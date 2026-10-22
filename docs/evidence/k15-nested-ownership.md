@@ -100,3 +100,29 @@ guardian kill can release its writer without executing the poison path; it is
 not covered by the empty-EOF guarantee. Within the supported ownership protocol,
 no timeout substitutes for acknowledgement and explicit verification/transport
 errors are not normalized to an ordinary exit.
+
+## Independent review and integration
+
+Independent review approved frozen `f48694bfcd1472926eee0dc90efb2af907ad769c`.
+The audit rehashed 47 committed source/support files, command and environment
+receipts, tool inputs, binaries and logs for the C24, Native lifetime10 and
+Native protocol/sibling gates. It checked the depth-two/depth-three paused
+snapshots, poison outcomes and completion-time process groups. The 19 terminal
+cases retain exact restoration logs; their older harness does not provide the
+same immutable receipt as the new gates, so that evidence has a narrower binding.
+
+The verdict is `/private/tmp/kvik-nested-receipt-review-2fu2rzvw/verdict.json`,
+SHA-256 `b56a31db7f969d1eb724ea2dbdb4b83d0e7147bc9d56f09270101cbc095b3c15`.
+The detailed audit is `report.json` in the same directory, SHA-256
+`8bbab10a968cf8a263489a18392d6136c5c4d3ae0a5c70d2a5a5a3f1e5c179b6`.
+
+The reviewer also reran the original Native leak reproduction using the matching
+final lifetime binaries. The outer result arrived after 0.747 seconds with no
+captured owned process/group live; final cleanup was verified. This is an actual
+independent replay, not just a receipt audit. Its report is
+`/private/tmp/kvik-nested-guardian-fixed-review-u3epmghp/report.json`, SHA-256
+`781306fbf393f6c55aa4fd46404958b30b60356ba85c21ef8131ea5f11bd6de0`.
+
+Main integration `d0630fd` matches all 15 files of the reviewed commit exactly.
+The merge audit is `/private/tmp/kvik-nested-merged-audit-xt5w8lmz/report.json`,
+SHA-256 `b8eda1d63c0203d818ee18c18f46e68a1fe6fcac2d2b9ee967eea059936d9bc2`.

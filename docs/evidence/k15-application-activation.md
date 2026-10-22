@@ -167,5 +167,8 @@ The reproduction report is
 `/private/tmp/kvik-nested-guardian-review-cdiws6j9/report.json`, SHA-256
 `8a5b3f65641e8c18f2562cc6436b66839683f50d52386f2a178549d52e76296a`.
 The reproduction cleaned its captured process group and verified cleanup.
-Until recursive cleanup acknowledgement is implemented and tested, this
-standalone gate must not be used as proof of safe foreground replacement.
+The [recursive Native ownership fix](k15-nested-ownership.md) subsequently
+passed its focused gates and an independent replay of this reproduction.
+The standalone activation gate still must not be used as proof of complete
+foreground replacement: Python bootstrap ownership and the public foreground
+application integration have separate acceptance gates.
