@@ -730,10 +730,13 @@
             "targets": {
               "type": "array",
               "items": {
-                "const": "jvm"
+                "enum": [
+                  "jvm",
+                  "macosArm64"
+                ]
               },
               "minItems": 1,
-              "maxItems": 1
+              "uniqueItems": true
             },
             "scopes": {
               "type": "array",

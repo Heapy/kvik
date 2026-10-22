@@ -106,7 +106,7 @@ DEFS["compilerPlugin"] = object_({"module": ID, "coordinate": COORDINATE, "targe
     optional=("module", "coordinate", "id", "compilerVersion", "pathOptions", "outputs"))
 DEFS["compilerPlugin"]["oneOf"] = [
     {"required": ["module", "id", "compilerVersion"], "not": {"required": ["coordinate"]}, "properties": {
-        "targets": array({"const": "jvm"}, minItems=1, maxItems=1), "scopes": array(enum("main", "test"), minItems=1, uniqueItems=True),
+        "targets": array(enum("jvm", "macosArm64"), minItems=1, uniqueItems=True), "scopes": array(enum("main", "test"), minItems=1, uniqueItems=True),
         "options": array({"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*="})}},
     {"required": ["coordinate"], "not": {"anyOf": [{"required": [name]} for name in ("module", "id", "compilerVersion")]},
      "properties": {"pathOptions": {"maxItems": 0}, "outputs": {"maxItems": 0}}}]
@@ -130,6 +130,7 @@ DEFS["scriptCompilerPlugin"]["properties"].update({
     "pathOptions": array(ref("pluginPathOption"), uniqueItems=True, maxItems=256),
 })
 DEFS["scriptCompilerPlugin"]["oneOf"][0]["properties"]["scopes"] = array({"const": "script"}, minItems=1, maxItems=1)
+DEFS["scriptCompilerPlugin"]["oneOf"][0]["properties"]["targets"] = array({"const": "jvm"}, minItems=1, maxItems=1)
 DEFS["scriptDependency"] = {"oneOf": [object_({key: value, "scope": enum("compile", "runtime")}, optional=("scope",))
     for key, value in [("coordinate", SCRIPT_COORDINATE), ("catalog", SCRIPT_ID), ("module", SCRIPT_ID)]]}
 SCRIPT_COMPILATION = {

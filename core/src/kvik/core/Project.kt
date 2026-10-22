@@ -107,7 +107,10 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         require(targets.isNotEmpty() && scopes.isNotEmpty() && scopes.all { it in setOf("main", "test", "script") })
         if (module != null) {
             require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilerVersion == "2.4.20") { "Workspace plugin requires an id and compilerVersion=2.4.20" }
-            require(targets == setOf("jvm") && (scopes == setOf("script") || scopes.all { it in setOf("main", "test") })) { "Workspace compiler plugins require JVM main/test or a separate script declaration" }
+            require(if ("script" in scopes) targets == setOf("jvm") && scopes == setOf("script")
+                else targets.all { it in setOf("jvm", "macosArm64") }) {
+                "Workspace compiler plugins require JVM/Native main/test or a separate JVM script declaration"
+            }
             validatePluginOptions(options, inputs, pathOptions, outputs)
         } else require(id == null && compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions are not supported" }
     }

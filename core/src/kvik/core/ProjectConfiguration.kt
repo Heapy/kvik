@@ -50,7 +50,9 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
             require(plugin.targets.all { requested -> module.targets.any { it.name == requested } }) { "Compiler plugin selects an undeclared target in ${module.id}" }
             plugin.module?.let { pluginModule ->
                 require(byId.getValue(pluginModule).targets.any { it.name == "jvm" }) { "Compiler plugin module $pluginModule requires a JVM target" }
-                require("test" !in plugin.scopes || module.targets.single { it.name == "jvm" }.test != null) { "Workspace plugin selects missing test compilation" }
+                require("test" !in plugin.scopes || plugin.targets.all { selected ->
+                    module.targets.single { it.name == selected }.test != null
+                }) { "Workspace plugin selects missing test compilation" }
             }
         }
     }
