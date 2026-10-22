@@ -6,6 +6,20 @@ import kvik.execution.NativeRunDirectory
 import kotlin.test.*
 
 class ApplicationLifecycleTest {
+    @Test fun processSetupEvidencePreservesCancellationAndDistinguishesExecutableExit() {
+        assertNull(ProcessResult(125).setupFailure)
+        assertNull(ProcessResult(127).setupFailure)
+        val fork = ProcessSetupFailure(ProcessSetupStage.FORK, 35)
+        assertEquals(fork, ProcessResult(125, setupFailure = fork).setupFailure)
+        assertEquals(fork, ProcessResult(130, cancelled = true, setupFailure = fork).setupFailure)
+        assertEquals(fork, ProcessResult(124, timedOut = true, setupFailure = fork).setupFailure)
+        ProcessResult(127, setupFailure = ProcessSetupFailure(ProcessSetupStage.EXEC, 2))
+        assertFailsWith<IllegalArgumentException> { ProcessSetupFailure(ProcessSetupStage.FORK, 0) }
+        assertFailsWith<IllegalArgumentException> { ProcessResult(0, setupFailure = fork) }
+        assertFailsWith<IllegalArgumentException> { ProcessResult(125, cancelled = true, setupFailure = fork) }
+        assertFailsWith<IllegalArgumentException> { ProcessResult(130, cancelled = true, timedOut = true, setupFailure = fork) }
+    }
+
     @Test fun observationMessageTruncationPreservesSupplementaryUnicode() {
         val supplementary = "\uD83D\uDE00"
         for (prefixLength in listOf(0, 510, 511, 512, 513)) {

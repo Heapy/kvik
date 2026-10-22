@@ -7,6 +7,18 @@ int kvik_process_ownership_version(void);
 void *kvik_process_start(const char *helper, const char *cwd, const char *out, const char *err,
                          long long timeout_ms, char *const *argv, char *const *envp);
 int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancelled);
+/* Only after poll returns 1: 1 setup failure, 0 executable outcome, -1 invalid state. */
+int kvik_process_setup_error(void *handle, int *stage, int *error);
+enum KvikProcessSetupStage {
+    KVIK_SETUP_NONE = 0, KVIK_SETUP_TIMEOUT_ARGUMENT = 1, KVIK_SETUP_BARRIER_PIPE = 2,
+    KVIK_SETUP_BARRIER_READ_DUP = 3, KVIK_SETUP_BARRIER_WRITE_DUP = 4, KVIK_SETUP_BARRIER_STAT = 5,
+    KVIK_SETUP_BARRIER_READ_FLAGS = 6, KVIK_SETUP_BARRIER_WRITE_FLAGS = 7, KVIK_SETUP_BARRIER_ENVIRONMENT = 8,
+    KVIK_SETUP_STATUS_PIPE = 9, KVIK_SETUP_STATUS_READ_DUP = 10, KVIK_SETUP_STATUS_WRITE_DUP = 11,
+    KVIK_SETUP_STATUS_READ_FLAGS = 12, KVIK_SETUP_FORK = 13, KVIK_SETUP_PARENT_GROUP = 14,
+    KVIK_SETUP_CHILD_GROUP = 15, KVIK_SETUP_BARRIER_BIND = 16, KVIK_SETUP_WORKING_DIRECTORY = 17,
+    KVIK_SETUP_STDIN_OPEN = 18, KVIK_SETUP_STDOUT_OPEN = 19, KVIK_SETUP_STDERR_OPEN = 20,
+    KVIK_SETUP_STDIN_BIND = 21, KVIK_SETUP_STDOUT_BIND = 22, KVIK_SETUP_STDERR_BIND = 23, KVIK_SETUP_EXEC = 24
+};
 void kvik_process_cancel(void *handle);
 /* poll: 0 pending, 1 verified terminal, -1 ownership protocol failure.
  * close always frees the handle; -1 reports an unverified cleanup result. */
@@ -50,8 +62,10 @@ int kvik_foreground_exec_terminal(const char *path, char *const *argv, char *con
 #define KVIK_BARRIER_ENV "KVIK_PROCESS_BARRIER_V1"
 #define KVIK_BARRIER_FD 6
 #define KVIK_BARRIER_MARKER_BYTES 128
-#define KVIK_PROCESS_RESULT_MAGIC 0x4b565031
-#define KVIK_PROCESS_RESULT_INTS 4
+#define KVIK_PROCESS_RESULT_MAGIC 0x4b565032
+#define KVIK_PROCESS_RESULT_INTS 6
+#define KVIK_PROCESS_SETUP_MAGIC 0x4b565331
+#define KVIK_PROCESS_SETUP_INTS 3
 typedef struct { int fd; uint64_t device, inode; } KvikBarrier;
 static inline int kvik_barrier_validate(const KvikBarrier *cap) {
     if (cap->fd < 0) return 0;

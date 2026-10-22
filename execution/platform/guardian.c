@@ -31,9 +31,34 @@ static int owner_gone(void) {
     if (poll(&fd, 1, 0) > 0) return 1;
     return interrupted != 0;
 }
-static void report(int code, int timeout, int cancelled) {
-    int result[KVIK_PROCESS_RESULT_INTS] = {KVIK_PROCESS_RESULT_MAGIC, code, timeout, cancelled};
+typedef struct { int stage, error; } SetupFailure;
+static void report_setup(int code, int timeout, int cancelled, SetupFailure setup) {
+    int result[KVIK_PROCESS_RESULT_INTS] = {KVIK_PROCESS_RESULT_MAGIC, code, timeout, cancelled, setup.stage, setup.error};
     (void)write(4, result, sizeof(result));
+}
+static void report(int code, int timeout, int cancelled) { report_setup(code, timeout, cancelled, (SetupFailure){0, 0}); }
+static int setup_error(SetupFailure *failure, int stage) {
+    failure->stage = stage; failure->error = errno; return -1;
+}
+/* The child emits at most one atomic PIPE_BUF-sized frame before exec. The write
+ * end is CLOEXEC, so successful exec is empty EOF, including an executable exit125. */
+static void child_setup_error(int fd, int stage, int error) {
+    int value[KVIK_PROCESS_SETUP_INTS] = {KVIK_PROCESS_SETUP_MAGIC, stage, error};
+    ssize_t written;
+    do { written = write(fd, value, sizeof(value)); } while (written < 0 && errno == EINTR);
+    _exit(stage == KVIK_SETUP_EXEC ? 127 : 125);
+}
+static int setup_pipe(int *read_fd, int *write_fd, SetupFailure *failure, int pipe_stage, int read_stage, int write_stage) {
+    int pair[2];
+    if (pipe(pair)) return setup_error(failure, pipe_stage);
+    *read_fd = fcntl(pair[0], F_DUPFD_CLOEXEC, 10);
+    if (*read_fd < 0) setup_error(failure, read_stage);
+    else {
+        *write_fd = fcntl(pair[1], F_DUPFD_CLOEXEC, 10);
+        if (*write_fd < 0) setup_error(failure, write_stage);
+    }
+    close(pair[0]); close(pair[1]);
+    return failure->stage ? -1 : 0;
 }
 
 /* A terminal restorer exists only while its owner's pipe is open. It never starts
@@ -152,50 +177,55 @@ static int process_main(int argc, char **argv) {
     errno = 0;
     long long timeout_ms = strtoll(argv[4], &timeout_end, 10), start = now_ms();
     if (argv[4][0] < '0' || argv[4][0] > '9' || errno == ERANGE ||
-            !timeout_end || *timeout_end || timeout_ms < 0) { report(125, 0, 0); return 0; }
-    if (owner_gone()) { report(130, 0, 1); return 0; }
-    int pipe_fds[2];
-    if (pipe(pipe_fds)) { report(125, 0, 0); return 0; }
-    int barrier_read = fcntl(pipe_fds[0], F_DUPFD_CLOEXEC, 10);
-    int barrier_write = fcntl(pipe_fds[1], F_DUPFD_CLOEXEC, 10);
-    close(pipe_fds[0]); close(pipe_fds[1]);
-    struct stat barrier_stat;
-    if (barrier_read < 0 || barrier_write < 0 || fstat(barrier_write, &barrier_stat) ||
-        fcntl(barrier_read, F_SETFL, O_NONBLOCK) || fcntl(barrier_write, F_SETFL, O_NONBLOCK)) {
-        if (barrier_read >= 0) close(barrier_read);
-        if (barrier_write >= 0) close(barrier_write);
-        report(125, 0, 0); return 0;
+            !timeout_end || *timeout_end || timeout_ms < 0) {
+        report_setup(125, 0, 0, (SetupFailure){KVIK_SETUP_TIMEOUT_ARGUMENT, errno == ERANGE ? ERANGE : EINVAL}); return 0;
     }
+    if (owner_gone()) { report(130, 0, 1); return 0; }
+    int barrier_read = -1, barrier_write = -1, status_read = -1, status_write = -1;
+    SetupFailure setup = {0, 0}; char **environment = NULL;
+    if (setup_pipe(&barrier_read, &barrier_write, &setup, KVIK_SETUP_BARRIER_PIPE,
+                   KVIK_SETUP_BARRIER_READ_DUP, KVIK_SETUP_BARRIER_WRITE_DUP)) goto early_setup_failure;
+    struct stat barrier_stat;
+    if (fstat(barrier_write, &barrier_stat)) { setup_error(&setup, KVIK_SETUP_BARRIER_STAT); goto early_setup_failure; }
+    if (fcntl(barrier_read, F_SETFL, O_NONBLOCK)) { setup_error(&setup, KVIK_SETUP_BARRIER_READ_FLAGS); goto early_setup_failure; }
+    if (fcntl(barrier_write, F_SETFL, O_NONBLOCK)) { setup_error(&setup, KVIK_SETUP_BARRIER_WRITE_FLAGS); goto early_setup_failure; }
     KvikBarrier downstream = {barrier_write, (uint64_t)barrier_stat.st_dev, (uint64_t)barrier_stat.st_ino};
     char marker[KVIK_BARRIER_MARKER_BYTES];
-    char **environment = kvik_barrier_environment(environ, &downstream, marker);
-    if (!environment) { close(barrier_read); close(barrier_write); report(125, 0, 0); return 0; }
+    environment = kvik_barrier_environment(environ, &downstream, marker);
+    if (!environment) { setup_error(&setup, KVIK_SETUP_BARRIER_ENVIRONMENT); goto early_setup_failure; }
+    if (setup_pipe(&status_read, &status_write, &setup, KVIK_SETUP_STATUS_PIPE,
+                   KVIK_SETUP_STATUS_READ_DUP, KVIK_SETUP_STATUS_WRITE_DUP)) goto early_setup_failure;
+    if (fcntl(status_read, F_SETFL, O_NONBLOCK)) { setup_error(&setup, KVIK_SETUP_STATUS_READ_FLAGS); goto early_setup_failure; }
     pid_t child = fork();
-    if (child < 0) { free(environment); close(barrier_read); close(barrier_write); report(125, 0, 0); return 0; }
+    if (child < 0) { setup_error(&setup, KVIK_SETUP_FORK); goto early_setup_failure; }
     if (!child) {
-        if (setpgid(0, 0)) _exit(125);
-        close(3); close(4); close(barrier_read);
+        if (setpgid(0, 0)) child_setup_error(status_write, KVIK_SETUP_CHILD_GROUP, errno);
+        close(3); close(4); close(barrier_read); close(status_read);
         if (upstream_barrier.fd >= 0) close(upstream_barrier.fd);
-        if (dup2(barrier_write, KVIK_BARRIER_FD) < 0) _exit(125);
+        if (dup2(barrier_write, KVIK_BARRIER_FD) < 0) child_setup_error(status_write, KVIK_SETUP_BARRIER_BIND, errno);
         close(barrier_write);
         signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL); signal(SIGHUP, SIG_DFL); signal(SIGPIPE, SIG_DFL);
-        if (chdir(argv[1])) _exit(125);
+        if (chdir(argv[1])) child_setup_error(status_write, KVIK_SETUP_WORKING_DIRECTORY, errno);
         int in = open("/dev/null", O_RDONLY);
+        if (in < 0) child_setup_error(status_write, KVIK_SETUP_STDIN_OPEN, errno);
         int out = open(argv[2], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+        if (out < 0) child_setup_error(status_write, KVIK_SETUP_STDOUT_OPEN, errno);
         int err = open(argv[3], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-        if (in < 0 || out < 0 || err < 0) _exit(125);
-        if (dup2(in, 0) < 0 || dup2(out, 1) < 0 || dup2(err, 2) < 0) _exit(125);
+        if (err < 0) child_setup_error(status_write, KVIK_SETUP_STDERR_OPEN, errno);
+        if (dup2(in, 0) < 0) child_setup_error(status_write, KVIK_SETUP_STDIN_BIND, errno);
+        if (dup2(out, 1) < 0) child_setup_error(status_write, KVIK_SETUP_STDOUT_BIND, errno);
+        if (dup2(err, 2) < 0) child_setup_error(status_write, KVIK_SETUP_STDERR_BIND, errno);
         if (in > 2) close(in);
         if (out > 2) close(out);
         if (err > 2) close(err);
         execve(argv[5], argv + 5, environment);
-        _exit(127);
+        child_setup_error(status_write, KVIK_SETUP_EXEC, errno);
     }
     /* The guardian never retains its own downstream writer. */
-    close(barrier_write); free(environment);
+    close(barrier_write); close(status_write); free(environment);
     int code = 125, timed_out = 0, cancelled = 0;
     int setup_failed = setpgid(child, child) && errno != EACCES && errno != ESRCH;
-    if (setup_failed) kill(child, SIGKILL);
+    if (setup_failed) { setup_error(&setup, KVIK_SETUP_PARENT_GROUP); kill(child, SIGKILL); }
     while (!setup_failed) {
         siginfo_t info = {0};
         if (waitid(P_PID, child, &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == child) {
@@ -229,8 +259,33 @@ static int process_main(int argc, char **argv) {
     pid_t reaped;
     do { reaped = waitpid(child, NULL, 0); } while (reaped < 0 && errno == EINTR);
     if (reaped != child) poisoned = 1;
+    unsigned char setup_bytes[sizeof(int) * KVIK_PROCESS_SETUP_INTS + 1]; size_t setup_size = 0;
+    for (;;) {
+        ssize_t count = read(status_read, setup_bytes + setup_size, sizeof(setup_bytes) - setup_size);
+        if (count > 0) { setup_size += count; if (setup_size == sizeof(setup_bytes)) { poisoned = 1; break; } }
+        else if (!count) break;
+        else if (errno != EINTR) { poisoned = 1; break; }
+    }
+    close(status_read);
+    if (setup_size) {
+        int value[KVIK_PROCESS_SETUP_INTS] = {0};
+        if (setup_size != sizeof(value)) poisoned = 1;
+        else {
+            memcpy(value, setup_bytes, sizeof(value));
+            if (value[0] != KVIK_PROCESS_SETUP_MAGIC || value[1] < KVIK_SETUP_CHILD_GROUP ||
+                value[1] > KVIK_SETUP_EXEC || value[2] <= 0) poisoned = 1;
+            else if (!setup.stage) setup = (SetupFailure){value[1], value[2]};
+        }
+    }
     if (poisoned) return 125;
-    report(code, timed_out, cancelled); return 0;
+    report_setup(code, timed_out, cancelled, setup); return 0;
+early_setup_failure:
+    free(environment);
+    if (barrier_read >= 0) close(barrier_read);
+    if (barrier_write >= 0) close(barrier_write);
+    if (status_read >= 0) close(status_read);
+    if (status_write >= 0) close(status_write);
+    report_setup(125, 0, 0, setup); return 0;
 }
 int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);

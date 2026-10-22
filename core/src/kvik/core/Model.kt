@@ -150,7 +150,36 @@ data class ProcessRequest(
     init { require(arguments.isNotEmpty() && timeoutMillis >= 0) }
 }
 
-data class ProcessResult(val exitCode: Int, val timedOut: Boolean = false, val cancelled: Boolean = false)
+/** Fixed platform boundary vocabulary; no executable-controlled diagnostic text. */
+enum class ProcessSetupStage(val platformCode: Int) {
+    TIMEOUT_ARGUMENT(1), BARRIER_PIPE(2), BARRIER_READ_DUP(3), BARRIER_WRITE_DUP(4),
+    BARRIER_STAT(5), BARRIER_READ_FLAGS(6), BARRIER_WRITE_FLAGS(7), BARRIER_ENVIRONMENT(8),
+    STATUS_PIPE(9), STATUS_READ_DUP(10), STATUS_WRITE_DUP(11), STATUS_READ_FLAGS(12),
+    FORK(13), PARENT_GROUP(14), CHILD_GROUP(15), BARRIER_BIND(16), WORKING_DIRECTORY(17),
+    STDIN_OPEN(18), STDOUT_OPEN(19), STDERR_OPEN(20), STDIN_BIND(21), STDOUT_BIND(22), STDERR_BIND(23), EXEC(24),
+}
+data class ProcessSetupFailure(val stage: ProcessSetupStage, val errno: Int) {
+    init { require(errno > 0) { "Setup failure requires a positive errno" } }
+    fun toJson(): JsonValue.Object = obj("stage" to stage.name.lowercase().json(), "errno" to errno.json())
+}
+data class ProcessResult(
+    val exitCode: Int,
+    val timedOut: Boolean = false,
+    val cancelled: Boolean = false,
+    val setupFailure: ProcessSetupFailure? = null,
+) {
+    init {
+        if (setupFailure != null) {
+            require(!(timedOut && cancelled))
+            require(exitCode == when {
+                cancelled -> 130
+                timedOut -> 124
+                setupFailure.stage == ProcessSetupStage.EXEC -> 127
+                else -> 125
+            }) { "Setup failure and process outcome disagree" }
+        }
+    }
+}
 interface OwnedProcess : AutoCloseable {
     fun poll(): ProcessResult?
     fun cancel()

@@ -1557,6 +1557,196 @@
         "handoffReady"
       ],
       "additionalProperties": false
+    },
+    "processSetupFailure": {
+      "type": "object",
+      "required": [
+        "stage",
+        "errno"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "timeout_argument",
+            "barrier_pipe",
+            "barrier_read_dup",
+            "barrier_write_dup",
+            "barrier_stat",
+            "barrier_read_flags",
+            "barrier_write_flags",
+            "barrier_environment",
+            "status_pipe",
+            "status_read_dup",
+            "status_write_dup",
+            "status_read_flags",
+            "fork",
+            "parent_group",
+            "child_group",
+            "barrier_bind",
+            "working_directory",
+            "stdin_open",
+            "stdout_open",
+            "stderr_open",
+            "stdin_bind",
+            "stdout_bind",
+            "stderr_bind",
+            "exec"
+          ]
+        },
+        "errno": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "additionalProperties": false
+    },
+    "observationResult": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "exitCode",
+        "cancelled",
+        "timedOut",
+        "error",
+        "setupFailure"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "cancelled": {
+          "type": "boolean"
+        },
+        "timedOut": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 512
+        },
+        "setupFailure": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/processSetupFailure"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "cancelled": {
+                "const": true
+              },
+              "timedOut": {
+                "const": true
+              }
+            },
+            "required": [
+              "cancelled",
+              "timedOut"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "setupFailure": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "setupFailure"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "cancelled": {
+                    "const": true
+                  },
+                  "timedOut": {
+                    "const": false
+                  },
+                  "exitCode": {
+                    "const": 130
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "cancelled": {
+                    "const": false
+                  },
+                  "timedOut": {
+                    "const": true
+                  },
+                  "exitCode": {
+                    "const": 124
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "cancelled": {
+                    "const": false
+                  },
+                  "timedOut": {
+                    "const": false
+                  },
+                  "setupFailure": {
+                    "properties": {
+                      "stage": {
+                        "const": "exec"
+                      }
+                    }
+                  },
+                  "exitCode": {
+                    "const": 127
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "cancelled": {
+                    "const": false
+                  },
+                  "timedOut": {
+                    "const": false
+                  },
+                  "setupFailure": {
+                    "properties": {
+                      "stage": {
+                        "not": {
+                          "const": "exec"
+                        }
+                      }
+                    }
+                  },
+                  "exitCode": {
+                    "const": 125
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
     }
   }
 }

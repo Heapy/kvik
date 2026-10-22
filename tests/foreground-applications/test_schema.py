@@ -41,6 +41,20 @@ class SchemaTest(unittest.TestCase):
                         dict(code='KVIK_SESSION_OBSERVATION',message='x',unbound=True)):
             invalid=copy.deepcopy(event);invalid['payload']=payload;self.assertFalse(validator.is_valid(invalid))
 
+    def test_observation_setup_failure_is_distinct_and_strict(self):
+        validator=jsonschema.Draft202012Validator({**SCHEMA,'$ref':'#/$defs/observationResult'},registry=REGISTRY)
+        value=dict(schemaVersion=1,exitCode=125,cancelled=False,timedOut=False,error='setup',setupFailure=None)
+        validator.validate(value)  # An executable may itself choose exit125.
+        value['setupFailure']=dict(stage='fork',errno=35);validator.validate(value)
+        for flags,code in ((dict(cancelled=True),130),(dict(timedOut=True),124)):
+            validator.validate(dict(value,**flags,exitCode=code))
+        validator.validate(dict(value,exitCode=127,setupFailure=dict(stage='exec',errno=2)))
+        for change in (dict(exitCode=0),dict(setupFailure=dict(stage='unknown',errno=2)),
+                       dict(setupFailure=dict(stage='fork',errno=0)),dict(setupFailure=dict(stage='fork',errno=True)),
+                       dict(setupFailure=dict(stage='exec',errno=2)),dict(cancelled=True),dict(cancelled=True,timedOut=True,exitCode=130),
+                       dict(setupFailure=dict(stage='fork',errno=2,text='unbounded'))):
+            self.assertFalse(validator.is_valid(dict(value,**change)),change)
+
     def test_bootstrap_ownership_is_optional_for_library_and_required_for_application(self):
         launch=dict(schemaVersion=1,sourceRoot='/source',python='/python',launcher='/source/kvik',
             bootstrapArguments=['--konan-data','/data','--cache-dir','/cache','--artifact-cache','/artifacts'],

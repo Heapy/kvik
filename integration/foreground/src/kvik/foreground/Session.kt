@@ -210,10 +210,12 @@ class ForegroundSession(
             if ((firstObservation || changed) && fingerprint == null) {
                 val retained = obj("schemaVersion" to 1.json(), "exitCode" to result.exitCode.json(),
                     "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(),
-                    "error" to (observationError?.let(::boundedObservationMessage)?.json() ?: JsonValue.Null))
+                    "error" to (observationError?.let(::boundedObservationMessage)?.json() ?: JsonValue.Null),
+                    "setupFailure" to (result.setupFailure?.toJson() ?: JsonValue.Null))
                 NativeFiles.writeNew("${child.path}/observation-result.json", retained.canonical().encodeToByteArray())
+                val setup = result.setupFailure?.let { "; setup=${it.stage.name.lowercase()}, errno=${it.errno}" } ?: ""
                 event("diagnostic", obj("code" to "KVIK_SESSION_OBSERVATION".json(),
-                    "message" to boundedObservationMessage("Snapshot unavailable: exit=${result.exitCode}, timedOut=${result.timedOut}; evidence=${child.path}").json()))
+                    "message" to boundedObservationMessage("Snapshot unavailable: exit=${result.exitCode}, timedOut=${result.timedOut}$setup; evidence=${child.path}").json()))
             }
             if (!observedOnce || changed) {
                 observed = fingerprint; observedOnce = true; revision++

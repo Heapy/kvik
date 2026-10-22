@@ -70,7 +70,7 @@ static int barrier_ready(void) {
 }
 typedef struct {
     pid_t guardian;
-    int control, result, eof, reaped, failed, notified;
+    int control, result, eof, reaped, failed, notified, verified, setup_stage, setup_error;
     size_t received;
     unsigned char bytes[sizeof(int) * KVIK_PROCESS_RESULT_INTS + 1];
 } Process;
@@ -153,11 +153,21 @@ int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancell
     if (!p->eof || !p->reaped) return 0;
     int values[KVIK_PROCESS_RESULT_INTS]; memcpy(values, p->bytes, sizeof(values));
     if (p->failed || values[0] != KVIK_PROCESS_RESULT_MAGIC || values[1] < 0 || values[1] > 255 ||
-        values[2] < 0 || values[2] > 1 || values[3] < 0 || values[3] > 1 || (values[2] && values[3])) {
+        values[2] < 0 || values[2] > 1 || values[3] < 0 || values[3] > 1 || (values[2] && values[3]) ||
+        values[4] < KVIK_SETUP_NONE || values[4] > KVIK_SETUP_EXEC ||
+        (!values[4] && values[5]) || (values[4] && values[5] <= 0) ||
+        (values[4] && values[1] != (values[3] ? 130 : values[2] ? 124 : values[4] == KVIK_SETUP_EXEC ? 127 : 125))) {
         if (!p->notified) { kvik_barrier_poison(&inherited_barrier); p->notified = 1; }
         errno = EPROTO; return -1;
     }
+    p->verified = 1; p->setup_stage = values[4]; p->setup_error = values[5];
     *exit_code = values[1]; *timed_out = values[2]; *cancelled = values[3]; return 1;
+}
+int kvik_process_setup_error(void *handle, int *stage, int *error) {
+    Process *p = handle;
+    if (!p || !p->verified || !stage || !error) { errno = EINVAL; return -1; }
+    *stage = p->setup_stage; *error = p->setup_error;
+    return p->setup_stage != KVIK_SETUP_NONE;
 }
 void kvik_process_cancel(void *handle) {
     Process *p = handle;

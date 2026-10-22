@@ -47,7 +47,15 @@ class NativeProcessHost(private val guardianExecutable: String) : ProcessHost {
                 val code = alloc<IntVar>(); val timeout = alloc<IntVar>(); val cancelled = alloc<IntVar>()
                 when (kvik_process_poll(current, code.ptr, timeout.ptr, cancelled.ptr)) {
                     0 -> null
-                    1 -> ProcessResult(code.value, timeout.value != 0, cancelled.value != 0).also { result = it }
+                    1 -> {
+                        val stage = alloc<IntVar>(); val setupError = alloc<IntVar>()
+                        val setup = when (kvik_process_setup_error(current, stage.ptr, setupError.ptr)) {
+                            0 -> null
+                            1 -> ProcessSetupFailure(ProcessSetupStage.entries.single { it.platformCode == stage.value }, setupError.value)
+                            else -> error("Ownership guardian setup result is unavailable (errno=$errno)")
+                        }
+                        ProcessResult(code.value, timeout.value != 0, cancelled.value != 0, setup).also { result = it }
+                    }
                     else -> error("Ownership guardian did not acknowledge complete cleanup (errno=$errno)")
                 }
             }
