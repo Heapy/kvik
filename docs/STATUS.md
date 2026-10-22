@@ -14,8 +14,9 @@ PLAN.md remains the acceptance specification. A working spike does not mark the 
 | K07 | Client slice implemented | [Remote cache evidence](evidence/k07.md); 13 backend scenario groups and independent wire review; synchronous bounded I/O, no compiler portability approval |
 | K09 | In progress | [Read-only native inspection](evidence/k09.md), reviewed [dependency commands](evidence/k09-dependency-cli.md), [full Native tool verification](evidence/k09-toolchains.md), [validated JVM/Native CLI and retained evidence](evidence/k09-build-cli.md), [full kotaml JVM run](evidence/k09-kotaml-cli.md); action explanations and broader interface gates remain |
 | K10–K11 | Pending | Adversarial validation and decision |
-| K12–K13 | Pending | Scripts and workspace compiler plugins |
+| K12 | Pending | Project and standalone scripts |
+| K13 | In progress | Workspace JVM compiler-plugin contracts reviewed; graph, worker and fixture implementation in an isolated branch; script/Native combinations remain |
 | K14 | In progress | [Local source composition and launcher](evidence/k14.md), verified native helper and source-built JVM worker bundle, 17 launcher checks; reviewed [launch context and read-only composition query](evidence/k14-launch-context.md) prepare foreground recomposition; Native handoff, remote source provisioning/shared executable cache integration remain |
-| K15 | In progress | Initial library build/test foreground session in a separate worktree; lifecycle validation, source-plugin recomposition and application restart remain pending |
+| K15 | In progress | Reviewed [foreground library sessions](evidence/k15.md) integrated, with Native lifecycle/recovery/shared-CAS evidence; [Native bootstrap context validation](evidence/k15-bootstrap-context.md) prepares source recomposition; composed JVM verification, source-plugin restart, application restart, raw-key controls and graph reuse remain |
 
 Automatic fixtures, test avoidance, an optional multiplatform test framework and `@Task` effect checking remain research directions. None is implemented or promised by the K01 spike.
