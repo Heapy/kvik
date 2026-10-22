@@ -219,6 +219,7 @@ private class Observation(private val root: String, private val content: Content
 
     private fun addFile(logical: String) {
         val path = LogicalPath(logical)
+        if (logical.split('/').size > limits.maxDepth) throw SnapshotFailure("Input file path exceeds depth limit: $logical")
         if (path in entries) return
         val absolute = "$root/$logical"
         val data = readFile(absolute, limits.maxFileBytes)

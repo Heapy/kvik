@@ -169,8 +169,13 @@ class ProjectSnapshotTest {
         val configurations = listOf(SnapshotLimits(maxFiles = 2), SnapshotLimits(maxDirectories = 1), SnapshotLimits(maxEntries = 1),
             SnapshotLimits(maxFileBytes = 10), SnapshotLimits(maxTotalBytes = 10))
         for (limits in configurations) assertFailsWith<SnapshotFailure> { f.capture(NativeProjectSnapshotter(f.root, f.store, limits)) }
-        NativeFiles.ensureDirectory("${f.root}/src/a/b")
         write("${f.root}/kvik.json", document(plugin = null))
+        // Directories have one component, but their files have two. No nested directory may
+        // accidentally be the reason this regression rejects a too-deep file.
+        val fileDepth = assertFailsWith<SnapshotFailure> { f.capture(NativeProjectSnapshotter(f.root, f.store, SnapshotLimits(maxDepth = 1))) }
+        assertTrue(fileDepth.message!!.startsWith("Input file path exceeds depth limit:"))
+        assertIs<SnapshotCapture.Captured>(NativeProjectSnapshotter(f.root, f.store, SnapshotLimits(maxDepth = 2)).capture(LogicalPath("kvik.json"), f.lock))
+        NativeFiles.ensureDirectory("${f.root}/src/a/b")
         assertFailsWith<SnapshotFailure> { f.capture(NativeProjectSnapshotter(f.root, f.store, SnapshotLimits(maxDepth = 1))) }
     }
 }
