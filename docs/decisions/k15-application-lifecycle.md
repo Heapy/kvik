@@ -98,10 +98,10 @@ reload. Tests do not silently launch applications. Shutdown/recomposition must
 cancel and reap application descendants as well as build/observer children.
 Runtime replacement and consumer application restart are distinct transitions.
 
-These are required subsequent integration and acceptance steps, not capabilities
-claimed by the artifact contract alone. Gates include real JVM and Native
-programs, resources/runtime-only dependencies, unchanged compilation after run
-argument edits, watch/reload, failed build followed by a fix, crash, long-lived
-process ownership, signal/parent-loss cleanup, two independent sessions, and
-source-plugin handoff while an application is running. No background service or
-unowned process is permitted.
+The [one-shot acceptance gate](../evidence/k15-application-cli.md) covers real JVM
+and Native programs, resources/runtime-only dependencies, unchanged compilation
+after run argument edits, long-lived ownership, signal/parent-loss cleanup and
+two independent invocation owners. Continuous-session gates still require
+watch/reload, failed preparation followed by a fix, crash recovery, two independent
+application sessions and source-plugin handoff while an application is running.
+No background service or unowned process is permitted.

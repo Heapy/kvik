@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work will use an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `dev`, `verification`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -40,6 +40,28 @@ establish compatibility. See the [query contract](integration/package-queries/CO
 and [composed CLI evidence](docs/evidence/k16-package-queries.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools.
+
+For a runnable target, declare `application` with an `entryPoint`, optional ordered
+`arguments` and an `environment` map. JVM entry points name the main class, such
+as `example.MainKt`; macosArm64 entry points name the Kotlin function, such as
+`example.main`. Select exactly one module and target:
+
+```sh
+./kvik --offline --no-build -- run-application --project /absolute/project/kvik.json \
+  --tools /absolute/project/tools.json --module app --target jvm
+```
+
+`prepare-application` accepts the same options and only prepares the bundle.
+`run-application` prepares it and starts a fresh owned process. Preparation may
+reuse cached compilation and packaging; application execution always runs. To
+replay a preparation, pass its `application-prepared` event's `directory` and
+`descriptor` to `run-prepared --run PATH --descriptor DIGEST_JSON`. Replay checks
+the bundle, completed evidence and current sources/tools before starting.
+The application uses the project directory, declared environment and EOF stdin;
+JSON events identify its retained stdout/stderr files. Its exit code propagates,
+and interruption stops its owned process group. See the [application contract](docs/decisions/k15-application-lifecycle.md)
+and [JVM/Native acceptance evidence](docs/evidence/k15-application-cli.md).
+Application restart in `dev` remains under implementation.
 
 Dependencies default to private compile dependencies. Set `exported: true` when a dependency belongs on consuming modules' compile classpaths; use `scope: "runtime"` for runtime-only dependencies. Runtime closures include private dependencies. Target `testCompilerOptions` optionally replaces `compilerOptions` for test compilation, so production-only settings such as strict explicit API need not apply to tests. Omission preserves inheritance; an empty list explicitly selects default test options.
 

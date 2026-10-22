@@ -170,3 +170,19 @@ cleanup cases, plus the old/new invocation bindings and 23 new command receipts.
 The seven read-only re-audits are explicitly not new exit receipts. Retained report:
 `/private/tmp/kvik-application-acceptance-review-e8oe2cm8/report.json`, SHA-256
 `32466c43e201e541a464ab3e39a72b402e24567afb4f62f3c19d8ff3f823713b`.
+
+The separate runtime/Native-contract audit is retained at
+`/private/tmp/kvik-application-runtime-review-stinl57c/report.json` (SHA-256
+`5dbcdf8afd7b15dbdc977c71dcbd8fedcdbc956597fbfdc510e99f7b03c0b1f3`).
+It verifies all 23 runtime source roots, 90 source files, bootstrap recipe,
+executable, guardian and JVM worker bundle against the frozen producer, and the
+35 distinct passing Native contract tests against their receipt. This audit
+rehashed the recorded compiler launch inputs; it did not refresh the complete
+installed tool roots.
+
+After serial integration, all 23 compiled source roots and 18 changed source,
+schema, test and harness files match the reviewed producer/acceptance commits.
+The integration report is
+`/private/tmp/kvik-application-merged-audit-3jh_6ua7/report.json`.
+The merged tree also passes 11 schema examples and all 21 Python schema tests.
+No application compiler work was repeated for that integration check.
