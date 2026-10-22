@@ -32,7 +32,7 @@ class BootstrapLaunch private constructor(
     /** A query may select new sources, but must not change invocation policy or source ownership. */
     fun requireReplacement(previous: BootstrapLaunch, expectedComposition: Digest) {
         require(sourceRoot == previous.sourceRoot && python == previous.python && launcher == previous.launcher &&
-            arguments == previous.arguments && processOwnershipVersion == previous.processOwnershipVersion && composition == expectedComposition) {
+            arguments == previous.arguments && composition == expectedComposition) {
             "Bootstrap replacement does not match the requested composition and launch policy"
         }
     }

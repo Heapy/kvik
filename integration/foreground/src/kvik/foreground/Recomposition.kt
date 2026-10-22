@@ -80,6 +80,7 @@ class Recomposition(
                 val bytes = NativeFiles.read("${child.directory}/stdout.jsonl", 32 * 1024)
                 val value = BootstrapLaunch.parse(bytes)
                 value.requireReplacement(launch, child.composition!!)
+                if (applicationMode) value.requireApplicationOwnership()
                 if (candidate == value.composition) selected = value to bytes
                 else error = "Source composition changed during rebuild"
             } catch (failure: Exception) { error = failure.message ?: "Invalid replacement descriptor" }

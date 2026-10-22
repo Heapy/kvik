@@ -57,8 +57,9 @@ class ApplicationProtocolTest {
         val legacy = BootstrapLaunch.parse(legacyBytes)
         assertNull(legacy.processOwnershipVersion)
         assertFails { legacy.requireApplicationOwnership() }
-        assertFails { legacy.requireReplacement(current, digest) }
-        assertFails { current.requireReplacement(legacy, digest) }
+        // Generic library replacement can upgrade its bootstrap bridge capability.
+        current.requireReplacement(legacy, digest)
+        legacy.requireReplacement(current, digest)
         assertFails { SessionResume.parse(state().copy(launchBytes = legacyBytes).toJson().canonical().encodeToByteArray()) }
         for (invalid in listOf(0.json(), 2.json(), "1".json(), JsonValue.Null, true.json())) {
             assertFails { BootstrapLaunch.parse(JsonValue.Object(fields + ("processOwnershipVersion" to invalid)).canonical().encodeToByteArray()) }
