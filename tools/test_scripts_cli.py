@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import sys
 import subprocess
 import tempfile
 import time
@@ -27,7 +28,18 @@ PLUGIN = ROOT / 'tests/workspace-plugins/fixture'
 LITERALS = ['@literal.args', '', 'space value', 'snowman ☃', 'astral 🚀', '--dash', 'quote"slash\\', 'line\nbreak']
 CENTRAL = dict(id='central', url='https://repo.maven.apache.org/maven2')
 PINS = ['org.jetbrains.kotlin:kotlin-stdlib:2.4.20', 'org.jetbrains:annotations:13.0']
-PHASES = ('standalone', 'named', 'lifecycle')
+sys.path.insert(0, str(ROOT/'tools'))
+import script_acceptance_published as published
+import script_acceptance_concurrency as concurrent
+import script_acceptance_compiler_identity as compiler_identity
+
+PHASES = ('standalone', 'named', 'lifecycle', 'published', 'named-invalidation', 'concurrency', 'compiler-identity')
+NAMED_PHASES = ('named', 'named-invalidation')
+
+
+def extensions_identity():
+    return {name: dict(module=digest(Path(module.__file__).read_bytes()), fixtures=inventory(module.FIXTURES))
+            for name,module in [('published',published), ('concurrency',concurrent), ('compiler-identity',compiler_identity)]}
 
 
 def canonical(value):
@@ -103,7 +115,7 @@ def named_document():
 def prepare(directory, phase):
     project = directory / 'project'
     project.mkdir(parents=True)
-    if phase != 'named':
+    if phase not in NAMED_PHASES:
         shutil.copyfile(FIXTURE/'standalone/Main.kt', project/'Main.kt')
         (project/'literal.args').write_text('THIS_MUST_NOT_EXPAND\n')
         write(project/'Main.kvik.json', companion(3000 if phase == 'lifecycle' else 60000))
@@ -119,6 +131,9 @@ def prepare(directory, phase):
                            ('other/Other.kt', 'fun unrelatedScript() = 1\n')]:
             path = project/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
         write(project/'kvik.json', named_document())
+    if phase == 'published': published.prepare(project)
+    if phase == 'concurrency': concurrent.prepare(project)
+    if phase == 'compiler-identity': compiler_identity.prepare(project)
     return project
 
 
@@ -126,15 +141,18 @@ class Gate:
     def __init__(self, args, case, phase):
         self.args, self.case, self.phase = args, case, phase
         self.directory = Path(tempfile.mkdtemp(prefix=phase+'-', dir=case))
+        extensions = extensions_identity()
         self.project = prepare(self.directory, phase)
+        assert extensions == extensions_identity(), 'Extension source changed during preparation'
         self.store, self.runs = self.directory/'store', self.directory/'runs'
-        self.config = self.project/('kvik.json' if phase == 'named' else 'Main.kvik.json')
-        self.lock = self.project/('kvik.lock.json' if phase == 'named' else 'Main.kvik.lock.json')
-        self.name = 'maintenance' if phase == 'named' else 'plain'
-        self.selector = [self.name, '--project', str(self.config)] if phase == 'named' else ['--file', str(self.project/'Main.kt')]
-        self.policy = [item for pin in PINS for item in ('--pin', pin)] if phase == 'named' else []
-        if phase == 'named':
+        self.config = self.project/('kvik.json' if phase in NAMED_PHASES else 'Main.kvik.json')
+        self.lock = self.project/('kvik.lock.json' if phase in NAMED_PHASES else 'Main.kvik.lock.json')
+        self.name = 'maintenance' if phase in NAMED_PHASES else 'plain'
+        self.selector = [self.name, '--project', str(self.config)] if phase in NAMED_PHASES else ['--file', str(self.project/'Main.kt')]
+        self.policy = [item for pin in PINS for item in ('--pin', pin)] if phase in NAMED_PHASES else []
+        if phase in NAMED_PHASES:
             self.policy += ['--scope-pin', 'script:maintenance:jvm:script:java-api:dependencies='+PINS[0]]
+        if phase == 'published': self.policy = published.policy()
         self.common = self.selector + ['--store', str(self.store)] + self.policy
         self.commands, self.records = [], []
         self.schema = json.loads((args.schema_root/'schemas/v1/contracts.json').read_bytes())
@@ -144,11 +162,14 @@ class Gate:
         write(self.directory/'initial-inputs.json', inventory(self.project))
         write(self.directory/'invocation.json', dict(schemaVersion=1, phase=phase, runtime=str(args.runtime) if args.runtime else None,
             runtimeIdentity=runtime_identity(args.runtime) if args.runtime else None,
+            alternateRuntime=str(getattr(args,'alternate_runtime',None)) if getattr(args,'alternate_runtime',None) else None,
+            alternateRuntimeIdentity=runtime_identity(getattr(args,'alternate_runtime',None)),
             harness=digest(Path(__file__).read_bytes()), fixtures=inventory(FIXTURE), pluginFixtures=inventory(PLUGIN),
+            extensions=extensions,
             tools=digest((case/'tools.json').read_bytes()), schemas={p: digest((args.schema_root/p).read_bytes()) for p in (
                 'schemas/v1/contracts.json', 'schemas/v1/packages.json', 'schemas/v1/script-inspection.json')},
             environment=self.environment, preparedOnly=args.prepare_only))
-        self.validate(json.loads(self.config.read_bytes()), 'project' if phase == 'named' else 'standaloneScript')
+        self.validate(json.loads(self.config.read_bytes()), 'project' if phase in NAMED_PHASES else 'standaloneScript')
 
     def validate(self, value, kind):
         jsonschema.Draft202012Validator({'$defs': self.schema['$defs'], '$ref': '#/$defs/'+kind}).validate(value)
@@ -221,7 +242,7 @@ class Gate:
         assert (run/'configuration.json').read_bytes() == self.config.read_bytes()
         assert (run/'dependency-lock.json').read_bytes() == self.lock.read_bytes()
         selection = json.loads((run/'run.json').read_bytes())['inputSelection']
-        assert selection == (dict(kind='script', name=self.name) if self.phase == 'named' else dict(kind='standalone-script'))
+        assert selection == (dict(kind='script', name=self.name) if self.phase in NAMED_PHASES else dict(kind='standalone-script'))
         specs = {item['actionId']: item for p in (run/'actions').glob('*.json') for item in [json.loads(p.read_bytes())]}
         observations = {item['actionId']: item['observation'] for p in (run/'observations').glob('*.json') for item in [json.loads(p.read_bytes())]}
         assert set(observations) <= {a['actionId'] for a in record['actions']}
@@ -298,6 +319,9 @@ class Gate:
         invocation = json.loads((self.directory/'invocation.json').read_bytes())
         assert invocation['harness'] == digest(Path(__file__).read_bytes())
         assert invocation['fixtures'] == inventory(FIXTURE) and invocation['pluginFixtures'] == inventory(PLUGIN)
+        assert invocation['extensions'] == extensions_identity()
+        assert invocation['runtimeIdentity'] == runtime_identity(self.args.runtime)
+        assert invocation['alternateRuntimeIdentity'] == runtime_identity(getattr(self.args,'alternate_runtime',None))
         assert invocation['tools'] == digest((self.case/'tools.json').read_bytes())
         summary = dict(schemaVersion=1, status='passed', phase=self.phase, commands=self.commands, runs=self.records,
             files=inventory(self.project), evidence=inventory(self.directory), **(additional or {}))
@@ -435,7 +459,7 @@ def locked_paths(lock, usage, roots, purpose='dependencies', prefix='deps'):
     return result
 
 
-def audit_named(gate, result, marker='helper:v1:hello:runtime', resource='resource-one'):
+def audit_named(gate, result, marker='helper:v1:hello:runtime', resource='resource-one', options=('value=first','value=second=literal'), library='library:private-runtime'):
     record, specs = result['record'], result['specs']
     expected_ids = {name+':jvm:main' for name in ('private','helper','runtime','producer','hidden','library')} | {
         'script:maintenance:jvm:compile', 'script:maintenance:jvm:run'}
@@ -458,21 +482,21 @@ def audit_named(gate, result, marker='helper:v1:hello:runtime', resource='resour
     plugin_cp += locked_paths(lock, 'java-runtime', [PINS[0], 'org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20'],
         'compiler-plugin', 'plugins/fixture.rewrite/deps')
     assert application['classpath'] == plugin_cp
-    assert application['options'] == ['value=first','value=second=literal']
+    assert application['options'] == list(options)
     assert application['inputs'] == ['plugin-inputs/fixture.rewrite/message.txt','plugin-inputs/fixture.rewrite/ancillary.txt']
     assert not any(f['path'].startswith(('plugins/', 'plugin-inputs/')) for f in run_action['inputs']['files'])
     assert parameters['includeStandardLibrary'] is True and parameters['jvmTarget'] == parameters['jdkRelease'] == 11
     observation = gate.observation(result)
     assert observation['processResult'] == dict(exitCode=0, timedOut=False, cancelled=False, setupFailure=None)
     assert observation['mainClass'] == 'scriptfixture.ScriptKt'
-    expected_line = marker+'|library:private-runtime|'+resource+'|library-resource|{"value":7}\n'
+    expected_line = marker+'|'+library+'|'+resource+'|library-resource|{"value":7}\n'
     assert Path(observation['stdoutFile']).read_bytes() == expected_line.encode()
     assert Path(observation['stderrFile']).read_bytes() == b''
     actual_cp = observation['arguments'][observation['arguments'].index('-cp')+1].split(':')
     assert actual_cp == [observation['directory']+'/input/'+p for p in expected_runtime] + [observation['stdlibJar']]
     compile_result = next(a for a in record['actions'] if a['actionId'] == 'script:maintenance:jvm:compile')
     report = next(f['digest'] for f in compile_result['outputs']['files'] if f['path'] == 'plugins/fixture.rewrite/report/result.txt')
-    assert (gate.store/'blobs'/f"{report['hash']}-{report['sizeBytes']}").read_bytes() == (marker+'\nfirst|second=literal').encode()
+    assert (gate.store/'blobs'/f"{report['hash']}-{report['sizeBytes']}").read_bytes() == (marker+'\n'+'|'.join(option.removeprefix('value=') for option in options)).encode()
     # Compiler output reports are retained on cache hits too, and never enter program CP.
     for name in ('--pin','--scope-pin'):
         assert record['reproduction'].count(name) == gate.policy.count(name)
@@ -627,6 +651,57 @@ def await_true(predicate, timeout, label):
     raise AssertionError('Timed out: '+label)
 
 
+def named_invalidation(gate):
+    gate.resolve('resolve')
+    cold = gate.run('cold', []); original = audit_named(gate, cold)
+    assert all(a['status'] == 'executed' for a in cold['record']['actions'])
+    document = json.loads(gate.config.read_bytes())
+    options = ['value=option-changed', 'value=literal=retained']
+    document['dependencyProfiles']['maintenance']['compilerPlugins'][0]['options'] = options
+    write(gate.config, document)
+    gate.query('option-stale', cold, 'stale', 3)
+    gate.resolve('option-resolve')
+    changed = gate.run('option-change', []); option_keys = audit_named(gate, changed, options=options)
+    assert option_keys['script:maintenance:jvm:compile'] != original['script:maintenance:jvm:compile']
+    assert all(a['status'] == 'local_hit' and a['key'] == original[a['actionId']]
+               for a in changed['record']['actions'] if a['actionId'].endswith(':main'))
+    helper = gate.project/'helper/Helper.kt'
+    before = helper.read_text(); assert before.count('hiddenPrefix()') == 1
+    helper.write_text(before.replace('hiddenPrefix()', 'hiddenPrefix() + "changed-helper:"'))
+    gate.query('helper-stale', changed, 'stale', 3)
+    changed = gate.run('helper-change', [])
+    helper_keys = audit_named(gate, changed, marker='helper:changed-helper:v1:hello:runtime', options=options)
+    affected = {'helper:jvm:main', 'producer:jvm:main', 'script:maintenance:jvm:compile'}
+    for action in changed['record']['actions']:
+        name = action['actionId']
+        if name in affected: assert action['status'] == 'executed' and action['key'] != option_keys[name]
+        elif name.endswith(':main'): assert action['status'] == 'local_hit' and action['key'] == option_keys[name]
+    lock_before = gate.lock.read_bytes(); configuration_before = gate.config.read_bytes()
+    library = gate.project/'library/Library.kt'
+    before = library.read_text(); assert before.count('"library:"') == 1
+    library.write_text(before.replace('"library:"', '"library-changed:"'))
+    gate.query('dependency-content-stale', changed, 'stale', 3)
+    changed = gate.run('dependency-content-change', [])
+    dependency_keys = audit_named(gate, changed, marker='helper:changed-helper:v1:hello:runtime', options=options,
+                                 library='library-changed:private-runtime')
+    assert gate.lock.read_bytes() == lock_before and gate.config.read_bytes() == configuration_before
+    affected = {'library:jvm:main', 'script:maintenance:jvm:compile'}
+    for action in changed['record']['actions']:
+        name = action['actionId']
+        if name in affected: assert action['status'] == 'executed' and action['key'] != helper_keys[name]
+        elif name.endswith(':main'): assert action['status'] == 'local_hit' and action['key'] == helper_keys[name]
+    old_library = next(a for a in cold['record']['actions'] if a['actionId'] == 'library:jvm:main')['outputs']
+    new_library = next(a for a in changed['record']['actions'] if a['actionId'] == 'library:jvm:main')['outputs']
+    assert old_library != new_library
+    warm = gate.run('changed-warm', [])
+    assert audit_named(gate, warm, marker='helper:changed-helper:v1:hello:runtime', options=options,
+                       library='library-changed:private-runtime') == dependency_keys
+    assert all(a['status'] == ('executed' if a['actionId'].endswith(':run') else 'local_hit') for a in warm['record']['actions'])
+    assert len((gate.project/'effects.log').read_text().splitlines()) == 5
+    return gate.finish(dict(successfulWorkspacePluginOptionInvalidation=True, successfulHelperInvalidation=True,
+                            successfulDependencyContentInvalidation=True))
+
+
 def lifecycle(gate):
     gate.resolve('resolve')
     # Warm the actual compile once, so all observed runs exercise cached compilation + fresh effects.
@@ -684,6 +759,7 @@ def lifecycle(gate):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path)
+    parser.add_argument('--alternate-runtime', type=Path, help='Separately built compiler-order runtime for compiler-identity phase')
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--schema-root', type=Path, default=ROOT)
     parser.add_argument('--output-dir', type=Path, default=ROOT/'.kvik/tests/scripts-cli')
@@ -693,6 +769,8 @@ def main():
     args = parser.parse_args()
     args.schema_root = args.schema_root.resolve(strict=True)
     if args.runtime: args.runtime = args.runtime.resolve(strict=True)
+    if args.alternate_runtime: args.alternate_runtime = args.alternate_runtime.resolve(strict=True)
+    assert args.prepare_only or args.phase not in ('all','compiler-identity') or args.alternate_runtime, '--alternate-runtime is required for compiler-identity/all'
     assert args.prepare_only or args.runtime, '--runtime is required for actual acceptance'
     args.output_dir.mkdir(parents=True, exist_ok=True)
     case = args.case.resolve(strict=True) if args.case else Path(tempfile.mkdtemp(prefix='case-', dir=args.output_dir.resolve()))
@@ -701,6 +779,7 @@ def main():
     else: (case/'tools.json').write_bytes(tools)
     try:
         identity = runtime_identity(args.runtime)
+        alternate_identity = runtime_identity(args.alternate_runtime)
     except BaseException as failure:
         write(case/'preflight-failure.json', dict(status='failed', runtime=str(args.runtime), cliInvoked=False,
             harness=digest(Path(__file__).read_bytes()), type=type(failure).__name__, message=str(failure), traceback=traceback.format_exc()))
@@ -710,6 +789,9 @@ def main():
         subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,command='], check=True, stdout=subprocess.DEVNULL)
         if (case/'runtime.json').exists(): assert json.loads((case/'runtime.json').read_bytes()) == identity
         else: write(case/'runtime.json', identity)
+        if alternate_identity:
+            if (case/'alternate-runtime.json').exists(): assert json.loads((case/'alternate-runtime.json').read_bytes()) == alternate_identity
+            else: write(case/'alternate-runtime.json', alternate_identity)
     print('Evidence:', case, flush=True)
     summaries = []
     for phase in PHASES if args.phase == 'all' else (args.phase,):
@@ -717,7 +799,8 @@ def main():
         if args.prepare_only:
             write(gate.directory/'preparation.json', dict(prepared=True, executed=False, inputs=inventory(gate.project)))
         else:
-            operation = {'standalone': standalone, 'named': named, 'lifecycle': lifecycle}[phase]
+            operation = {'standalone': standalone, 'named': named, 'lifecycle': lifecycle, 'published': published.run,
+                         'named-invalidation': named_invalidation, 'concurrency': concurrent.run, 'compiler-identity': compiler_identity.run}[phase]
             try:
                 summaries.append(operation(gate))
             except BaseException as failure:
@@ -726,8 +809,9 @@ def main():
                 raise
     if not args.prepare_only:
         assert runtime_identity(args.runtime) == identity, 'Runtime changed during gate'
+        assert runtime_identity(args.alternate_runtime) == alternate_identity, 'Alternate runtime changed during gate'
         write(case/('summary-'+str(time.time_ns())+'.json'), dict(status='passed', selectedPhase=args.phase, phases=summaries,
-            runtime=identity, harness=digest(Path(__file__).read_bytes())))
+            runtime=identity, alternateRuntime=alternate_identity, harness=digest(Path(__file__).read_bytes())))
     print('PASS preparation only; no acceptance claimed' if args.prepare_only else 'PASS selected script acceptance phases', case, flush=True)
 
 

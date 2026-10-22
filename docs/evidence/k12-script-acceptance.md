@@ -69,7 +69,7 @@ executable SHA-256 `db7519af140d30460f8e380ec316d15d912741976e832096fe873145565e
 (5,585,096 bytes), built from root candidate `26661c2`. No runtime source was
 changed during acceptance.
 
-The 35 real CLI commands produced 11 complete run records. Cold compilation took
+The 35 real CLI commands produced 11 complete run records. Cold invocation took
 4.348 seconds and warm invocation 1.053 seconds under the current host load, not
 as a benchmark. Warm compilation was a local hit; script execution stayed fresh
 with distinct private directories and a second effect. Exact NUL, BMP and astral
@@ -132,13 +132,14 @@ Separate emergency-cleanup files cannot satisfy the terminal assertions.
 
 ## Reproduction and remaining scope
 
-Use the schema-tools Python environment with `jsonschema` installed:
+For the historical three-phase gate, use frozen harness `c17882c` and the
+schema-tools Python environment with `jsonschema` installed:
 
 ```sh
 python -B tools/test_scripts_cli.py \
   --runtime /private/tmp/kvik-k12-script-cli/.kvik/script-cli-integrated/runtime/executables/d87e052a81fae1f63f0d5c4958edc4b2a5d2e1ebf1baa7c4c81fed1cd7909075/kvik.kexe \
   --tools /Users/yoda/dev/pet/kvik/.kvik/tests/cli-native/case-gki_vdpd/tools.json \
-  --schema-root /private/tmp/kvik-k12-script-cli --phase all
+  --schema-root /private/tmp/kvik-k12-script-cli --phase standalone
 ```
 
 The retained commands used `--phase standalone`, then `--case` with `--phase named`
@@ -150,3 +151,25 @@ and concurrent worktrees with shared-cache cancellation isolation remain separat
 gates. Escaped process sessions, direct guardian SIGKILL and uninterruptible kernel
 tasks are outside the owned-process guarantee.
 
+
+Independent named and lifecycle audits passed without reruns:
+`/private/tmp/kvik-script-named-audit-y6axyftg/report.json`, SHA-256
+`80ec9926bf481d64db8d62ae0dfc86266fb07fcb31b3510a514ed629a1e80fa9`, and
+`/private/tmp/kvik-script-lifecycle-audit-iulzbccc/report.json`, SHA-256
+`17d899c2c371c8c463cd76e7da8b513256de1fdab2c65cbf851706f7443d837b`.
+The latter independently confirms the owner-loss first table still held four live
+owned descendants, followed by bounded cleanup; no ordinary terminal claim uses
+that exception.
+
+Source-only extension preparation adds published serialization, successful workspace
+plugin-option/helper invalidation, and two Git worktrees sharing a CAS. These are
+pending actual execution on the refreshed composed runtime. The original phase
+receipts remain bound to their original frozen harness and runtime.
+
+Extension source freeze `a82b24e` passed 14 light checks (11 central harness and
+three published-fixture checks). Retained source/Python/log hashes are in
+`/private/tmp/kvik-k12-script-acceptance/.kvik/tests/scripts-cli/light-extensions-su2zvzzl/receipt.json`,
+SHA-256 `7570c6b51a84fd708ac479e7135a3731c6fb072ad07f20b2b75e388ec8808e5f`.
+These checks forbid process launches during preparation and challenge substituted
+extension source and lost/replaced survivor processes. They do not prove actual
+shared-worktree execution.

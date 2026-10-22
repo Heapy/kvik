@@ -4,7 +4,7 @@
 Kvik, invokes Gradle/KTC, replaces the resolver, or launches the JVM compiler itself.
 Consumer compilation is requested only through `run-script`.
 
-The three independently retained phases are:
+The independently retained phases are:
 
 * `standalone`: a `.kt` file with its explicit companion, no declared dependency,
   implicit pinned stdlib, cold compilation and warm compilation with fresh effects,
@@ -25,6 +25,25 @@ The three independently retained phases are:
   eventual cleanup, because that owner cannot acknowledge completion. No guardian SIGKILL,
   escaped process sessions, uninterruptible kernel tasks or arbitrary foreign
   process ownership are claimed.
+
+* `published`: real standalone serialization compiler plugin and generated serializer,
+  pinned external runtime artifacts, offline checks/runs, source/helper changes,
+  missing-plugin compile failure and explicit unsupported-options/version refusals.
+* `named-invalidation`: successful workspace-plugin option changes with exact reports,
+  helper-source recompilation through producer and script, unaffected module cache hits,
+  ordinary dependency body changes with fixed config/lock and changed output bytes,
+  and final warm compilation with fresh execution.
+* `concurrency`: a fixture-only local Git seed with two detached worktrees, one shared
+  CAS and separate locks/runs/effects. Both actual process trees must coexist; after
+  cancelling one, its first terminal table must be drained while the second exact
+  tree is alive. A project-local release file permits the survivor to complete
+  normally, then each worktree executes fresh using the same cached compile key.
+  Git commands/revision are retained; prepare-only invokes no Git processes.
+* `compiler-identity`: an independently source-built alternate runtime swaps only
+  the ordered compiler distribution entries; A cold/warm, B cold/warm, A reuse
+  runs share one project/CAS. Both runtimes are bound before execution and at final
+  publication. See `tests/compiler-identity/README.md` for required source/build
+  provenance and the explicit composition-confounding limitation.
 
 Each invocation creates a new phase attempt, including with `--case`. Failed
 attempts and their commands remain; this is not a mid-phase resume mechanism.
@@ -52,3 +71,15 @@ requests, observations, action specs, CAS files and process-table evidence.
 Harness timeouts retain partial binary streams and a `harness-timeout` receipt
 with no invented program exit code; emergency cleanup is recorded separately
 and cannot satisfy an ordinary lifecycle assertion.
+
+The original three phases passed against composition `d87e052a...`; the extension
+phases require the refreshed runtime containing the specific published-plugin
+refusal diagnostics. Adding their source is not a claim that they have run.
+Every extension module and its fixture tree is bound before preparation and checked
+again before final evidence publication. Child worktree evidence is included in
+the parent phase inventory. Shared-cache concurrency tests use only fixture-owned
+repositories and signal only captured owners; there is no remote Git transport.
+
+Actual `--phase compiler-identity` and `--phase all` require `--alternate-runtime`.
+A single phase such as `--phase published` does not. Alternate identity is bound in
+case metadata when supplied, so later attempts cannot silently substitute runtime B.

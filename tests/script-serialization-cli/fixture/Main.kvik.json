@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "name": "plain",
+  "repositories": [
+    {
+      "id": "central",
+      "url": "https://repo.maven.apache.org/maven2"
+    }
+  ],
+  "script": {
+    "sources": [
+      "Main.kt",
+      "Helper.kt"
+    ],
+    "dependencies": [
+      {
+        "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0"
+      }
+    ],
+    "compilerOptions": [
+      "-Xjdk-release=11"
+    ],
+    "compilerPlugins": [
+      {
+        "coordinate": "org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20",
+        "targets": [
+          "jvm"
+        ],
+        "scopes": [
+          "script"
+        ],
+        "options": [],
+        "inputs": []
+      }
+    ]
+  }
+}

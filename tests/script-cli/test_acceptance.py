@@ -16,6 +16,43 @@ spec.loader.exec_module(gate)
 
 
 class AcceptanceHarnessTest(unittest.TestCase):
+    def test_alternate_runtime_is_bound_and_missing_policy_fails_before_case_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); (root/'tools.json').write_text('{}')
+            alternate=root/'alternate/kvik.kexe'; alternate.parent.mkdir()
+            for name,data in [('kvik.kexe',b'executable'),('guardian',b'guardian'),('runtime.lock.json',b'{}')]:
+                (alternate.parent/name).write_bytes(data)
+            gate.write(alternate.parent/'manifest.json',dict(executable=gate.digest(b'executable'),guardian=gate.digest(b'guardian'),composition=gate.digest(b'{}')))
+            args=SimpleNamespace(runtime=None,alternate_runtime=alternate,schema_root=ROOT,prepare_only=True)
+            value=gate.Gate(args,root,'compiler-identity')
+            invocation=json.loads((value.directory/'invocation.json').read_bytes())
+            self.assertEqual(invocation['alternateRuntimeIdentity'],gate.runtime_identity(alternate))
+            (alternate.parent/'runtime.lock.json').write_bytes(b'{}\n')
+            with self.assertRaises(AssertionError): value.finish()
+            arguments=['test_scripts_cli.py','--phase','compiler-identity','--runtime',str(alternate),
+                       '--tools',str(root/'tools.json'),'--output-dir',str(root/'cases')]
+            with patch.object(sys,'argv',arguments), self.assertRaisesRegex(AssertionError,'alternate-runtime is required'):
+                gate.main()
+            self.assertFalse((root/'cases').exists())
+
+    def test_extensions_are_bound_and_survivor_identity_is_checked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); (root/'tools.json').write_text('{}')
+            value = gate.Gate(SimpleNamespace(runtime=None,schema_root=ROOT,prepare_only=True),root,'published')
+            invocation = json.loads((value.directory/'invocation.json').read_bytes())
+            self.assertEqual(invocation['extensions'],gate.extensions_identity())
+            self.assertEqual(value.policy,gate.published.policy())
+            self.assertEqual((value.project/'Helper.kt').read_bytes(),(gate.published.FIXTURES/'fixture/Helper.kt').read_bytes())
+            wrong = copy.deepcopy(invocation['extensions']); wrong['published']['module']=gate.digest(b'changed')
+            with patch.object(gate,'extensions_identity',return_value=wrong), self.assertRaises(AssertionError): value.finish()
+        owner=dict(process=SimpleNamespace(poll=lambda:None),captured={12:dict(pgid=12,command='owned-app')})
+        table={12:dict(pgid=12,command='owned-app',state='S')}
+        gate.concurrent.live=gate.live
+        gate.concurrent.assert_survivor(table,owner)
+        for mutation in ({}, {12:dict(pgid=12,command='owned-app',state='Z')}, {12:dict(pgid=13,command='owned-app',state='S')},
+                         {12:dict(pgid=12,command='different',state='S')}):
+            with self.assertRaises(AssertionError): gate.concurrent.assert_survivor(mutation,owner)
+
     def test_canonical_control_escapes_match_core_without_rewriting_literal_backslashes(self):
         value = ['\n','\\n','\t','\\t','\r','\b','\f','\x00','☃ 🚀','"']
         encoded = gate.canonical(value)
@@ -51,7 +88,7 @@ class AcceptanceHarnessTest(unittest.TestCase):
                     patch.object(gate.subprocess, 'Popen', side_effect=AssertionError('process forbidden')):
                 gate.main()
             preparations = list((root/'cases').glob('case-*/*/preparation.json'))
-            self.assertEqual(len(preparations), 3)
+            self.assertEqual(len(preparations), len(gate.PHASES))
             self.assertTrue(all(json.loads(p.read_bytes())['executed'] is False for p in preparations))
 
     def test_lock_classpath_preserves_requested_order_deduplicates_and_refuses_wrong_domain(self):

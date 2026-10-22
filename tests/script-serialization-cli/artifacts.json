@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.20/kotlin-stdlib-2.4.20.jar",
+      "digest": {
+        "hash": "2226de463d309d4a5500a481320b3dea515a6981dcae1def531fbc158884e25f",
+        "sizeBytes": 1853314
+      },
+      "reference": "compiler/jvm/kotaml-artifacts.lock.json"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.11.0/kotlinx-serialization-core-jvm-1.11.0.jar",
+      "digest": {
+        "hash": "f4a801c647d4351327cd9e1ac4113e2be9ea37a64ab0abae269c25a52e28f35d",
+        "sizeBytes": 404509
+      },
+      "reference": "compiler/jvm/kotaml-artifacts.lock.json"
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:13.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.jar",
+      "digest": {
+        "hash": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+        "sizeBytes": 17536
+      },
+      "reference": "compiler/jvm/kotaml-artifacts.lock.json"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.11.0/kotlinx-serialization-json-jvm-1.11.0.jar",
+      "digest": {
+        "hash": "563a25b4eb5c9128ae9c2479f3d1a5c44dcd176112b91cf03682e906eba5c935",
+        "sizeBytes": 294166
+      },
+      "reference": "compiler/jvm/kotaml-artifacts.lock.json"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-serialization-compiler-plugin-embeddable/2.4.20/kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar",
+      "digest": {
+        "hash": "2221ec78c4f8d7367df9a9bd4310c916c5ef70150fb49eeacf238f074f368b52",
+        "sizeBytes": 452378
+      },
+      "reference": "compiler/jvm/test-artifacts.lock.json"
+    }
+  ]
+}
