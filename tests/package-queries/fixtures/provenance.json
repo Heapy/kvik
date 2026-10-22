@@ -1,0 +1,20 @@
+[
+  {
+    "file": "kotlinx-serialization-json-versions.xml",
+    "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json/maven-metadata.xml",
+    "observedAt": "2026-10-22T09:34:27.921565+00:00",
+    "digest": {
+      "hash": "0788dd7ffb6c9e4f27d419b3583fb896b862c37d15ca3ebc45693cb13f96b993",
+      "sizeBytes": 1539
+    }
+  },
+  {
+    "file": "junit-jupiter-api-versions.xml",
+    "url": "https://repo.maven.apache.org/maven2/org/junit/jupiter/junit-jupiter-api/maven-metadata.xml",
+    "observedAt": "2026-10-22T09:34:28.096398+00:00",
+    "digest": {
+      "hash": "4f44180761d12bab7918d74115acbc44655bee12de8d860a1b500fef8289a3dd",
+      "sizeBytes": 4029
+    }
+  }
+]

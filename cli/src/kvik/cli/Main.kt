@@ -29,13 +29,17 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, resolve, check-lock, build, test, verification, dev, help
+            Commands: runtime-info, inspect, resolve, check-lock, build, test, verification, dev, packages, dependencies, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Lock options: --lock PATH --store PATH --offline
             Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N
             Dev: dev --control jsonl|lines [--watch-ms 1000] [--initial build|test] plus build options
+            Packages: packages versions GROUP:ARTIFACT --project PATH [--channel all|stable|prerelease] [--limit N] [--cursor TOKEN]
+            Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target jvm|macosArm64 --usage USAGE --project PATH
+            Query cache: --query-cache PATH [--refresh|--offline] --json
+            Project graph: dependencies --project PATH [--lock PATH] [--store PATH] [--module ID] [--target TARGET] [--compilation main|test] [--usage USAGE] --json
             Evidence: verification --run PATH
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
@@ -49,6 +53,8 @@ private fun command(args: Array<String>) {
             "jvmWorker" to worker.identity.toJson(), "jvmCompiler" to worker.compiler.toJson(),
             ).canonical())
         }
+        "packages" -> exitProcess(printPackageQuery(packageCommand(args.drop(1))).code)
+        "dependencies" -> exitProcess(printPackageQuery(projectDependenciesCommand(args.drop(1))).code)
         "inspect" -> {
             val options = projectOptions(args.drop(1), lockOptions = false)
             println(inspectProject(options.project, options.resolverPolicy()).canonical())

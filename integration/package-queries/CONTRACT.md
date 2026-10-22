@@ -103,14 +103,14 @@ The entire lock is strictly parsed and verified against current effective
 configuration and existing CAS. Selected domain graphs are replayed with the same
 pins from those exact locked metadata/artifact bytes, then their selections are
 compared to the lock before paths are emitted. There is no network transport,
-query-cache creation, repair or write on this command. Missing/corrupt/stale locks
+query-cache creation, repair or write on this command. Overlapping repository URL bases are rejected for dependency graph queries when a metadata source cannot be attributed uniquely; version listing keeps its explicit per-repository provenance. Missing/corrupt/stale locks
 produce incomplete evidence while preserving the available declarations. Project
 and lock bytes are checked again before successful completion.
 
 ## Cache, bounds and exclusions
 
 Package queries may write only an explicit query cache (default
-`.kvik/package-queries`), disjoint from project and lock files. Content is digest
+`.kvik/package-queries`), disjoint from project and lock files. An existing nonempty cache directory must carry the query-cache marker; build CAS directories are not adopted implicitly. Content is digest
 verified on every replay; no mtime trust is introduced. URL observation records
 are bounded, strictly parsed and atomically replaced. Default repository
 observation TTL is one hour: online queries reuse fresh cache or fetch absent/stale
@@ -120,7 +120,7 @@ Corrupt cache evidence is not silently repaired except by explicit refresh.
 
 Bounds: 32 repositories, 1 MiB/10,000 XML nodes per metadata document, 10,000
 distinct listed versions, at most 200 rows/page; existing resolver 256 components,
-1,024 requests, 64 MiB/artifact and 256 MiB aggregate bytes; graph/path/output
+1,024 requests, 64 MiB/artifact and 256 MiB aggregate bytes (locked project KSP-runtime domains retain their explicit 128 MiB policy); graph/path/output
 bounds (1,024 nodes, 8,192 edges, 4,096 paths per graph, 256 reported project
 domains, 16 MiB total JSON) are enforced before publication. Truncation is explicit incomplete
 evidence, never an apparently complete shortened graph. Unsupported Maven/KMP

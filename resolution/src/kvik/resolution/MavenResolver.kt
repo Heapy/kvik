@@ -40,7 +40,14 @@ class MavenResolver(
         resolveAll(listOf(coordinate), variant, repositories).single()
 
     /** Resolve roots together to detect graph conflicts, retaining a closure per root in declaration order. */
-    fun resolveAll(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>): List<LockedSelection> {
+    fun resolveAll(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>): List<LockedSelection> =
+        traverse(roots, variant, repositories, trace = false).selections
+
+    /** Additive inspection evidence; shares selection, validation and byte verification with locks. */
+    fun resolveGraph(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>): ResolutionGraph =
+        traverse(roots, variant, repositories, trace = true)
+
+    private fun traverse(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>, trace: Boolean): ResolutionGraph {
         require(roots.isNotEmpty() && roots.size <= maxComponents)
         require(variant.attributes.keys.all { variant.platform == "jvm" && it == JVM_TARGET_VERSION_ATTRIBUTE }) { "Unsupported consumer variant attributes" }
         variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]?.let(::supportedJvmTarget)
@@ -51,6 +58,9 @@ class MavenResolver(
         val visited = mutableSetOf<String>()
         val active = mutableSetOf<String>()
         val graph = linkedMapOf<String, Component>()
+        val traceNodes = linkedMapOf<String, ResolutionNode>()
+        val traceEdges = mutableListOf<ResolutionEdge>()
+        val constraintEdges = mutableListOf<Pair<String, Coordinate>>()
         val capabilityProviders = mutableMapOf<String, Pair<String, String>>()
         val parentCoordinates = mutableSetOf<Coordinate>()
         val downloaded = linkedMapOf<String, ByteArray>()
@@ -74,7 +84,13 @@ class MavenResolver(
             require(selected.size + parentCoordinates.size <= maxComponents) { "Resolution component/parent bound exceeded" }
             return result
         }
-        fun constrain(c: Coordinate) { constraints.getOrPut(c.key()) { mutableListOf() } += c.version }
+        fun constrain(source: String, c: Coordinate) {
+            constraints.getOrPut(c.key()) { mutableListOf() } += c.version
+            if (trace) {
+                require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
+                constraintEdges += source to c
+            }
+        }
         fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null, transitive: Boolean = true): String {
             val c = record(input)
             // Expansion belongs to an incoming edge, not a component-wide suppression flag.
@@ -99,8 +115,18 @@ class MavenResolver(
             val edges = mutableListOf<String>()
             val artifacts = mutableListOf<LockedArtifact>()
             var metadataOwner = c
+            var selectedVariant = ""
             var provided = listOf(c)
             var provider = "$c|$platform"
+            fun dependencyEdge(input: Coordinate, dependencyPlatform: Boolean = false, dependencyRepository: Repository? = null,
+                               owner: Coordinate? = null, expand: Boolean = true, kind: String = "dependency", semantics: String = "requires"): String {
+                val target = visit(input, dependencyPlatform, dependencyRepository, owner, expand)
+                if (trace) {
+                    require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
+                    traceEdges += ResolutionEdge(key, target, kind, input, semantics, traceNodes.getValue(target).coordinate, expand)
+                }
+                return target
+            }
             if (found.module) {
                 val module = parseJson(found.bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("formatVersion", "component", "variants"), setOf("createdBy"))
                 require(module.string("formatVersion") == "1.1") { "Unsupported Gradle metadata version" }
@@ -122,16 +148,17 @@ class MavenResolver(
                 val chosen = JsonValue.Object(candidates.single()).fields(setOf("name", "attributes"), setOf("dependencies", "dependencyConstraints", "files", "available-at", "capabilities"))
                 provided = capabilities(chosen, c)
                 val name = chosen.string("name")
+                selectedVariant = name
                 val redirect = chosen["available-at"]
                 if (redirect != null) {
                     require(chosen.items("files").isEmpty() && chosen.items("dependencies").isEmpty() && chosen.items("dependencyConstraints").isEmpty()) { "Redirect with local contents" }
                     val r = redirect.fields(setOf("url", "group", "module", "version"))
                     val target = Coordinate(r.string("group"), r.string("module"), r.string("version"))
                     require(target.group == c.group && r.string("url") == "../../${target.name}/${target.version}/${target.name}-${target.version}.module") { "Unsupported available-at URL" }
-                    edges += visit(target, platform, found.repository, owner, transitive)
+                    edges += dependencyEdge(target, platform, found.repository, owner, transitive, "redirect", "redirect")
                     provider = graph.getValue(edges.single()).capabilityProvider
                 } else {
-                    if (transitive) chosen.items("dependencyConstraints").forEach { constrain(dependency(it, constraint = true).first) }
+                    if (transitive) chosen.items("dependencyConstraints").forEach { constrain(key, dependency(it, constraint = true).first) }
                     for (f in chosen.items("files")) {
                         val file = f.fields(setOf("name", "url", "size", "sha256"), setOf("sha512", "sha1", "md5"))
                         val path = file.string("url")
@@ -142,7 +169,7 @@ class MavenResolver(
                         require(Sha256.digest(fetch(url)) == expected) { "Artifact digest mismatch: $url" }
                         artifacts += LockedArtifact(c, name, found.repository.id, url, expected)
                     }
-                    if (transitive) chosen.items("dependencies").forEach { val (d, p) = dependency(it); edges += visit(d, p) }
+                    if (transitive) chosen.items("dependencies").forEach { val (d, p) = dependency(it); edges += dependencyEdge(d, p) }
                 }
             } else {
                 val pom = effectivePom(c, pomParser.parse(found.bytes)) { parent ->
@@ -156,8 +183,9 @@ class MavenResolver(
                     pomParser.parse(source.bytes)
                 }
                 val packaging = pom.packaging
+                selectedVariant = "maven-$packaging-${variant.usage}"
                 require(packaging == if (platform) "pom" else "jar") { "Unsupported POM packaging/platform: $packaging" }
-                if (platform && transitive) pom.managementCoordinates().forEach(::constrain)
+                if (platform && transitive) pom.managementCoordinates().forEach { constrain(key, it) }
                 if (!platform) {
                     // A POM has no producer bytecode version. The known consumer target policy is
                     // retained in the lock, but does not establish a bytecode guarantee for POM jars.
@@ -167,7 +195,7 @@ class MavenResolver(
                     require(bytes.size <= maxArtifactBytes) { "Artifact exceeds byte bound" }
                     artifacts += LockedArtifact(c, "maven-$packaging-${variant.usage}", found.repository.id, url, Sha256.digest(bytes))
                 }
-                if (transitive) pom.dependencyEdges(variant).forEach { edges += visit(it.coordinate, transitive = it.transitive) }
+                if (transitive) pom.dependencyEdges(variant).forEach { edges += dependencyEdge(it.coordinate, expand = it.transitive, semantics = "pom-effective") }
             }
             // No capability conflict-resolution policy is implied by a version pin. Redirect
             // aliases share their terminal provider; independent providers must not coexist.
@@ -177,13 +205,17 @@ class MavenResolver(
                 capabilityProviders[capability.key()] = provider to capability.version
             }
             graph[key] = Component(artifacts, used, edges, metadataOwner, provider)
+            if (trace) {
+                require(traceNodes.size < 1024) { "Query graph node bound exceeded" }
+                traceNodes[key] = ResolutionNode(key, c, platform, transitive, selectedVariant, found.repository.id, used.toList(), artifacts.toList())
+            }
             active -= key
             visited += key
             return key
         }
         val rootKeys = roots.map { visit(it) }
         constraints.forEach { (key, versions) -> selected[key]?.let { c -> versions.forEach { require(atLeast(c.version, it)) { "Constraint $key:$it conflicts with $c" } } } }
-        return roots.zip(rootKeys).map { (root, key) ->
+        val selections = roots.zip(rootKeys).map { (root, key) ->
             val emitted = mutableSetOf<String>()
             val artifacts = linkedMapOf<String, LockedArtifact>()
             val metadata = linkedMapOf<String, MetadataIdentity>()
@@ -197,6 +229,12 @@ class MavenResolver(
             collect(key)
             LockedSelection(root, variant, artifacts.values.toList(), metadata.values.toList())
         }
+        for ((source, requirement) in constraintEdges) {
+            val chosen = selected[requirement.key()]
+            val target = traceNodes.values.firstOrNull { it.coordinate == chosen }?.id
+            traceEdges += ResolutionEdge(source, target, "constraint", requirement, "constraint", chosen, false)
+        }
+        return ResolutionGraph(variant, roots.zip(rootKeys).map { (root, key) -> ResolutionRoot(root, key) }, traceNodes.values.toList(), traceEdges.toList(), selections)
     }
 
     private data class Source(val repository: Repository, val url: String, val bytes: ByteArray, val module: Boolean)
