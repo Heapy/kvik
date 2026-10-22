@@ -9,6 +9,7 @@ internal data class BuildOptions(
     val tools: String,
     val runs: String,
     val budget: ResourceBudget,
+    val remoteCache: String? = null,
 )
 
 internal fun buildOptions(args: List<String>): BuildOptions {
@@ -20,7 +21,7 @@ internal fun buildOptions(args: List<String>): BuildOptions {
     while (index < args.size) {
         val flag = args[index++]
         if (flag == "--offline") { project += flag; continue }
-        require(flag in setOf("--project", "--lock", "--store", "--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--target", "--tools", "--runs", "--jobs", "--memory-mib")) { "Unsupported build option: $flag" }
+        require(flag in setOf("--project", "--lock", "--store", "--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--target", "--tools", "--runs", "--jobs", "--memory-mib", "--remote-cache")) { "Unsupported build option: $flag" }
         val value = args.getOrNull(index++)
         require(value != null && value.isNotBlank() && !value.startsWith("--")) { "Missing value for $flag" }
         when (flag) {
@@ -36,5 +37,5 @@ internal fun buildOptions(args: List<String>): BuildOptions {
     val jobs = values["--jobs"]?.toIntOrNull() ?: if ("--jobs" in values) error("Invalid --jobs") else 2
     val memory = values["--memory-mib"]?.toLongOrNull() ?: if ("--memory-mib" in values) error("Invalid --memory-mib") else 4096L
     return BuildOptions(projectOptions(project, lockOptions = true), modules, targets,
-        values["--tools"] ?: error("Supply --tools PATH with pinned installation roots"), values["--runs"] ?: ".kvik/runs", ResourceBudget(jobs, memory))
+        values["--tools"] ?: error("Supply --tools PATH with pinned installation roots"), values["--runs"] ?: ".kvik/runs", ResourceBudget(jobs, memory), values["--remote-cache"])
 }

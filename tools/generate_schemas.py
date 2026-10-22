@@ -245,7 +245,7 @@ for suffix in ("Input", "Observed"):
         "pluginApiVersion": {"const": 1}, "target": {"const": "macos_arm64"}, "kotlinVersion": {"const": "2.4.20"},
         "sources": array(ref("sourceGraphNode" + suffix), minItems=1, maxItems=64),
         "runtime": object_({"source": SOURCE_ID, "nativePlatform": SOURCE_PATH,
-            "nativeLibraries": array(enum("resolution", "toolchains"), maxItems=2, uniqueItems=True),
+            "nativeLibraries": array(enum("resolution", "toolchains", "remote"), maxItems=3, uniqueItems=True),
             "jvmWorkerSources": {"const": "compiler/jvm/src"}}),
         "plugins": array(object_({"id": {"type": "string", "maxLength": 128, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"},
             "source": SOURCE_ID, "implementation": {"type": "string", "maxLength": 1024,

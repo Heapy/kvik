@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvik.dev/schemas/v1/remote-cache.json",
+  "title": "Kvik remote cache transport configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "url", "trustedWriters"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "url": {"type": "string", "pattern": "^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?|http://127\\.0\\.0\\.1:[0-9]{1,5})$"},
+    "instance": {"type": "string", "maxLength": 1024, "pattern": "^[^\\u0000-\\u001f]*$"},
+    "trustedWriters": {"const": true},
+    "mode": {"enum": ["read", "read-write"], "default": "read"},
+    "tokenEnvironment": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}
+  }
+}

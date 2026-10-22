@@ -36,6 +36,7 @@ private fun command(args: Array<String>) {
             Lock options: --lock PATH --store PATH --offline
             Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N
+            Remote compilation cache: --remote-cache PATH (transport JSON); --offline disables remote access
             Scripts: run-script NAME --project PATH --tools PATH -- ARGS; or run-script --file FILE.kt --tools PATH -- ARGS
             Script locks: resolve-script or check-script-lock with NAME --project PATH or --file FILE.kt, plus lock options
             Script inspection: inspect-script with the same selector and --tools PATH (read-only; no execution)

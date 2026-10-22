@@ -98,7 +98,11 @@ private fun declaredClasspath(paths: List<LogicalPath>, inputs: TreeManifest) {
     for (path in paths) require(inputs.files.any { it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/") }) { "Undeclared/unsupported classpath: ${path.value}" }
 }
 
-fun jvmCompileAction(compilation: JvmCompilation, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 120_000): ActionSpec {
+fun jvmCompileAction(compilation: JvmCompilation, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 120_000, cachePolicy: CachePolicy = CachePolicy.LOCAL): ActionSpec {
+    require(cachePolicy == CachePolicy.LOCAL || cachePolicy == CachePolicy.REMOTE) { "Unsupported JVM compilation cache policy" }
+    require(cachePolicy != CachePolicy.REMOTE || compilation.plugins.isEmpty() && compilation.pluginApplications.isEmpty()) {
+        "Compiler plugin actions require a separate remote portability approval"
+    }
     require(toolchains.keys == jvmIdentities)
     require((compilation.sources + compilation.plugins).all { path -> inputs.files.any { it.path == path } }) { "Undeclared source/plugin input" }
     declaredClasspath(compilation.classpath, inputs)
@@ -107,7 +111,17 @@ fun jvmCompileAction(compilation: JvmCompilation, inputs: TreeManifest, composit
         require(plugin.inputs.all { input -> inputs.files.any { it.path == input } }) { "Undeclared compiler plugin input" }
     }
     return ActionSpec("kvik-jvm-compiler-v1", composition, ActionKind.COMPILE, hostPlatform, "jvm", toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs }, listOf("kvik.jvm.CompilerWorkerKt") + compilation.options(), workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
+        listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs }, listOf("kvik.jvm.CompilerWorkerKt") + compilation.options(), workerEnvironment, compilation.toJson(), timeoutMillis, cachePolicy)
+}
+
+/** The approved portable slice excludes all compiler plugins, including workspace plugins. */
+fun portableJvmCompilation(action: ActionSpec): Boolean {
+    if (action.implementation != "kvik-jvm-compiler-v1" || action.target != "jvm" || action.kind != ActionKind.COMPILE) return false
+    return try {
+        val compilation = JvmCompilation.fromJson(action.parameters)
+        compilation.plugins.isEmpty() && compilation.pluginApplications.isEmpty() &&
+            action == jvmCompileAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis, action.cachePolicy)
+    } catch (_: Exception) { false }
 }
 
 fun jvmTestAction(selection: JvmTestSelection, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000): ActionSpec {

@@ -10,6 +10,28 @@ import platform.posix.usleep
 
 class BridgeUnitTest {
     private val digest = Sha256.digest(byteArrayOf())
+    @Test fun remoteCompilationRequiresTheApprovedTypedPluginFreeContract() {
+        val source = LogicalPath("A.kt")
+        val compilation = JvmCompilation("m", listOf(source), emptyList(), LogicalPath("classes"))
+        val inputs = TreeManifest(listOf(FileEntry(source, digest)))
+        val identities = jvmIdentities.associateWith { digest }
+        val local = jvmCompileAction(compilation, inputs, digest, identities)
+        val remote = jvmCompileAction(compilation, inputs, digest, identities, cachePolicy = CachePolicy.REMOTE)
+        assertTrue(portableJvmCompilation(local))
+        assertTrue(portableJvmCompilation(remote))
+        assertEquals(local.copy(cachePolicy = CachePolicy.REMOTE), remote)
+        assertFalse(portableJvmCompilation(remote.copy(arguments = remote.arguments + "-Xunknown")))
+        assertFalse(portableJvmCompilation(remote.copy(environment = remote.environment + ("UNDECLARED" to "1"))))
+        assertFalse(portableJvmCompilation(remote.copy(platform = mapOf("os" to "linux", "arch" to "x64"))))
+        assertFalse(portableJvmCompilation(remote.copy(cachePolicy = CachePolicy.NEVER)))
+        val plugin = LogicalPath("plugin.jar")
+        val pluginInputs = TreeManifest(inputs.files + FileEntry(plugin, digest))
+        val withPlugin = compilation.copy(plugins = listOf(plugin))
+        assertFalse(portableJvmCompilation(jvmCompileAction(withPlugin, pluginInputs, digest, identities)))
+        assertFailsWith<IllegalArgumentException> {
+            jvmCompileAction(withPlugin, pluginInputs, digest, identities, cachePolicy = CachePolicy.REMOTE)
+        }
+    }
     @Test fun releaseIsExplicitTypedAndChangesOnlyOptedInActionIdentity() {
         val compilation = JvmCompilation("m", listOf(LogicalPath("A.kt")), emptyList(), LogicalPath("classes"))
         assertFalse("jdkRelease" in compilation.toJson().objectValue())

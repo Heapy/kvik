@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "coreSources": ["core/src", "cache/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/package-queries/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/action-cache/src", "integration/application/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/native/src", "compiler/ksp/src", "cli/src", "integration/foreground/src"],
+  "coreSources": ["core/src", "cache/src", "cache/remote/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/package-queries/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/action-cache/src", "integration/application/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/native/src", "compiler/ksp/src", "cli/src", "integration/foreground/src"],
   "nativePlatform": "execution/platform",
-  "nativeLibraries": ["resolution", "toolchains"],
+  "nativeLibraries": ["resolution", "toolchains", "remote"],
   "jvmWorkerSources": "compiler/jvm/src",
   "plugins": [
     {"id": "kvik.kotlin", "directory": "plugins/kotlin", "sourceDirectories": ["src"], "implementation": "kvik.plugins.kotlin.KotlinBuildPlugin"}

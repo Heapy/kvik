@@ -62,7 +62,7 @@ class JvmActionExecutor(
         val compilation = if (action.implementation == "kvik-jvm-compiler-v1") JvmCompilation.fromJson(action.parameters) else null
         val selection = if (action.implementation == "kvik-jvm-tests-v1") JvmTestSelection.fromJson(action.parameters) else null
         val expected = when {
-            compilation != null -> jvmCompileAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
+            compilation != null -> jvmCompileAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis, action.cachePolicy)
             selection != null -> jvmTestAction(selection, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             else -> error("Unsupported JVM action implementation")
         }

@@ -173,7 +173,7 @@ def audit_runtime(directory, expected_lock, key, records):
     libraries = [native_argv[index + 1] for index, arg in enumerate(native_argv) if arg == '-library']
     expected_external = [str(build_root/'sources/libraries'/(name+'.klib')) for name in expected_lock['nativeLibraryOrder']]
     assert libraries[-len(expected_external):] == expected_external
-    assert libraries == [str(build_root/'bridge'/(name+'.klib')) for name in ('process', 'resolution', 'toolchains')] + expected_external
+    assert libraries == [str(build_root/'bridge'/(name+'.klib')) for name in ['process', *expected_lock['runtime']['nativeLibraries']]] + expected_external
     return {'manifest': manifest, 'sourceInputCount': len(inputs), 'commands': len(commands),
             'receiptDigests': {name: digest((directory/name).read_bytes()) for name in
                 ('source-acquisition.json', 'source-inputs.json', 'source-commands.jsonl', 'runtime.lock.json')}}

@@ -4,6 +4,7 @@ from bootstrap.identity import inventory, canonical, digest
 RECIPES = {
     "resolution": ("resolution/native", "resolution", {"resolution.h", "resolution.def"}),
     "toolchains": ("integration/toolchains/platform", "stream_hash", {"stream_hash.h", "stream_hash.def"}),
+    "remote": ("cache/remote/platform", "remote", {"remote.c", "remote.h", "remote.def"}),
 }
 
 
@@ -30,6 +31,13 @@ def build(names, source_root, output, roots, environment, log, run_owned):
         options = ["-compiler-option", f"-I{source}"]
         if name == "resolution":
             options += ["-compiler-option", f"-I{roots['sdk']}/usr/include/libxml2"]
+        if name == "remote":
+            toolchain = roots['xcodeToolchain'] / 'usr/bin'
+            object_file = output / 'remote.o'
+            run_owned([toolchain / 'clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                '-isysroot', roots['sdk'], '-c', source / 'remote.c', '-o', object_file], environment, log)
+            run_owned([toolchain / 'ar', 'rcs', output / 'libkvik-remote.a', object_file], environment, log)
+            options += ['-libraryPath', str(output)]
         library = output / name
         run_owned([roots["kotlinNative"] / "bin/cinterop", "-def", source / (definition + ".def"), *options,
             "-target", "macos_arm64", "-Xoverride-konan-properties", "airplaneMode=true", "-o", library], environment, log)

@@ -2606,10 +2606,11 @@
               "items": {
                 "enum": [
                   "resolution",
-                  "toolchains"
+                  "toolchains",
+                  "remote"
                 ]
               },
-              "maxItems": 2,
+              "maxItems": 3,
               "uniqueItems": true
             },
             "jvmWorkerSources": {
@@ -2759,10 +2760,11 @@
               "items": {
                 "enum": [
                   "resolution",
-                  "toolchains"
+                  "toolchains",
+                  "remote"
                 ]
               },
-              "maxItems": 2,
+              "maxItems": 3,
               "uniqueItems": true
             },
             "jvmWorkerSources": {

@@ -2,12 +2,15 @@
 package kvik.cli
 
 import kvik.actioncache.LocalCachingActionExecutor
+import kvik.actioncache.RemoteCachingActionExecutor
 import kvik.application.*
 import kvik.cache.*
+import kvik.cache.remote.*
 import kvik.compiler.jvm.JvmActionExecutor
 import kvik.compiler.jvm.JvmScriptExecutor
 import kvik.compiler.jvm.JvmScriptObservation
 import kvik.compiler.jvm.JvmScriptPhase
+import kvik.compiler.jvm.portableJvmCompilation
 import kvik.compiler.native.NativeCompilerExecutor
 import kvik.compiler.native.KotestNativeExecutor
 import kvik.compiler.ksp.KspNativeExecutor
@@ -69,6 +72,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val storePath = projectPath(root, options.project.store)
     val lockPath = projectPath(root, options.project.lock)
     val toolsPath = projectPath(root, options.tools)
+    val remotePath = options.remoteCache?.let { projectPath(root, it) }
+    val remoteConfiguration = remotePath?.let(RemoteCacheConfiguration::read)
+    val remoteEndpoint = if (options.project.offline) null else remoteConfiguration?.endpoint { boundedEnvironment(it, 8192) }
     val runsPath = projectPath(root, options.runs)
     val policy = options.project.resolverPolicy()
     // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
@@ -113,6 +119,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) + selector + listOf(
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
+        (remotePath?.let { listOf("--remote-cache", it) } ?: emptyList()) +
+        (if (options.project.offline) listOf("--offline") else emptyList()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
         options.project.metadataExclusions.flatMap { listOf("--exclude-metadata-edge", it.toJson().canonical()) } +
@@ -177,8 +185,18 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         override fun start(runId: String, actionId: String, action: ActionSpec) = executor(action).start(runId, actionId, action)
                     }
                     fun cacheDiagnostic(value: CacheDiagnostic) = journal.diagnostic(Diagnostic("KVIK_CACHE_NOTICE", DiagnosticCategory.CACHE, "${value.code}: ${value.message}"))
-                    val cached = LocalCachingActionExecutor(delegate, NativeActionCache("$storePath/actions", content), content, ::cacheDiagnostic,
+                    val localCache = NativeActionCache("$storePath/actions", content)
+                    val remote = remoteEndpoint?.let { endpoint ->
+                        val client = RemoteActionCache(content, localCache, endpoint, setOf(PortabilityApproval(
+                            "kvik-jvm-compiler-v1", "jvm", mapOf("os" to "macos", "arch" to "arm64"),
+                            "tools/test_jvm_portability.py")), checkNotNull(remoteConfiguration).limits)
+                        RemoteCachingActionExecutor(delegate, localCache, content, client, ::portableJvmCompilation,
+                            ::cacheDiagnostic, cacheDecision = { journal.emit("action-cache-decision", it.toJson()) },
+                            publishEnabled = remoteConfiguration.write)
+                    }
+                    val cached = remote ?: LocalCachingActionExecutor(delegate, localCache, content, ::cacheDiagnostic,
                         cacheDecision = { journal.emit("action-cache-decision", it.toJson()) })
+                    try {
                     val seen = mutableSetOf<String>()
                     fun retain(id: String, value: JsonValue) {
                         NativeFiles.writeNew("${run.path}/observations/${Sha256.digest(id.encodeToByteArray()).hash}.json",
@@ -219,7 +237,10 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         }
                     }
                     val traced = graph.nodes.map { node -> node.copy(resolve = { predecessors ->
-                        node.resolve(predecessors).also { action ->
+                        node.resolve(predecessors).let { action ->
+                            // Keep the same identity in online and offline runs of this configured policy.
+                            if (remoteConfiguration != null && portableJvmCompilation(action)) action.copy(cachePolicy = CachePolicy.REMOTE) else action
+                        }.also { action ->
                             NativeFiles.writeNew("${run.path}/actions/${Sha256.digest(node.id.encodeToByteArray()).hash}.json",
                                 obj("schemaVersion" to CONTRACT_VERSION.json(), "actionId" to node.id.json(), "key" to action.key(Sha256).toJson(),
                                     "dependencies" to node.dependencies.sorted().map { it.json() }.json(), "action" to action.toJson()).canonical().encodeToByteArray())
@@ -231,11 +252,19 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         while (!scheduler.isFinished) {
                             if (kvik_interrupt_requested() != 0) { cancelled = true; scheduler.cancel() }
                             scheduler.tick()
+                            remote?.observeCompleted(scheduler.results)
                             observations()
                             if (!scheduler.isFinished) usleep(10_000u)
                         }
                         results = scheduler.results.values.toList()
                     }
+                    if (remote != null) {
+                        while (!remote.pollPublications()) {
+                            if (kvik_interrupt_requested() != 0) { cancelled = true; remote.abortPublications(); break }
+                            usleep(10_000u)
+                        }
+                    }
+                    } finally { remote?.close() }
                 }
             }
         } catch (failure: Exception) {
