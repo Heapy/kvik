@@ -1,0 +1,1228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvik.dev/schemas/v1/packages.json",
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "hash",
+        "sizeBytes"
+      ],
+      "additionalProperties": false
+    },
+    "repository": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "id",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "url",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 1024
+        },
+        "variant": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "coordinate",
+        "variant",
+        "repository",
+        "url",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "variant": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "enum": [
+            "jvm",
+            "macosArm64",
+            "common"
+          ]
+        },
+        "usage": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "platform",
+        "usage",
+        "attributes"
+      ],
+      "additionalProperties": false
+    },
+    "domain": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "compilation": {
+          "enum": [
+            "main",
+            "test"
+          ]
+        },
+        "usage": {
+          "enum": [
+            "java-api",
+            "java-runtime",
+            "kotlin-api",
+            "kotlin-runtime"
+          ]
+        },
+        "purpose": {
+          "enum": [
+            "dependencies",
+            "compiler-plugin",
+            "ksp-runtime",
+            "symbol-processor"
+          ]
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "compilation",
+        "usage",
+        "purpose"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "kind": {
+          "enum": [
+            "metadata",
+            "artifact"
+          ]
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache": {
+          "enum": [
+            "network",
+            "cache",
+            "locked",
+            "none"
+          ]
+        },
+        "status": {
+          "enum": [
+            "found",
+            "not-found",
+            "missing",
+            "corrupt",
+            "error"
+          ]
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale",
+            "missing",
+            "indeterminate"
+          ]
+        },
+        "latest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastUpdated": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "repository",
+        "url",
+        "kind",
+        "digest",
+        "observedAt",
+        "cache",
+        "status",
+        "freshness",
+        "latest",
+        "release",
+        "lastUpdated"
+      ],
+      "additionalProperties": false
+    },
+    "requirement": {
+      "type": "object",
+      "properties": {
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 1024
+        },
+        "semantics": {
+          "enum": [
+            "requires",
+            "pom-effective",
+            "redirect",
+            "constraint"
+          ]
+        }
+      },
+      "required": [
+        "coordinate",
+        "semantics"
+      ],
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 1024
+        },
+        "platform": {
+          "type": "boolean"
+        },
+        "expanded": {
+          "type": "boolean"
+        },
+        "variant": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadata"
+          },
+          "maxItems": 32
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          },
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "id",
+        "coordinate",
+        "platform",
+        "expanded",
+        "variant",
+        "repository",
+        "metadata",
+        "artifacts"
+      ],
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "dependency",
+            "redirect",
+            "constraint"
+          ]
+        },
+        "requirement": {
+          "$ref": "#/$defs/requirement"
+        },
+        "selected": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transitive": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "kind",
+        "requirement",
+        "selected",
+        "transitive"
+      ],
+      "additionalProperties": false
+    },
+    "root": {
+      "type": "object",
+      "properties": {
+        "requested": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 1024
+        },
+        "node": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "requested",
+        "node"
+      ],
+      "additionalProperties": false
+    },
+    "path": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 1024
+        },
+        "node": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 1024
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxItems": 1024
+        }
+      },
+      "required": [
+        "root",
+        "node",
+        "nodes",
+        "edges"
+      ],
+      "additionalProperties": false
+    },
+    "graph": {
+      "type": "object",
+      "properties": {
+        "variant": {
+          "$ref": "#/$defs/variant"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/root"
+          },
+          "maxItems": 256
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "maxItems": 1024
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          },
+          "maxItems": 8192
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          },
+          "maxItems": 4096
+        },
+        "pathPolicy": {
+          "enum": [
+            "shortest-per-root-node"
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "artifactVerification": {
+          "enum": [
+            "verified"
+          ]
+        }
+      },
+      "required": [
+        "variant",
+        "roots",
+        "nodes",
+        "edges",
+        "paths",
+        "pathPolicy",
+        "truncated",
+        "artifactVerification"
+      ],
+      "additionalProperties": false
+    },
+    "version": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "channel": {
+          "enum": [
+            "stable",
+            "prerelease",
+            "unclassified"
+          ]
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "version",
+        "channel",
+        "repositories"
+      ],
+      "additionalProperties": false
+    },
+    "declaration": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "sourceSet": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "external",
+            "module",
+            "compiler-plugin",
+            "ksp-runtime",
+            "symbol-processor"
+          ]
+        },
+        "coordinate": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencyModule": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "enum": [
+            "compile",
+            "runtime"
+          ]
+        },
+        "exported": {
+          "type": "boolean"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 32
+        },
+        "compilations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "main",
+              "test",
+              "script"
+            ]
+          },
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "module",
+        "sourceSet",
+        "kind",
+        "coordinate",
+        "dependencyModule",
+        "scope",
+        "exported",
+        "targets",
+        "compilations"
+      ],
+      "additionalProperties": false
+    },
+    "scopedGraph": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/domain"
+        },
+        "graph": {
+          "$ref": "#/$defs/graph"
+        }
+      },
+      "required": [
+        "domain",
+        "graph"
+      ],
+      "additionalProperties": false
+    },
+    "versionQuery": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 512
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repository"
+          },
+          "maxItems": 32
+        },
+        "channel": {
+          "enum": [
+            "all",
+            "stable",
+            "prerelease"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "enum": [
+            "cache",
+            "refresh",
+            "offline"
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "coordinate",
+        "repositories",
+        "channel",
+        "limit",
+        "cursor",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "packageQuery": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "maxLength": 1024
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repository"
+          },
+          "maxItems": 32
+        },
+        "variant": {
+          "$ref": "#/$defs/variant"
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+            "maxLength": 1024
+          },
+          "maxItems": 256
+        },
+        "mode": {
+          "enum": [
+            "cache",
+            "refresh",
+            "offline"
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "coordinate",
+        "repositories",
+        "variant",
+        "pins",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "projectQuery": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "lock": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "store": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 1024
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64"
+            ]
+          },
+          "maxItems": 2
+        },
+        "compilation": {
+          "anyOf": [
+            {
+              "enum": [
+                "main",
+                "test"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "enum": [
+                "java-api",
+                "java-runtime",
+                "kotlin-api",
+                "kotlin-runtime"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "lock",
+        "store",
+        "modules",
+        "targets",
+        "compilation",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "versions": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "unsupported"
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale",
+            "missing",
+            "indeterminate"
+          ]
+        },
+        "freshnessBasis": {
+          "enum": [
+            "repository-observation",
+            "locked-inputs"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          },
+          "maxItems": 8192
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          },
+          "maxItems": 1024
+        },
+        "compatibility": {
+          "const": "not-assessed"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "package-versions"
+        },
+        "query": {
+          "$ref": "#/$defs/versionQuery"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/version"
+          },
+          "maxItems": 200
+        },
+        "order": {
+          "const": "lexical-ascending"
+        },
+        "classification": {
+          "const": "numeric-known-qualifiers-v1"
+        },
+        "page": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "nextCursor": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "snapshot": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "total": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "limit",
+            "nextCursor",
+            "snapshot",
+            "total"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "status",
+        "observedAt",
+        "freshness",
+        "freshnessBasis",
+        "sources",
+        "diagnostics",
+        "compatibility",
+        "truncated",
+        "kind",
+        "query",
+        "versions",
+        "order",
+        "classification",
+        "page"
+      ],
+      "additionalProperties": false
+    },
+    "packageDependencies": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "unsupported"
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale",
+            "missing",
+            "indeterminate"
+          ]
+        },
+        "freshnessBasis": {
+          "enum": [
+            "repository-observation",
+            "locked-inputs"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          },
+          "maxItems": 8192
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          },
+          "maxItems": 1024
+        },
+        "compatibility": {
+          "const": "not-assessed"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "package-dependencies"
+        },
+        "query": {
+          "$ref": "#/$defs/packageQuery"
+        },
+        "graph": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/graph"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "status",
+        "observedAt",
+        "freshness",
+        "freshnessBasis",
+        "sources",
+        "diagnostics",
+        "compatibility",
+        "truncated",
+        "kind",
+        "query",
+        "graph"
+      ],
+      "additionalProperties": false
+    },
+    "projectDependencies": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete",
+            "unsupported"
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "freshness": {
+          "enum": [
+            "fresh",
+            "stale",
+            "missing",
+            "indeterminate"
+          ]
+        },
+        "freshnessBasis": {
+          "enum": [
+            "repository-observation",
+            "locked-inputs"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          },
+          "maxItems": 8192
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          },
+          "maxItems": 1024
+        },
+        "compatibility": {
+          "const": "not-assessed"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "project-dependencies"
+        },
+        "query": {
+          "$ref": "#/$defs/projectQuery"
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencyLock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "declarations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/declaration"
+          },
+          "maxItems": 16384
+        },
+        "declarationsScope": {
+          "const": "all-project"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scopedGraph"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "status",
+        "observedAt",
+        "freshness",
+        "freshnessBasis",
+        "sources",
+        "diagnostics",
+        "compatibility",
+        "truncated",
+        "kind",
+        "query",
+        "configuration",
+        "dependencyLock",
+        "declarations",
+        "declarationsScope",
+        "domains"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/versions"
+    },
+    {
+      "$ref": "#/$defs/packageDependencies"
+    },
+    {
+      "$ref": "#/$defs/projectDependencies"
+    }
+  ]
+}
