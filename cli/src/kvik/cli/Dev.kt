@@ -49,6 +49,7 @@ internal fun devCommand(args: List<String>): Int {
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
+        options.project.metadataExclusions.flatMap { listOf("--exclude-metadata-edge", it.toJson().canonical()) } +
         options.modules.sorted().flatMap { listOf("--module", it) } + options.targets.sorted().flatMap { listOf("--target", it) }
     val parent = "${project.root}/.kvik/sessions"
     NativeFiles.ensureDirectory(parent)

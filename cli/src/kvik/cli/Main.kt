@@ -32,6 +32,7 @@ private fun command(args: Array<String>) {
             Commands: runtime-info, inspect, resolve, check-lock, build, test, verification, dev, packages, dependencies, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
+            Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline
             Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N

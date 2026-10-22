@@ -70,6 +70,7 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
+        options.project.metadataExclusions.flatMap { listOf("--exclude-metadata-edge", it.toJson().canonical()) } +
         options.modules.sorted().flatMap { listOf("--module", it) } + options.targets.sorted().flatMap { listOf("--target", it) }
     NativeFiles.writeNew("${run.path}/run.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "projectRoot" to project.root.json(),
         "configurationPath" to project.name.value.json(), "lockPath" to lockPath.json(), "toolsPath" to toolsPath.json(),

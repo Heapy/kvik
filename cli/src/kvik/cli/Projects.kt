@@ -6,6 +6,8 @@ import kvik.core.*
 import kvik.locking.ResolutionDomain
 import kvik.locking.ResolverPolicy
 import kvik.locking.ScopedPin
+import kvik.locking.ScopedMetadataExclusion
+import kvik.locking.parseMetadataEdgeExclusion
 import kotlinx.cinterop.*
 import platform.posix.*
 
@@ -42,9 +44,10 @@ internal data class ProjectOptions(
     val pins: List<Coordinate> = emptyList(),
     val offline: Boolean = false,
     val scopedPins: List<ScopedPin> = emptyList(),
+    val metadataExclusions: List<ScopedMetadataExclusion> = emptyList(),
 )
 
-internal fun ProjectOptions.resolverPolicy() = ResolverPolicy(pins, scopedPins = scopedPins)
+internal fun ProjectOptions.resolverPolicy() = ResolverPolicy(pins, scopedPins = scopedPins, metadataExclusions = metadataExclusions)
 
 internal fun ScopedPin.argument(): String = with(domain) {
     "$module:$target:$compilation:$usage:$purpose=$coordinate"
@@ -64,9 +67,10 @@ internal fun projectOptions(args: List<String>, lockOptions: Boolean): ProjectOp
     val values = mutableMapOf<String, String>()
     val pins = mutableListOf<Coordinate>()
     val scopedPins = mutableListOf<ScopedPin>()
+    val metadataExclusions = mutableListOf<ScopedMetadataExclusion>()
     var offline = false
     var index = 0
-    val allowed = setOf("--project", "--pin", "--scope-pin") + if (lockOptions) setOf("--store", "--lock") else emptySet()
+    val allowed = setOf("--project", "--pin", "--scope-pin", "--exclude-metadata-edge") + if (lockOptions) setOf("--store", "--lock") else emptySet()
     while (index < args.size) {
         val flag = args[index++]
         if (flag == "--offline" && lockOptions) {
@@ -79,8 +83,12 @@ internal fun projectOptions(args: List<String>, lockOptions: Boolean): ProjectOp
         require(value != null && value.isNotBlank() && !value.startsWith("--")) { "Missing value for $flag" }
         if (flag == "--pin") pins += Coordinate.parse(value)
         else if (flag == "--scope-pin") scopedPins += scopedPin(value)
+        else if (flag == "--exclude-metadata-edge") {
+            require(metadataExclusions.size < 32) { "At most 32 metadata edge exclusions are supported" }
+            metadataExclusions += parseMetadataEdgeExclusion(value)
+        }
         else require(values.put(flag, value) == null) { "Duplicate option: $flag" }
     }
     return ProjectOptions(values["--project"] ?: "kvik.json", values["--store"] ?: ".kvik/cache", values["--lock"] ?: "kvik.lock.json", pins,
-        offline || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", scopedPins)
+        offline || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", scopedPins, metadataExclusions)
 }

@@ -108,10 +108,10 @@ private fun unchangedQueryProject(result: JsonValue.Object, project: ProjectFile
 
 internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
     val options = queryArguments(args, setOf("--project", "--store", "--lock", "--compilation", "--usage"),
-        repeats = setOf("--pin", "--scope-pin", "--module", "--target"), flags = setOf("--offline"))
+        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--target"), flags = setOf("--offline"))
     val projectFlags = buildList {
         options.values.filterKeys { it in setOf("--project", "--store", "--lock") }.forEach { (key, value) -> add(key); add(value) }
-        options.repeats.filterKeys { it in setOf("--pin", "--scope-pin") }.forEach { (key, values) -> values.forEach { add(key); add(it) } }
+        options.repeats.filterKeys { it in setOf("--pin", "--scope-pin", "--exclude-metadata-edge") }.forEach { (key, values) -> values.forEach { add(key); add(it) } }
         if ("--offline" in options.flags) add("--offline")
     }
     val selected = projectOptions(projectFlags, lockOptions = true)
