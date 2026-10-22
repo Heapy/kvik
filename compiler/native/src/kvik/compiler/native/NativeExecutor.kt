@@ -17,7 +17,7 @@ data class NativeToolchainLayout(val compiler: String, val javaHome: String, val
     init { require(listOf(compiler, javaHome, sdk, dependencies, developerDirectory).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
 }
 
-data class NativeActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: NativeTestReport? = null, val stdout: String, val stderr: String)
+data class NativeActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: NativeTestReport? = null, val stdout: String, val stderr: String, val directory: String)
 
 /** macosArm64 adapter. Owns each compiler/listing/test process through the injected K03 host. */
 class NativeCompilerExecutor(
@@ -114,7 +114,7 @@ class NativeCompilerExecutor(
                     if (report != null) "KVIK_NATIVE_TEST_RESULT" else "KVIK_NATIVE_PROCESS_FAILED", if (report != null) DiagnosticCategory.TEST else DiagnosticCategory.INFRASTRUCTURE,
                     diagnostic ?: "Native process exited ${exit.exitCode}", actionId, module, "macosArm64")) else emptyList()
                 return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostic).also {
-                    result = it; observations[actionId] = NativeActionObservation(it, finalDiagnostics, report, stdout, stderr)
+                    result = it; observations[actionId] = NativeActionObservation(it, finalDiagnostics, report, stdout, stderr, directory)
                 }
             }
             override fun cancel() {

@@ -62,6 +62,6 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
             "sourceSets" to entries.map { it.sourceSet }.distinct().sorted().map { it.json() }.json(),
             "targets" to entries.flatMap { it.targets }.distinct().sorted().map { it.json() }.json(),
         ) }.json(), "origins" to JsonValue.Object(origins),
-        "capabilities" to listOf("runtime-info", "project-inspection", "dependency-resolution", "locked-dependencies").map { it.json() }.json(),
+        "capabilities" to listOf("runtime-info", "project-inspection", "dependency-resolution", "locked-dependencies", "build", "test", "verification").map { it.json() }.json(),
     )
 }

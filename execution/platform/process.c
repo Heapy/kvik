@@ -10,6 +10,35 @@
 #include <unistd.h>
 #include <mach-o/dyld.h>
 
+static volatile sig_atomic_t interrupted = 0;
+static int interrupt_installed = 0;
+static struct sigaction previous_int, previous_term;
+static void record_interrupt(int signal_number) { interrupted = signal_number; }
+int kvik_interrupt_install(void) {
+    if (interrupt_installed) { errno = EBUSY; return -1; }
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = record_interrupt;
+    sigemptyset(&action.sa_mask);
+    interrupted = 0;
+    if (sigaction(SIGINT, &action, &previous_int)) return -1;
+    if (sigaction(SIGTERM, &action, &previous_term)) {
+        int error = errno;
+        (void)sigaction(SIGINT, &previous_int, NULL);
+        errno = error;
+        return -1;
+    }
+    interrupt_installed = 1;
+    return 0;
+}
+int kvik_interrupt_requested(void) { return (int)interrupted; }
+void kvik_interrupt_restore(void) {
+    if (!interrupt_installed) return;
+    (void)sigaction(SIGINT, &previous_int, NULL);
+    (void)sigaction(SIGTERM, &previous_term, NULL);
+    interrupt_installed = 0;
+}
+
 char *kvik_executable_directory(void) {
     uint32_t size = 0;
     (void)_NSGetExecutablePath(NULL, &size);

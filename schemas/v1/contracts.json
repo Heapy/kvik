@@ -882,6 +882,147 @@
       ],
       "additionalProperties": false
     },
+    "installedToolLock": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kotlinVersion": {
+          "const": "2.4.20"
+        },
+        "host": {
+          "type": "object",
+          "properties": {
+            "os": {
+              "const": "Darwin"
+            },
+            "architecture": {
+              "const": "arm64"
+            },
+            "release": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "sdk": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "os",
+            "architecture",
+            "release",
+            "sdk"
+          ],
+          "additionalProperties": false
+        },
+        "components": {
+          "type": "object",
+          "properties": {
+            "jdk": {
+              "$ref": "#/$defs/digest"
+            },
+            "kotlinNative": {
+              "$ref": "#/$defs/digest"
+            },
+            "llvm": {
+              "$ref": "#/$defs/digest"
+            },
+            "libffi": {
+              "$ref": "#/$defs/digest"
+            },
+            "sdk": {
+              "$ref": "#/$defs/digest"
+            },
+            "xcodeToolchain": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "required": [
+            "jdk",
+            "kotlinNative",
+            "llvm",
+            "libffi",
+            "sdk",
+            "xcodeToolchain"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kotlinVersion",
+        "host",
+        "components"
+      ],
+      "additionalProperties": false
+    },
+    "toolInstallation": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "toolLock": {
+          "$ref": "#/$defs/installedToolLock"
+        },
+        "roots": {
+          "type": "object",
+          "properties": {
+            "jdk": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "kotlinNative": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "llvm": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "libffi": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "sdk": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "xcodeToolchain": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "jdk",
+            "kotlinNative",
+            "llvm",
+            "libffi",
+            "sdk",
+            "xcodeToolchain"
+          ],
+          "additionalProperties": false
+        },
+        "konanData": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "compilerArtifacts": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "toolLock",
+        "roots",
+        "konanData",
+        "compilerArtifacts"
+      ],
+      "additionalProperties": false
+    },
     "diagnostic": {
       "type": "object",
       "properties": {
@@ -1245,6 +1386,41 @@
         "status",
         "freshnessAtCompletion",
         "reproduction"
+      ],
+      "additionalProperties": false
+    },
+    "verificationQuery": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "verification": {
+          "$ref": "#/$defs/verification"
+        },
+        "freshness": {
+          "enum": [
+            "current",
+            "stale",
+            "indeterminate"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "verification",
+        "freshness",
+        "reason"
       ],
       "additionalProperties": false
     },

@@ -10,12 +10,13 @@ internal data class ProjectFile(val root: String, val name: LogicalPath, val byt
     val path: String get() = "$root/${name.value}"
 }
 
-internal fun readProject(projectPath: String): ProjectFile {
-    val cwd = memScoped {
+internal fun currentDirectory(): String = memScoped {
         val buffer = allocArray<ByteVar>(4096)
         getcwd(buffer, 4096u)?.toKString() ?: error("Cannot read working directory: errno=$errno")
-    }
-    val absolute = if (projectPath.startsWith('/')) projectPath else "$cwd/$projectPath"
+}
+
+internal fun readProject(projectPath: String): ProjectFile {
+    val absolute = if (projectPath.startsWith('/')) projectPath else "${currentDirectory()}/$projectPath"
     NativeFiles.validateAbsolute(absolute)
     val parent = absolute.substringBeforeLast('/').ifEmpty { "/" }
     val resolved = realpath(parent, null) ?: error("Cannot resolve project directory: errno=$errno")

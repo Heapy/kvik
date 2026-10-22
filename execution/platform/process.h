@@ -7,4 +7,8 @@ void kvik_process_cancel(void *handle);
 void kvik_process_close(void *handle);
 /* Caller frees the returned absolute directory. NULL indicates an OS/path error. */
 char *kvik_executable_directory(void);
+/* Foreground coordinator only; handler stores a sig_atomic_t flag, never calls Kotlin. */
+int kvik_interrupt_install(void);
+int kvik_interrupt_requested(void);
+void kvik_interrupt_restore(void);
 #endif

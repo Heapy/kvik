@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work will use an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands are `help`, `runtime-info`, `inspect`, `resolve` and `check-lock`; consumer builds are still being integrated. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [launcher evidence and limits](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands are `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test` and `verification`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -12,9 +12,14 @@ With tools matching the explicitly provisioned host lock:
 ./kvik --offline --no-build -- inspect --project /absolute/project/kvik.json
 ./kvik --no-build -- resolve --project /absolute/project/kvik.json
 ./kvik --offline --no-build -- check-lock --project /absolute/project/kvik.json
+./kvik --offline --no-build -- test --project /absolute/project/kvik.json \
+  --tools /absolute/project/tools.json --module library --target macosArm64
+./kvik --offline --no-build -- verification --run /absolute/project/.kvik/runs/RUN_ID
 ```
 
 `resolve` explicitly publishes `kvik.lock.json` and fills `.kvik/cache` relative to the project. `--store` selects a shared content store, `--lock` selects a lockfile, and repeated `--pin group:artifact:version` options declare resolver policy. Supply the same pins to inspection and lock checks. `check-lock` verifies the lock and cached artifacts without downloading or repairing anything. `resolve --offline` also performs only that check; the launcher's `--offline` propagates to dependency commands. Publication uses a persistent `.kvik-dependency-publication.lock` in the destination directory and rejects configuration/lock changes observed during resolution. See [CLI dependency evidence](docs/evidence/k09-dependency-cli.md).
+
+`build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools.
 
 The source bootstrap uses Python with `os.waitid`/`WNOWAIT` support (tested with Python 3.15). A cache hit verifies and executes the native binary without starting a JVM. A cache miss verifies the installed compiler, JDK, native dependencies and Apple tools against `bootstrap/toolchains.lock.json`; it does not download missing tools. That lock currently describes the development macOS ARM64 host, so another host must be explicitly provisioned and repinned with `bootstrap/pin_tools.py` before building.
 
