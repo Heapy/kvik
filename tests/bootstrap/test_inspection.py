@@ -48,7 +48,7 @@ class InspectionTest(unittest.TestCase):
         self.assertEqual(["jvm"], files["src/jvmTest/Test.kt"]["targets"])
         self.assertEqual(["commonMain"], files["src/commonMain/Shared.kt"]["sourceSets"])
         self.assertEqual(["hello"], files["src/commonMain/Shared.kt"]["modules"])
-        self.assertEqual(["runtime-info", "project-inspection"], value["capabilities"])
+        self.assertEqual(["runtime-info", "project-inspection", "dependency-resolution", "locked-dependencies"], value["capabilities"])
         for origin in value["origins"].values():
             self.assertEqual("kvik.json", origin["file"])
             current = self.document

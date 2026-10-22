@@ -4,29 +4,19 @@ package kvik.cli
 
 import kvik.cache.NativeFiles
 import kvik.core.*
+import kvik.locking.ResolverPolicy
+import kvik.locking.effectiveConfiguration
 import kotlinx.cinterop.*
 import platform.posix.*
 
 private data class Owner(val module: String, val sourceSet: String, val targets: List<String>)
 
 /** Read-only inspection of declared directories, including untracked files. */
-fun inspectProject(projectPath: String): JsonValue {
-    val cwd = memScoped {
-        val buffer = allocArray<ByteVar>(4096)
-        getcwd(buffer, 4096u)?.toKString() ?: error("Cannot read working directory: errno=$errno")
-    }
-    val absolute = if (projectPath.startsWith('/')) projectPath else "$cwd/$projectPath"
-    NativeFiles.validateAbsolute(absolute)
-    val parent = absolute.substringBeforeLast('/').ifEmpty { "/" }
-    val root = memScoped {
-        val resolved = realpath(parent, null) ?: error("Cannot resolve project directory: errno=$errno")
-        try { resolved.toKString() } finally { free(resolved) }
-    }
-    require(root != "/") { "Filesystem root cannot be a project" }
-    NativeFiles.ensureDirectory(root, create = false)
-    val fileName = LogicalPath(absolute.substringAfterLast('/'))
-    val bytes = NativeFiles.read("$root/${fileName.value}", 4 * 1024 * 1024)
-    val configuration = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy()): JsonValue {
+    val project = readProject(projectPath)
+    val root = project.root
+    val fileName = project.name
+    val configuration = project.configuration
     val owners = linkedMapOf<String, MutableList<Owner>>()
     fun collect(path: String, owner: Owner) {
         val logical = LogicalPath(path)
@@ -64,7 +54,7 @@ fun inspectProject(projectPath: String): JsonValue {
     }
     return obj(
         "schemaVersion" to CONTRACT_VERSION.json(), "project" to configuration.document,
-        "configuration" to configuration.digest.toJson(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
+        "configuration" to effectiveConfiguration(configuration, policy).digest.toJson(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
         "files" to owners.keys.sorted().map { path ->
             val entries = owners.getValue(path)
             obj(
@@ -72,6 +62,6 @@ fun inspectProject(projectPath: String): JsonValue {
             "sourceSets" to entries.map { it.sourceSet }.distinct().sorted().map { it.json() }.json(),
             "targets" to entries.flatMap { it.targets }.distinct().sorted().map { it.json() }.json(),
         ) }.json(), "origins" to JsonValue.Object(origins),
-        "capabilities" to listOf("runtime-info", "project-inspection").map { it.json() }.json(),
+        "capabilities" to listOf("runtime-info", "project-inspection", "dependency-resolution", "locked-dependencies").map { it.json() }.json(),
     )
 }

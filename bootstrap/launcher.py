@@ -14,7 +14,7 @@ import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json
 from bootstrap.pin_tools import host_identity, tool_roots
-from bootstrap import jvm_worker
+from bootstrap import jvm_worker, native_libraries
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,13 +40,16 @@ def relative(root, value):
 
 def composition():
     recipe = read_json(ROOT / "bootstrap/composition.json")
-    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "nativePlatform", "jvmWorkerSources", "plugins", "compilerOptions"}:
+    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "nativePlatform", "nativeLibraries", "jvmWorkerSources", "plugins", "compilerOptions"}:
         raise ValueError("Unsupported composition schema")
     if not isinstance(recipe["coreSources"], list) or not recipe["coreSources"] or not isinstance(recipe["plugins"], list):
         raise ValueError("Invalid composition sources/options")
     validate_options(recipe["compilerOptions"])
     selected = []
     pins = []
+    library_pins, library_sources = native_libraries.select(ROOT, recipe["nativeLibraries"], relative)
+    pins.extend(library_pins)
+    selected.extend(library_sources)
     native = relative(ROOT, recipe["nativePlatform"])
     native_tree = inventory(native)
     if {item["path"] for item in native_tree["files"]} != {"process.c", "process.h", "process.def", "guardian.c"}:
@@ -241,6 +244,8 @@ def build(args, recipe, selected, lock, key, destination):
         with log_path.open("w") as log:
             for command in commands:
                 run_owned(command, environment, log)
+            libraries = [bridge / "process.klib"] + native_libraries.build(recipe["nativeLibraries"], temporary / "sources",
+                bridge, roots, environment, log, run_owned)
             guardian_digest = file_digest(guardian)
             worker_digest = jvm_worker.build_bundle(temporary, temporary / "sources", recipe["jvmWorkerSources"], jvm_lock,
                 artifacts, roots["jdk"] / "bin/java", environment, log, run_owned)
@@ -252,7 +257,7 @@ def build(args, recipe, selected, lock, key, destination):
                 f'const val runtimeJvmWorkerSize: Long = {worker_digest["sizeBytes"]}L\n' +
                 f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
             run_owned([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
-                "-library", bridge / "process.klib", "-o", executable, *source_files, registry], environment, log)
+                *[part for library in libraries for part in ("-library", library)], "-o", executable, *source_files, registry], environment, log)
         if composition()[3] != key:
             raise ValueError("Runtime sources changed during compilation; refusing stale composition, retry")
         # Write/flush the complete publication before exposing its directory.
@@ -315,6 +320,7 @@ def main():
         if args.print_runtime:
             print(executable)
         else:
+            os.environ["KVIK_BOOTSTRAP_OFFLINE"] = "1" if args.offline else "0"
             os.execv(executable, [str(executable), *command])
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, BootstrapInterrupted) as failure:
         emit("bootstrap-error", message=str(failure))

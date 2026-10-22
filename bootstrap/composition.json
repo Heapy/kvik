@@ -1,7 +1,8 @@
 {
   "schemaVersion": 1,
-  "coreSources": ["core/src", "cache/src", "execution/src", "cli/src"],
+  "coreSources": ["core/src", "cache/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/toolchains/src", "integration/compiler-tools/src", "compiler/jvm/native/src", "compiler/native/src", "cli/src"],
   "nativePlatform": "execution/platform",
+  "nativeLibraries": ["resolution", "toolchains"],
   "jvmWorkerSources": "compiler/jvm/src",
   "plugins": [
     {"id": "kvik.kotlin", "directory": "plugins/kotlin", "sourceDirectories": ["src"], "implementation": "kvik.plugins.kotlin.KotlinBuildPlugin"}
