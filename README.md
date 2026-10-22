@@ -1,6 +1,6 @@
 # Kvik
 
-An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work will use an explicit foreground session.
+An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work uses an explicit foreground session.
 
 The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
@@ -61,7 +61,28 @@ The application uses the project directory, declared environment and EOF stdin;
 JSON events identify its retained stdout/stderr files. Its exit code propagates,
 and interruption stops its owned process group. See the [application contract](docs/decisions/k15-application-lifecycle.md)
 and [JVM/Native acceptance evidence](docs/evidence/k15-application-cli.md).
-Application restart in `dev` remains under implementation.
+
+For continuous application work, select application mode explicitly:
+
+```sh
+./kvik --offline -- dev --mode application --project /absolute/project/kvik.json \
+  --tools /absolute/project/tools.json --module app --target jvm
+```
+
+In a terminal, `r` requests reload, `t` runs fresh tests, `q` exits and `?` shows
+help. File watching also requests reloads. A failed preparation keeps the previous
+application running; status identifies when it belongs to older inputs. A ready
+replacement starts only after the previous owned process tree has stopped. Test requests are retained
+independently of reload requests. `--initial test` requests tests before the first
+application preparation. Without `--mode application`, `dev` uses library mode.
+
+Agents and other non-TTY callers must pass `--control jsonl` (versioned controls
+and events) or `--control lines`. Status includes the active application identity,
+candidate state and queued intents; closing input stops the session's children.
+Source changes to Kvik or its build plugins trigger a new native composition and
+an explicit session handoff. See the [foreground controller and acceptance
+status](docs/evidence/k15-foreground-applications.md); the full public JVM/Native
+replacement and compiled-source handoff gate is still being validated.
 
 Dependencies default to private compile dependencies. Set `exported: true` when a dependency belongs on consuming modules' compile classpaths; use `scope: "runtime"` for runtime-only dependencies. Runtime closures include private dependencies. Target `testCompilerOptions` optionally replaces `compilerOptions` for test compilation, so production-only settings such as strict explicit API need not apply to tests. Omission preserves inheritance; an empty list explicitly selects default test options.
 
