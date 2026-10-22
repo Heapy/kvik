@@ -11,6 +11,16 @@ import signal
 import subprocess
 import sys
 import time
+import importlib.util
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+if __package__:
+    from bootstrap import process_barrier as barrier
+else:
+    _spec = importlib.util.spec_from_file_location("kvik_process_barrier", Path(__file__).with_name("process_barrier.py"))
+    barrier = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(barrier)
 
 REQUEST_LIMIT = 4 * 1024 * 1024
 TERM_GRACE_SECONDS = 0.2
@@ -21,6 +31,7 @@ def main():
     owner, request_fd, result_fd, child_in, child_out, child_err = map(int, sys.argv[1:7])
     deadline = float(sys.argv[7])
     process = None
+    completion = None
     interrupted = False
     outcome = dict(outcome="setup-error", exit_code=None, limit_stream=None, error=None)
     flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
@@ -50,6 +61,7 @@ def main():
         return None
 
     try:
+        barrier.check()
         data = bytearray()
         while True:
             reason = stopping()
@@ -72,10 +84,11 @@ def main():
         if reason is not None:
             outcome = reason
             return
-        # No ownership/control pipe reaches the command or its descendants.
-        process = subprocess.Popen(configuration["argv"], cwd=configuration["cwd"], env=configuration["environment"],
+        # Only the completion capability reaches the child; control pipes do not.
+        completion = barrier.Completion()
+        process = completion.spawn(configuration["argv"], cwd=configuration["cwd"], environment=configuration["environment"],
                                    stdin=child_in, stdout=child_out, stderr=child_err,
-                                   close_fds=True, start_new_session=True)
+                                   start_new_session=True)
         for fd in (child_in, child_out, child_err):
             os.close(fd)
         child_in = child_out = child_err = None
@@ -100,20 +113,12 @@ def main():
             pass
         if process is not None:
             try:
-                for number in (signal.SIGTERM, signal.SIGKILL):
-                    try:
-                        os.killpg(process.pid, number)
-                    except ProcessLookupError:
-                        pass
-                    except PermissionError:
-                        # Darwin can report EPERM for groups containing only zombies.
-                        if os.waitid(os.P_PID, process.pid, flags) is None:
-                            raise
-                    if number == signal.SIGTERM:
-                        time.sleep(TERM_GRACE_SECONDS)
-                process.wait(timeout=REAP_GRACE_SECONDS)
+                barrier.clean_group(process, completion, grace=TERM_GRACE_SECONDS)
             except Exception as failure:
                 outcome.update(outcome="setup-error", error=f"Group cleanup failed: {failure}"[:256])
+                barrier.poison()
+        elif completion is not None:
+            completion.close()
         for fd in (request_fd, child_in, child_out, child_err):
             if fd is not None:
                 os.close(fd)

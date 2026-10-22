@@ -18,6 +18,7 @@ import threading
 import time
 from types import MappingProxyType
 from typing import Mapping
+from bootstrap import process_barrier
 
 CLEANUP_GRACE_SECONDS = 2.0
 MAX_ARGV_BYTES = MAX_ENVIRONMENT_BYTES = 256 * 1024
@@ -97,6 +98,9 @@ def run_owned(request: OwnedProcessRequest) -> OwnedProcessResult:
     started = time.monotonic()
     try:
         _validate(request)
+        helper_environment, ownership_fds = process_barrier.inherited({"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"})
+        if process_barrier.ENVIRONMENT in request.environment:
+            raise ValueError("Process completion marker is reserved")
         configuration = json.dumps(dict(argv=request.argv, cwd=str(request.cwd), environment=dict(request.environment)),
                                    ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     except Exception as failure:
@@ -166,11 +170,11 @@ def run_owned(request: OwnedProcessRequest) -> OwnedProcessResult:
         error_read, error_write = pipe()
         helper = Path(__file__).resolve().with_name("source_guardian.py")
         inherited = (owner_read, request_read, result_write, input_read, output_write, error_write)
-        guardian = subprocess.Popen([str(Path(sys.executable).resolve()), "-I", "-S", str(helper),
+        guardian = subprocess.Popen([str(Path(sys.executable).resolve()), "-I", "-S", "-B", str(helper),
                                      *map(str, inherited), str(deadline)],
-                                    cwd="/", env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+                                    cwd="/", env=helper_environment,
                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                    close_fds=True, pass_fds=inherited, start_new_session=True)
+                                    close_fds=True, pass_fds=(*inherited, *ownership_fds), start_new_session=True)
         for fd in inherited:
             close(fd)
         register(request_write, selectors.EVENT_WRITE, "request")
@@ -273,6 +277,7 @@ def run_owned(request: OwnedProcessRequest) -> OwnedProcessResult:
             try:
                 guardian.wait(timeout=max(0, final_deadline - time.monotonic() - 0.2))
             except subprocess.TimeoutExpired:
+                process_barrier.poison()
                 guardian.kill()
                 try:
                     guardian.wait(timeout=max(0, final_deadline - time.monotonic()))
@@ -283,6 +288,9 @@ def run_owned(request: OwnedProcessRequest) -> OwnedProcessResult:
         selector.close()
         for number, previous in handlers.items():
             signal.signal(number, previous)
+
+    if guardian is not None and (received is None or guardian.returncode != 0 or error is not None):
+        process_barrier.poison()
 
     value = received or dict(outcome="setup-error", exit_code=None, limit_stream=None, error=error)
     if error is not None:

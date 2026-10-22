@@ -113,6 +113,7 @@ class LaunchDescriptorTest(unittest.TestCase):
             description = json.loads(stdout.getvalue())
             build.assert_not_called()
         self.assertEqual(key, description["composition"])
+        self.assertEqual(1, description["processOwnershipVersion"])
         jsonschema.Draft202012Validator(json.loads((ROOT / "schemas/v1/bootstrap-launch.json").read_text())).validate(description)
         self.assertEqual(str(self.project), description["sourceRoot"])
         self.assertEqual(str(self.project / "kvik"), description["launcher"])
@@ -120,7 +121,7 @@ class LaunchDescriptorTest(unittest.TestCase):
         self.assertEqual(options[-2:], description["bootstrapArguments"][-2:])
         self.assertEqual(str(Path(options[1]).absolute()), description["bootstrapArguments"][1])
         with patch.object(launcher, "ROOT", self.project), patch.object(launcher, "composition", return_value=({}, [], {}, key)), \
-                patch.object(launcher, "cached", return_value=True), patch.object(launcher.os, "execv") as execute, \
+                patch.object(launcher, "cached", return_value=True), patch.object(launcher.process_barrier, "exec_runtime") as execute, \
                 patch.dict(os.environ, clear=False), patch.object(sys, "argv", ["kvik", *options, "--", "dev", "--control", "jsonl"]):
             launcher.main()
             self.assertEqual(description, json.loads(os.environ["KVIK_BOOTSTRAP_LAUNCH"]))

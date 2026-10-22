@@ -77,7 +77,11 @@ while True:
         with self.assertRaises(dataclasses.FrozenInstanceError):
             request.cwd = Path('/')
         result = run_owned(request)
-        self.assertEqual(b'ONLY_DECLARED=$(literal)\nvalue\n', result.stdout)
+        # Only the explicit value and the reserved ownership transport capability
+        # reach the command. The latter is regenerated per guardian, not ambient.
+        declared, marker = result.stdout.split(b'KVIK_PROCESS_BARRIER_V1=')
+        self.assertEqual(b'ONLY_DECLARED=$(literal)\nvalue\n', declared)
+        self.assertRegex(marker.decode(), r'^6:[0-9]+:[0-9]+\n$')
         literal = '$(touch SHOULD_NOT_EXIST); spaces\nsecond line'
         result = run_owned(self.request('import os,sys,json;print(json.dumps([os.getcwd(),sys.argv[1:]]))',
             argv=(PYTHON, '-I', '-S', '-c', 'import os,sys,json;print(json.dumps([os.getcwd(),sys.argv[1:]]))', literal)))

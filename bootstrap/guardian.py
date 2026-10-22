@@ -10,6 +10,17 @@ import signal
 import subprocess
 import sys
 import time
+import importlib.util
+from pathlib import Path
+
+# -I -S intentionally excludes the checkout from sys.path.
+sys.dont_write_bytecode = True
+if __package__:
+    from bootstrap import process_barrier as barrier
+else:
+    _spec = importlib.util.spec_from_file_location("kvik_process_barrier", Path(__file__).with_name("process_barrier.py"))
+    barrier = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(barrier)
 
 
 def main():
@@ -18,6 +29,7 @@ def main():
     command = sys.argv[4:]
     interrupted = False
     process = None
+    completion = None
     outcome = {"exitCode": 125, "timedOut": False, "cancelled": False}
 
     def stop(_number, _frame):
@@ -30,13 +42,15 @@ def main():
     try:
         # Fail before starting anything on a Python/platform without non-reaping wait.
         flags = os.WEXITED | os.WNOHANG | os.WNOWAIT
+        barrier.check()
         if not command or timeout <= 0:
             raise ValueError("Invalid bootstrap guardian command/timeout")
         if select.select([owner], [], [], 0)[0]:
             outcome.update(exitCode=130, cancelled=True)
         else:
             # close_fds prevents compiler descendants from retaining the ownership pipe.
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, close_fds=True, start_new_session=True)
+            completion = barrier.Completion()
+            process = completion.spawn(command, environment=os.environ, stdin=subprocess.DEVNULL, start_new_session=True)
             deadline = time.monotonic() + timeout
             while True:
                 info = os.waitid(os.P_PID, process.pid, flags)
@@ -55,20 +69,16 @@ def main():
         # huge filenames/messages, with full details retained in the compiler log.
         outcome.update(exitCode=125, error=str(failure)[:128])
     finally:
-        if process is not None:
-            for number in (signal.SIGTERM, signal.SIGKILL):
-                try:
-                    os.killpg(process.pid, number)
-                except ProcessLookupError:
-                    pass
-                except PermissionError:
-                    # Darwin returns EPERM for a group containing only zombies.
-                    # Credential-changing/privileged compiler children are unsupported.
-                    if os.waitid(os.P_PID, process.pid, flags) is None:
-                        raise
-                if number == signal.SIGTERM:
-                    time.sleep(0.2)
-            process.wait()
+        try:
+            if process is not None:
+                barrier.clean_group(process, completion)
+            elif completion is not None:
+                completion.close()
+        except BaseException:
+            barrier.poison()
+            os.close(owner)
+            os.close(result)
+            raise
         try:
             os.write(result, json.dumps(outcome, separators=(",", ":")).encode() + b"\n")
         except BrokenPipeError:

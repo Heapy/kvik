@@ -14,7 +14,7 @@ import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
 from bootstrap.pin_tools import host_identity, tool_roots
-from bootstrap import jvm_worker, native_libraries, source_graph
+from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -244,7 +244,7 @@ def launch_descriptor(args, key, executable):
     for flag, enabled in (("--offline", args.offline), ("--no-build", args.no_build)):
         if enabled:
             arguments.append(flag)
-    value = {"schemaVersion": 1, "sourceRoot": str(ROOT),
+    value = {"schemaVersion": 1, "processOwnershipVersion": 1, "sourceRoot": str(ROOT),
              "python": str(Path(sys.executable).resolve()), "launcher": str(ROOT / "kvik"),
              "bootstrapArguments": arguments, "composition": key, "runtime": str(executable)}
     encoded = canonical(value)
@@ -255,6 +255,7 @@ def launch_descriptor(args, key, executable):
 
 def run_owned(command, environment, log, timeout=300):
     """Pipe lifetime owns the compiler even when the launcher receives SIGKILL."""
+    environment, inherited = process_barrier.inherited(environment)
     process = None
     handlers = {}
     owner_read, owner_write = os.pipe()
@@ -263,12 +264,25 @@ def run_owned(command, environment, log, timeout=300):
     def interrupted(number, _frame):
         raise BootstrapInterrupted(f"Bootstrap interrupted by signal {number}")
 
+    def read_result(code, encoded):
+        try:
+            outcome = json.loads(encoded)
+            if (code != 0 or not isinstance(outcome, dict) or
+                    set(outcome) not in ({"exitCode", "timedOut", "cancelled"}, {"exitCode", "timedOut", "cancelled", "error"}) or
+                    type(outcome["exitCode"]) is not int or not 0 <= outcome["exitCode"] <= 255 or
+                    type(outcome["timedOut"]) is not bool or type(outcome["cancelled"]) is not bool):
+                raise ValueError("Invalid guardian result")
+            return outcome
+        except (ValueError, TypeError, KeyError):
+            process_barrier.poison()
+            raise RuntimeError("Bootstrap guardian cleanup was not verified") from None
+
     try:
         for number in (signal.SIGINT, signal.SIGTERM):
             handlers[number] = signal.signal(number, interrupted)
-        process = subprocess.Popen([sys.executable, "-I", "-S", str(ROOT / "bootstrap/guardian.py"),
+        process = subprocess.Popen([sys.executable, "-I", "-S", "-B", str(ROOT / "bootstrap/guardian.py"),
             str(owner_read), str(result_write), str(timeout), *map(str, command)], env=environment,
-            stdout=log, stderr=subprocess.STDOUT, start_new_session=True, pass_fds=(owner_read, result_write))
+            stdout=log, stderr=subprocess.STDOUT, start_new_session=True, pass_fds=(owner_read, result_write, *inherited))
         os.close(owner_read)
         owner_read = None
         os.close(result_write)
@@ -276,21 +290,33 @@ def run_owned(command, environment, log, timeout=300):
         code = process.wait(timeout=timeout + 5)
         with os.fdopen(result_read, "rb") as result:
             result_read = None
-            outcome = json.loads(result.read(4096))
-        if code or outcome["exitCode"]:
+            encoded = result.read(4096)
+        outcome = read_result(code, encoded)
+        if outcome["exitCode"]:
             raise RuntimeError(f"Native compiler failed: {outcome}; see retained bootstrap log")
     finally:
+        primary_failure = sys.exc_info()[1]
         # Repeated terminal signals must not interrupt reaping the guardian.
         for number in handlers:
             signal.signal(number, signal.SIG_IGN)
         os.close(owner_write)
-        if process is not None:
-            process.wait()
-        for descriptor in (owner_read, result_read, result_write):
-            if descriptor is not None:
-                os.close(descriptor)
-        for number, handler in handlers.items():
-            signal.signal(number, handler)
+        try:
+            if process is not None:
+                code = process.wait()
+                if result_read is not None:
+                    # Interruption may bypass the ordinary read, but never the
+                    # cleanup acknowledgement check or upstream poison.
+                    try:
+                        read_result(code, os.read(result_read, 4096))
+                    except RuntimeError:
+                        if primary_failure is None:
+                            raise
+        finally:
+            for descriptor in (owner_read, result_read, result_write):
+                if descriptor is not None:
+                    os.close(descriptor)
+            for number, handler in handlers.items():
+                signal.signal(number, handler)
 
 
 def build(args, recipe, selected, lock, key, destination):
@@ -539,7 +565,7 @@ def main():
         else:
             os.environ["KVIK_BOOTSTRAP_OFFLINE"] = "1" if args.offline else "0"
             os.environ["KVIK_BOOTSTRAP_LAUNCH"] = description
-            os.execv(executable, [str(executable), *command])
+            process_barrier.exec_runtime(executable, [str(executable), *command])
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, BootstrapInterrupted) as failure:
         emit("bootstrap-error", message=str(failure))
         raise SystemExit(130 if isinstance(failure, BootstrapInterrupted) else 2)

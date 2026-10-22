@@ -11,6 +11,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT))
 from bootstrap.launcher import BootstrapInterrupted, run_owned
 
