@@ -26,10 +26,11 @@ class BridgeUnitTest {
         val d = digest
         assertNotEquals(jvmWorkerIdentity(d, d, d, d), jvmWorkerIdentity(d, Sha256.digest(byteArrayOf(1)), d, d))
         assertFailsWith<IllegalArgumentException> { JvmCompilation("m", listOf(LogicalPath("A.kt")), emptyList(), LogicalPath("classes"), jvmTarget = 8) }
-        assertFailsWith<IllegalArgumentException> { JvmTestSelection("m", emptyList(), emptyList(), listOf("unknown")) }
+        assertFailsWith<IllegalArgumentException> { JvmTestSelection("m", listOf(LogicalPath("runtime.jar")), emptyList(), listOf("unknown")) }
+        assertFailsWith<IllegalArgumentException> { JvmTestSelection("m", emptyList(), listOf("fixture.Test")) }
         val identities = jvmIdentities.associateWith { d }
         assertFailsWith<IllegalArgumentException> { jvmCompileAction(JvmCompilation("m", listOf(LogicalPath("A.kt")), emptyList(), LogicalPath("classes")), TreeManifest(emptyList()), d, identities) }
-        val test = jvmTestAction(JvmTestSelection("m", emptyList(), emptyList()), TreeManifest(emptyList()), d, identities)
+        val test = jvmTestAction(JvmTestSelection("m", listOf(LogicalPath("runtime.jar")), emptyList()), TreeManifest(listOf(FileEntry(LogicalPath("runtime.jar"), d))), d, identities)
         assertEquals(CachePolicy.NEVER, test.cachePolicy)
     }
 
@@ -55,7 +56,10 @@ class BridgeUnitTest {
             override fun close() = Unit
         }
         val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
-        val action = jvmTestAction(JvmTestSelection("m", emptyList(), listOf("fixture.Test")), TreeManifest(emptyList()), digest, identities)
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("runtime.jar"), store.put(byteArrayOf()))))
+        val action = jvmTestAction(JvmTestSelection("m", listOf(LogicalPath("runtime.jar")), listOf("fixture.Test")), inputs, digest, identities)
+        val emptyClasspath = JsonValue.Object(action.parameters.values + ("classpath" to emptyList<JsonValue>().json()))
+        assertFailsWith<IllegalArgumentException> { executor.start(root.runId, "empty-classpath", action.copy(parameters = emptyClasspath)) }
         assertFailsWith<IllegalArgumentException> { executor.start(root.runId, "unsafe-args", action.copy(arguments = listOf("arbitrary"))) }
         assertFailsWith<IllegalArgumentException> { executor.start(root.runId, "unsafe-env", action.copy(environment = mapOf("JAVA_TOOL_OPTIONS" to "unsafe"))) }
         assertEquals(0, launches)
@@ -63,6 +67,22 @@ class BridgeUnitTest {
         assertEquals(1, launches)
         assertEquals(VerificationStatus.CANCELLED, executor.observations.getValue("cancelled").tests!!.status)
         assertEquals(0, executor.observations.getValue("cancelled").tests!!.counts.executed)
+    }
+
+    @Test fun incompleteCannotConcealFailedTestsOrContainerFailures() {
+        fun record(status: String, exit: Int, tests: List<TestResult>, counts: TestCounts, diagnostics: List<Diagnostic>) = obj(
+            "schemaVersion" to 1.json(), "requestId" to "request".json(), "exitCode" to exit.json(), "status" to status.json(),
+            "tests" to tests.map { it.toJson() }.json(), "testCounts" to counts.toJson(), "diagnostics" to diagnostics.map { it.toJson() }.json())
+        val failed = listOf(TestResult("failed-id", "m", "jvm", TestStatus.FAILED))
+        val counts = TestCounts(1, 1, 1, 0, true)
+        assertFailsWith<IllegalArgumentException> { parseTestResult(record("incomplete", 3, failed, counts, emptyList()), "request", "m", 3) }
+        assertEquals(VerificationStatus.FAILED, parseTestResult(record("failed", 1, failed, counts, emptyList()), "request", "m", 1).report.status)
+        val containerFailure = listOf(Diagnostic("KVIK_TEST_CONTAINER_FAILURE", DiagnosticCategory.TEST, "setup failed"))
+        assertFailsWith<IllegalArgumentException> { parseTestResult(record("incomplete", 3, emptyList(), TestCounts(1, 0, 0, 0, false), containerFailure), "request", "m", 3) }
+        val incomplete = listOf(Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST, "no tests"))
+        val zero = TestCounts(0, 0, 0, 0, true)
+        assertEquals(VerificationStatus.INCOMPLETE, parseTestResult(record("incomplete", 3, emptyList(), zero, incomplete), "request", "m", 3).report.status)
+        assertFailsWith<IllegalArgumentException> { parseTestResult(record("failed", 1, emptyList(), zero, incomplete), "request", "m", 1) }
     }
 
     @Test fun compilerResultRequiresMatchingRequestExitAndDeclaredOutputs() {

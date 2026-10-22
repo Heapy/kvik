@@ -63,6 +63,7 @@ data class JvmCompilation(
 data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter")) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
+        require(classpath.isNotEmpty()) { "Test runtime classpath must be nonempty" }
         require(classpath.distinct().size == classpath.size && classes.distinct().size == classes.size)
         require(classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_.$]*")) })
         require(engines.isNotEmpty() && engines.distinct().size == engines.size && engines.all { it in setOf("junit-jupiter", "kotest") })

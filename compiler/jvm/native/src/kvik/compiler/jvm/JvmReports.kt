@@ -26,10 +26,13 @@ internal fun parseTestResult(value: JsonValue, requestId: String, module: String
     require(counts.executed == tests.count { it.status != TestStatus.SKIPPED } && counts.failed == tests.count { it.status == TestStatus.FAILED } && counts.skipped == tests.count { it.status == TestStatus.SKIPPED }) { "Test counts do not match concrete test records" }
     require(!counts.discoveryComplete || counts.discovered == tests.size) { "Complete discovery has unreported tests" }
     val diagnostics = d.getValue("diagnostics").arrayValue().map(Diagnostic::fromJson)
+    // TestWorker chooses failures before incomplete execution and only adds this diagnostic
+    // after deciding that neither concrete tests nor containers/infrastructure failed.
+    val failureDiagnostic = diagnostics.any { it.code != "KVIK_TEST_INCOMPLETE" || it.category != DiagnosticCategory.TEST }
     val status = when (d.getValue("status").stringValue()) {
         "passed" -> VerificationStatus.PASSED.also { require(exitCode == 0 && counts.satisfiesExecution && diagnostics.isEmpty()) { "Inconsistent passing test result" } }
-        "failed" -> VerificationStatus.FAILED.also { require(exitCode == 1 && (counts.failed > 0 || diagnostics.isNotEmpty())) { "Inconsistent failed test result" } }
-        "incomplete" -> VerificationStatus.INCOMPLETE.also { require(exitCode == 3 && !counts.satisfiesExecution) { "Inconsistent incomplete test result" } }
+        "failed" -> VerificationStatus.FAILED.also { require(exitCode == 1 && (counts.failed > 0 || failureDiagnostic)) { "Inconsistent failed test result" } }
+        "incomplete" -> VerificationStatus.INCOMPLETE.also { require(exitCode == 3 && counts.failed == 0 && !failureDiagnostic && !counts.satisfiesExecution) { "Inconsistent incomplete test result" } }
         else -> error("Unsupported worker test status")
     }
     return ParsedTestResult(JvmTestReport(tests, counts, status), diagnostics)
