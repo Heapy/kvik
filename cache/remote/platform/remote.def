@@ -1,0 +1,4 @@
+headers = remote.h
+package = kvik.cache.remote.platform
+staticLibraries = libkvik-remote.a
+linkerOpts = -lcurl
