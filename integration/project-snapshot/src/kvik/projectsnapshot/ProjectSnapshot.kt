@@ -33,6 +33,7 @@ class ProjectInputSnapshot internal constructor(
     lockBytes: ByteArray,
     val inputs: TreeManifest,
     val fingerprint: Digest,
+    private val parsedConfiguration: ProjectConfiguration? = null,
 ) {
     private val config = configurationBytes.copyOf()
     private val lock = lockBytes.copyOf()
@@ -40,7 +41,7 @@ class ProjectInputSnapshot internal constructor(
     val lockBytes: ByteArray get() = lock.copyOf()
     val configuration: ProjectConfiguration get() {
         require(selection != SnapshotSelection.StandaloneScript) { "Snapshot contains a standalone companion" }
-        return parseProjectConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
+        return parsedConfiguration ?: parseProjectConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
     }
     val standaloneConfiguration: StandaloneScriptConfiguration get() {
         require(selection == SnapshotSelection.StandaloneScript) { "Snapshot contains a project" }
@@ -58,7 +59,9 @@ sealed interface SnapshotCapture {
  * stable through use; changing files/directories are detected where observed. ABA edits and edits
  * after the final observation are not excluded. Call freshness after execution before claiming current.
  */
-class NativeProjectSnapshotter(private val root: String, private val content: ContentStore, private val limits: SnapshotLimits = SnapshotLimits()) {
+class NativeProjectSnapshotter(private val root: String, private val content: ContentStore, private val limits: SnapshotLimits = SnapshotLimits(),
+    private val parseConfiguration: (ByteArray) -> ProjectConfiguration = { parseProjectConfiguration(parseJson(it.decodeToString(throwOnInvalidSequence = true))) },
+) {
     init { physicalDirectory(root) }
 
     fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project): SnapshotCapture {
@@ -92,7 +95,7 @@ class NativeProjectSnapshotter(private val root: String, private val content: Co
     }
 
     private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean, expectedConfiguration: Digest?, selection: SnapshotSelection): ProjectInputSnapshot =
-        Observation(root, content.takeIf { publish }, limits).capture(configurationPath, lockPath, expectedConfiguration, selection)
+        Observation(root, content.takeIf { publish }, limits, parseConfiguration).capture(configurationPath, lockPath, expectedConfiguration, selection)
 }
 
 private fun physicalDirectory(path: String) {
@@ -115,7 +118,8 @@ private fun status(path: String): Status? = memScoped {
     value.status()
 }
 
-private class Observation(private val root: String, private val content: ContentStore?, private val limits: SnapshotLimits) {
+private class Observation(private val root: String, private val content: ContentStore?, private val limits: SnapshotLimits,
+    private val parseConfiguration: (ByteArray) -> ProjectConfiguration) {
     private val identities = mutableMapOf<Pair<ULong, ULong>, String>()
     private val bytes = mutableMapOf<String, ByteArray>()
     private val entries = linkedMapOf<LogicalPath, FileEntry>()
@@ -135,10 +139,14 @@ private class Observation(private val root: String, private val content: Content
         if (expectedConfiguration != null && Sha256.digest(configurationBytes) != expectedConfiguration)
             throw SnapshotRace("Configuration changed after input/store preflight")
         val lockBytes = readFile(lockPath, minOf(limits.maxFileBytes, 16 * 1024 * 1024), publish = false)
+        var configuration: ProjectConfiguration? = null
         val plan = try {
-            val document = parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true))
-            if (selection == SnapshotSelection.StandaloneScript) standaloneScriptInputPlan(parseStandaloneScriptConfiguration(document))
-            else projectInputPlan(parseProjectConfiguration(document), selection)
+            if (selection == SnapshotSelection.StandaloneScript) standaloneScriptInputPlan(parseStandaloneScriptConfiguration(
+                parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true))))
+            else {
+                configuration = parseConfiguration(configurationBytes)
+                projectInputPlan(configuration!!, selection)
+            }
         } catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Invalid configuration") }
         val roots = plan.directories
         val plugins = plan.files
@@ -170,7 +178,7 @@ private class Observation(private val root: String, private val content: Content
         val selectedIdentity = JsonValue.Object(identity.objectValue() +
             (if (plan.scriptRoots.isEmpty()) emptyMap() else mapOf("scriptRoots" to plan.scriptRoots.map { it.value.json() }.json())) +
             (if (selection == SnapshotSelection.Project) emptyMap() else mapOf("selection" to selection.toJson())))
-        return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree, Sha256.digest(selectedIdentity))
+        return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree, Sha256.digest(selectedIdentity), configuration)
     }
 
     private fun requireDeclared(path: LogicalPath) {

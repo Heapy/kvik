@@ -21,7 +21,9 @@ internal fun currentDirectory(): String = memScoped {
         getcwd(buffer, 4096u)?.toKString() ?: error("Cannot read working directory: errno=$errno")
 }
 
-internal fun readProject(projectPath: String): ProjectFile {
+internal fun readProject(projectPath: String, parse: (ByteArray) -> ProjectConfiguration = {
+    parseProjectConfiguration(parseJson(it.decodeToString(throwOnInvalidSequence = true)))
+}): ProjectFile {
     val absolute = if (projectPath.startsWith('/')) projectPath else "${currentDirectory()}/$projectPath"
     NativeFiles.validateAbsolute(absolute)
     val parent = absolute.substringBeforeLast('/').ifEmpty { "/" }
@@ -31,7 +33,7 @@ internal fun readProject(projectPath: String): ProjectFile {
     NativeFiles.ensureDirectory(root, create = false)
     val name = LogicalPath(absolute.substringAfterLast('/'))
     val bytes = NativeFiles.read("$root/${name.value}", 4 * 1024 * 1024)
-    return ProjectFile(root, name, bytes, parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true))))
+    return ProjectFile(root, name, bytes, parse(bytes))
 }
 
 internal fun projectPath(root: String, value: String): String = (if (value.startsWith('/')) value else "$root/${LogicalPath(value).value}").also {

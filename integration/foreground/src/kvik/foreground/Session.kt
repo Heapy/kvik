@@ -51,6 +51,7 @@ class ForegroundSession(
     private val applicationTarget: String? = null,
     initialIntents: List<Operation>? = null,
     preparedApplication: ApplicationReady? = null,
+    private val operations: SessionOperations? = null,
 ) {
     init {
         require(!keys || !jsonControls); require(inheritedTerminalLease == null || keys)
@@ -59,7 +60,8 @@ class ForegroundSession(
     }
     private val pending = PendingOperation(initial, mode, initialIntents)
     private val applications = if (mode == SessionMode.APPLICATION) ApplicationLifecycle(host, directory, workingDirectory, arguments,
-        checkNotNull(applicationModule), checkNotNull(applicationTarget), ::event) else null
+        checkNotNull(applicationModule), checkNotNull(applicationTarget),
+        startProcess = operations?.let { it::start } ?: host::start, event = ::event) else null
     private var resumePrepared = preparedApplication
     private var replacementAttempt: Pair<Digest, Long>? = null
     private var observedRuntime: String? = null
@@ -120,9 +122,10 @@ class ForegroundSession(
         val command = if (kind == null) listOf(runtime, "snapshot-query") + snapshotArguments
             else listOf(executable, kind.command) + arguments + listOf("--runs", "$path/runs", "--offline")
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
-        val process = host.start(ProcessRequest(command, workingDirectory,
+        val request = ProcessRequest(command, workingDirectory,
             mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to "1"),
-            "$path/stdout.jsonl", "$path/stderr.log", if (kind == null) 60_000 else 30 * 60_000))
+            "$path/stdout.jsonl", "$path/stderr.log", if (kind == null) 60_000 else 30 * 60_000)
+        val process = if (kind == null || operations == null) host.start(request) else operations.start(request)
         return Child(process, path, revision, kind, runtime)
     }
     private fun control(value: Control) {
@@ -344,7 +347,7 @@ class ForegroundSession(
                     }
                     flushOutput()
                     if (output.isNotEmpty() && now() - handoffStarted >= 1000) stop("output-backpressure")
-                    if (closing == null && output.isEmpty() && kvik_interrupt_requested() == 0) {
+                    if (closing == null && output.isEmpty() && kvik_interrupt_requested() == 0 && operations?.drain() != false) {
                         try {
                             check(fsync(journal) == 0) { "Cannot persist restart boundary" }
                             checkNotNull(restart) { "Missing runtime replacement boundary" }.invoke(SessionResume(nextSessionDirectory!!,
@@ -363,7 +366,7 @@ class ForegroundSession(
                     }
                 }
                 flushOutput()
-                if (closing != null && operation == null && scanner == null && sources?.busy != true && applications?.busy != true) break
+                if (closing != null && operation == null && scanner == null && sources?.busy != true && applications?.busy != true && operations?.drain() != false) break
                 usleep(10_000u)
             }
             event("session-finished", obj("reason" to closing!!.json()))
@@ -374,7 +377,9 @@ class ForegroundSession(
             primaryFailure = failure
             throw failure
         } finally {
-            closeSessionResources(primaryFailure, { host.close() }, {
+            closeSessionResources(primaryFailure, {
+                closeSessionResources(null, { operations?.close() }, {}, { host.close() })
+            }, {
                 if (journal >= 0) {
                     val descriptor = journal; journal = -1
                     val syncResult = fsync(descriptor); val syncError = errno

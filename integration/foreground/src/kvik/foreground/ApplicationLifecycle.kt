@@ -12,6 +12,7 @@ internal class ApplicationLifecycle(
     private val arguments: List<String>,
     private val module: String,
     private val target: String,
+    private val startProcess: (ProcessRequest) -> OwnedProcess = host::start,
     private val event: (String, JsonValue.Object) -> Unit,
 ) {
     private data class Child(
@@ -85,7 +86,7 @@ internal class ApplicationLifecycle(
             "--token", token.toJson().canonical()) + if (prepared == null) arguments + listOf("--runs", "$path/runs", "--offline")
             else listOf("--run", prepared.preparationDirectory, "--descriptor", prepared.descriptor.toJson().canonical())
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
-        val process = host.start(ProcessRequest(command, workingDirectory,
+        val process = startProcess(ProcessRequest(command, workingDirectory,
             mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to "1"),
             "$path/stdout.jsonl", "$path/stderr.log", 0))
         candidate = Child(process, path, gate, token, revision, generation, composition, replacement, prepared)

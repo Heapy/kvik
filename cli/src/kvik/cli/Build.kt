@@ -40,15 +40,16 @@ internal data class BuildOutcome(val status: ExitStatus, val preparation: Prepar
 internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
     executeBuild(args, if (test) ProjectMode.TEST else ProjectMode.BUILD).status
 
-internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true): BuildOutcome =
-    executeBuildOptions(buildOptions(args), mode, ownInterrupts)
+internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null): BuildOutcome =
+    executeBuildOptions(buildOptions(args), mode, ownInterrupts, sessionCache = sessionCache)
 
 internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile): BuildOutcome = executeBuildOptions(
     BuildOptions(options.forFile(file), emptySet(), setOf("jvm"), checkNotNull(options.tools), options.runs, options.budget),
     ProjectMode.BUILD, true, file, options.arguments)
 
 private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInterrupts: Boolean,
-                                scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList()): BuildOutcome {
+                                scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList(),
+                                sessionCache: BuildSessionCache? = null): BuildOutcome {
     val test = mode == ProjectMode.TEST
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
         "Application preparation requires exactly one --module and --target"
@@ -58,7 +59,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.TEST -> "test"
         ProjectMode.APPLICATION -> "prepare-application"
     }
-    val project = if (scriptFile == null) readProject(options.project.project) else null
+    val project = if (scriptFile == null) {
+        if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
+    } else null
     val root = scriptFile?.root ?: checkNotNull(project).root
     val name = scriptFile?.name ?: checkNotNull(project).name
     val sourceBytes = scriptFile?.bytes ?: checkNotNull(project).bytes
@@ -74,7 +77,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     if (scriptFile == null) requireDisjointStore(checkNotNull(project), storePath, lockPath, toolsPath)
     else requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
     val content = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes)
-    val snapshots = NativeProjectSnapshotter(root, content)
+    val snapshots = if (sessionCache == null) NativeProjectSnapshotter(root, content)
+        else NativeProjectSnapshotter(root, content, parseConfiguration = sessionCache::configuration)
     val snapshot = when (val captured = snapshots.capture(name, lockPath, Sha256.digest(sourceBytes), selection)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
@@ -145,9 +149,11 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             toolIdentities = tools.verify(toolTargets)
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
-                graph = if (scriptFile == null) projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities,
-                    graphRequest) else
+                graph = if (scriptFile != null)
                     scriptActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities.getValue("jvm"), ScriptGraphRequest(scriptFile.scriptName, scriptArguments))
+                else if (sessionCache != null) sessionCache.graph(effective, lock, snapshot.inputs, snapshot.fingerprint, snapshot.lockBytes,
+                    composition, toolIdentities, Sha256.digest(tools.document), graphRequest)
+                else projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities, graphRequest)
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())

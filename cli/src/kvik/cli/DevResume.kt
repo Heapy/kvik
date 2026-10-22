@@ -75,7 +75,8 @@ internal fun resumeDev(args: List<String>): Int {
             state.previousDirectory, resumed = true, restart = ::replaceSession, keys = state.terminalLease != null, inheritedTerminalLease = state.terminalLease,
             mode = state.mode, currentComposition = launch.composition, applicationModule = state.applicationModule,
             applicationTarget = state.applicationTarget, initialIntents = if (state.mode == SessionMode.APPLICATION) state.pendingIntents else null,
-            preparedApplication = state.preparedApplication).run() }
+            preparedApplication = state.preparedApplication,
+            operations = OwnedSessionOperations(host, state.directory, state.workingDirectory)).run() }
         catch (failure: Exception) { throw RunStreamFailure("Resumed foreground session failed: ${failure.message}") }
     }
 }

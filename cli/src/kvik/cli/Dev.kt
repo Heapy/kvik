@@ -73,7 +73,8 @@ internal fun devCommand(args: List<String>): Int {
             applicationModule = if (mode == SessionMode.APPLICATION) options.modules.single() else null,
             applicationTarget = if (mode == SessionMode.APPLICATION) options.targets.single() else null,
             initialWatched = if (mode == SessionMode.APPLICATION) Operation.APPLICATION else initial,
-            initialIntents = if (mode == SessionMode.APPLICATION && initial == Operation.TEST) listOf(Operation.TEST, Operation.APPLICATION) else null).let { foreground ->
+            initialIntents = if (mode == SessionMode.APPLICATION && initial == Operation.TEST) listOf(Operation.TEST, Operation.APPLICATION) else null,
+            operations = OwnedSessionOperations(host, directory, project.root)).let { foreground ->
                 try { foreground.run() }
                 catch (failure: Exception) { throw RunStreamFailure("Foreground session failed: ${failure.message}") }
             }

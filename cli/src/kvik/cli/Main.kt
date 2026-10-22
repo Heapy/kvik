@@ -78,6 +78,7 @@ private fun command(args: Array<String>) {
         "stage-application" -> exitProcess(stageApplicationCommand(args.drop(1)))
         "stage-prepared" -> exitProcess(stagePreparedApplicationCommand(args.drop(1)))
         "dev" -> exitProcess(devCommand(args.drop(1)))
+        "session-coordinator" -> exitProcess(sessionCoordinatorCommand(args.drop(1)))
         "snapshot-query" -> println(snapshotQueryCommand(args.drop(1)).canonical())
         "verification" -> exitProcess(verificationCommand(args.drop(1)).code)
         "explain" -> println(explainCommand(args.drop(1)).canonical())
