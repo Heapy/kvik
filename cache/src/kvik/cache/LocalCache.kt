@@ -2,6 +2,9 @@ package kvik.cache
 
 import kvik.core.*
 
+/** Same action identity produced different output identities: not a recoverable cache outage. */
+class CacheConflictFailure(message: String) : Exception(message)
+
 /** Whole-buffer prototype, bounded to 64 MiB per blob. */
 class NativeContentStore(
     val root: String,
@@ -105,7 +108,7 @@ class NativeActionCache(
                     NativeFiles.read(path, maxRecordBytes) else null
                 val oldRecord = try { oldBytes?.let { decodeRecord(it, snapshot.key) } } catch (_: Exception) { null }
                 if (oldRecord != null) {
-                    if (oldRecord.outputs.toJson() != snapshot.outputs.toJson()) throw CacheFailure("Conflicting outputs for action ${snapshot.key.hash}")
+                    if (oldRecord.outputs.toJson() != snapshot.outputs.toJson()) throw CacheConflictFailure("Conflicting outputs for action ${snapshot.key.hash}")
                     NativeFiles.syncDirectory(root)
                     return@withLock
                 }
