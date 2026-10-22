@@ -207,6 +207,26 @@
       ],
       "additionalProperties": false
     },
+    "nativeTestSettings": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "const": "kotest"
+        },
+        "kspVersion": {
+          "const": "2.3.12"
+        },
+        "processor": {
+          "const": "io.kotest:kotest-framework-symbol-processor:6.2.5"
+        }
+      },
+      "required": [
+        "engine",
+        "kspVersion",
+        "processor"
+      ],
+      "additionalProperties": false
+    },
     "target": {
       "type": "object",
       "properties": {
@@ -2319,26 +2339,6 @@
         "selections",
         "artifacts",
         "metadata"
-      ],
-      "additionalProperties": false
-    },
-    "nativeTestSettings": {
-      "type": "object",
-      "properties": {
-        "engine": {
-          "const": "kotest"
-        },
-        "kspVersion": {
-          "const": "2.3.12"
-        },
-        "processor": {
-          "const": "io.kotest:kotest-framework-symbol-processor:6.2.5"
-        }
-      },
-      "required": [
-        "engine",
-        "kspVersion",
-        "processor"
       ],
       "additionalProperties": false
     }
