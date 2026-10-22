@@ -61,10 +61,35 @@ unchanged. Retained commands, exit statuses and diagnostics are in
 corrected test expectations for the existing absent-domain and query argument
 length diagnostics; no production change was needed.
 
-Successful public Native kotaml resolution and its 1,880-test gate remain open.
-The composed resolver reached atomicfu's unsupported `prefers` version field
-(`case-pkxxb5hr` in the Native CLI worktree); bounded preference semantics are
-being implemented separately. The complete 47-command CLI harness additionally
-requires successful lock replay, canonical configuration identity, exact scoped
-query corrections and changed/missing-policy rejection. Those positive and
-lock-dependent checks have not passed yet.
+After integrating [bounded preference semantics](k05-preferred-versions.md),
+composition `178653da1e6f33e99813865c52bef298b4476bd65982675ed0c7a7bc3ae8bace`
+built in 39,338 ms. Its executable SHA-256 is
+`4980b82e69b02847ffbc6e2bb18fb5a35f006fab3af96229c30863620497309a`
+(4,759,032 bytes). Public Native kotaml resolution now passes, including exact
+API/runtime and KSP artifact sets, all 12 explicit metadata corrections, offline
+check-lock and byte-identical offline re-resolution. Evidence is in
+`.kvik/tests/kotaml-native-cli/case-_4es_3sp`.
+
+The complete 47-command CLI harness also passed against that runtime. Four
+commands succeeded and 43 rejected their intended invalid policy or unsupported
+option. The complete query contains 14 resolution domains and exactly the 12
+scoped correction records, each with a verified canonical rule digest. Reordered
+JSON arguments preserve configuration identity; changed/missing policies fail.
+All before/after inventory bytes match. Retained commands, outputs and inventories
+are in `.kvik/tests/metadata-exclusions-cli/case-br4w562g`.
+
+This gate uses an isolated resolved-project copy, `resolved-04esbr70`, a sibling
+of `case-br4w562g` under `.kvik/tests/metadata-exclusions-cli`.
+`/private/tmp/kvik-copy-resolved-native.py` copies only source,
+configuration and policy files plus the 81 immutable blobs referenced by the
+successful lock, rehashes them, and retains `copy-receipt.json`. It neither reads
+mutable action outputs nor changes the concurrent full Native test run. Public
+execution of all 1,880 Native tests remains a separate gate.
+
+Independent retained-evidence review passed all 47 output schemas and expected
+exits, reconstructed the effective configuration identity, verified all 12 rules,
+rehashed 81 lock-referenced blobs in both isolated copies and checked all 174
+inventory entries plus the runtime/composition identity. The audit is retained
+as `/private/tmp/kvik-public-metadata-audit.py` and `.json`. Inventory equality
+establishes unchanged retained state; it is not a trace proving no transient
+filesystem writes occurred.
