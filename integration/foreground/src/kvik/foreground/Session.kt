@@ -9,6 +9,11 @@ import kvik.execution.platform.*
 import platform.posix.*
 import kotlin.time.TimeSource
 
+/** Bound diagnostic UTF-16 units without splitting a valid supplementary code point. */
+internal fun boundedObservationMessage(value: String): String = value.take(512).let {
+    if (it.isNotEmpty() && it.last() in '\uD800'..'\uDBFF') it.dropLast(1) else it
+}
+
 /** Each cleanup boundary runs even when another fails; the original session failure remains primary. */
 internal fun closeSessionResources(primary: Throwable?, closeOwned: () -> Unit, closeJournal: () -> Unit, restoreTerminal: () -> Unit) {
     var cleanup: Throwable? = null
@@ -205,10 +210,10 @@ class ForegroundSession(
             if ((firstObservation || changed) && fingerprint == null) {
                 val retained = obj("schemaVersion" to 1.json(), "exitCode" to result.exitCode.json(),
                     "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(),
-                    "error" to (observationError?.take(512)?.json() ?: JsonValue.Null))
+                    "error" to (observationError?.let(::boundedObservationMessage)?.json() ?: JsonValue.Null))
                 NativeFiles.writeNew("${child.path}/observation-result.json", retained.canonical().encodeToByteArray())
                 event("diagnostic", obj("code" to "KVIK_SESSION_OBSERVATION".json(),
-                    "message" to "Snapshot unavailable: exit=${result.exitCode}, timedOut=${result.timedOut}; evidence=${child.path}".take(512).json()))
+                    "message" to boundedObservationMessage("Snapshot unavailable: exit=${result.exitCode}, timedOut=${result.timedOut}; evidence=${child.path}").json()))
             }
             if (!observedOnce || changed) {
                 observed = fingerprint; observedOnce = true; revision++

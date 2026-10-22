@@ -6,6 +6,26 @@ import kvik.execution.NativeRunDirectory
 import kotlin.test.*
 
 class ApplicationLifecycleTest {
+    @Test fun observationMessageTruncationPreservesSupplementaryUnicode() {
+        val supplementary = "\uD83D\uDE00"
+        for (prefixLength in listOf(0, 510, 511, 512, 513)) {
+            val value = "a".repeat(prefixLength) + supplementary + "tail"
+            val bounded = boundedObservationMessage(value)
+            assertTrue(bounded.length <= 512)
+            assertEquals(bounded.json(), parseJson(bounded.json().canonical()))
+            assertEquals(when (prefixLength) {
+                0 -> value
+                510 -> "a".repeat(510) + supplementary
+                511 -> "a".repeat(511)
+                else -> "a".repeat(512)
+            }, bounded)
+        }
+        assertEquals("", boundedObservationMessage(""))
+        val path = "/" + "a".repeat(170) + "/" + "b".repeat(170) + "/" + "c".repeat(168) + supplementary
+        assertEquals(511, boundedObservationMessage(path).length)
+        boundedObservationMessage(path).json().canonical()
+    }
+
     private class Process : OwnedProcess {
         var result: ProcessResult? = null
         var cancels = 0
