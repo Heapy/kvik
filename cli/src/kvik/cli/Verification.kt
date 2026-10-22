@@ -28,7 +28,7 @@ internal fun checkRun(directory: String): CheckedRun {
     NativeFiles.ensureDirectory(directory, create = false)
     fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
     val record = verificationRecordFromJson(document("verification.json"))
-    val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"), setOf("inputSelection"))
+    val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"), setOf("inputSelection", "toolTargets"))
     metadata.requireVersion()
     require(record.runId == directory.substringAfterLast('/')) { "Verification run identity does not match directory" }
     var current = Freshness.INDETERMINATE
@@ -66,7 +66,9 @@ internal fun checkRun(directory: String): CheckedRun {
                 val targets = metadata.getValue("targets").arrayValue().map(JsonValue::stringValue).toSet()
                 require(targets.isNotEmpty() && targets.all { it in setOf("jvm", "macosArm64") }) { "Invalid retained target selection" }
                 val tools = BuildTools(metadata.getValue("toolsPath").stringValue())
-                val verified = tools.verify(targets)
+                val toolTargets = metadata["toolTargets"]?.arrayValue()?.map(JsonValue::stringValue)?.toSet() ?: targets
+                require(toolTargets.containsAll(targets) && toolTargets.all { it in setOf("jvm", "macosArm64") }) { "Invalid retained tool target selection" }
+                val verified = tools.verify(toolTargets)
                     .flatMap { (target, identities) -> identities.map { (name, digest) -> "$target:$name" to digest } }.toMap()
                 if (verified != record.toolchains) { current = Freshness.STALE; reason = "Verified tool identities changed" }
                 else {

@@ -365,6 +365,71 @@ class ProjectGraphTest {
         assertFails { graph(project, files = TreeManifest(files.files.filter { it.path.value != "config.txt" }), request = request(ProjectMode.TEST)).let(::resolved) }
     }
 
+    @Test fun nativeWorkspacePluginBuildsJvmProducersAndKeepsReportsOutOfLinks() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("macosArm64"), setOf("main", "test"),
+            listOf("value=with,comma=andEquals"), listOf(LogicalPath("config.txt")), "example.plugin", "2.4.20",
+            listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val producer = module("producer", listOf(Dependency.Module("base"), Dependency.Module("runtime", DependencyScopeKind.RUNTIME),
+            external("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20")))
+        val runtime = module("runtime", listOf(external("g:private-runtime:1")))
+        val extra = listOf("producer", "runtime").flatMap { id ->
+            listOf("common/Common.kt", "jvm/Actual.kt", "resources/META-INF/services/Registrar").map {
+                FileEntry(LogicalPath("$id/$it"), digest("$id/$it"))
+            }
+        }
+        val files = TreeManifest(snapshot().files + extra + FileEntry(LogicalPath("config.txt"), digest("config")))
+        fun plan(scopes: Set<String> = plugin.scopes): ProjectActionGraph = graph(
+            configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin.copy(scopes = scopes)))),
+            files, request(ProjectMode.TEST, "macosArm64"))
+        val nativeRequest = request(ProjectMode.TEST, "macosArm64")
+        val configured = configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin)))
+        assertEquals(setOf("jvm", "macosArm64"), projectToolTargets(configured.project, nativeRequest))
+        assertEquals(setOf("macosArm64"), projectToolTargets(project.project, nativeRequest))
+        val testOnly = configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin.copy(scopes = setOf("test")))))
+        assertEquals(setOf("macosArm64"), projectToolTargets(testOnly.project, request(ProjectMode.BUILD, "macosArm64")))
+        val planned = plan()
+        val before = resolved(planned)
+        val changed = resolved(planned, "producer:jvm:main")
+        assertTrue("producer:jvm:main" in before && "runtime:jvm:main" in before)
+        assertFalse("producer:macosArm64:main" in before || "runtime:macosArm64:main" in before)
+        assertFalse(JvmCompilation.fromJson(before.getValue("producer:jvm:main").parameters).classpath.any { "runtime" in it.value })
+        for (id in listOf("app:macosArm64:main", "app:macosArm64:test-compile")) {
+            val action = before.getValue(id)
+            val compile = NativeCompilation.fromJson(action.parameters)
+            assertEquals(tools.getValue("macosArm64") + tools.getValue("jvm"), action.toolchains)
+            val applied = compile.pluginApplications.single()
+            assertEquals(plugin.options, applied.options)
+            assertTrue(applied.classpath.any { "runtime/classes" in it.value })
+            assertTrue(applied.classpath.none { it in compile.libraries })
+            assertTrue(action.inputs.files.any { it.path.value == "plugin-inputs/example.plugin/config.txt" })
+            assertTrue(LogicalPath("plugins/example.plugin/report") in action.outputs)
+            assertNotEquals(action.key(Sha256), changed.getValue(id).key(Sha256))
+        }
+        assertEquals(before.getValue("base:macosArm64:main"), changed.getValue("base:macosArm64:main"))
+        // Plugin-generated reports are retained by compilation but cannot become link libraries.
+        val results = linkedMapOf<String, ActionResult>()
+        for (node in planned.nodes) {
+            val action = node.resolve(results.filterKeys { it in node.dependencies })
+            val generated = if (node.id in setOf("app:macosArm64:main", "app:macosArm64:test-compile"))
+                listOf(FileEntry(LogicalPath("plugins/example.plugin/report/output.txt"), digest("report"))) else emptyList()
+            if (node.id == "app:macosArm64:test-link") {
+                assertTrue(NativeCompilation.fromJson(action.parameters).pluginApplications.isEmpty())
+                assertEquals(tools.getValue("macosArm64"), action.toolchains)
+                assertFalse(action.inputs.files.any { it.path.value.startsWith("plugins/") })
+            }
+            results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED,
+                TreeManifest(outputs(action, node.id).files + generated), 0)
+        }
+        for ((scopes, excluded, included) in listOf(
+            Triple(setOf("main"), "app:macosArm64:test-compile", "app:macosArm64:main"),
+            Triple(setOf("test"), "app:macosArm64:main", "app:macosArm64:test-compile"),
+        )) {
+            val scoped = resolved(plan(scopes))
+            assertTrue(NativeCompilation.fromJson(scoped.getValue(excluded).parameters).pluginApplications.isEmpty())
+            assertEquals(1, NativeCompilation.fromJson(scoped.getValue(included).parameters).pluginApplications.size)
+        }
+    }
+
     @Test fun workspacePluginCyclesAndTestOnlyScopeAreExplicit() {
         val plugin = CompilerPluginSpec("base", null, setOf("jvm"), setOf("test"), emptyList(), emptyList(), "example.plugin", "2.4.20")
         val config = configuration(base, app.copy(compilerPlugins = listOf(plugin)))

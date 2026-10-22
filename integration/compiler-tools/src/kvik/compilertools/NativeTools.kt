@@ -87,6 +87,6 @@ class InstalledNativeToolchainProvider(
             require(CompilerFiles.names(cache).all { it == ".lock" }) { "Native dependency archive cache must be empty" }
             NativeFiles.info("$cache/.lock")?.let { require(NativeFiles.regular(it) && it.size == 0L) { "Dependency cache lock must be an empty regular file" } }
         }
-        return NativeToolchainLayout(compiler, jdk.root, sdk.root, data, developer)
+        return NativeToolchainLayout(compiler, jdk.root, sdk.root, data, developer, native.root)
     }
 }

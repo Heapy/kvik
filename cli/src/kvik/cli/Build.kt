@@ -93,6 +93,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         val settings = target.testSettings ?: error("Declare testSettings.classes and testSettings.engines for $id:jvm; implicit test scanning is unsupported")
         JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it })
     } else emptyMap()
+    val graphRequest = ProjectGraphRequest(options.modules, options.targets, mode, selectedTests)
+    val toolTargets = if (scriptFile == null) projectToolTargets(snapshot.configuration.project, graphRequest) else options.targets
     val requested = scriptFile?.let { setOf("script:${it.scriptName}:jvm:run") }
         ?: options.modules.flatMap { module -> options.targets.map { target -> "$module:$target:${mode.name.lowercase()}" } }.toSet()
     val tools = try { BuildTools(toolsPath) } catch (failure: Exception) {
@@ -114,7 +116,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             else listOf("--") + scriptArguments)
     val runMetadata = obj("schemaVersion" to CONTRACT_VERSION.json(), "projectRoot" to root.json(),
         "configurationPath" to name.value.json(), "lockPath" to lockPath.json(), "toolsPath" to toolsPath.json(),
-        "targets" to options.targets.sorted().map { it.json() }.json())
+        "targets" to options.targets.sorted().map { it.json() }.json(),
+        "toolTargets" to toolTargets.sorted().map { it.json() }.json())
     val selectedMetadata = if (selection == SnapshotSelection.Project) runMetadata else JsonValue.Object(runMetadata.values + ("inputSelection" to selection.toJson()))
     NativeFiles.writeNew("${run.path}/run.json", selectedMetadata.canonical().encodeToByteArray())
     NativeFiles.writeNew("${run.path}/inputs.json", snapshot.inputs.toJson().canonical().encodeToByteArray())
@@ -139,16 +142,16 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         journal.emit("run-started", obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson()))
         began = true
         try {
-            toolIdentities = tools.verify(options.targets)
+            toolIdentities = tools.verify(toolTargets)
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
                 graph = if (scriptFile == null) projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities,
-                    ProjectGraphRequest(options.modules, options.targets, mode, selectedTests)) else
+                    graphRequest) else
                     scriptActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities.getValue("jvm"), ScriptGraphRequest(scriptFile.scriptName, scriptArguments))
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
-                    val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider())
+                    val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(), tools.jvmProvider())
                     val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val application = ApplicationBundleExecutor(content)

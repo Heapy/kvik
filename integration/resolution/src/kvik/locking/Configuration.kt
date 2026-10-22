@@ -182,7 +182,7 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
             requests += ResolutionRequest(settings.processor, host, processorDomain)
         }
         val selectedPlugins = module.compilerPlugins.filter { target.name in it.targets &&
-            (domain.compilation in it.scopes || target.name == "macosArm64" && domain.compilation == "test" && "main" in it.scopes) }
+            (domain.compilation in it.scopes || it.module == null && target.name == "macosArm64" && domain.compilation == "test" && "main" in it.scopes) }
         if (selectedPlugins.isNotEmpty()) {
             val pluginDomain = domain.copy(usage = "java-runtime", purpose = "compiler-plugin")
             domains += pluginDomain
