@@ -21,8 +21,9 @@ journal evidence. Stage-prepared performs that validation without building.
 Readiness also verifies the runtime guardian bytes required for ownership; the
 process host verifies them again after activation. The owned validator also
 checks effective executable access for both the guardian and the verified Java
-or materialized Native entry executable before readiness and after activation. Both retain the validated launch plan privately; readiness never supplies
-trusted executable arguments.
+or materialized Native entry executable before readiness and after activation.
+Both retain the validated launch plan privately; readiness never supplies trusted
+executable arguments.
 
 `kvik.foreground` provides immutable ApplicationReady(token,
 preparationDirectory, descriptor, verification, composition, module, target),
@@ -76,7 +77,7 @@ The protocol harness binds sources/compiler support/command/environment and
 rejects stale --no-build use. Unhashed installation/SDK support remains stable
 through build/reuse. The actual harness verifies the runtime manifest and lock
 against the current source composition, records exact commands, protocol bytes,
-logs and effects, and uses a real Kotlin JVM application. Planned checks include
+logs and effects, and uses a real Kotlin JVM application. Checks include
 no effects before activation, wrong token/digest/shape, cancellation/owner loss,
 post-ready source or bundle corruption, old process and descendants reaped
 before replacement activation, 60-second deadline, and public one-shot/replay.
@@ -93,11 +94,44 @@ cleanup. Its summary SHA-256 is
 That gate predates the pre-readiness guardian verification correction: previously
 stage-prepared first checked the guardian only after activation. The correction
 checks it before readiness and retains the later host check. Three additional
-actual cases copy the runtime bundle, remove/corrupt/deny execute access only on the copied guardian,
-and require stage-prepared refusal with no ready/started file or application
+actual cases copy the runtime bundle, remove/corrupt/deny execute access only on
+the copied guardian, and require stage-prepared refusal with no ready/started file or application
 effects, with specific failure diagnostics. A fourth case copies the full pinned
 JDK, retains its exact canonical inventory identity with owner-readable but
 owner-nonexecutable Java mode, and requires the specific executable-access
-refusal before readiness. No user tool installation is modified. A matching
-corrected runtime/full actual gate is pending. Protocol
-source and its compiled receipt are unchanged.
+refusal before readiness. No user tool installation is modified.
+
+Final frozen source/harness `85f2bfe` built composition
+`cd80c6f3f9b67b6808d86612e9d449c46a5cbea1003fd65140fbd647d5e11291`
+in 93.475 seconds of compiler time (handle 5975, terminal 0). Its executable
+SHA-256 is `a90f30e2affbfe8956b1e33e85982a6f3fee0c07bf21583408a0e33b2bf263b8`
+(size 4970792). The full actual gate (handle 95905, terminal 0) passed all 24
+scenarios in `.kvik/tests/application-activation/case-k7_uvlpc`, including all
+four new access/prerequisite refusals and the 60.294-second readiness deadline.
+The summary SHA-256 is
+`5db5fb4171f490a5258e6ebc32fd8b55fe907f46e6bce73bd4cf253b1851e2e2`.
+Protocol source and its five-group compiled receipt are unchanged.
+
+The final case retains exact command arguments, logs, readiness/activation/start
+records, committed preparation journals, six application effect records, and
+full owned-tree/process-group observations. The old-running and owner-loss-running
+ownership receipts have SHA-256
+`0ae912554b929b9e49a49f64ed565edf33afd9fa07533e0fcbc3b8b0a01d086c` and
+`59824645f798275f955a0eaf01dbb77cfa3c945de01c3e719a8c221c2cc3c4f7`.
+The private JDK proof records the unchanged pinned inventory and denied actual
+execute access; the project tools document is restored in a finally block.
+
+Exact final invocation from this worktree:
+
+```sh
+/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python -B tools/test_application_activation.py \
+  --runtime /private/tmp/kvik-k15-application-activation/.kvik/runtime/executables/cd80c6f3f9b67b6808d86612e9d449c46a5cbea1003fd65140fbd647d5e11291/kvik.kexe \
+  --tools /private/tmp/kvik-k15-application-acceptance/.kvik/tests/application-cli/case-dao5fqft/project/tools.json
+```
+
+This proves the standalone staged supervisor boundary with a real JVM consumer.
+It does not establish nested foreground-supervisor cleanup, the Session/Dev
+state machine, source-runtime resume, or a real Native application's activation.
+Readiness establishes checked artifacts, tools and current executable access;
+future OS spawn success and application health still require the actual start
+and terminal process evidence.
