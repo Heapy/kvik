@@ -194,7 +194,7 @@ def main():
             # The replacement witness checked exact old ownership before its first effect; also observe cleanup here.
             assert not [row for row in table() if row[0] in old_pids or row[2] in old_groups]
             assert len(effects(target))==initial_effects+1
-            assert all(result['status']=='local-hit' for result in warm['record']['actions'])
+            assert all(result['status']=='local_hit' for result in warm['record']['actions'])
             current=s.status();assert current['application']['active']['generation']==warm['generation']
             s.witness()
             source=project/'app'/('jvm' if target=='jvm' else 'native')/'Application.kt';original=source.read_bytes();restore_sources[source]=original
