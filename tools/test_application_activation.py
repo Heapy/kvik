@@ -17,6 +17,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bootstrap.launcher import composition
+from bootstrap.identity import inventory
 
 
 def canonical(value): return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
@@ -183,17 +184,44 @@ def main():
         cold=start('cold');saved=ready(cold);activate(cold);started(cold);finish(cold,0)
         assert len(effects())==len(cold['before'])+1
         # Missing/corrupt helper must refuse readiness; never mutate the approved runtime.
-        for mode in ('missing','corrupt'):
+        for mode in ('missing','corrupt','nonexecutable'):
             copied=case/('runtime-'+mode);shutil.copytree(runtime.parent,copied)
             helper=copied/'guardian'
             if mode=='missing':helper.unlink()
-            else:
+            elif mode=='corrupt':
                 data=helper.read_bytes();helper.chmod(0o755);helper.write_bytes(bytes([data[0]^1])+data[1:])
+            else:
+                helper.chmod(0o401);assert not os.access(helper,os.X_OK),'UID bypasses executable permission fixture'
             gate=case/('helper-'+mode);gate.mkdir();before=list(effects())
-            run_command('helper-'+mode,[str(copied/'kvik.kexe'),'stage-prepared','--activation',str(gate),
+            refusal=run_command('helper-'+mode,[str(copied/'kvik.kexe'),'stage-prepared','--activation',str(gate),
                 '--token',canonical(digest(mode.encode())).decode(),'--run',saved['preparationDirectory'],
                 '--descriptor',canonical(saved['descriptor']).decode()],1)
             assert not (gate/'ready.json').exists() and not (gate/'started.json').exists() and effects()==before
+            diagnostic=json.loads(refusal.stdout)['diagnostic']
+            assert diagnostic['code']=='KVIK_APPLICATION_RUN_FAILED'
+            expected={'missing':'open '+str(helper),'corrupt':'Native ownership helper differs','nonexecutable':'Native ownership helper is not executable'}[mode]
+            assert expected in diagnostic['message'],diagnostic
+        # A copied JDK preserves the complete pinned inventory (including executable boolean),
+        # while owner read/no-execute permission defeats actual exec access without touching user tools.
+        tools_bytes=(project/'tools.json').read_bytes();tools_document=json.loads(tools_bytes)
+        private_jdk=case/'private-jdk';shutil.copytree(tools_document['roots']['jdk'],private_jdk,symlinks=True)
+        private_java=private_jdk/'bin/java';private_java.chmod(0o401)
+        assert not os.access(private_java,os.X_OK),'UID bypasses Java executable permission fixture'
+        private_identity=digest(canonical(inventory(private_jdk,allow_internal_symlinks=True)))
+        assert private_identity==tools_document['toolLock']['components']['jdk']
+        write_json(case/'private-jdk-proof.json',dict(root=str(private_jdk),inventory=private_identity,java=file_digest(private_java),executableAccess=False,mode=oct(private_java.stat().st_mode & 0o777)))
+        tools_document['roots']['jdk']=str(private_jdk)
+        gate=case/'java-nonexecutable';gate.mkdir();before=list(effects())
+        try:
+            write_json(project/'tools.json',tools_document)
+            refusal=run_command('java-nonexecutable',[str(runtime),'stage-prepared','--activation',str(gate),
+                '--token',canonical(digest(b'java-permissions')).decode(),'--run',saved['preparationDirectory'],
+                '--descriptor',canonical(saved['descriptor']).decode()],1)
+            diagnostic=json.loads(refusal.stdout)['diagnostic']
+            assert diagnostic['code']=='KVIK_APPLICATION_RUN_FAILED' and 'Application executable is not executable' in diagnostic['message'],diagnostic
+            assert not (gate/'ready.json').exists() and not (gate/'started.json').exists() and effects()==before
+        finally:(project/'tools.json').write_bytes(tools_bytes)
+
         for label,patch,raw in [('wrong-token',dict(token=digest(b'wrong')),None),('wrong-ready',dict(ready=digest(b'wrong')),None),
             ('unknown-field',dict(extra=True),None),('noncanonical',None,b'{}\n')]:
             item=start(label,prepared=saved);ready(item);activate(item,patch=patch,raw=raw);finish(item,1);no_start(item)

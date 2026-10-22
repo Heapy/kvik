@@ -11,6 +11,8 @@ import kvik.foreground.*
 import kvik.projectgraph.ProjectMode
 import kvik.runevidence.verificationRecordFromJson
 import platform.posix.usleep
+import platform.posix.access
+import platform.posix.X_OK
 import kotlin.time.TimeSource
 
 internal fun prepareApplicationCommand(args: List<String>): ExitStatus = executeBuild(args, ProjectMode.APPLICATION).status
@@ -158,7 +160,7 @@ private data class ApplicationPlan(
 
 private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
     // Readiness must include the ownership helper required to start the application.
-    verifiedRuntimeGuardian()
+    require(access(verifiedRuntimeGuardian(), X_OK) == 0) { "Native ownership helper is not executable" }
     val directory = prepared.directory
     val descriptorBytes = NativeFiles.read("$directory/prepared.json", 8192)
     require(Sha256.digest(descriptorBytes) == prepared.descriptor) { "Prepared application descriptor changed" }
@@ -177,6 +179,7 @@ private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
         listOf(checkNotNull(checked.javaExecutable), "--disable-@files", "-cp",
             launch.classpath.joinToString(":") { "$inputs/${it.value}" }, launch.application.entryPoint) + launch.application.arguments
     } else listOf("$inputs/${checkNotNull(launch.executable).value}") + launch.application.arguments
+    require(access(arguments.first(), X_OK) == 0) { "Application executable is not executable" }
     require("KVIK_APPLICATION_INPUTS" !in launch.application.environment) { "KVIK_APPLICATION_INPUTS is supplied by the application runner" }
     val environment = mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC") +
         launch.application.environment + ("KVIK_APPLICATION_INPUTS" to inputs)

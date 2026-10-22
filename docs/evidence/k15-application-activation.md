@@ -19,7 +19,9 @@ Stage-application completes executeBuild(APPLICATION), including committed run
 completion, then validates the prepared bundle and full current source/tool and
 journal evidence. Stage-prepared performs that validation without building.
 Readiness also verifies the runtime guardian bytes required for ownership; the
-process host verifies them again after activation. Both retain the validated launch plan privately; readiness never supplies
+process host verifies them again after activation. The owned validator also
+checks effective executable access for both the guardian and the verified Java
+or materialized Native entry executable before readiness and after activation. Both retain the validated launch plan privately; readiness never supplies
 trusted executable arguments.
 
 `kvik.foreground` provides immutable ApplicationReady(token,
@@ -90,8 +92,12 @@ cleanup. Its summary SHA-256 is
 
 That gate predates the pre-readiness guardian verification correction: previously
 stage-prepared first checked the guardian only after activation. The correction
-checks it before readiness and retains the later host check. Two additional
-actual cases copy the runtime bundle, remove/corrupt only the copied guardian,
+checks it before readiness and retains the later host check. Three additional
+actual cases copy the runtime bundle, remove/corrupt/deny execute access only on the copied guardian,
 and require stage-prepared refusal with no ready/started file or application
-effects. A matching corrected runtime/full actual gate is pending. Protocol
+effects, with specific failure diagnostics. A fourth case copies the full pinned
+JDK, retains its exact canonical inventory identity with owner-readable but
+owner-nonexecutable Java mode, and requires the specific executable-access
+refusal before readiness. No user tool installation is modified. A matching
+corrected runtime/full actual gate is pending. Protocol
 source and its compiled receipt are unchanged.
