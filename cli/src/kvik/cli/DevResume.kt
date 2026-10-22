@@ -60,6 +60,9 @@ internal fun resumeDev(args: List<String>): Int {
     val paths = listOf(options.project.project, options.project.lock, options.project.store, options.tools)
     paths.forEach(NativeFiles::validateAbsolute)
     require(options.project.project.substringBeforeLast('/') == state.workingDirectory) { "Resume project binding changed" }
+    if (state.mode == SessionMode.APPLICATION) require(options.modules == setOf(state.applicationModule) && options.targets == setOf(state.applicationTarget)) {
+        "Resumed application selection changed"
+    }
     val launch = BootstrapLaunch.parse(state.launchBytes)
     launch.requireCurrent(Digest(runtimeComposition, runtimeCompositionSize), "${runtimeDirectory()}/kvik.kexe")
     checkNotNull(bootstrapContext()) { "Missing resumed bootstrap context" }.requireReplacement(launch, launch.composition)
@@ -69,7 +72,10 @@ internal fun resumeDev(args: List<String>): Int {
         try { ForegroundSession(host, launch.runtime, state.directory, state.workingDirectory, state.arguments,
             listOf("--project", paths[0], "--lock", paths[1], "--tools", paths[3], "--store", paths[2]), state.jsonControls,
             state.watchMillis, state.pending, launch, bootstrapEnvironment(), state.watched, state.partialInput,
-            state.previousDirectory, resumed = true, restart = ::replaceSession, keys = state.terminalLease != null, inheritedTerminalLease = state.terminalLease).run() }
+            state.previousDirectory, resumed = true, restart = ::replaceSession, keys = state.terminalLease != null, inheritedTerminalLease = state.terminalLease,
+            mode = state.mode, currentComposition = launch.composition, applicationModule = state.applicationModule,
+            applicationTarget = state.applicationTarget, initialIntents = if (state.mode == SessionMode.APPLICATION) state.pendingIntents else null,
+            preparedApplication = state.preparedApplication).run() }
         catch (failure: Exception) { throw RunStreamFailure("Resumed foreground session failed: ${failure.message}") }
     }
 }

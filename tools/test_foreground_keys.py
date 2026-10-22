@@ -66,7 +66,7 @@ def main():
         core = sorted((ROOT/'core/src').rglob('*.kt'))
         compiler = [args.konan_home/'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true']
         pure = [ROOT/'integration/foreground/src/kvik/foreground'/name for name in
-                ('Protocol.kt', 'BootstrapLaunch.kt', 'SessionResume.kt', 'SessionCapabilities.kt')]
+                ('Protocol.kt', 'BootstrapLaunch.kt', 'SessionResume.kt', 'SessionCapabilities.kt', 'ApplicationActivation.kt')]
         if not args.skip_unit_build:
             run([*compiler, *core, *pure, ROOT/'tests/foreground/ProtocolTest.kt', ROOT/'tests/foreground-recomposition/ResumeTest.kt',
                  ROOT/'tests/foreground-keys/KeysProtocolTest.kt', '-generate-test-runner', '-o', output/'keys-unit.kexe'])

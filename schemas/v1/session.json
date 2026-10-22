@@ -59,7 +59,13 @@
             "rebuild-started",
             "rebuild-finished",
             "session-restarting",
-            "replacement-checked"
+            "replacement-checked",
+            "application-preparing",
+            "application-ready",
+            "application-activating",
+            "application-started",
+            "application-stale",
+            "application-finished"
           ]
         },
         "payload": {
@@ -179,7 +185,8 @@
                     "enum": [
                       "build",
                       "test",
-                      null
+                      null,
+                      "application"
                     ]
                   },
                   "help": {
@@ -190,6 +197,20 @@
                   },
                   "compositionReady": {
                     "type": "boolean"
+                  },
+                  "application": {
+                    "$ref": "#/$defs/applicationStatus"
+                  },
+                  "pendingIntents": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "test",
+                        "application"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -200,7 +221,15 @@
                   "help",
                   "compositionReady"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "dependentRequired": {
+                  "application": [
+                    "pendingIntents"
+                  ],
+                  "pendingIntents": [
+                    "application"
+                  ]
+                }
               }
             }
           }
@@ -221,7 +250,8 @@
                   "code": {
                     "enum": [
                       "KVIK_SESSION_CONTROL",
-                      "KVIK_SESSION_RESTART"
+                      "KVIK_SESSION_RESTART",
+                      "KVIK_SESSION_APPLICATION"
                     ]
                   },
                   "message": {
@@ -631,6 +661,334 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-preparing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "revision",
+                  "composition",
+                  "module",
+                  "target",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  },
+                  "ready": {
+                    "$ref": "contracts.json#/$defs/applicationReady"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "revision",
+                  "composition",
+                  "module",
+                  "target",
+                  "evidenceDirectory",
+                  "ready"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-activating"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "revision",
+                  "composition",
+                  "module",
+                  "target",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  },
+                  "started": {
+                    "$ref": "contracts.json#/$defs/applicationStarted"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "revision",
+                  "composition",
+                  "module",
+                  "target",
+                  "evidenceDirectory",
+                  "started"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-stale"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "revision",
+                  "composition",
+                  "module",
+                  "target",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "cancelled": {
+                    "type": "boolean"
+                  },
+                  "timedOut": {
+                    "type": "boolean"
+                  },
+                  "started": {
+                    "type": "boolean"
+                  },
+                  "stale": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "revision",
+                  "composition",
+                  "module",
+                  "target",
+                  "evidenceDirectory",
+                  "exitCode",
+                  "cancelled",
+                  "timedOut",
+                  "started",
+                  "stale"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
         }
       ]
     },
@@ -857,6 +1215,9 @@
         },
         {
           "$ref": "#/$defs/resumeV2"
+        },
+        {
+          "$ref": "#/$defs/resumeV3"
         }
       ]
     },
@@ -910,6 +1271,265 @@
         "runtime",
         "resumeVersions",
         "terminalLease"
+      ],
+      "additionalProperties": false
+    },
+    "resumeV3": {
+      "description": "UTF-8 representation bounded to 128 KiB; digest is carried in literal exec argv. Trusted invocation-local state.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 3
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "previousDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "workingDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "arguments": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]*(?![\\s\\S])"
+          }
+        },
+        "jsonControls": {
+          "type": "boolean"
+        },
+        "watchMillis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "pending": {
+          "enum": [
+            "test",
+            "application"
+          ]
+        },
+        "watched": {
+          "const": "application"
+        },
+        "partialInput": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255,
+            "not": {
+              "const": 10
+            }
+          }
+        },
+        "launch": {
+          "$ref": "bootstrap-launch.json#/$defs/launch"
+        },
+        "mode": {
+          "const": "application"
+        },
+        "pendingIntents": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "test",
+              "application"
+            ]
+          }
+        },
+        "preparedApplication": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "contracts.json#/$defs/applicationReady"
+            }
+          ]
+        },
+        "applicationModule": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "applicationTarget": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "terminalLease": {
+          "$ref": "#/$defs/terminalLease"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "directory",
+        "previousDirectory",
+        "workingDirectory",
+        "arguments",
+        "jsonControls",
+        "watchMillis",
+        "pending",
+        "watched",
+        "partialInput",
+        "launch",
+        "mode",
+        "pendingIntents",
+        "preparedApplication",
+        "applicationModule",
+        "applicationTarget"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "terminalLease"
+            ]
+          },
+          "then": {
+            "properties": {
+              "jsonControls": {
+                "const": false
+              },
+              "partialInput": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "applicationStatus": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "composition": {
+                  "$ref": "#/$defs/digest"
+                },
+                "module": {
+                  "type": "string"
+                },
+                "target": {
+                  "enum": [
+                    "jvm",
+                    "macosArm64"
+                  ]
+                },
+                "evidenceDirectory": {
+                  "type": "string"
+                },
+                "stale": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "generation",
+                "revision",
+                "composition",
+                "module",
+                "target",
+                "evidenceDirectory",
+                "stale"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "candidate": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "composition": {
+                  "$ref": "#/$defs/digest"
+                },
+                "module": {
+                  "type": "string"
+                },
+                "target": {
+                  "enum": [
+                    "jvm",
+                    "macosArm64"
+                  ]
+                },
+                "evidenceDirectory": {
+                  "type": "string"
+                },
+                "phase": {
+                  "enum": [
+                    "preparing",
+                    "ready",
+                    "waiting-for-old-cleanup",
+                    "starting",
+                    "cancelling"
+                  ]
+                }
+              },
+              "required": [
+                "generation",
+                "revision",
+                "composition",
+                "module",
+                "target",
+                "evidenceDirectory",
+                "phase"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "handoffReady": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "active",
+        "candidate",
+        "handoffReady"
       ],
       "additionalProperties": false
     }

@@ -32,7 +32,7 @@ def main():
     env=dict(os.environ,JAVA_HOME=str(args.java_home.resolve()))
     if not args.skip_unit_build:
         files=[*sorted((ROOT/'core/src').rglob('*.kt')),ROOT/'integration/foreground/src/kvik/foreground/BootstrapLaunch.kt',
-               ROOT/'integration/foreground/src/kvik/foreground/SessionResume.kt',ROOT/'integration/foreground/src/kvik/foreground/Protocol.kt',
+               ROOT/'integration/foreground/src/kvik/foreground/ApplicationActivation.kt',ROOT/'integration/foreground/src/kvik/foreground/SessionResume.kt',ROOT/'integration/foreground/src/kvik/foreground/Protocol.kt',
                ROOT/'tests/foreground-recomposition/ResumeTest.kt']
         subprocess.run([str(args.konan_home/'bin/konanc'),'-target','macos_arm64','-Xoverride-konan-properties=airplaneMode=true',
                         '-generate-test-runner','-o',str(output/'resume.kexe'),*map(str,files)],env=env,check=True)

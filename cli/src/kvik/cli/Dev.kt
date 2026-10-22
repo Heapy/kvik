@@ -12,7 +12,7 @@ internal fun devCommand(args: List<String>): Int {
     if (args.firstOrNull() == "--resume") return resumeDev(args)
     if (args == listOf("--session-capabilities")) {
         println(obj("schemaVersion" to 1.json(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
-            "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "resumeVersions" to listOf(1.json(), 2.json()).json(),
+            "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "resumeVersions" to listOf(1.json(), 2.json(), 3.json()).json(),
             "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to "macos-arm64".json(),
                 "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
         return 0
@@ -23,7 +23,7 @@ internal fun devCommand(args: List<String>): Int {
     var index = 0
     while (index < args.size) {
         val flag = args[index++]
-        if (flag in setOf("--control", "--watch-ms", "--initial")) {
+        if (flag in setOf("--control", "--watch-ms", "--initial", "--mode")) {
             require(index < args.size && session.put(flag, args[index++]) == null) { "Missing/duplicate session option: $flag" }
         } else {
             require(flag != "--runs") { "dev reserves .kvik/sessions for invocation-owned evidence" }
@@ -36,9 +36,18 @@ internal fun devCommand(args: List<String>): Int {
     require(control != "keys" || isatty(0) == 1) { "Key controls require a foreground controlling TTY; use --control jsonl or lines for non-TTY input" }
     val interval = session["--watch-ms"]?.toLongOrNull() ?: if ("--watch-ms" in session) error("Invalid watch interval") else 1000L
     require(interval in 100..60_000) { "Watch interval must be 100..60000 milliseconds" }
-    val initial = when (session["--initial"] ?: "build") { "build" -> Operation.BUILD; "test" -> Operation.TEST; else -> error("Invalid initial operation") }
+    val mode = when (session["--mode"] ?: "library") {
+        "library" -> SessionMode.LIBRARY; "application" -> SessionMode.APPLICATION; else -> error("Invalid session mode")
+    }
+    val initial = when (session["--initial"] ?: "build") { "build" -> if (mode == SessionMode.APPLICATION) Operation.APPLICATION else Operation.BUILD; "test" -> Operation.TEST; else -> error("Invalid initial operation") }
     val options = buildOptions(build)
     val project = readProject(options.project.project)
+    if (mode == SessionMode.APPLICATION) {
+        require(options.modules.size == 1 && options.targets.size == 1) { "Application sessions require exactly one --module and --target" }
+        val selected = project.configuration.project.modules.singleOrNull { it.id == options.modules.single() }
+            ?.targets?.singleOrNull { it.name == options.targets.single() } ?: error("Unknown application module/target")
+        require(selected.application != null) { "Selected target has no application settings" }
+    }
     // Validate arguments before any session output writes; actual lock/tool validation stays in children.
     kvik.locking.effectiveConfiguration(project.configuration, options.project.resolverPolicy())
     val tools = projectPath(project.root, options.tools)
@@ -56,7 +65,12 @@ internal fun devCommand(args: List<String>): Int {
     val directory = NativeRunDirectory(parent).path
     return runtimeProcessHost().use { host ->
         ForegroundSession(host, "${runtimeDirectory()}/kvik.kexe", directory, project.root, arguments,
-            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession, keys = control == "keys").let { foreground ->
+            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession, keys = control == "keys", mode = mode,
+            currentComposition = Digest(runtimeComposition, runtimeCompositionSize),
+            applicationModule = if (mode == SessionMode.APPLICATION) options.modules.single() else null,
+            applicationTarget = if (mode == SessionMode.APPLICATION) options.targets.single() else null,
+            initialWatched = if (mode == SessionMode.APPLICATION) Operation.APPLICATION else initial,
+            initialIntents = if (mode == SessionMode.APPLICATION && initial == Operation.TEST) listOf(Operation.TEST, Operation.APPLICATION) else null).let { foreground ->
                 try { foreground.run() }
                 catch (failure: Exception) { throw RunStreamFailure("Foreground session failed: ${failure.message}") }
             }

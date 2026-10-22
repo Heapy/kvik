@@ -85,7 +85,7 @@ def main():
                               ('sharedStoreProducerDescriptor', shared)]) + '\n')
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + [
         ROOT / 'integration/foreground/src/kvik/foreground' / name
-        for name in ('BootstrapLaunch.kt', 'Protocol.kt', 'SessionResume.kt')
+        for name in ('BootstrapLaunch.kt', 'Protocol.kt', 'SessionResume.kt', 'ApplicationActivation.kt')
     ] + [ROOT / 'tests/foreground-bootstrap/BootstrapLaunchTest.kt',
          ROOT / 'tests/foreground-recomposition/ResumeTest.kt', generated]
     source_hashes = {str(path): digest(path.read_bytes()) for path in sources}

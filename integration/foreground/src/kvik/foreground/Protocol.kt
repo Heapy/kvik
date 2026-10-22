@@ -2,7 +2,8 @@ package kvik.foreground
 
 import kvik.core.*
 
-enum class Operation(val command: String) { BUILD("build"), TEST("test") }
+enum class Operation(val command: String) { BUILD("build"), TEST("test"), APPLICATION("application") }
+enum class SessionMode(val value: String) { LIBRARY("library"), APPLICATION("application") }
 
 data class Control(val requestId: String?, val command: String)
 
@@ -18,14 +19,21 @@ fun parseControl(line: String, json: Boolean): Control {
     return control
 }
 
-/** A bounded intent queue; tests include compilation, so build cannot erase pending tests. */
-class PendingOperation(initial: Operation) {
-    var pending: Operation? = initial
-        private set
+/** Library tests subsume builds; application reload and test intents remain independent. */
+class PendingOperation(initial: Operation, private val mode: SessionMode = SessionMode.LIBRARY,
+    restored: List<Operation>? = null) {
+    private val intents = mutableListOf<Operation>()
+    init { (restored ?: listOf(initial)).forEach(::request) }
+    val pending: Operation? get() = intents.firstOrNull()
+    fun snapshot(): List<Operation> = intents.toList()
     fun request(operation: Operation) {
-        if (pending != Operation.TEST) pending = operation
+        require(if (mode == SessionMode.APPLICATION) operation != Operation.BUILD else operation != Operation.APPLICATION)
+        if (mode == SessionMode.LIBRARY) {
+            if (pending != Operation.TEST) { intents.clear(); intents.add(operation) }
+        } else if (operation !in intents) intents.add(operation)
     }
-    fun take(): Operation? = pending.also { pending = null }
+    fun take(): Operation? = if (intents.isEmpty()) null else intents.removeAt(0)
+    fun remove(operation: Operation) { intents.remove(operation) }
 }
 
 /** Raw mode never buffers a line. Ctrl-D is handled as EOF by the session. */
