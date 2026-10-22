@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,12 +22,23 @@ def digest(data):
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+    # core Json.kt orders UTF-16 keys and spells every C0 control as lowercase
+    # Unicode escapes. Match JSON escape tokens so literal backslash-n stays distinct.
+    def ordered(item):
+        if isinstance(item, dict):
+            return {key: ordered(item[key]) for key in sorted(item, key=lambda key: key.encode('utf-16-be'))}
+        if isinstance(item, list):
+            return [ordered(entry) for entry in item]
+        return item
+    text = json.dumps(ordered(value), separators=(',', ':'), ensure_ascii=False)
+    escapes = {'b': r'\u0008', 'f': r'\u000c', 'n': r'\u000a', 'r': r'\u000d', 't': r'\u0009'}
+    return re.sub(r'\\(["\\/bfnrt])', lambda match: escapes.get(match[1], match[0]), text).encode()
 
 
 SELECTED = ['consumer', 'consumerTwo', 'unrelated']
 NATIVE_TOOLS = {'native', 'jdk', 'sdk', 'native-dependencies'}
 PLUGIN_TOOLS = NATIVE_TOOLS | {'jvm-compiler', 'jvm-worker', 'junit'}
+EDITED_NATIVE_OPTIONS = ['value=changed,comma\nsecond=literal\rthird\u2028fourth', 'value=second=literal']
 
 
 def native_project(original):
@@ -222,7 +234,7 @@ def run_native(args):
     check('producer-edit', 'v2', 'hello', options, affected | {'producer:jvm:main'})
     (project / 'message.txt').write_text('changed\n')
     check('input-edit', 'v2', 'changed', options, affected)
-    options = ['value=changed,comma', 'value=second=literal']
+    options = EDITED_NATIVE_OPTIONS.copy()
     for module in document['modules']:
         for plugin in module.get('compilerPlugins', []):
             plugin['options'] = options

@@ -24,6 +24,15 @@ def project():
 
 
 class NativePreparationTest(unittest.TestCase):
+    def test_multiline_options_and_core_canonical_escaping(self):
+        self.assertEqual(cli.EDITED_NATIVE_OPTIONS,
+                         ['value=changed,comma\nsecond=literal\rthird\u2028fourth', 'value=second=literal'])
+        self.assertEqual(cli.canonical(cli.EDITED_NATIVE_OPTIONS),
+                         '["value=changed,comma\\u000asecond=literal\\u000dthird\u2028fourth","value=second=literal"]'.encode())
+        self.assertEqual(cli.canonical(['\\n', '\n', '\r', '\t', '\b', '\f']),
+                         br'["\\n","\u000a","\u000d","\u0009","\u0008","\u000c"]')
+        self.assertEqual(cli.canonical({'\ue000': 1, '\U00010000': 2}), '{"\U00010000":2,"\ue000":1}'.encode())
+
     def test_preserves_jvm_producer_closure_and_original_document(self):
         original = project()
         before = copy.deepcopy(original)
