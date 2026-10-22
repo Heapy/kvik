@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--konan-home", type=Path, required=True)
     parser.add_argument("--java-home", type=Path, required=True)
     parser.add_argument("--scheduler-only", action="store_true", help="Run native scheduler and real-process DAG/schema checks, skipping the lifecycle matrix")
+    parser.add_argument("--unit-only", action="store_true", help="Run scheduler and asynchronous preparation unit tests only")
     args = parser.parse_args()
     output = ROOT / ".kvik/tests/execution"
     output.mkdir(parents=True, exist_ok=True)
@@ -42,8 +43,10 @@ def main():
              "-target", "macos_arm64", "-o", output / "process"])
     sources = sorted((ROOT / "core/src").rglob("*.kt")) + sorted((ROOT / "execution/src").rglob("*.kt"))
     base = [args.konan_home / "bin/konanc", "-target", "macos_arm64", "-library", output / "process.klib", *sources]
-    command([*base, ROOT / "tests/execution/SchedulerTest.kt", "-generate-test-runner", "-o", output / "scheduler.kexe"])
+    command([*base, ROOT / "tests/execution/SchedulerTest.kt", ROOT / "tests/execution/NativePreparationTest.kt", "-generate-test-runner", "-o", output / "scheduler.kexe"])
     command([output / "scheduler.kexe"])
+    if args.unit_only:
+        return
     command([*base, ROOT / "tests/execution/ProcessProbe.kt", "-entry", "kvik.execution.probe.main", "-o", output / "probe.kexe"])
 
     def wait_until(test, description, timeout=5):
