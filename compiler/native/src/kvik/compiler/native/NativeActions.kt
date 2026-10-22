@@ -4,6 +4,11 @@ import kvik.core.*
 
 enum class NativeOutput { LIBRARY, PROGRAM, TEST }
 
+/** Bind the verified dependency component inventories without leaking installation paths into keys. */
+fun nativeDependenciesIdentity(llvm: Digest, libffi: Digest, xcodeToolchain: Digest): Digest = Sha256.digest(obj(
+    "schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-native-dependencies-v1".json(),
+    "llvm" to llvm.toJson(), "libffi" to libffi.toJson(), "xcodeToolchain" to xcodeToolchain.toJson()))
+
 data class NativeCompilation(
     val module: String,
     val sources: List<LogicalPath>,
@@ -30,6 +35,7 @@ data class NativeCompilation(
     }
     fun arguments(): List<String> = buildList {
         addAll(listOf("-target", "macos_arm64", "-produce", if (produce == NativeOutput.LIBRARY) "library" else "program", "-o", "output/${output.value}", "-module-name", moduleName))
+        add("-Xoverride-konan-properties=airplaneMode=true")
         if (produce == NativeOutput.TEST) add("-generate-test-runner")
         if (commonSources.isNotEmpty()) {
             add("-Xmulti-platform")

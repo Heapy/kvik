@@ -22,6 +22,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--java-home', type=Path, required=True)
+    parser.add_argument('--developer-directory', type=Path, required=True, help='Explicit Xcode Contents/Developer directory')
+    parser.add_argument('--sdk', type=Path, required=True, help='Explicit macOS SDK; no xcode-select/xcrun selection')
     parser.add_argument('--kotaml', type=Path)
     parser.add_argument('--ktc-cache', type=Path)
     parser.add_argument('--skip-bootstrap', action='store_true')
@@ -29,7 +31,11 @@ def main():
     output = ROOT / '.kvik/tests/native'
     output.mkdir(parents=True, exist_ok=True)
     (output / 'runs').mkdir(exist_ok=True)
-    env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()))
+    developer = args.developer_directory.resolve(strict=True)
+    sdk = args.sdk.resolve(strict=True)
+    assert (developer/'Toolchains/XcodeDefault.xctoolchain').is_dir()
+    assert (sdk/'SDKSettings.json').is_file()
+    env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), DEVELOPER_DIR=str(developer), SDKROOT=str(sdk))
     native = ROOT / 'execution/platform'
     def command(parts): subprocess.run(list(map(str, parts)), env=env, check=True)
     if not args.skip_bootstrap:
@@ -38,21 +44,25 @@ def main():
         command(['ar', 'rcs', output / 'libkvik-process.a', output / 'process.o'])
         command([args.konan_home / 'bin/cinterop', '-def', native / 'process.def', '-compiler-option', f'-I{native}', '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'])
         sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'execution/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'compiler/native/src').rglob('*.kt'))
-        base = [args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-library', output / 'process.klib', *sources]
+        base = [args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-library', output / 'process.klib', *sources]
         command([*base, ROOT / 'tests/native/NativeUnitTest.kt', '-generate-test-runner', '-o', output / 'unit.kexe'])
         command([output / 'unit.kexe'])
         command([*base, ROOT / 'tests/native/NativeProbe.kt', '-entry', 'kvik.compiler.native.probe.main', '-o', output / 'probe.kexe'])
-    sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
     # Local probe identity coverage is explicit, not a production toolchain inventory/cache gate.
+    dependency_evidence = {
+        'llvm': {'root': str(Path.home()/'.konan/dependencies/llvm-21-aarch64-macos-essentials-97'), 'policy': 'local-probe-no-cache-reuse'},
+        'libffi': {'root': str(Path.home()/'.konan/dependencies/libffi-3.3-1-macos-arm64'), 'policy': 'local-probe-no-cache-reuse'},
+        'xcodeToolchain': {'root': str(developer/'Toolchains/XcodeDefault.xctoolchain'), 'developerDirectory': str(developer), 'policy': 'local-probe-no-cache-reuse'},
+    }
     evidence = {
         'native': {str(p.relative_to(args.konan_home)): digest(p.read_bytes()) for p in [args.konan_home/'bin/konanc', args.konan_home/'konan/lib/kotlin-native-compiler-embeddable.jar', args.konan_home/'konan/konan.properties']},
         'jdk': {'release': digest((args.java_home/'release').read_bytes())},
         'sdk': {'SDKSettings.json': digest((Path(sdk)/'SDKSettings.json').read_bytes())},
-        'native-dependencies': {'root': str(Path.home()/'.konan'), 'policy': 'local-probe-no-cache-reuse'},
+        'native-dependencies': {'schemaVersion': 1, 'implementation': 'kvik-native-dependencies-v1', **{key: digest(canonical(value)) for key, value in dependency_evidence.items()}},
     }
     identities = {key: digest(canonical(value)) for key,value in evidence.items()}
-    (output/'toolchain-provenance.json').write_bytes(canonical(evidence))
-    common = {'guardian': str(output/'guardian'), 'store': str(output/'store'), 'runs': str(output/'runs'), 'compiler': str(args.konan_home/'bin/konanc'), 'javaHome': str(args.java_home), 'sdk': sdk, 'dependencies': str(Path.home()/'.konan'), 'toolchains': identities, 'composition': digest((output/'probe.kexe').read_bytes())}
+    (output/'toolchain-provenance.json').write_bytes(canonical({'identities': identities, 'evidence': evidence, 'partialDependencyEvidence': dependency_evidence}))
+    common = {'guardian': str(output/'guardian'), 'store': str(output/'store'), 'runs': str(output/'runs'), 'compiler': str(args.konan_home/'bin/konanc'), 'javaHome': str(args.java_home.resolve()), 'sdk': str(sdk), 'developerDirectory': str(developer), 'dependencies': str(Path.home()/'.konan'), 'toolchains': identities, 'composition': digest((output/'probe.kexe').read_bytes())}
     counter = 0
     def run(files, *, compilation=None, module=None, executable=None, filter=None):
         nonlocal counter
@@ -66,7 +76,8 @@ def main():
             request.update(module=module, executable=executable)
             if filter is not None: request['filter'] = filter
         path = output/f'request-{counter}.json'; path.write_bytes(canonical(request))
-        command([output/'probe.kexe', path])
+        # The adapter must select verified tool paths, not inherit the probe owner's Xcode selection.
+        subprocess.run([str(output/'probe.kexe'), str(path)], env=dict(env, DEVELOPER_DIR='/nonexistent/kvik-parent-developer'), check=True)
         result = json.loads(report.read_text())
         if result['result']['status'] != 'executed': print('Observed expected/inspectable failure:', result['result']['diagnostic'] or result['diagnostics'])
         return result

@@ -25,7 +25,7 @@ fun main(args: Array<String>) {
     NativeProcessHost(string("guardian")).use { host ->
         val executor = NativeCompilerExecutor(directory.runId, directory.path, host, store, NativeToolchainProvider { actual ->
             check(actual == identities)
-            NativeToolchainLayout(string("compiler"), string("javaHome"), string("sdk"), string("dependencies"))
+            NativeToolchainLayout(string("compiler"), string("javaHome"), string("sdk"), string("dependencies"), string("developerDirectory"))
         })
         executor.start(directory.runId, "probe", action).use { running ->
             while (running.poll() == null) usleep(10000u)

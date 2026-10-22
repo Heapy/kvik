@@ -7,10 +7,14 @@ import kvik.core.*
 import kvik.cache.NativeOutputTrees
 import kvik.execution.NativeRunDirectory
 
-/** Provider verifies all requested distribution/JDK/SDK/dependency identities before returning paths. */
+/** Provider verifies distribution/JDK/SDK plus LLVM/libffi/Xcode identities before returning paths.
+ * native-dependencies is nativeDependenciesIdentity of the three verified component inventories.
+ * developerDirectory must select that verified Xcode installation; dependencies must contain the
+ * verified LLVM/libffi versions selected by the verified compiler's properties in offline mode.
+ */
 fun interface NativeToolchainProvider { fun verified(identities: Map<String, Digest>): NativeToolchainLayout }
-data class NativeToolchainLayout(val compiler: String, val javaHome: String, val sdk: String, val dependencies: String) {
-    init { require(listOf(compiler, javaHome, sdk, dependencies).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
+data class NativeToolchainLayout(val compiler: String, val javaHome: String, val sdk: String, val dependencies: String, val developerDirectory: String) {
+    init { require(listOf(compiler, javaHome, sdk, dependencies, developerDirectory).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
 }
 
 data class NativeActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: NativeTestReport? = null, val stdout: String, val stderr: String)
@@ -51,7 +55,8 @@ class NativeCompilerExecutor(
             var current = "$directory/output"
             parent.split('/').forEach { current += "/$it"; mkdirNew(current) }
         }
-        val environment = action.environment + mapOf("JAVA_HOME" to layout.javaHome, "SDKROOT" to layout.sdk, "KONAN_DATA_DIR" to layout.dependencies, "HOME" to "$directory/home")
+        val environment = action.environment + mapOf("JAVA_HOME" to layout.javaHome, "SDKROOT" to layout.sdk, "KONAN_DATA_DIR" to layout.dependencies,
+            "DEVELOPER_DIR" to layout.developerDirectory, "HOME" to "$directory/home")
         val started = kotlin.time.TimeSource.Monotonic.markNow()
         var phase = if (compile == null) "discovery" else "compile"
         fun launch(arguments: List<String>, phase: String): OwnedProcess = host.start(ProcessRequest(arguments, directory, environment, "$directory/$phase.stdout", "$directory/$phase.stderr", maxOf(1L, action.timeoutMillis - started.elapsedNow().inWholeMilliseconds)))

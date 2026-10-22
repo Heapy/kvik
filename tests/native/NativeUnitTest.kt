@@ -7,6 +7,54 @@ import kvik.cache.NativeContentStore
 import kvik.execution.NativeRunDirectory
 
 class NativeUnitTest {
+    @Test fun verifiedToolEnvironmentAndOfflinePolicyCannotBeOverridden() {
+        val root = NativeRunDirectory("/private/tmp").path
+        val store = NativeContentStore("$root/store")
+        val digest = store.put("class Example".encodeToByteArray())
+        val input = TreeManifest(listOf(FileEntry(LogicalPath("Example.kt"), digest)))
+        val identities = listOf("native", "jdk", "sdk", "native-dependencies").associateWith { digest }
+        val action = nativeCompileAction(NativeCompilation("example", listOf(LogicalPath("Example.kt")), output = LogicalPath("example.klib")), input, digest, identities)
+        var verifications = 0
+        val requests = mutableListOf<ProcessRequest>()
+        val host = object : ProcessHost {
+            override fun start(request: ProcessRequest): OwnedProcess {
+                requests += request
+                writeNativeFile(request.stdoutFile, byteArrayOf())
+                writeNativeFile(request.stderrFile, "error: deliberate fixture failure".encodeToByteArray())
+                return object : OwnedProcess {
+                    override fun poll() = ProcessResult(1)
+                    override fun cancel() = Unit
+                    override fun close() = Unit
+                }
+            }
+            override fun close() = Unit
+        }
+        val executor = NativeCompilerExecutor("tools", root, host, store, NativeToolchainProvider { requested ->
+            verifications++
+            assertEquals(identities, requested)
+            NativeToolchainLayout("/verified/konanc", "/verified/jdk", "/verified/sdk", "/verified/konan", "/verified/Xcode/Contents/Developer")
+        })
+        val offline = "-Xoverride-konan-properties=airplaneMode=true"
+        for ((id, modified) in listOf(
+            "removed" to action.copy(arguments = action.arguments - offline),
+            "overridden" to action.copy(arguments = action.arguments + "-Xoverride-konan-properties=airplaneMode=false"),
+            "developer" to action.copy(environment = action.environment + ("DEVELOPER_DIR" to "/unverified")),
+            "sdk" to action.copy(environment = action.environment + ("SDKROOT" to "/unverified")))) {
+            assertFailsWith<IllegalArgumentException> { executor.start("tools", id, modified) }
+        }
+        assertEquals(0, verifications)
+        assertTrue(requests.isEmpty())
+        executor.start("tools", "valid", action).use { assertEquals(ActionStatus.FAILED, it.poll()!!.status) }
+        val process = requests.single()
+        assertEquals(1, process.arguments.count { it == offline })
+        assertEquals(mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "JAVA_HOME" to "/verified/jdk", "SDKROOT" to "/verified/sdk",
+            "KONAN_DATA_DIR" to "/verified/konan", "DEVELOPER_DIR" to "/verified/Xcode/Contents/Developer", "HOME" to "${process.workingDirectory}/home"), process.environment)
+        val other = Sha256.digest(byteArrayOf(2))
+        val original = nativeDependenciesIdentity(digest, digest, digest)
+        for (changed in listOf(nativeDependenciesIdentity(other, digest, digest), nativeDependenciesIdentity(digest, other, digest), nativeDependenciesIdentity(digest, digest, other))) assertNotEquals(original, changed)
+        assertFailsWith<IllegalArgumentException> { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "relative/developer") }
+    }
+
     @Test fun malformedSuiteFinishProducesIncompleteReport() {
         for (events in listOf("##teamcity[testSuiteFinished]", "##teamcity[testSuiteFinished name='absent']",
             "##teamcity[testSuiteStarted name='suite']\n##teamcity[testSuiteFinished]")) {
@@ -39,7 +87,7 @@ class NativeUnitTest {
             override fun close() = Unit
         }
         val executor = NativeCompilerExecutor("review", root, host, store,
-            NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies") })
+            NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer") })
         executor.start("review", "tests", action).use { running ->
             running.cancel()
             val result = running.poll()!!
