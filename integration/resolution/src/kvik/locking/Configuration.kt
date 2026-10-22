@@ -2,21 +2,40 @@ package kvik.locking
 
 import kvik.core.*
 
+/** Consumers with equal names remain separate conflict-resolution identities. */
+sealed interface ResolutionConsumer {
+    val name: String
+    data class Module(override val name: String) : ResolutionConsumer
+    data class Script(override val name: String) : ResolutionConsumer
+}
+
 /** Consumer conflict-resolution boundary, deliberately separate from producer variant attributes. */
-data class ResolutionDomain(val module: String, val target: String, val compilation: String, val usage: String, val purpose: String = "dependencies") {
+data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String, val compilation: String, val usage: String, val purpose: String = "dependencies") {
+    constructor(module: String, target: String, compilation: String, usage: String, purpose: String = "dependencies") :
+        this(ResolutionConsumer.Module(module), target, compilation, usage, purpose)
+    /** Legacy module callers must not accidentally interpret a script as a workspace module. */
+    val module: String get() = (consumer as? ResolutionConsumer.Module)?.name ?: error("Script domain is not a module")
     init {
-        require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid resolution domain module" }
-        require(target in setOf("jvm", "macosArm64") && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
+        require(consumer.name.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid resolution consumer name" }
+        if (consumer is ResolutionConsumer.Script) {
+            require(consumer.name.length <= 128 && target == "jvm" && compilation == "script") { "Scripts require a named JVM script domain" }
+            require(purpose in setOf("dependencies", "compiler-plugin")) { "Unsupported script resolution purpose" }
+        } else require(target in setOf("jvm", "macosArm64") && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
         require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")) { "Invalid resolution domain purpose" }
         require(purpose !in setOf("ksp-runtime", "symbol-processor") || target == "macosArm64" && compilation == "test") { "KSP domains currently require macosArm64 tests" }
         require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
     }
     val isHostTool: Boolean get() = purpose != "dependencies"
-    fun toJson(): JsonValue.Object = obj("module" to module.json(), "target" to target.json(), "compilation" to compilation.json(), "usage" to usage.json(), "purpose" to purpose.json())
+    fun toJson(): JsonValue.Object = obj((if (consumer is ResolutionConsumer.Module) "module" else "script") to consumer.name.json(),
+        "target" to target.json(), "compilation" to compilation.json(), "usage" to usage.json(), "purpose" to purpose.json())
     companion object {
+        fun script(name: String, usage: String, purpose: String = "dependencies") = ResolutionDomain(ResolutionConsumer.Script(name), "jvm", "script", usage, purpose)
         fun fromJson(value: JsonValue): ResolutionDomain {
-            val fields = value.fields(setOf("module", "target", "compilation", "usage", "purpose"))
-            return ResolutionDomain(fields.getValue("module").stringValue(), fields.getValue("target").stringValue(), fields.getValue("compilation").stringValue(), fields.getValue("usage").stringValue(), fields.getValue("purpose").stringValue())
+            val fields = value.fields(setOf("target", "compilation", "usage", "purpose"), setOf("module", "script"))
+            require(("module" in fields) != ("script" in fields)) { "Resolution domain requires exactly one module or script" }
+            val consumer = fields["module"]?.let { ResolutionConsumer.Module(it.stringValue()) }
+                ?: ResolutionConsumer.Script(fields.getValue("script").stringValue())
+            return ResolutionDomain(consumer, fields.getValue("target").stringValue(), fields.getValue("compilation").stringValue(), fields.getValue("usage").stringValue(), fields.getValue("purpose").stringValue())
         }
     }
 }
@@ -76,6 +95,14 @@ data class DependencyScope(val module: String, val target: String, val scope: St
     internal fun toJson(): JsonValue = obj("module" to module.json(), "target" to target.json(), "scope" to scope.json(), "usage" to usage.json())
     fun domain() = ResolutionDomain(module, target, scope, usage)
 }
+data class ScriptDependencyScope(val script: String, val usage: String) {
+    init { ResolutionDomain.script(script, usage) }
+    internal fun toJson(): JsonValue = obj("script" to script.json(), "target" to "jvm".json(), "scope" to "script".json(), "usage" to usage.json())
+    fun domain() = ResolutionDomain.script(script, usage)
+}
+fun defaultScriptDependencyScopes(configuration: ProjectConfiguration): List<ScriptDependencyScope> =
+    configuration.project.scripts.keys.flatMap { name -> listOf("java-api", "java-runtime").map { ScriptDependencyScope(name, it) } }
+
 data class ResolutionRequest(val coordinate: Coordinate, val variant: VariantRequest, val domain: ResolutionDomain)
 
 class EffectiveConfiguration internal constructor(
@@ -99,13 +126,32 @@ fun defaultDependencyScopes(configuration: ProjectConfiguration): List<Dependenc
 
 /** Each compilation owns its conflict domain. Prerequisite compiles have their own domains. */
 fun effectiveConfiguration(configuration: ProjectConfiguration, policy: ResolverPolicy = ResolverPolicy(),
-                           scopes: List<DependencyScope> = defaultDependencyScopes(configuration)): EffectiveConfiguration {
+                           scopes: List<DependencyScope> = defaultDependencyScopes(configuration),
+                           scriptScopes: List<ScriptDependencyScope> = defaultScriptDependencyScopes(configuration)): EffectiveConfiguration {
     val snapshot = parseProjectConfiguration(parseJson(configuration.document.canonical()))
     require(snapshot.project == configuration.project) { "Configuration document and model disagree" }
+    val scripts = scriptScopes.map { it.script }.distinct().associateWith { expandScript(snapshot.project, it) }
+    return effectiveConfiguration(snapshot.project, "project" to snapshot.document, policy, scopes, scriptScopes, scripts)
+}
+
+/** Companion declarations retain their own document and origins; no synthetic module is published. */
+fun effectiveConfiguration(configuration: StandaloneScriptConfiguration, policy: ResolverPolicy = ResolverPolicy()): EffectiveConfiguration {
+    val snapshot = parseStandaloneScriptConfiguration(parseJson(configuration.document.canonical()))
+    require(snapshot == configuration) { "Standalone configuration document and model disagree" }
+    val scopes = listOf("java-api", "java-runtime").map { ScriptDependencyScope(snapshot.name, it) }
+    // Empty workspace is used solely by shared closure traversal, never serialized as a project.
+    val workspace = ProjectSpec(snapshot.name, snapshot.repositories, emptyList())
+    return effectiveConfiguration(workspace, "standaloneScript" to snapshot.document, policy, emptyList(), scopes, mapOf(snapshot.name to snapshot.expanded()))
+}
+
+private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String, JsonValue>, policy: ResolverPolicy,
+                                   scopes: List<DependencyScope>, scriptScopes: List<ScriptDependencyScope>, scripts: Map<String, ExpandedScript>): EffectiveConfiguration {
     val pinned = policy.copy(pins = policy.pins.toList(), scopedPins = policy.scopedPins.toList(), metadataExclusions = canonicalExclusions(policy.metadataExclusions))
     require(scopes.distinct().size == scopes.size) { "Duplicate dependency scope" }
     val orderedScopes = scopes.sortedBy { it.toJson().canonical() }
-    val modules = snapshot.project.modules.associateBy { it.id }
+    require(scriptScopes.distinct().size == scriptScopes.size) { "Duplicate script dependency scope" }
+    val orderedScriptScopes = scriptScopes.sortedBy { it.toJson().canonical() }
+    val modules = project.modules.associateBy { it.id }
     val requests = linkedSetOf<ResolutionRequest>()
     val domains = linkedSetOf<ResolutionDomain>()
     fun visit(domain: ResolutionDomain) {
@@ -116,7 +162,7 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
         val consumer = if (domain.target == "jvm") jvmTargetFromOptions(target.optionsFor(domain.compilation)) else null
         if (consumer != null && domain.compilation == "test") require(jvmTargetFromOptions(target.compilerOptions) <= consumer) { "Main bytecode target exceeds test consumer target: $domain" }
         val runtime = domain.usage.endsWith("runtime")
-        val closure = dependencyClosure(snapshot.project, module.id, target.name, domain.compilation, if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
+        val closure = dependencyClosure(project, module.id, target.name, domain.compilation, if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
         if (consumer != null) require(closure.modules.all { id -> jvmTargetFromOptions(modules.getValue(id).targets.single { it.name == target.name }.compilerOptions) <= consumer }) { "Module bytecode target exceeds consumer target: $domain" }
         // Native producers expose kotlin-api; kotlin-runtime names only our link domain.
         val variant = if (consumer != null) jvmVariantRequest(domain.usage, consumer) else VariantRequest(target.name, "kotlin-api", emptyMap())
@@ -145,7 +191,7 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
                 plugin.module?.let { producer ->
                     // Compilation uses its own target/API domain; loading uses the compiler host.
                     visit(ResolutionDomain(producer, "jvm", "main", "java-api"))
-                    val runtimeClosure = dependencyClosure(snapshot.project, producer, "jvm", "main", DependencyUsage.RUNTIME)
+                    val runtimeClosure = dependencyClosure(project, producer, "jvm", "main", DependencyUsage.RUNTIME)
                     runtimeClosure.modules.forEach { visit(ResolutionDomain(it, "jvm", "main", "java-api")) }
                     runtimeClosure.external.forEach {
                         requests += ResolutionRequest(it, jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST), pluginDomain)
@@ -154,15 +200,46 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
             }
         }
     }
+    fun visitScript(scope: ScriptDependencyScope) {
+        val script = scripts.getValue(scope.script)
+        val domain = scope.domain()
+        if (!domains.add(domain)) return
+        val consumer = jvmTargetFromOptions(script.compilerOptions.map { it.value })
+        val closure = scriptDependencyClosure(project, script, if (scope.usage == "java-runtime") DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
+        require(closure.modules.all { id -> jvmTargetFromOptions(modules.getValue(id).targets.single { it.name == "jvm" }.compilerOptions) <= consumer }) {
+            "Module bytecode target exceeds script consumer target: ${script.name}"
+        }
+        val variant = jvmVariantRequest(scope.usage, consumer)
+        closure.external.forEach { requests += ResolutionRequest(it, variant, domain) }
+        closure.modules.forEach { visit(ResolutionDomain(it, "jvm", "main", "java-api")) }
+        if (script.compilerPlugins.isNotEmpty()) {
+            val pluginDomain = ResolutionDomain.script(script.name, "java-runtime", "compiler-plugin")
+            domains += pluginDomain
+            val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
+            for (value in script.compilerPlugins) {
+                val plugin = value.value
+                plugin.coordinate?.let { requests += ResolutionRequest(it, host, pluginDomain) }
+                plugin.module?.let { producer ->
+                    visit(ResolutionDomain(producer, "jvm", "main", "java-api"))
+                    val runtime = dependencyClosure(project, producer, "jvm", "main", DependencyUsage.RUNTIME)
+                    runtime.modules.forEach { visit(ResolutionDomain(it, "jvm", "main", "java-api")) }
+                    runtime.external.forEach { requests += ResolutionRequest(it, host, pluginDomain) }
+                }
+            }
+        }
+    }
     orderedScopes.forEach { visit(it.domain()) }
+    orderedScriptScopes.forEach(::visitScript)
     require(pinned.metadataExclusions.all { rule -> requests.any { it.domain == rule.domain } }) { "Metadata exclusion refers to an empty or unselected resolution domain" }
     require(pinned.scopedPins.all { it.domain in domains }) { "Scoped pin refers to an unselected resolution domain" }
     require(domains.size <= 8192 && requests.size <= 8192) { "Too many dependency domains/requests" }
     val orderedRequests = requests.sortedBy { it.domain.toJson().canonical() + it.variant.toLockJson().canonical() + ":" + it.coordinate }
-    val document = obj("schemaVersion" to CONTRACT_VERSION.json(), "project" to snapshot.document,
+    val base = obj("schemaVersion" to CONTRACT_VERSION.json(), authoring,
         "resolver" to pinned.toJson(domains.any { it.purpose == "ksp-runtime" }), "scopes" to orderedScopes.map { it.toJson() }.json(),
         "domains" to domains.sortedBy { it.toJson().canonical() }.map { it.toJson() }.json())
-    return EffectiveConfiguration(document, orderedRequests, snapshot.project.repositories.toList(), pinned)
+    val document = if (orderedScriptScopes.isEmpty()) base else JsonValue.Object(base.objectValue() +
+        ("scriptScopes" to orderedScriptScopes.map { it.toJson() }.json()))
+    return EffectiveConfiguration(document, orderedRequests, project.repositories.toList(), pinned)
 }
 
 internal fun VariantRequest.toLockJson(): JsonValue = obj("platform" to platform.json(), "usage" to usage.json(),

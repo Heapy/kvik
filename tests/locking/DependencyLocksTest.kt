@@ -175,7 +175,7 @@ class DependencyLocksTest {
         assertEquals(listOf(Coordinate.parse("example:annotations:13.0")), policy.pinsFor(domain.copy(compilation = "main")))
         assertFails { ResolverPolicy(scopedPins = listOf(pin, pin)) }
         assertFails { effectiveConfiguration(project, policy, listOf(scope())) }
-        assertFails { effectiveConfiguration(project, ResolverPolicy(scopedPins = listOf(pin.copy(domain = domain.copy(module = "typo"))))) }
+        assertFails { effectiveConfiguration(project, ResolverPolicy(scopedPins = listOf(pin.copy(domain = domain.copy(consumer = ResolutionConsumer.Module("typo")))))) }
         assertFails { ResolutionDomain("sample", "jvm", "main", "kotlin-api") }
         assertEquals(domain, ResolutionDomain.fromJson(domain.toJson()))
         assertFails { ResolutionDomain.fromJson(JsonValue.Object(domain.toJson().objectValue() + ("unknown" to true.json()))) }

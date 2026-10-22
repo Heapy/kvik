@@ -109,7 +109,7 @@ class MetadataExclusionsTest {
         assertEquals(effective(listOf(scoped,other)).digest,effective(listOf(other,scoped)).digest)
         assertFails { ResolverPolicy(metadataExclusions=listOf(scoped,scoped)) }
         assertFails { effective(listOf(scoped),config(emptyList())) }
-        assertFails { effective(listOf(scoped.copy(domain=domain.copy(module="unknown")))) }
+        assertFails { effective(listOf(scoped.copy(domain=domain.copy(consumer=ResolutionConsumer.Module("unknown"))))) }
         assertFails { parseMetadataEdgeExclusion(" ".repeat(4097)) }
         assertFails { parseMetadataEdgeExclusion(scoped.argument().dropLast(1)+",\"extra\":true}") }
         assertFails { scoped.rule.copy(reason="bad\n") }
