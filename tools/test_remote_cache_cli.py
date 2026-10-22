@@ -26,10 +26,11 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--fixture', type=Path, required=True)
     parser.add_argument('--backend', type=Path, required=True)
+    parser.add_argument('--restore-only', type=Path, help='Reuse a completed writer case; check restoration into dependency-only CAS')
     args = parser.parse_args()
     runtime, fixture, backend = (p.resolve() for p in (args.runtime, args.fixture, args.backend))
     parent = ROOT / '.kvik/tests/remote-cache-cli'; parent.mkdir(parents=True, exist_ok=True)
-    case = Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
+    case = args.restore_only.resolve() if args.restore_only else Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
     grpc, http = free_port(), free_port()
     while grpc == http:
         http = free_port()
@@ -55,7 +56,12 @@ def main():
                 root = case / name
                 shutil.copytree(fixture, root, ignore=shutil.ignore_patterns('.kvik', '.git'))
                 # Seed dependency blobs only. Never copy action metadata between worktrees.
-                shutil.copytree(fixture / '.kvik/cache/blobs', root / '.kvik/cache/blobs')
+                blobs = root / '.kvik/cache/blobs'; blobs.mkdir(parents=True)
+                lock = json.loads((fixture / 'kvik.lock.json').read_text())
+                names = {f"{entry['digest']['hash']}-{entry['digest']['sizeBytes']}"
+                         for selection in lock['selections'] for kind in ('artifacts', 'metadata') for entry in selection[kind]}
+                for name in names:
+                    shutil.copyfile(fixture / '.kvik/cache/blobs' / name, blobs / name)
                 config = dict(schemaVersion=1, url=url or f'http://127.0.0.1:{grpc}', trustedWriters=True,
                               mode=mode, tokenEnvironment='KVIK_TEST_CACHE_TOKEN')
                 (root / 'remote.json').write_text(json.dumps(config))
@@ -86,6 +92,14 @@ def main():
                 assert effects[0].read_text() == 'executed\n'
                 return {action['actionId']: (action['key'], action['outputs']) for action in compilations}
 
+            if args.restore_only:
+                records = list((case / 'writer/.kvik/publish').glob('*/verification.json')); assert len(records) == 1
+                written = json.loads(records[0].read_text())
+                produced = {a['actionId']: (a['key'], a['outputs']) for a in written['actions'] if a['actionId'] != 'consumer:jvm:test'}
+                fresh = project('fresh-reader', 'read')
+                assert run(fresh, 'restore', 'remote_hit') == produced
+                print(f'PASS remote compilation outputs restored into dependency-only CAS: {fresh}')
+                return
             writer = project('writer', 'read-write')
             produced = run(writer, 'publish', 'executed')
             reader = project('reader', 'read')
