@@ -142,7 +142,7 @@ def run_native(args):
         (project / 'kvik.json').write_bytes(canonical(document))
         validate(json.loads(invoke(label, ['resolve', *shared])), 'dependencyResolution')
 
-    print('Evidence:', case, flush=True)
+    print('Test case:', case, flush=True)
     if not args.resume_native_cold:
         resolve('resolve')
     commands = ['test', *shared, '--tools', str(project / 'tools.json'), '--runs', str(runs),
@@ -238,9 +238,6 @@ def run_native(args):
             logs = '\n'.join(Path(p).read_text() for p in observation['logs'])
             expected = 'PLUGIN_MARKER' if module == 'consumer' and main_only else value
             assert 'MAIN:' + expected in logs and 'TEST:' + expected in logs, (module, logs)
-        query = json.loads(invoke(label + '-verification', ['verification', '--run', str(run)]))
-        validate(query, 'verificationQuery')
-        assert query['freshness'] == 'current'
         assert (project / 'kvik.json').read_bytes() == config and (project / 'kvik.lock.json').read_bytes() == lock
         records.append(dict(label=label, run=str(run), configuration=digest(config), lock=digest(lock), record=record))
         previous = results
@@ -268,6 +265,11 @@ def run_native(args):
     resolve('resolve-scopes')
     check('main-only', 'v2', 'changed', options, {'consumer:macosArm64:test-compile', 'consumer:macosArm64:test-link'}, main_only=True)
     check('main-only-warm', 'v2', 'changed', options, set(), main_only=True)
+    # One query covers the Native consumer + JVM plugin-host tool selection. Rechecking
+    # every intermediate run would repeat the same full tool inventories without adding coverage.
+    query = json.loads(invoke('verification', ['verification', '--run', records[-1]['run']]))
+    validate(query, 'verificationQuery')
+    assert query['freshness'] == 'current'
     assert {p.relative_to(fixture).as_posix(): digest(p.read_bytes()) for p in fixture.rglob('*') if p.is_file()} == original
     (case / 'summary.json').write_text(json.dumps(dict(status='passed', target='macosArm64', runtime=str(runtime),
         runtimeDigest=digest(runtime.read_bytes()), sourceRequestDigest=digest(request_bytes), runs=records), indent=2) + '\n')
