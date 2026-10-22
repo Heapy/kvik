@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work uses an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -38,6 +38,26 @@ versions, original requirements and locked selections distinct. They do not
 execute package code or change configuration/locks, and availability does not
 establish compatibility. See the [query contract](integration/package-queries/CONTRACT.md)
 and [composed CLI evidence](docs/evidence/k16-package-queries.md).
+
+Named project scripts and standalone `.kt` files use explicit dependency locks:
+
+```sh
+./kvik --no-build -- resolve-script maintenance --project /absolute/project/kvik.json
+./kvik --offline --no-build -- run-script maintenance --project /absolute/project/kvik.json \
+  --tools /absolute/project/tools.json -- "space argument" @literal.args
+./kvik --no-build -- resolve-script --file /absolute/scripts/update.kt
+./kvik --offline --no-build -- inspect-script --file /absolute/scripts/update.kt \
+  --tools /absolute/scripts/tools.json
+```
+
+A standalone `update.kt` requires an adjacent `update.kvik.json` companion and defaults
+to `update.kvik.lock.json`. Use `check-script-lock` with the same selector to verify an
+existing lock. Compilation supplies the pinned standard library and can be reused;
+script execution always runs afresh. Pass program arguments after `--`. Run stdout
+contains JSON events, while observations identify the script's separate UTF-8 stdout
+and stderr files. `inspect-script` reports inputs, expanded dependency/profile origins
+and action prerequisites without compiling or running. See the [script contract](docs/decisions/k12-scripts.md)
+and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools.
 
