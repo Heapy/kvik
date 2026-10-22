@@ -146,6 +146,7 @@ class ScriptGraphTest {
         val launch = JvmScriptLaunch("task", LogicalPath("classes"), listOf(LogicalPath("classes")))
         val files = scriptFiles("classes/Main.class")
         assertEquals(launch, JvmScriptLaunch.fromJson(launch.toJson()))
+        for (name in listOf(".", "..", "1task")) assertFailsWith<IllegalArgumentException> { launch.copy(name = name) }
         assertFailsWith<IllegalArgumentException> { jvmScriptAction(launch, files, scriptDigest("runtime"), scriptTools, mapOf("JAVA_TOOL_OPTIONS" to "-agentlib:evil"), 1000) }
         assertFailsWith<IllegalArgumentException> { jvmScriptAction(launch, TreeManifest(emptyList()), scriptDigest("runtime"), scriptTools, emptyMap(), 1000) }
         assertFailsWith<IllegalArgumentException> { JvmScriptLaunch("task", LogicalPath("classes"), listOf(LogicalPath("classes"), LogicalPath("bad:entry.jar"))) }

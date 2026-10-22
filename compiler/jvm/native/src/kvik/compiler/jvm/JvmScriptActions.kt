@@ -11,7 +11,7 @@ data class JvmScriptLaunch(
     val arguments: List<String> = emptyList(),
 ) {
     init {
-        require(name.length in 1..128 && name.matches(Regex("[A-Za-z0-9_.-]+")))
+        require(name.length in 1..128 && name.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")))
         require(classpath.isNotEmpty() && classpath.first() == scriptClasses && classpath.distinct().size == classpath.size)
         require(classpath.none { ':' in it.value || it.value.any(Char::isISOControl) })
         require(mainClass == null || mainClass.length <= 1024 && mainClass.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*")))
