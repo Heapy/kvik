@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Source-graph launch observation, identities and cache boundaries, without compilers."""
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout, redirect_stderr
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -141,6 +142,35 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
         self.assertEqual(str(self.project / 'kvik'), value['launcher'])
         self.assertEqual(['--source-lock', str(self.lock), '--source-cache', str(self.source_cache), '--offline', '--no-build'],
                          value['bootstrapArguments'][-6:])
+
+    def test_cached_launch_reobserves_after_lock_wait_and_bundle_verification(self):
+        self.document['sources'][0]['pin'] = dict(kind='local', origin='.', tree=None)
+        self.write_lock()
+        source = next((self.project / 'plugins/kotlin/src').rglob('*.kt'))
+        original = source.read_bytes()
+        # Stub a verified previous executable and inject an edit at each
+        # potentially long boundary. Neither case may return its launch context.
+        for boundary in ('lock-wait', 'cache-verification'):
+            with self.subTest(boundary=boundary):
+                source.write_bytes(original)
+                def lock_wait(*args):
+                    if boundary == 'lock-wait': source.write_bytes(original + b'\n')
+                def cache_verification(*args):
+                    if boundary == 'cache-verification': source.write_bytes(original + b'\n')
+                    return True
+                with patch.object(launcher, 'ROOT', self.project), \
+                        patch.object(launcher.fcntl, 'flock', lock_wait), \
+                        patch.object(launcher, 'cached', cache_verification), \
+                        patch.object(launcher, 'build') as build, \
+                        patch.object(sys, 'argv', ['kvik', '--source-lock', str(self.lock),
+                            '--source-cache', str(self.source_cache), '--cache-dir', str(self.cache),
+                            '--artifact-cache', str(self.artifacts), '--no-build', '--print-launch']), \
+                        redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
+                    with self.assertRaises(SystemExit) as failure: launcher.main()
+                    self.assertEqual(2, failure.exception.code)
+                    self.assertEqual('', output.getvalue())
+                    self.assertIn('changed while preparing launch', errors.getvalue())
+                    build.assert_not_called()
 
     def test_graph_cached_runtime_verifies_retained_input_and_acquisition_receipts(self):
         _, _, lock, key = self.composition()

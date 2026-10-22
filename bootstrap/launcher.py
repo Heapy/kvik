@@ -443,12 +443,17 @@ def main():
         locks.mkdir(parents=True, exist_ok=True)
         with (locks / (key["hash"] + ".lock")).open("a+b") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            if not cached(destination, key):
+            cache_hit = cached(destination, key)
+            if not cache_hit:
                 if args.no_build:
                     raise ValueError("No valid executable for the current composition (--no-build)")
                 emit("runtime-building", composition=key["hash"])
                 build(args, recipe, selected, lock, key, destination)
-            else:
+            # Waiting for another producer and verifying a cached bundle can
+            # outlive the initial observation. Never return or exec that stale key.
+            if desired_composition(args)[3] != key:
+                raise ValueError("Runtime inputs changed while preparing launch; retry")
+            if cache_hit:
                 emit("runtime-cache-hit", composition=key["hash"])
         executable = destination / "kvik.kexe"
         if args.print_runtime:

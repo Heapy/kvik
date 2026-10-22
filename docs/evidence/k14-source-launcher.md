@@ -41,7 +41,7 @@ Run from the integration checkout:
 python3 -B tests/bootstrap/test_identity.py
 ```
 
-The source launcher suite passed 15 groups in 4.989 seconds. It includes legacy
+The source launcher suite passed 16 groups in 5.214 seconds. It includes legacy
 launch-descriptor tests, schema-valid full graph identity, remote declarations
 with absent local runtime sources, no query writes/acquisition, content and
 metadata invalidation, unchanged whitespace/consumer edits, source/cache overlap
@@ -57,6 +57,12 @@ after bundle verification and filesystem syncing, immediately before publication
 Both selected-source and input-lock edits at that boundary have regression
 coverage. This remains a last observation under the documented stable-filesystem
 boundary, not a transaction locking out concurrent editors.
+
+Review also reproduced a cached launch using the initial observation after an
+edit during the runtime-lock wait. The launcher now re-observes after waiting
+and cache verification, before returning a descriptor or executing the runtime.
+Injected edits at both boundaries fail with a retry diagnostic and no descriptor;
+they cannot silently launch the previously verified composition.
 
 Eight source-graph schema groups, eleven schema examples/canonical vectors, and
 seven legacy identity checks also passed. Independently rerunning the foreground
