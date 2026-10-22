@@ -378,6 +378,36 @@ DEFS["coverageReportExport"] = versioned({"runId": NONEMPTY, "check": COVERAGE_C
 DEFS["coverageReportGraph"] = versioned({"sourceRun": NONEMPTY,
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+DEFS["coverageThresholdPolicy"] = object_({"metric": enum("line", "branch", "function"),
+    "minimumBasisPoints": {"type": "integer", "minimum": 0, "maximum": 10_000},
+    "modules": array(COVERAGE_ID, minItems=1, uniqueItems=True)})
+COVERAGE_COUNTER = {"type": "integer", "minimum": 0, "maximum": 100_000_000_000}
+DEFS["coverageThresholdResult"] = versioned({"kind": {"const": "coverage-threshold"}, "report": ref("digest"),
+    "runId": NONEMPTY, "check": COVERAGE_CHECK, "sourceStatus": REPORT_STATUS, "policy": ref("coverageThresholdPolicy"),
+    "outcome": enum("passed", "below_threshold", "incomplete", "unsupported"), "status": REPORT_STATUS,
+    **{name: nullable(COVERAGE_COUNTER) for name in ("covered", "executable", "unknown")},
+    "sourceCount": {"type": "integer", "minimum": 0, "maximum": 100_000}, "diagnostics": array(STRING)})
+DEFS["coverageThresholdResult"]["$comment"] = ("The Kotlin contract additionally verifies covered <= executable and the exact integer "
+    "threshold comparison. Evaluation verifies selected module membership, same-source identity/measurement compatibility and report completeness.")
+DEFS["coverageThresholdResult"]["allOf"] = [
+    {"oneOf": [{"properties": {name: {"type": "null"} for name in ("covered", "executable", "unknown")}},
+               {"properties": {name: COVERAGE_COUNTER for name in ("covered", "executable", "unknown")}}]},
+    {"if": {"properties": {"outcome": {"const": "unsupported"}}},
+     "then": {"properties": {name: {"type": "null"} for name in ("covered", "executable", "unknown")}}},
+    {"if": {"properties": {"outcome": {"enum": ["passed", "below_threshold"]}}}, "then": {"properties": {
+        "covered": COVERAGE_COUNTER, "executable": {**COVERAGE_COUNTER, "minimum": 1}, "unknown": {"const": 0},
+        "sourceCount": {"minimum": 1}}}},
+    *[{"if": {"properties": {"sourceStatus": {"const": status}}},
+       "then": {"properties": {"status": {"const": status}}}} for status in ("failed", "incomplete", "cancelled")],
+    *[{"if": {"properties": {"sourceStatus": {"const": "passed"}, "outcome": {"const": outcome}}},
+       "then": {"properties": {"status": {"const": status}}}} for outcome, status in (
+           ("passed", "passed"), ("below_threshold", "failed"), ("incomplete", "incomplete"), ("unsupported", "incomplete"))],
+]
+DEFS["coverageThresholdExport"] = versioned({"outputDirectory": NONEMPTY,
+    "result": ref("coverageThresholdResult"), "artifacts": ref("tree")})
+DEFS["coverageThresholdGraph"] = versioned({"sourceReport": ref("digest"),
+    "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
+    "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
 APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({

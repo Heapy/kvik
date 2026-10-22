@@ -31,4 +31,25 @@ The output contains `coverage.json` (normalized data), `coverage/<module>/jacoco
 
 Coverage completeness is separate from test success. A failed, incomplete or cancelled test execution keeps that outcome; reporting cannot turn it into a passing run. Retained freshness describes completion time and does not verify today's source tree. Use `verification --run PATH` for current source/tool freshness.
 
-The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Coverage thresholds, exclusions through CLI settings, merging scopes or CI runs, and publishing to external services are separate features.
+The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Exclusions through CLI settings, merging separate reports or CI runs, and publishing to external services remain separate features.
+
+## Check a threshold
+
+Evaluate the retained report without rerunning tests or starting a JDK:
+
+```sh
+kvik coverage-check --report /path/to/coverage-directory/coverage.json \
+  --metric line --minimum 80.25 --all-modules --output /path/to/new-threshold-directory
+```
+
+Use repeatable `--module ID` instead of `--all-modules` to select production modules within this report. The minimum is a decimal from 0 to 100 with at most two fractional digits; `80.25` is stored as 8025 basis points. The comparison uses exact integer arithmetic, without rounding a displayed percentage.
+
+Only `line` is currently supported. `branch` and `function` produce a structured `unsupported` result rather than borrowing JaCoCo counters that lack normalized source mapping. The command verifies the original report artifacts against their retained digests and requires a new output directory outside the report directory.
+
+Selected modules contribute one combined line ratio, not an average of module percentages. A shared logical source path counts once only when its content digest, line count and every line state agree across the selected modules. Conflicting copies yield an incomplete result. This combines modules within one report; it does not merge separate test scopes or runs.
+
+A passing threshold requires complete, current-at-completion coverage from a passing source run and at least one executable line. Unknown lines, partial reports and zero executable lines cannot pass, even with a zero-percent minimum. Checking a historical report does not establish freshness against today's sources.
+
+The output contains `threshold.json`, `evaluation.json`, `policy.json` and `graph.json`, including when coverage is below the threshold. Stdout returns the structured result and output artifact manifest. Exit codes follow the result status: 0 for passed, 1 for failed, 3 for incomplete, and 130 for cancelled. Unsupported metrics normally yield incomplete. A failed, incomplete or cancelled source report preserves its status even when the measured ratio passes or the metric is unsupported. Invalid command arguments use exit code 2.
+
+The JSON contracts are `coverageThresholdPolicy`, `coverageThresholdResult`, `coverageThresholdExport` (stdout) and `coverageThresholdGraph` in `schemas/v1/contracts.json`. The result retains the source-report digest, selected policy, measured counts and diagnostics; `outcome` describes the comparison while `status` also preserves the source report’s outcome.

@@ -4769,6 +4769,457 @@
       ],
       "additionalProperties": false
     },
+    "coverageThresholdPolicy": {
+      "type": "object",
+      "properties": {
+        "metric": {
+          "enum": [
+            "line",
+            "branch",
+            "function"
+          ]
+        },
+        "minimumBasisPoints": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "metric",
+        "minimumBasisPoints",
+        "modules"
+      ],
+      "additionalProperties": false
+    },
+    "coverageThresholdResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "coverage-threshold"
+        },
+        "report": {
+          "$ref": "#/$defs/digest"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "check": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:test(?![\\s\\S])"
+        },
+        "sourceStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/coverageThresholdPolicy"
+        },
+        "outcome": {
+          "enum": [
+            "passed",
+            "below_threshold",
+            "incomplete",
+            "unsupported"
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "covered": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unknown": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "report",
+        "runId",
+        "check",
+        "sourceStatus",
+        "policy",
+        "outcome",
+        "status",
+        "covered",
+        "executable",
+        "unknown",
+        "sourceCount",
+        "diagnostics"
+      ],
+      "additionalProperties": false,
+      "$comment": "The Kotlin contract additionally verifies covered <= executable and the exact integer threshold comparison. Evaluation verifies selected module membership, same-source identity/measurement compatibility and report completeness.",
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "covered": {
+                  "type": "null"
+                },
+                "executable": {
+                  "type": "null"
+                },
+                "unknown": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "properties": {
+                "covered": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000000000
+                },
+                "executable": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000000000
+                },
+                "unknown": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000000000
+                }
+              }
+            }
+          ]
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "covered": {
+                "type": "null"
+              },
+              "executable": {
+                "type": "null"
+              },
+              "unknown": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "passed",
+                  "below_threshold"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "covered": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000000000
+              },
+              "executable": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000000
+              },
+              "unknown": {
+                "const": 0
+              },
+              "sourceCount": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "below_threshold"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageThresholdExport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "outputDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "result": {
+          "$ref": "#/$defs/coverageThresholdResult"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/tree"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "outputDirectory",
+        "result",
+        "artifacts"
+      ],
+      "additionalProperties": false
+    },
+    "coverageThresholdGraph": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sourceReport": {
+          "$ref": "#/$defs/digest"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "action": {
+                "$ref": "#/$defs/action"
+              }
+            },
+            "required": [
+              "actionId",
+              "dependencies",
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sourceReport",
+        "actions",
+        "results",
+        "events"
+      ],
+      "additionalProperties": false
+    },
     "verificationQuery": {
       "type": "object",
       "properties": {
