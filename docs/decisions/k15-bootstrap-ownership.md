@@ -1,7 +1,8 @@
 # Recursive ownership through bootstrap
 
-Status: implementation and targeted validation in progress. This does not yet
-establish a complete foreground source-recomposition acceptance gate.
+Status: implemented and independently reviewed at `4552add`; targeted validation
+passed. See [retained evidence](../evidence/k15-bootstrap-ownership.md). This does
+not yet establish a complete foreground source-recomposition acceptance gate.
 
 Native foreground sessions launch Python bootstrap workers. Those workers use
 separate guardians for compiler invocations and source acquisition. Previously,
