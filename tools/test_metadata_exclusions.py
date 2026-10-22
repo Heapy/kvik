@@ -115,6 +115,8 @@ def main():
     lock = json.loads((work / 'excluded-lock.json').read_text())
     gv.validate(graph)
     lv.validate(lock)
+    gv.validate(json.loads((work / 'preferred-constraints.json').read_text()))
+    lv.validate(json.loads((work / 'preferred-lock.json').read_text()))
     invalid = []
     for field, value in [('target', graph['nodes'][0]['id']), ('selected', 'example:jvm-only:1'),
                          ('transitive', True), ('kind', 'dependency')]:
@@ -139,6 +141,7 @@ def main():
         if isinstance(value, dict) and value.get('kind') in ['package-versions', 'package-dependencies', 'project-dependencies']:
             query_validator.validate(value)
     query_validator.validate(json.loads((work / 'excluded-project.json').read_text()))
+    query_validator.validate(json.loads((work / 'preferred-project.json').read_text()))
     for name in ['production-lock.json', 'scoped-lock.json']:
         lv.validate(json.loads((work / 'locking' / name).read_text()))
     selections = json.loads((resolution_output / 'selections.json').read_text())
@@ -151,7 +154,7 @@ def main():
     binary = output / 'unit.kexe'
     with binary.open('rb') as source:
         binary_hash = hashlib.file_digest(source, 'sha256').hexdigest()
-    summary = dict(nativeGroups=58, binarySha256=binary_hash, policyNativeGroups=5, regressionSuites=['resolution', 'locking', 'package-queries'], priorArtifactIdentities=len(artifacts), invalidGraphCases=len(invalid), invalidRuleCases=4, work=str(work))
+    summary = dict(nativeGroups=65, preferredVersionNativeGroups=7, binarySha256=binary_hash, policyNativeGroups=5, regressionSuites=['resolution', 'locking', 'package-queries'], priorArtifactIdentities=len(artifacts), invalidGraphCases=len(invalid), invalidRuleCases=4, work=str(work))
     (work / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print('PASS exact Native metadata exclusion, offline CAS replay and schemas:', work)
 

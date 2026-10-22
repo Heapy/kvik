@@ -53,6 +53,10 @@ class PackageSchemaTest(unittest.TestCase):
             self.validator('domain').validate(dict(module='library',target='macosArm64',compilation='test',usage='java-runtime',purpose=purpose))
         edge=dict(source='root',target='node',kind='dependency',requirement=dict(coordinate='a:b:1',semantics='requires'),selected='a:b:2',transitive=True)
         self.validator('edge').validate(edge)
+        preferred=copy.deepcopy(edge);preferred['requirement']['semantics']='prefers';preferred['requirement']['coordinate']='a:b:9'
+        self.validator('edge').validate(preferred)
+        constraint=copy.deepcopy(preferred);constraint.update(kind='constraint',target=None,selected=None,transitive=False)
+        self.validator('edge').validate(constraint)
         bad=copy.deepcopy(edge);bad['requirement']='a:b:2'
         with self.assertRaises(jsonschema.ValidationError): self.validator('edge').validate(bad)
 

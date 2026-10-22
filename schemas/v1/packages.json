@@ -316,6 +316,7 @@
         "semantics": {
           "enum": [
             "requires",
+            "prefers",
             "pom-effective",
             "redirect",
             "constraint",
@@ -496,6 +497,7 @@
                   "semantics": {
                     "enum": [
                       "requires",
+                      "prefers",
                       "pom-effective",
                       "redirect",
                       "constraint"

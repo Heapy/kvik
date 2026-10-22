@@ -273,5 +273,15 @@
     "file": "org__jetbrains__kotlinx__kotlinx-coroutines-core-jvm__1.8.0__kotlinx-coroutines-core-jvm-1.8.0.module",
     "hash": "ff6a22da40040938751db0ae21177e76517dbf126a76796f5426727bf76c1228",
     "sizeBytes": 4278
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1.module": {
+    "file": "org.jetbrains.kotlinx__atomicfu-macosarm64__0.32.1.module",
+    "hash": "650c1dc58d4c9dca48b8bf3d575545e073193d73287ebbee820bec6a7a962728",
+    "sizeBytes": 4162
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/atomicfu/0.32.1/atomicfu-0.32.1.module": {
+    "file": "org.jetbrains.kotlinx__atomicfu__0.32.1.module",
+    "hash": "86d3cedc1bf235d9a7f629344f9dcfe5bbc1da6ea198e4292dae8c5dba698285",
+    "sizeBytes": 45316
   }
 }

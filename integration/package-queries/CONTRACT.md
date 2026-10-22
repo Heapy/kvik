@@ -79,6 +79,17 @@ identified as such; raw property expressions are not represented as literal
 version requirements. A constraint may have no selected target and never creates
 a fictitious dependency selection.
 
+Literal Gradle `prefers` declarations retain `requirement.semantics="prefers"`
+and their original coordinate; `selected` remains separate. A prefers-only
+dependency requires an explicit effective version pin in this bounded resolver.
+That pin may be below or above the preference, subject to independently reached
+required dependencies/constraints. Without a pin the query reports unsupported
+selection rather than inferring a version from traversal order. Prefer-only
+constraints neither create a selection nor impose a minimum; they may have a
+null target. Mixed rich-version fields, ranges, mutable preferences, strict
+constraints and rejected-version lists remain unsupported. Existing `requires`,
+POM and redirect semantics are unchanged.
+
 Nodes distinguish platform/library and expanded/nontransitive visits. Thus a
 wildcard-excluded edge cannot suppress a normal path reaching the same component.
 Paths are one deterministic shortest path per root/reachable node; all graph

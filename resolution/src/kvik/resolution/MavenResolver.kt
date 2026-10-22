@@ -20,7 +20,7 @@ private fun Coordinate.path() = "${group.replace('.', '/')}/$name/$version/$name
 private fun Map<String, JsonValue>.string(key: String) = getValue(key).stringValue()
 private fun Map<String, JsonValue>.items(key: String) = get(key)?.arrayValue().orEmpty()
 
-/** Exact versions only. Pins explicitly select newer compatible 'requires' versions; no implicit latest-wins. */
+/** Literal versions only: compatible requires pins, explicit pins for soft prefers; no implicit latest-wins. */
 class MavenResolver(
     private val transport: ArtifactTransport,
     private val pomParser: PomParser,
@@ -64,7 +64,7 @@ class MavenResolver(
         val graph = linkedMapOf<String, Component>()
         val traceNodes = linkedMapOf<String, ResolutionNode>()
         val traceEdges = mutableListOf<ResolutionEdge>()
-        val constraintEdges = mutableListOf<Pair<String, Coordinate>>()
+        val constraintEdges = mutableListOf<Triple<String, Coordinate, String>>()
         val capabilityProviders = mutableMapOf<String, Pair<String, String>>()
         val parentCoordinates = mutableSetOf<Coordinate>()
         val downloaded = linkedMapOf<String, ByteArray>()
@@ -79,24 +79,29 @@ class MavenResolver(
             }
         }
         fun metadata(url: String): ByteArray = fetch(url).also { require(it.size <= 1024 * 1024) { "Metadata exceeds byte bound" } }
-        fun record(c: Coordinate): Coordinate {
+        fun record(c: Coordinate, preferred: Boolean = false): Coordinate {
             require(!c.version.lowercase().startsWith("latest.") && !c.version.lowercase().endsWith("-snapshot")) { "Mutable Maven version unsupported" }
-            val result = pins[c.key()]?.also { require(atLeast(it.version, c.version)) { "Pin $it conflicts with requirement $c" } } ?: c
+            val pin = pins[c.key()]
+            require(!preferred || pin != null) { "Preferred dependency $c requires an explicit version pin; automatic preference selection is unsupported" }
+            val result = pin?.also {
+                if (preferred) requireLiteralPreference(it.version)
+                else require(atLeast(it.version, c.version)) { "Pin $it conflicts with requirement $c" }
+            } ?: c
             val prior = selected[result.key()]
             if (prior == null) selected[result.key()] = result
             require(prior == null || prior == result) { "Conflicting versions: $prior and $result; supply an explicit compatible pin" }
             require(selected.size + parentCoordinates.size <= maxComponents) { "Resolution component/parent bound exceeded" }
             return result
         }
-        fun constrain(source: String, c: Coordinate) {
-            constraints.getOrPut(c.key()) { mutableListOf() } += c.version
+        fun constrain(source: String, c: Coordinate, semantics: String = "constraint") {
+            if (semantics != "prefers") constraints.getOrPut(c.key()) { mutableListOf() } += c.version
             if (trace) {
                 require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
-                constraintEdges += source to c
+                constraintEdges += Triple(source, c, semantics)
             }
         }
-        fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null, transitive: Boolean = true): String {
-            val c = record(input)
+        fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null, transitive: Boolean = true, preferred: Boolean = false): String {
+            val c = record(input, preferred)
             // Expansion belongs to an incoming edge, not a component-wide suppression flag.
             // Keep separate closure nodes; both still identify the same capability provider.
             val key = "$c|$platform|$transitive"
@@ -126,7 +131,7 @@ class MavenResolver(
             var provider = "$c|$platform"
             fun dependencyEdge(input: Coordinate, dependencyPlatform: Boolean = false, dependencyRepository: Repository? = null,
                                owner: Coordinate? = null, expand: Boolean = true, kind: String = "dependency", semantics: String = "requires"): String {
-                val target = visit(input, dependencyPlatform, dependencyRepository, owner, expand)
+                val target = visit(input, dependencyPlatform, dependencyRepository, owner, expand, preferred = semantics == "prefers")
                 if (trace) {
                     require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
                     traceEdges += ResolutionEdge(key, target, kind, input, semantics, traceNodes.getValue(target).coordinate, expand)
@@ -157,7 +162,7 @@ class MavenResolver(
                 selectedVariant = name
                 require(rules.all { it.variant == name }) { "Stale metadata exclusion variant: $c:$name" }
                 val declaredDependencies = if (transitive || rules.isNotEmpty()) chosen.items("dependencies").map { dependency(it) } else emptyList()
-                require(rules.all { rule -> declaredDependencies.count { it.first == rule.dependency && !it.second } == 1 } &&
+                require(rules.all { rule -> declaredDependencies.count { it.coordinate == rule.dependency && !it.platform } == 1 } &&
                     (rules.isEmpty() || !platform && chosen["available-at"] == null)) { "Stale or unsupported metadata exclusion edge: $c" }
                 val redirect = chosen["available-at"]
                 if (redirect != null) {
@@ -168,7 +173,10 @@ class MavenResolver(
                     edges += dependencyEdge(target, platform, found.repository, owner, transitive, "redirect", "redirect")
                     provider = graph.getValue(edges.single()).capabilityProvider
                 } else {
-                    if (transitive) chosen.items("dependencyConstraints").forEach { constrain(key, dependency(it, constraint = true).first) }
+                    if (transitive) chosen.items("dependencyConstraints").forEach {
+                        val declared = dependency(it, constraint = true)
+                        constrain(key, declared.coordinate, if (declared.preferred) "prefers" else "constraint")
+                    }
                     for (f in chosen.items("files")) {
                         val file = f.fields(setOf("name", "url", "size", "sha256"), setOf("sha512", "sha1", "md5"))
                         val path = file.string("url")
@@ -179,9 +187,10 @@ class MavenResolver(
                         require(Sha256.digest(fetch(url)) == expected) { "Artifact digest mismatch: $url" }
                         artifacts += LockedArtifact(c, name, found.repository.id, url, expected)
                     }
-                    if (transitive) declaredDependencies.forEach { (d, p) ->
+                    if (transitive) declaredDependencies.forEach { declared ->
+                        val d = declared.coordinate
                         val exclusion = rules.singleOrNull { it.dependency == d }
-                        if (exclusion == null) edges += dependencyEdge(d, p)
+                        if (exclusion == null) edges += dependencyEdge(d, declared.platform, semantics = if (declared.preferred) "prefers" else "requires")
                         else {
                             appliedExclusions += exclusion
                             if (trace) {
@@ -250,10 +259,10 @@ class MavenResolver(
             collect(key)
             LockedSelection(root, variant, artifacts.values.toList(), metadata.values.toList())
         }
-        for ((source, requirement) in constraintEdges) {
+        for ((source, requirement, semantics) in constraintEdges) {
             val chosen = selected[requirement.key()]
             val target = traceNodes.values.firstOrNull { it.coordinate == chosen }?.id
-            traceEdges += ResolutionEdge(source, target, "constraint", requirement, "constraint", chosen, false)
+            traceEdges += ResolutionEdge(source, target, "constraint", requirement, semantics, chosen, false)
         }
         return ResolutionGraph(variant, roots.zip(rootKeys).map { (root, key) -> ResolutionRoot(root, key) }, traceNodes.values.toList(), traceEdges.toList(), selections)
     }
@@ -286,14 +295,25 @@ private fun atLeast(selected: String, required: String): Boolean {
     return true
 }
 
-private fun dependency(value: JsonValue, constraint: Boolean = false): Pair<Coordinate, Boolean> {
+private data class ModuleDependency(val coordinate: Coordinate, val platform: Boolean, val preferred: Boolean)
+
+private fun requireLiteralPreference(version: String) {
+    require(version.matches(Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")) &&
+        !version.lowercase().startsWith("latest.") && !version.lowercase().endsWith("-snapshot")) { "Unsupported preferred version: $version; only immutable literals are supported" }
+}
+
+private fun dependency(value: JsonValue, constraint: Boolean = false): ModuleDependency {
     val d = value.fields(setOf("group", "module", "version"), if (constraint) setOf("reason") else setOf("attributes", "endorseStrictVersions", "reason"))
-    val version = d.getValue("version").fields(setOf("requires"))
+    val version = d.getValue("version").fields(emptySet(), setOf("requires", "prefers"))
+    require(version.size == 1) { "Unsupported rich version combination: require exactly one literal requires or prefers" }
+    val preferred = "prefers" in version
+    val literal = version.string(if (preferred) "prefers" else "requires")
+    if (preferred) requireLiteralPreference(literal)
     val attributes = d["attributes"]?.objectValue().orEmpty()
     require(attributes.isEmpty() || attributes == mapOf("org.gradle.category" to "platform".json())) { "Unsupported dependency attributes" }
     val platform = attributes.isNotEmpty()
     require(d["endorseStrictVersions"] == null || platform && d.getValue("endorseStrictVersions").booleanValue()) { "Unsupported strict-version endorsement" }
-    return Coordinate(d.string("group"), d.string("module"), version.string("requires")) to platform
+    return ModuleDependency(Coordinate(d.string("group"), d.string("module"), literal), platform, preferred)
 }
 
 private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform: Boolean): Boolean {
