@@ -304,8 +304,8 @@ DEFS["applicationStarted"] = versioned({"token": ref("applicationActivationDiges
 for name in ("applicationReady", "applicationActivation", "applicationStarted"):
     DEFS[name]["description"] = "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
 DEFS["actionCacheDecision"] = object_({"actionId": NONEMPTY, "key": ref("digest"),
-    "decision": enum("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error"), "detail": nullable(STRING)})
-DEFS["actionCacheDecision"]["allOf"] = [{"if": {"properties": {"decision": {"const": "local-error"}}},
+    "decision": enum("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error", "remote-hit", "remote-miss", "remote-error"), "detail": nullable(STRING)})
+DEFS["actionCacheDecision"]["allOf"] = [{"if": {"properties": {"decision": {"enum": ["local-error", "remote-error"]}}},
     "then": {"properties": {"detail": STRING}}, "else": {"properties": {"detail": {"type": "null"}}}}]
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
@@ -350,7 +350,7 @@ DEFS["actionExplanation"] = versioned({
     "result": ref("actionResult"), "action": nullable(ref("action")), "cacheDecision": nullable(ref("actionCacheDecision")),
     "dependencyEvidence": enum("unavailable", "unbound-retained"),
     "dependencies": nullable(array(ref("actionResult"))),
-    "reason": object_({"code": enum("shared-within-run", "local-cache-hit", "remote-cache-hit", "blocked", "cancelled", "failed", "execution-required", "executed-cache-reason-unrecorded", "local-cache-miss", "local-cache-error", "cache-unsupported"),
+    "reason": object_({"code": enum("shared-within-run", "local-cache-hit", "remote-cache-hit", "blocked", "cancelled", "failed", "execution-required", "executed-cache-reason-unrecorded", "local-cache-miss", "local-cache-error", "remote-cache-miss", "remote-cache-error", "cache-unsupported"),
         "message": NONEMPTY, "sharedWith": nullable(NONEMPTY), "startedSequence": nullable({"type": "integer", "minimum": 1}),
         "finishedSequence": {"type": "integer", "minimum": 1}}),
     "actionDiagnostics": array(ref("diagnostic")), "runCacheNotices": array(ref("diagnostic")),

@@ -9,6 +9,6 @@ typedef struct {
     int transport_error;
 } kvik_rpc_reply;
 kvik_rpc_reply *kvik_rpc(const char *url, const char *authorization,
-    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms);
+    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms, int (*cancelled)(void *), void *cancel_context);
 void kvik_rpc_free(kvik_rpc_reply *reply);
 #endif

@@ -41,7 +41,7 @@ def main():
     command(['ar', 'rcs', output / 'libkvik-remote.a', output / 'remote.o'])
     command([args.konan_home / 'bin/cinterop', '-def', platform / 'remote.def', '-compiler-option', '-I' + str(platform),
              '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'remote'])
-    sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'cache/remote/src').rglob('*.kt'))
+    sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'cache/remote/src').rglob('*.kt')) + sorted((ROOT / 'integration/action-cache/src').rglob('*.kt'))
     command([args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-library', output / 'remote.klib', *sources,
              *sorted((ROOT / 'tests/remote').glob('*.kt')), '-entry', 'kvik.cache.remote.tests.main', '-o', output / 'probe.kexe'])
     executable = output / 'probe.kexe'
@@ -86,6 +86,8 @@ def main():
                 assert not (root / 'reader/restored/out/share/data').stat().st_mode & 0o111
                 print('PASS native REAPI publish, directory Tree restore, executable modes', flush=True)
                 print(run('selftest', 'wire').strip(), flush=True)
+                print(run('executor', 'executor').strip(), flush=True)
+                print(run('executor-unit', 'executor-unit').strip(), flush=True)
                 local = run('lookup', 'reader', url='http://127.0.0.1:1', restore=False)
                 assert 'HIT local' in local, local
                 print('PASS verified local fallback requires no remote endpoint', flush=True)
@@ -153,12 +155,14 @@ def main():
                 assert not list((root / 'corrupt-reader/actions').glob('*.json'))
                 assert not (root / 'corrupt-reader/restored').exists()
                 print('PASS real backend blob corruption cannot publish local metadata or outputs', flush=True)
+                print(run('executor-fallback', 'corrupt-executor', 'corrupt').strip(), flush=True)
 
                 assert 'PUBLISHED true' in run('publish', 'missing-writer', 'missing')
                 stored_blob('missing').unlink()
                 result = run('lookup', 'missing-reader', 'missing')
                 assert 'MISS' in result and not list((root / 'missing-reader/actions').glob('*.json')), result
                 print('PASS deleted backend blob yields diagnosed miss', flush=True)
+                print(run('executor-fallback', 'missing-executor', 'missing').strip(), flush=True)
 
                 with DropAfterProxy(('127.0.0.1', grpc), allowed=3) as proxy:
                     result = run('publish', 'partial-writer', 'partial', url=f'http://127.0.0.1:{proxy.port}')
@@ -185,7 +189,7 @@ def main():
                 action_url = f'http://127.0.0.1:{http}/ac/{remote_key}'
                 with urllib.request.urlopen(action_url, timeout=2) as response:
                     saved_action = response.read()
-                huge_result = field(2, field(1, 'single.txt') + field(2, wire_digest(oversized)))
+                huge_result = b''.join(field(2, field(1, name) + field(2, wire_digest(oversized))) for name in ('out', 'single.txt'))
                 try:
                     with urllib.request.urlopen(urllib.request.Request(action_url, data=huge_result, method='PUT'), timeout=3) as response:
                         assert response.status == 200
@@ -217,6 +221,21 @@ def main():
                     assert not observer.is_alive()
                 print('PASS stalled RPC observes native transport deadline', flush=True)
 
+                stop = threading.Event()
+                with socket.socket() as stalled:
+                    stalled.bind(('127.0.0.1', 0)); stalled.listen(); stalled.settimeout(10)
+                    def accept_cancelled():
+                        with stalled.accept()[0]:
+                            (root / 'cancel-reader/connected').write_bytes(b'connected')
+                            stop.wait(10)
+                    observer = threading.Thread(target=accept_cancelled)
+                    observer.start()
+                    try:
+                        print(run('executor-cancel', 'cancel-reader', url=f'http://127.0.0.1:{stalled.getsockname()[1]}').strip(), flush=True)
+                    finally:
+                        stop.set(); observer.join(timeout=11)
+                    assert not observer.is_alive()
+
                 server.terminate()
                 server.wait(timeout=5)
                 started = time.monotonic()
@@ -224,6 +243,7 @@ def main():
                 assert 'MISS' in result and time.monotonic() - started < 3, result
                 assert 'HIT local' in run('lookup', 'reader', restore=False)
                 print('PASS backend outage is bounded and existing local cache remains usable', flush=True)
+                print(run('executor-fallback', 'outage-executor').strip(), flush=True)
                 print('K07 native REAPI integration checks passed', flush=True)
             finally:
                 server.terminate()

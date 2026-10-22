@@ -38,13 +38,16 @@ data class TransferLimits(
     }
 }
 
+internal class RemoteGrpcFailure(val status: Int) : Exception("Remote gRPC status $status")
+
 /** Synchronous bounded RPC phase; caller must not run it on a responsive scheduler/control thread. */
-internal class RpcSession(private val endpoint: RemoteEndpoint, val limits: TransferLimits) {
+internal class RpcSession(private val endpoint: RemoteEndpoint, val limits: TransferLimits, private val checkpoint: () -> Unit = {}) {
     private val started = TimeSource.Monotonic.markNow()
     private var transferred = 0L
     private var requests = 0
     var batchBytes: Long = limits.blobBytes.toLong()
     fun rpc(service: String, method: String, message: ByteArray): ByteArray {
+        checkpoint()
         demand(++requests <= limits.requests, "Remote request budget exceeded")
         val remaining = limits.operationMillis - started.elapsedNow().inWholeMilliseconds
         demand(remaining > 0, "Remote operation deadline exceeded")
@@ -55,18 +58,25 @@ internal class RpcSession(private val endpoint: RemoteEndpoint, val limits: Tran
         for (index in 0..3) framed[index + 1] = (message.size ushr ((3 - index) * 8)).toByte()
         message.copyInto(framed, 5)
         val maximum = minOf(limits.rpcBytes.toLong(), limits.totalBytes - transferred).toInt()
-        val response = framed.usePinned { pinned ->
+        val cancellation = StableRef.create(checkpoint)
+        val response = try { framed.usePinned { pinned ->
             val result = kvik_rpc("${endpoint.url}/build.bazel.remote.execution.v2.$service/$method",
                 endpoint.bearerToken?.let { "authorization: Bearer $it" }, pinned.addressOf(0).reinterpret(),
-                framed.size.convert(), maximum.convert(), minOf(remaining, limits.rpcMillis))
+                framed.size.convert(), maximum.convert(), minOf(remaining, limits.rpcMillis), staticCFunction { context: COpaquePointer? ->
+                    try { requireNotNull(context).asStableRef<() -> Unit>().get().invoke(); 0 }
+                    catch (_: Throwable) { 1 }
+                }, cancellation.asCPointer())
                 ?: throw RemoteFailure("Remote transport allocation failed")
             try {
+                checkpoint()
                 demand(result.pointed.transport_error == 0, "Remote transport failed (${result.pointed.transport_error})")
                 demand(result.pointed.http_status == 200L, "Remote HTTP status ${result.pointed.http_status}")
-                demand(result.pointed.grpc_status == 0, "Remote gRPC status ${result.pointed.grpc_status}")
+                if (result.pointed.grpc_status != 0) throw RemoteGrpcFailure(result.pointed.grpc_status)
                 result.pointed.data?.readBytes(result.pointed.size.toInt()) ?: byteArrayOf()
             } finally { kvik_rpc_free(result) }
         }
+        } finally { cancellation.dispose() }
+        checkpoint()
         transferred += response.size
         demand(response.size >= 5 && response[0] == 0.toByte(), "Invalid or compressed gRPC frame")
         var length = 0L

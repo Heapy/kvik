@@ -3737,7 +3737,10 @@
             "unsupported-action-kind",
             "local-hit",
             "local-miss",
-            "local-error"
+            "local-error",
+            "remote-hit",
+            "remote-miss",
+            "remote-error"
           ]
         },
         "detail": {
@@ -3763,7 +3766,10 @@
           "if": {
             "properties": {
               "decision": {
-                "const": "local-error"
+                "enum": [
+                  "local-error",
+                  "remote-error"
+                ]
               }
             }
           },
@@ -4847,6 +4853,8 @@
                 "executed-cache-reason-unrecorded",
                 "local-cache-miss",
                 "local-cache-error",
+                "remote-cache-miss",
+                "remote-cache-error",
                 "cache-unsupported"
               ]
             },

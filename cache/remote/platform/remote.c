@@ -11,6 +11,12 @@ static pthread_once_t initialized = PTHREAD_ONCE_INIT;
 static CURLcode initialization;
 static void initialize(void) { initialization = curl_global_init(CURL_GLOBAL_DEFAULT); }
 typedef struct { kvik_rpc_reply *reply; size_t limit, headers; int content_type; } Transfer;
+typedef struct { int (*cancelled)(void *); void *context; } Cancellation;
+static int progress(void *context, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d) {
+    (void)a; (void)b; (void)c; (void)d;
+    Cancellation *cancellation = context;
+    return cancellation->cancelled && cancellation->cancelled(cancellation->context);
+}
 static size_t receive(char *bytes, size_t size, size_t count, void *context) {
     Transfer *transfer = context;
     if (size && count > SIZE_MAX / size) return 0;
@@ -49,7 +55,7 @@ static size_t header(char *bytes, size_t size, size_t count, void *context) {
     return length;
 }
 kvik_rpc_reply *kvik_rpc(const char *url, const char *authorization,
-    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms) {
+    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms, int (*cancelled)(void *), void *cancel_context) {
     kvik_rpc_reply *reply = calloc(1, sizeof(*reply));
     if (!reply) return NULL;
     reply->grpc_status = -1; reply->transport_error = -1;
@@ -62,6 +68,10 @@ kvik_rpc_reply *kvik_rpc(const char *url, const char *authorization,
     headers = curl_slist_append(headers, "te: trailers");
     if (authorization && *authorization) headers = curl_slist_append(headers, authorization);
     Transfer transfer = {reply, response_limit, 0, 0};
+    Cancellation cancellation = {cancelled, cancel_context};
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &cancellation);
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);

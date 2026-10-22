@@ -28,6 +28,10 @@ fun main(args: Array<String>) {
     val mapping = ReapiMapping(action, limits)
     when (operation) {
         "selftest" -> wireChecks(action, limits)
+        "executor" -> executorBackendChecks(root, endpoint)
+        "executor-unit" -> executorChecks(root)
+        "executor-cancel" -> executorCancellationCheck(root, endpoint)
+        "executor-fallback" -> executorFallbackCheck(root, endpoint, action)
         "identity" -> println("IDENTITY ${mapping.localKey.hash} ${mapping.actionDigest.hash} ${mapping.actionDigest.sizeBytes}")
         "publish", "unapproved", "test", "failed", "oversize", "undeclared" -> {
             content.put("fixture-input".encodeToByteArray())

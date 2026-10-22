@@ -28,18 +28,19 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
     require(decisions.size <= 1) { "Duplicate cache decision for action" }
     val decision = decisions.singleOrNull()?.let { event ->
         val fields = cacheDecisionFields(event.payload)
-        require(Digest.fromJson(fields.getValue("key")) == result.key && event.sequence < finished.sequence &&
-            (started == null || event.sequence < started.sequence)) { "Cache decision differs from action identity/order" }
+        require(Digest.fromJson(fields.getValue("key")) == result.key && event.sequence < finished.sequence) { "Cache decision differs from action identity/order" }
         val choice = fields.getValue("decision").stringValue()
         require(action != null) { "Cache decision requires a resolved recipe" }
         val eligible = action.kind in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE)
         require(when (choice) {
             "disabled-by-policy" -> action.cachePolicy == CachePolicy.NEVER
             "unsupported-action-kind" -> action.cachePolicy != CachePolicy.NEVER && !eligible
+            "remote-hit", "remote-miss", "remote-error" -> action.cachePolicy == CachePolicy.REMOTE && eligible
             else -> action.cachePolicy != CachePolicy.NEVER && eligible
         }) { "Cache decision contradicts action policy" }
         if (result.status == ActionStatus.LOCAL_HIT) require(choice == "local-hit") { "Local hit contradicts cache decision" }
-        if (result.status == ActionStatus.EXECUTED) require(choice != "local-hit") { "Execution contradicts local hit decision" }
+        if (result.status == ActionStatus.REMOTE_HIT) require(choice == "remote-hit") { "Remote hit contradicts cache decision" }
+        if (result.status == ActionStatus.EXECUTED) require(choice !in setOf("local-hit", "remote-hit")) { "Execution contradicts local hit decision" }
         event.payload
     }
     // Older scheduler versions recorded sharing in a diagnostic rather than a typed event.
@@ -62,6 +63,8 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
         result.status == ActionStatus.CANCELLED -> "cancelled" to "The action was cancelled."
         result.status == ActionStatus.FAILED -> "failed" to "The action failed."
         decision?.values?.get("decision") == "local-miss".json() -> "local-cache-miss" to "No local cache entry was returned for this action key."
+        decision?.values?.get("decision") == "remote-miss".json() -> "remote-cache-miss" to "Neither the local nor remote cache returned this action; the action executed."
+        decision?.values?.get("decision") == "remote-error".json() -> "remote-cache-error" to "Remote cache lookup or output validation failed; the action executed."
         decision?.values?.get("decision") == "local-error".json() -> "local-cache-error" to "Local cache lookup or entry validation failed; the action executed."
         decision?.values?.get("decision") == "unsupported-action-kind".json() -> "cache-unsupported" to "This action kind bypassed the local compilation cache."
         action?.cachePolicy == CachePolicy.NEVER -> "execution-required" to "The action executed with a policy that forbids cached results."
@@ -99,8 +102,8 @@ internal fun cacheDecisionFields(value: JsonValue): Map<String, JsonValue> {
     require(fields.getValue("actionId").stringValue().isNotBlank())
     Digest.fromJson(fields.getValue("key"))
     val decision = fields.getValue("decision").stringValue()
-    require(decision in setOf("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error")) { "Unknown cache decision" }
+    require(decision in setOf("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error", "remote-hit", "remote-miss", "remote-error")) { "Unknown cache decision" }
     val detail = fields.getValue("detail")
-    if (decision == "local-error") detail.stringValue() else require(detail == JsonValue.Null) { "Unexpected cache decision detail" }
+    if (decision in setOf("local-error", "remote-error")) detail.stringValue() else require(detail == JsonValue.Null) { "Unexpected cache decision detail" }
     return fields
 }

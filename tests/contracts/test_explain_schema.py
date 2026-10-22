@@ -42,6 +42,12 @@ class ExplanationSchemaTest(unittest.TestCase):
         self.assertTrue(list(validator.iter_errors(event)))
         event['payload']['decision'] = 'local-error'
         validator.validate(event)
+        for decision in ('remote-hit', 'remote-miss', 'remote-error'):
+            event['payload']['decision'] = decision
+            event['payload']['detail'] = 'unavailable' if decision == 'remote-error' else None
+            validator.validate(event)
+            event['payload']['detail'] = None if decision == 'remote-error' else 'unexpected'
+            self.assertTrue(list(validator.iter_errors(event)))
         event['payload']['extra'] = True
         self.assertTrue(list(validator.iter_errors(event)))
 

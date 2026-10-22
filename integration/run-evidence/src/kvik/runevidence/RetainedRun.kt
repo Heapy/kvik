@@ -32,7 +32,7 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
         "action-cache-decision" -> {
             val fields = cacheDecisionFields(event.payload)
             val id = fields.getValue("actionId").stringValue()
-            require(id !in started && id !in finished && decisions.add(id) &&
+            require(id !in finished && decisions.add(id) &&
                 results[id]?.key == Digest.fromJson(fields.getValue("key"))) { "Cache decision differs from action result or order" }
         }
         "action-started" -> {

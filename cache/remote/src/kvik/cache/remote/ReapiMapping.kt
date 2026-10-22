@@ -86,6 +86,8 @@ internal class ReapiMapping(original: ActionSpec, private val limits: TransferLi
     fun validateOutputs(manifest: TreeManifest) {
         TreeManifest(manifest.files.toList())
         demand(manifest.files.size <= limits.files, "Too many output files")
+        demand(action.outputs.all { root -> manifest.files.any { it.path == root || it.path.value.startsWith(root.value + "/") } },
+            "Missing declared output root")
         for (file in manifest.files) {
             demand(file.path.value.split('/').size <= limits.depth, "Output exceeds depth limit")
             demand(action.outputs.any { file.path == it || file.path.value.startsWith(it.value + "/") }, "Undeclared output path")

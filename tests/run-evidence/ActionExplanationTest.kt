@@ -85,14 +85,17 @@ class ActionExplanationTest {
             Triple("local-miss", ActionStatus.EXECUTED, "local-cache-miss"),
             Triple("local-error", ActionStatus.EXECUTED, "local-cache-error"),
             Triple("local-hit", ActionStatus.LOCAL_HIT, "local-cache-hit"),
+            Triple("remote-hit", ActionStatus.REMOTE_HIT, "remote-cache-hit"),
+            Triple("remote-miss", ActionStatus.EXECUTED, "remote-cache-miss"),
+            Triple("remote-error", ActionStatus.EXECUTED, "remote-cache-error"),
             Triple("disabled-by-policy", ActionStatus.EXECUTED, "execution-required"),
             Triple("local-miss", ActionStatus.FAILED, "failed"),
             Triple("local-hit", ActionStatus.CANCELLED, "cancelled"))) {
-            val spec = if (choice == "disabled-by-policy") action.copy(cachePolicy = CachePolicy.NEVER) else action
+            val spec = if (choice == "disabled-by-policy") action.copy(cachePolicy = CachePolicy.NEVER) else if (choice.startsWith("remote-")) action.copy(cachePolicy = CachePolicy.REMOTE) else action
             val record = record(listOf(result(status = status, recipe = spec)))
             val decision = obj("actionId" to "main".json(), "key" to spec.key(Sha256).toJson(), "decision" to choice.json(),
-                "detail" to if (choice == "local-error") "missing blob".json() else JsonValue.Null)
-            val journal = events(record).toMutableList().also { it.add(1, RunEvent(record.runId, 2, "action-cache-decision", decision)) }
+                "detail" to if (choice in setOf("local-error", "remote-error")) "missing blob".json() else JsonValue.Null)
+            val journal = events(record).toMutableList().also { it.add(if (choice.startsWith("remote-")) 2 else 1, RunEvent(record.runId, 2, "action-cache-decision", decision)) }
                 .mapIndexed { i, e -> e.copy(sequence = i + 1L) }
             val explained = explainRetainedAction(record, validate(record, journal), "main", recipe(spec = spec))
             assertEquals(expected, reason(explained)); assertEquals(decision, explained.values.getValue("cacheDecision"))
@@ -113,7 +116,8 @@ class ActionExplanationTest {
             assertFails { validate(record, withDecision(value)) }
         }
         assertFails { validate(record, withDecision(decision, duplicate = true)) }
-        assertFails { validate(record, withDecision(decision, at = 2)) }
+        validate(record, withDecision(decision, at = 2)) // Async decision after start is valid.
+        assertFails { validate(record, withDecision(decision, at = 3)) }
         val contradictory = JsonValue.Object(decision.values + ("decision" to "disabled-by-policy".json()))
         assertFails { explainRetainedAction(record, validate(record, withDecision(contradictory)), "main", recipe()) }
         val hit = JsonValue.Object(decision.values + ("decision" to "local-hit".json()))
