@@ -45,8 +45,10 @@ unsupported by `ScriptGraph.pluginInputs`. The phase tests explicit graph refusa
 of nonempty options and an actually resolved 2.3.20 plugin, with no compiler worker
 request or program effect. It does **not** claim successful published plugin-option
 invalidation or universal binary plugin compatibility. Workspace-plugin option
-invalidation is a separate named-script gate. The final restored valid lock must
-equal its original bytes and reuse the successful changed-source compile while
+invalidation is a separate named-script gate. Each configuration edit first proves offline stale-lock refusal without writes,
+then explicitly resolves normally and checks the updated lock offline. Online
+resolution may update CAS; artifact identities remain independently checked.
+The final restored valid lock must equal its original bytes and reuse the successful changed-source compile while
 executing the program afresh.
 
 This phase does not prove an explicit compiler-identity mutation, concurrent

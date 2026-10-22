@@ -132,13 +132,19 @@ def _effects(gate, expected):
     return (gate.project/'effects.log').read_bytes()
 
 
-def _resolve_offline(gate, label):
-    blobs = inventory(gate.store/'blobs')
-    values = gate.invoke(label, ['resolve-script', *gate.common, '--offline'])
+def _resolve_configuration(gate, label):
+    # Offline means replay of the existing effective configuration, not permission
+    # to replace a stale lock even when all artifact bytes happen to be available.
+    paths = [('project', gate.project), ('store', gate.store), ('runs', gate.runs)]
+    before = {name: inventory(path) for name, path in paths}
+    values = gate.invoke(label+'-stale-offline', ['resolve-script', *gate.common, '--offline'], 2)
     assert len(values) == 1
-    gate.validate(values[0], 'dependencyResolution')
-    gate.validate(json.loads(gate.lock.read_bytes()), 'dependencyLock')
-    assert blobs == inventory(gate.store/'blobs')
+    assert values[0]['diagnostic']['code'] == 'KVIK_LOCK_INVALID'
+    assert values[0]['diagnostic']['message'] == 'Stale dependency lock: effective configuration differs; explicitly resolve/update'
+    assert before == {name: inventory(path) for name, path in paths}
+    write(gate.directory/(label+'-stale-offline.unchanged.json'), before)
+    gate.resolve(label)
+    gate.read_only(label+'-check-offline', ['check-script-lock', *gate.common, '--offline'], 'dependencyResolution')
 
 
 def _refused_plugin(gate, label, expected_message):
@@ -220,7 +226,7 @@ def run(gate):
 
     # Removal proves generated serializer use rather than mere runtime JSON parsing.
     document = copy.deepcopy(initial); document['script']['compilerPlugins'] = []
-    write(gate.config, document); _resolve_offline(gate, 'published-no-plugin-resolve')
+    write(gate.config, document); _resolve_configuration(gate, 'published-no-plugin-resolve')
     failed = gate.run('published-no-plugin', [], 1, 'failed')
     assert failed['terminal']['status'] == 'blocked'
     assert all(a['outputs']['files'] == [] for a in failed['record']['actions'])
@@ -229,7 +235,7 @@ def run(gate):
 
     # Published options are deliberately unsupported: refusal, not claimed successful invalidation.
     document = copy.deepcopy(initial); document['script']['compilerPlugins'][0]['options'] = ['generateSchema=true']
-    write(gate.config, document); _resolve_offline(gate, 'published-options-resolve')
+    write(gate.config, document); _resolve_configuration(gate, 'published-options-resolve')
     assert json.loads(gate.lock.read_bytes())['configuration'] != json.loads(lock_bytes)['configuration']
     _refused_plugin(gate, 'published-options-rejected',
         f'Published script compiler plugin {PLUGIN} does not support options; remove options or use a workspace compiler plugin')
@@ -245,7 +251,7 @@ def run(gate):
         'Script compiler plugin org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.3.20 '
         f'is incompatible with pinned Kotlin 2.4.20; use {PLUGIN}')
 
-    write(gate.config, initial); _resolve_offline(gate, 'published-restored-resolve')
+    write(gate.config, initial); _resolve_configuration(gate, 'published-restored-resolve')
     assert gate.lock.read_bytes() == lock_bytes
     recovered = gate.run('published-recovered', [])
     assert audit(gate, recovered, message='helper-two', value=8) == helper_keys
