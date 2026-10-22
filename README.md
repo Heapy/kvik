@@ -2,7 +2,16 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work will use an explicit foreground session.
 
-The implementation is at the bootstrap/contracts stage. There is no production consumer-build CLI yet. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [bootstrap evidence](docs/evidence/k01.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands are `help` and `runtime-info`; consumer builds are still being integrated. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [launcher evidence and limits](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+
+With tools matching the explicitly provisioned host lock:
+
+```sh
+./kvik --java-home "$JDK" --konan-home "$KONAN" -- runtime-info
+./kvik --offline --no-build -- help
+```
+
+The source bootstrap uses Python with `os.waitid`/`WNOWAIT` support (tested with Python 3.15). A cache hit verifies and executes the native binary without starting a JVM. A cache miss verifies the installed compiler, JDK, native dependencies and Apple tools against `bootstrap/toolchains.lock.json`; it does not download missing tools. That lock currently describes the development macOS ARM64 host, so another host must be explicitly provisioned and repinned with `bootstrap/pin_tools.py` before building.
 
 ## Current checks
 

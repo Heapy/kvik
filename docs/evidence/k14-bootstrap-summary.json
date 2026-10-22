@@ -1,0 +1,103 @@
+{
+  "date": "2026-10-22",
+  "platform": "macosArm64",
+  "compiler": "Kotlin/Native 2.4.20",
+  "python": "3.15.0",
+  "scope": "local source composition; tools already provisioned; consumer builds not integrated",
+  "identityTests": 6,
+  "ownershipTests": 5,
+  "launcherChecks": [
+    {
+      "name": "interrupted-native-bootstrap-no-publication",
+      "seconds": 31.5156775409705,
+      "details": null
+    },
+    {
+      "name": "concurrent-cold-launchers",
+      "seconds": 40.6242031250149,
+      "details": "601da8b9417ad261dc256ae13388f5fa5b8bf92a5ca241c3d9cc7a928b746b9d"
+    },
+    {
+      "name": "relocated-cached-runtime",
+      "seconds": 0.0888,
+      "details": null
+    },
+    {
+      "name": "invalidate-core-source",
+      "seconds": 0.0443,
+      "details": null
+    },
+    {
+      "name": "invalidate-native-options",
+      "seconds": 0.0388,
+      "details": null
+    },
+    {
+      "name": "invalidate-plugin-registry",
+      "seconds": 0.0392,
+      "details": null
+    },
+    {
+      "name": "invalidate-tool-lock",
+      "seconds": 0.0378,
+      "details": null
+    },
+    {
+      "name": "consumer-edit-and-no-compiler-needed",
+      "seconds": 0.0386,
+      "details": null
+    },
+    {
+      "name": "same-size-same-mtime-plugin-invalidation",
+      "seconds": 0.0377,
+      "details": null
+    },
+    {
+      "name": "source-plugin-recomposition",
+      "seconds": 37.158,
+      "details": "7c7a54f879c1167c7ba300ba20f6889bda831c96a78ae8a38f1f3bbfa74b2c2b"
+    },
+    {
+      "name": "corrupt-executable-rejected",
+      "seconds": 0.1141,
+      "details": null
+    },
+    {
+      "name": "corrupt-executable-rebuilt",
+      "seconds": 38.6387,
+      "details": null
+    },
+    {
+      "name": "failed-rebuild-no-stale-fallback",
+      "seconds": 36.8244,
+      "details": null
+    },
+    {
+      "name": "source-restore-reuses-original-composition",
+      "seconds": 0.1152,
+      "details": null
+    }
+  ],
+  "cachedStartup": {
+    "composition": "fb18291a8a33149c49789bd63ca0cf74dee38a3adf0b4bf6d53c825666304247",
+    "nativeCompileMillis": 13720,
+    "checks": [
+      {
+        "name": "cached-offline-startup",
+        "seconds": 0.4601,
+        "details": [
+          0.0512,
+          0.0399,
+          0.0409,
+          0.0399,
+          0.0456,
+          0.0444,
+          0.0585,
+          0.0469,
+          0.0467,
+          0.0461
+        ]
+      }
+    ]
+  }
+}
