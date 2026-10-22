@@ -164,9 +164,8 @@ verification and concurrent development work and are not performance acceptance 
 The subsequent [dependency-domain slice](k09-dependency-scopes.md) implements runtime-only
 external edges, separate test compiler options, exported/private module dependencies and
 scope-specific resolution (the reference selects different annotations versions for
-production and tests). The unchanged kotaml fixture now passes schema validation, but its
-first public resolution attempt rejects test-framework capability metadata. Its harness
-checks pinned source files, exact per-domain artifact sets, actual action classpaths and all
-2,038 reference test identities; full execution remains pending. Adapter-level test evidence
-remains separate from composed CLI parity. These observations do not establish the complete
-K10 gates.
+production and tests). Subsequent capability and parent-POM support enabled the
+[full unchanged kotaml CLI run](k09-kotaml-cli.md): all 2,038 exact test identities
+and all eight external artifact sets passed, with actual action classpath checks
+and a current post-exit query. The evidence records classpath-order and compiler
+comparison limits. These observations do not establish the complete K10 gates.

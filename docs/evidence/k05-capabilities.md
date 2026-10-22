@@ -60,3 +60,14 @@ This is not a passing full kotaml resolution or test gate. No dependency pins,
 scope expectations, fixture sources, or assertions were widened. The probe will
 compare all eight exact domain artifact sets and perform CAS-only replay once
 the separately scoped POM support allows resolution to complete.
+
+Independent review approved `689b6f6` before integration as `d36858b`. Native
+probes additionally rejected explicit-versus-POM implicit provider collisions
+in both root orders, accepted multi-hop aliases sharing one terminal provider,
+and resolved/replayed independent providers in separate consumer domains. The
+actual JUnit5 closures and parent-POM rejection were checked independently in
+`/private/tmp/kvik-caps-fixture-u94f1jj6`; the additional probe is retained under
+`/private/tmp/kvik-capabilities-review`.
+
+The subsequent [parent-POM slice](k05-parent-poms.md) completes the fixture's
+resolution, followed by the separately validated [full public CLI run](k09-kotaml-cli.md).

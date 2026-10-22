@@ -103,3 +103,14 @@ Full Native probe evidence is retained at
 `/private/tmp/kvik-k05-parent-pom/.kvik/tests/kotaml-resolution/case-0ccetjkb`:
 `comparisons.json` has eight exact matches, `lock.json` retains parent provenance,
 and `metadata.json` maps every fetched metadata URL to captured bytes/digests.
+
+Independent review approved `42afc8e` before integration as `fdb8265`. Seven
+focused Native POM checks passed in `/private/tmp/kvik-parent-fixture-review-0s00ndzd`.
+The reviewer reproduced both captured Maven oracle outputs exactly after checking
+the pinned model/model-builder jar digests in `/private/tmp/kvik-pom-oracle-review-md0miuaf`.
+All eight retained artifact sets were recomputed against the reference, and all
+64 metadata URL/hash/size entries were verified against their captured bytes,
+including both parent POMs. The candidate worktree remained unchanged.
+
+The subsequent [full public CLI run](k09-kotaml-cli.md) separately validates
+compilation and all 2,038 expected JVM test identities with this resolver.
