@@ -157,3 +157,15 @@ resulting runtime; those processes were left untouched. This receipt claims no
 consumer test result. The public Git transport gate remains the separate
 source-store evidence. No full-gate build failed or was replaced by an older
 runtime.
+
+Independent review approved harness `9d65b67` and this result after checking
+the five archives, selected source bytes, copied trusted bootstrap, all three
+runtime publications, 24 build commands, 276 input records, worker bundles,
+ordered library/compiler classpaths, source caches and retained HTTP requests.
+The four fixture tests and adversarial receipt test also passed independently.
+Report: `/private/tmp/kvik-source-bootstrap-independent-9cpwujay/report.json`;
+reproduce the retained-byte audit with
+`/private/tmp/kvik-source-bootstrap-independent-audit.py --final`.
+The review bound installed-tool identities but did not repeat full installation
+hashing or compiler execution. The resulting helper-v2 runtime also passed the
+separate [production JVM consumer gate](k14-source-runtime-consumer.md).

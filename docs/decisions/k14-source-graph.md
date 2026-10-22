@@ -1,6 +1,6 @@
 # K14 source-graph input lock v1
 
-Status: approved source-graph contract. Strict parsing, local observation, acquisition, private snapshots and launcher integration are implemented. Full composed-runtime acceptance remains a separate gate; see the acceptance list below. The example is `examples/k14-source-graph.lock.json` and contains illustrative, non-provisionable source pins.
+Status: approved source-graph contract. Strict parsing, local observation, acquisition, private snapshots and launcher integration are implemented. The [full HTTPS composed-runtime fixture](../evidence/k14-source-bootstrap.md) and its [JVM consumer gate](../evidence/k14-source-runtime-consumer.md) pass; the acceptance list below also includes remaining combined concurrency, handoff and cache work. The example is `examples/k14-source-graph.lock.json` and contains illustrative, non-provisionable source pins.
 
 ## Goal and trust boundary
 

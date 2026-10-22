@@ -95,3 +95,13 @@ stale/exit 3, retained in `stale-query.json`.
 No runtime, runtime-cache or source-bootstrap fixture was modified by this gate.
 This result proves this existing production JVM consumer works with the supplied
 source-composed CLI; it does not establish all K14 acceptance criteria.
+
+Integration independently rehashed the executable and all eight output blobs,
+checked the three completion/journal/verification bindings and stdout equality,
+exact test identities/reports and distinct per-run effects, and all retained
+journal-corruption and stale-source queries. Report:
+`/private/tmp/kvik-source-consumer-independent-audit.json`; the reproducible
+read-only script has the same basename with `.py`. This was a retained-byte
+audit, without rerunning compilers/tests or rehashing the complete installed
+tool roots. A process check after both fixture handles terminated found no
+remaining process referencing either exact fixture path.

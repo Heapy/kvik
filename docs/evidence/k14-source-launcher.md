@@ -81,8 +81,14 @@ Neither review ran the full composition compiler gate.
 
 ## Remaining acceptance
 
-This slice does not claim full K14 completion. Actual remote full-runtime
-bootstrap with two plugins, shared helper and real serialization KLIB closure,
-production consumer smoke, relocated/offline executable reuse and rebuild,
-runtime invalidation/concurrent publication, foreground source graph handoff,
-and shared executable cache integration remain explicit acceptance work.
+The subsequent [full HTTPS composition gate](k14-source-bootstrap.md) passed
+with two plugins, shared helper and real serialization KLIB closure, including
+relocated/offline executable reuse, offline rebuild and helper-pin invalidation.
+The resulting runtime passed the [production JVM consumer gate](k14-source-runtime-consumer.md).
+
+Full K14 completion still requires the remaining combined invalidation,
+concurrency/failure cases, live foreground source graph handoff and shared
+executable cache integration. The archive fixture does not establish a public
+Git bootstrap of the full Kvik repository; the source-store's public Git check
+uses its separate small pinned fixture. Native binary reproducibility remains
+an explicit limitation.
