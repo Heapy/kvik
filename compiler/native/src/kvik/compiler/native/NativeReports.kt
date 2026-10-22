@@ -140,8 +140,8 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
     val counts = TestCounts(discovered.size, tests.count { it.status != TestStatus.SKIPPED }, tests.count { it.status == TestStatus.FAILED }, tests.count { it.status == TestStatus.SKIPPED }, protocolError == null)
     val status = when {
         process.cancelled -> VerificationStatus.CANCELLED
-        process.timedOut || protocolError != null -> VerificationStatus.INCOMPLETE
         counts.failed > 0 -> VerificationStatus.FAILED
+        process.timedOut || protocolError != null -> VerificationStatus.INCOMPLETE
         process.exitCode != 0 -> VerificationStatus.FAILED
         !counts.satisfiesExecution -> VerificationStatus.INCOMPLETE
         else -> VerificationStatus.PASSED

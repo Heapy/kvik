@@ -52,4 +52,24 @@ class NativeReportDetailsTest {
         assertEquals(TEST_TEXT_LIMIT, failure.message!!.length)
         assertEquals(TEST_STACK_TRACE_LIMIT, failure.stackTrace!!.length)
     }
+    @Test fun completedFailureSurvivesTimeoutAndTruncationButCancellationKeepsPriority() {
+        val prefix = "##teamcity[testSuiteStarted name='Suite']\n##teamcity[testStarted name='leaf']\n" +
+            "##teamcity[testFailed name='leaf' message='observed failure' details='frame']\n" +
+            "##teamcity[testFinished name='leaf' duration='2']\n"
+        for (tail in listOf("", "##teamcity[testStarted name='remaining'", "##teamcity[unsupported]\n")) {
+            for (process in listOf(ProcessResult(17), ProcessResult(124, timedOut = true), ProcessResult(130, cancelled = true))) {
+                val result = nativeTestReport("module", listOf("Suite.leaf", "Suite.remaining"), prefix + tail, process)
+                assertEquals(if (process.cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED, result.status)
+                assertEquals(TestCounts(2, 1, 1, 0, false), result.counts)
+                val attempt = result.tests.single().details!!.attempts.single()
+                assertEquals("observed failure", attempt.failure!!.message)
+                assertEquals(2_000_000L, attempt.durationNanos)
+            }
+        }
+        val passedPrefix = prefix.lineSequence().filterNot { it.startsWith("##teamcity[testFailed") }.joinToString("\n")
+        val incomplete = nativeTestReport("module", listOf("Suite.leaf", "Suite.remaining"), passedPrefix, ProcessResult(124, timedOut = true))
+        assertEquals(VerificationStatus.INCOMPLETE, incomplete.status)
+        assertEquals(TestCounts(2, 1, 0, 0, false), incomplete.counts)
+    }
+
 }
