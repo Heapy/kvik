@@ -17,6 +17,13 @@ normalization on the tested macOS volume) are rejected before plugin loading.
 Plugin outputs never become ordinary module classes. The full producer/runtime
 bytes, resources, options and inputs participate in consumer action identity.
 
+Independent integration review found no open production findings. It reran the
+two plugin-schema tests and the retained input/output/domain audit, then checked
+all eight scenarios independently: canonical action keys, both consumers'
+implementation/input invalidation, scope selection, failed-producer blocking,
+unrelated compile reuse and all eight negative worker results. Public composed
+CLI validation is a separate integration gate.
+
 ## Executed fixture
 
 From `/private/tmp/kvik-k13-workspace-plugins`:
