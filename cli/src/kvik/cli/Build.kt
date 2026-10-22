@@ -5,6 +5,8 @@ import kvik.actioncache.LocalCachingActionExecutor
 import kvik.cache.*
 import kvik.compiler.jvm.JvmActionExecutor
 import kvik.compiler.native.NativeCompilerExecutor
+import kvik.compiler.native.KotestNativeExecutor
+import kvik.compiler.ksp.KspNativeExecutor
 import kvik.core.*
 import kvik.execution.*
 import kvik.execution.platform.*
@@ -101,11 +103,17 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider())
+                    val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
+                    val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val delegate = object : ActionExecutor {
-                        private fun executor(action: ActionSpec): ActionExecutor = when (action.target) {
-                            "jvm" -> jvm
-                            "macosArm64" -> native
-                            else -> error("Unsupported action target ${action.target}")
+                        private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
+                            "kvik-ksp-native-v1" -> ksp
+                            "kvik-kotest-native-tests-v1" -> kotest
+                            else -> when (action.target) {
+                                "jvm" -> jvm
+                                "macosArm64" -> native
+                                else -> error("Unsupported action target ${action.target}")
+                            }
                         }
                         override fun resources(action: ActionSpec) = executor(action).resources(action)
                         override fun start(runId: String, actionId: String, action: ActionSpec) = executor(action).start(runId, actionId, action)
@@ -127,7 +135,13 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
                                 report.tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
                             }
                         }
-                        for ((id, observation) in native.observations) if (seen.add(id)) {
+                        for ((id, observation) in ksp.observations) if (seen.add(id)) {
+                            retain(id, obj("result" to observation.result.toJson(), "diagnostics" to observation.diagnostics.map { it.toJson() }.json(),
+                                "directory" to observation.directory.json(), "logs" to listOf("ksp.stdout", "ksp.stderr")
+                                    .map { "${observation.directory}/$it".json() }.json()))
+                            observation.diagnostics.forEach(journal::diagnostic)
+                        }
+                        for ((id, observation) in native.observations + kotest.observations) if (seen.add(id)) {
                             retain(id, obj("result" to observation.result.toJson(), "diagnostics" to observation.diagnostics.map { it.toJson() }.json(),
                                 "tests" to (observation.tests?.toJson() ?: JsonValue.Null), "directory" to observation.directory.json(),
                                 "logs" to NativeFiles.names(observation.directory).filter { it.endsWith(".stdout") || it.endsWith(".stderr") }
