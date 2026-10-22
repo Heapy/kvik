@@ -52,8 +52,13 @@ class DependencyCliTest(unittest.TestCase):
         return value
 
     def files(self):
-        return {str(path.relative_to(self.root)): (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode)
-            for path in self.root.rglob("*") if path.is_file()}
+        entries = {}
+        for path in self.root.rglob("*"):
+            if path.is_file():
+                entries[str(path.relative_to(self.root))] = ("file", path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode)
+            elif path.is_dir():
+                entries[str(path.relative_to(self.root))] = ("directory", path.stat().st_mode)
+        return entries
 
     def test_resolve_publishes_schema_valid_lock_and_offline_checks_are_readonly(self):
         resolved = self.invoke("resolve")
@@ -105,6 +110,52 @@ class DependencyCliTest(unittest.TestCase):
         self.document["modules"][0]["targets"][0]["compilerOptions"] = ["-Werror"]
         self.write_project()
         self.assertEqual("KVIK_LOCK_INVALID", self.invoke("check-lock", pins, expected=2)["diagnostic"]["code"])
+
+    def test_scoped_pins_preserve_production_versions_and_offline_identity(self):
+        module = self.document["modules"][0]
+        module["sourceSets"].append({"name": "tests", "directories": ["test"], "resources": [],
+                                    "dependsOn": ["main"], "dependencies": []})
+        module["targets"][0]["test"] = "tests"
+        self.write_project()
+        pins = [argument for usage in ("java-api", "java-runtime") for argument in
+                ("--scope-pin", f"library:jvm:test:{usage}:dependencies=org.jetbrains:annotations:23.0.0")]
+        resolved = self.invoke("resolve", pins)
+        lock = json.loads((self.root / "kvik.lock.json").read_text())
+        jsonschema.Draft202012Validator({"$defs": SCHEMA["$defs"], "$ref": "#/$defs/dependencyLock"}).validate(lock)
+        self.assertEqual(2, lock["schemaVersion"])
+        self.assertEqual(4, len(lock["selections"]))
+        for selection in lock["selections"]:
+            domain = selection["domain"]
+            self.assertEqual("library", domain["module"])
+            self.assertEqual("dependencies", domain["purpose"])
+            version = "13.0" if domain["compilation"] == "main" else "23.0.0"
+            self.assertEqual(["org.jetbrains:annotations:"+version], [artifact["coordinate"] for artifact in selection["artifacts"]])
+        self.assertEqual(resolved["configuration"], self.invoke("inspect", pins)["configuration"])
+        before = self.files()
+        self.invoke("check-lock", pins)
+        self.invoke("resolve", [*pins, "--offline"])
+        self.assertEqual(before, self.files())
+        self.invoke("check-lock", expected=2)
+        self.assertEqual(before, self.files())
+
+    def test_invalid_scoped_pins_fail_before_publication(self):
+        before = self.files()
+        for value in ("library:jvm:main:java-api=org.jetbrains:annotations:13.0",
+                      "library:jvm:main:java-api:dependencies=org.jetbrains:annotations:13.0=extra",
+                      "library:jvm:main:java-api:dependencies=not-a-coordinate",
+                      "library:jvm:test:java-api:dependencies=org.jetbrains:annotations:13.0"):
+            self.invoke("resolve", ["--scope-pin", value], expected=2)
+            self.assertEqual(before, self.files())
+        value = "library:jvm:main:java-api:dependencies=org.jetbrains:annotations:13.0"
+        self.invoke("resolve", ["--scope-pin", value, "--scope-pin", value], expected=2)
+        self.assertEqual(before, self.files())
+        for command in ("build", "test"):
+            for invalid in (["--scope-pin", value, "--scope-pin", value],
+                            ["--scope-pin", "absent:jvm:main:java-api:dependencies=org.jetbrains:annotations:13.0"],
+                            ["--pin", "org.jetbrains:annotations:13.0", "--pin", "org.jetbrains:annotations:13.0"]):
+                result = self.invoke(command, ["--module", "library", "--target", "jvm", "--tools", "missing-tools.json", *invalid], expected=2)
+                self.assertNotIn("missing-tools", result["diagnostic"]["message"])
+                self.assertEqual(before, self.files())
 
     def test_offline_missing_lock_and_invalid_paths_do_not_mutate_project(self):
         before = self.files()

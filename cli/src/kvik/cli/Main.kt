@@ -2,7 +2,6 @@
 package kvik.cli
 
 import kvik.core.*
-import kvik.locking.ResolverPolicy
 import kotlin.system.exitProcess
 
 class CliFailure(val code: String, val category: DiagnosticCategory, message: String, val exitStatus: ExitStatus = ExitStatus.FAILED) : Exception(message)
@@ -32,6 +31,7 @@ private fun command(args: Array<String>) {
             Kvik — Kotlin/Native source-built prototype
             Commands: runtime-info, inspect, resolve, check-lock, build, test, verification, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
+            Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Lock options: --lock PATH --store PATH --offline
             Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N
@@ -50,7 +50,7 @@ private fun command(args: Array<String>) {
         }
         "inspect" -> {
             val options = projectOptions(args.drop(1), lockOptions = false)
-            println(inspectProject(options.project, ResolverPolicy(options.pins)).canonical())
+            println(inspectProject(options.project, options.resolverPolicy()).canonical())
         }
         "resolve", "check-lock" -> println(dependencyCommand(args.drop(1), updateRequested = args[0] == "resolve").canonical())
         "build", "test" -> exitProcess(buildCommand(args.drop(1), test = args[0] == "test").code)

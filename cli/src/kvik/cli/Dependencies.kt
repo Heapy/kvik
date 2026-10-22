@@ -77,7 +77,7 @@ private fun publishLock(project: ProjectFile, destination: String, previous: Dig
 internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): JsonValue {
     val options = projectOptions(args, lockOptions = true)
     val project = readProject(options.project)
-    val effective = effectiveConfiguration(project.configuration, ResolverPolicy(options.pins))
+    val effective = effectiveConfiguration(project.configuration, options.resolverPolicy())
     val destination = projectPath(project.root, options.lock)
     val store = projectPath(project.root, options.store)
     require(destination.substringAfterLast('/').lowercase() != PUBLICATION_LOCK) { "Dependency lock cannot replace its publication coordination file" }

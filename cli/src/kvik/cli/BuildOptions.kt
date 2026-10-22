@@ -20,11 +20,11 @@ internal fun buildOptions(args: List<String>): BuildOptions {
     while (index < args.size) {
         val flag = args[index++]
         if (flag == "--offline") { project += flag; continue }
-        require(flag in setOf("--project", "--lock", "--store", "--pin", "--module", "--target", "--tools", "--runs", "--jobs", "--memory-mib")) { "Unsupported build option: $flag" }
+        require(flag in setOf("--project", "--lock", "--store", "--pin", "--scope-pin", "--module", "--target", "--tools", "--runs", "--jobs", "--memory-mib")) { "Unsupported build option: $flag" }
         val value = args.getOrNull(index++)
         require(value != null && value.isNotBlank() && !value.startsWith("--")) { "Missing value for $flag" }
         when (flag) {
-            "--project", "--lock", "--store", "--pin" -> project += listOf(flag, value)
+            "--project", "--lock", "--store", "--pin", "--scope-pin" -> project += listOf(flag, value)
             "--module" -> require(modules.add(value)) { "Duplicate module selection: $value" }
             "--target" -> require(targets.add(value)) { "Duplicate target selection: $value" }
             else -> require(values.put(flag, value) == null) { "Duplicate option: $flag" }

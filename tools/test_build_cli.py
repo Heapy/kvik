@@ -52,7 +52,7 @@ class PassingTests {
 ''')
     def source(name, directory, dependencies=(), parents=(), resources=()):
         return dict(name=name, directories=[directory], resources=list(resources), dependsOn=list(parents), dependencies=list(dependencies))
-    stdlib = {'coordinate': 'org.jetbrains.kotlin:kotlin-stdlib:2.4.20'}
+    stdlib = {'coordinate': 'org.jetbrains.kotlin:kotlin-stdlib:2.4.20', 'exported': True}
     document = dict(schemaVersion=1, name='cliFixture', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[
         dict(id='library', sourceSets=[source('commonMain', 'library/common', [stdlib]), source('jvmMain', 'library/jvm', parents=['commonMain'])],
              targets=[dict(name='jvm', main='jvmMain', test=None, compilerOptions=[])], compilerPlugins=[]),

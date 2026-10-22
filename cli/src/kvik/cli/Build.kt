@@ -35,13 +35,17 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
     val lockPath = projectPath(project.root, options.project.lock)
     val toolsPath = projectPath(project.root, options.tools)
     val runsPath = projectPath(project.root, options.runs)
+    val policy = options.project.resolverPolicy()
+    // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
+    // against the captured configuration below, since the project may change meanwhile.
+    effectiveConfiguration(project.configuration, policy)
     val content = NativeContentStore(storePath)
     val snapshots = NativeProjectSnapshotter(project.root, content)
     val snapshot = when (val captured = snapshots.capture(project.name, lockPath)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
-    val effective = effectiveConfiguration(snapshot.configuration, ResolverPolicy(options.project.pins))
+    val effective = effectiveConfiguration(snapshot.configuration, policy)
     val lock = try { DependencyLocks(content, kvik.resolution.NativePomParser()).loadLocked(snapshot.lockBytes, effective) }
         catch (failure: Exception) { throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Invalid dependency lock", ExitStatus.INVALID_CONFIGURATION) }
     val selectedTests = if (test && "jvm" in options.targets) options.modules.associateWith { id ->
@@ -62,6 +66,7 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
+        options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
         options.modules.sorted().flatMap { listOf("--module", it) } + options.targets.sorted().flatMap { listOf("--target", it) }
     NativeFiles.writeNew("${run.path}/run.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "projectRoot" to project.root.json(),
         "configurationPath" to project.name.value.json(), "lockPath" to lockPath.json(), "toolsPath" to toolsPath.json(),

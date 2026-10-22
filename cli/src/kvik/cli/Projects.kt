@@ -3,6 +3,9 @@ package kvik.cli
 
 import kvik.cache.NativeFiles
 import kvik.core.*
+import kvik.locking.ResolutionDomain
+import kvik.locking.ResolverPolicy
+import kvik.locking.ScopedPin
 import kotlinx.cinterop.*
 import platform.posix.*
 
@@ -38,14 +41,32 @@ internal data class ProjectOptions(
     val lock: String = "kvik.lock.json",
     val pins: List<Coordinate> = emptyList(),
     val offline: Boolean = false,
+    val scopedPins: List<ScopedPin> = emptyList(),
 )
+
+internal fun ProjectOptions.resolverPolicy() = ResolverPolicy(pins, scopedPins = scopedPins)
+
+internal fun ScopedPin.argument(): String = with(domain) {
+    "$module:$target:$compilation:$usage:$purpose=$coordinate"
+}
+
+private fun scopedPin(value: String): ScopedPin {
+    require(value.count { it == '=' } == 1) {
+        "Expected scoped pin MODULE:TARGET:COMPILATION:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION"
+    }
+    val domain = value.substringBefore('=').split(':')
+    require(domain.size == 5 && domain.all { it.isNotEmpty() }) { "Scoped pin requires five domain components" }
+    return ScopedPin(ResolutionDomain(domain[0], domain[1], domain[2], domain[3], domain[4]),
+        Coordinate.parse(value.substringAfter('=')))
+}
 
 internal fun projectOptions(args: List<String>, lockOptions: Boolean): ProjectOptions {
     val values = mutableMapOf<String, String>()
     val pins = mutableListOf<Coordinate>()
+    val scopedPins = mutableListOf<ScopedPin>()
     var offline = false
     var index = 0
-    val allowed = setOf("--project", "--pin") + if (lockOptions) setOf("--store", "--lock") else emptySet()
+    val allowed = setOf("--project", "--pin", "--scope-pin") + if (lockOptions) setOf("--store", "--lock") else emptySet()
     while (index < args.size) {
         val flag = args[index++]
         if (flag == "--offline" && lockOptions) {
@@ -57,8 +78,9 @@ internal fun projectOptions(args: List<String>, lockOptions: Boolean): ProjectOp
         val value = args.getOrNull(index++)
         require(value != null && value.isNotBlank() && !value.startsWith("--")) { "Missing value for $flag" }
         if (flag == "--pin") pins += Coordinate.parse(value)
+        else if (flag == "--scope-pin") scopedPins += scopedPin(value)
         else require(values.put(flag, value) == null) { "Duplicate option: $flag" }
     }
     return ProjectOptions(values["--project"] ?: "kvik.json", values["--store"] ?: ".kvik/cache", values["--lock"] ?: "kvik.lock.json", pins,
-        offline || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1")
+        offline || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", scopedPins)
 }

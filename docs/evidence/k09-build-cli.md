@@ -161,10 +161,12 @@ and queries passed schema validation; all four journal corruption probes rejecte
 adding an untracked source made retained verification stale/3. Timings include full tool
 verification and concurrent development work and are not performance acceptance results.
 
-The full unchanged kotaml CLI fixture needs further dependency-model work: runtime-only
+The subsequent [dependency-domain slice](k09-dependency-scopes.md) implements runtime-only
 external edges, separate test compiler options, exported/private module dependencies and
 scope-specific resolution (the reference selects different annotations versions for
-production and tests). Its preparation harness verifies all pinned source files and test
-selectors but deliberately does not claim execution through a widened classpath or a
-global version substitution. Adapter-level 2,038-test evidence remains separate from
-composed CLI parity. These observations do not establish the complete K10 gates.
+production and tests). The unchanged kotaml fixture now passes schema validation, but its
+first public resolution attempt rejects test-framework capability metadata. Its harness
+checks pinned source files, exact per-domain artifact sets, actual action classpaths and all
+2,038 reference test identities; full execution remains pending. Adapter-level test evidence
+remains separate from composed CLI parity. These observations do not establish the complete
+K10 gates.
