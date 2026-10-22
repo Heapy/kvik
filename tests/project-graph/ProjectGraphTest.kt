@@ -76,6 +76,38 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun explicitJdkReleaseFlowsThroughScopedVariantsInheritanceAndActionKeys() {
+        fun configured(main: List<String>, test: List<String>? = null) = configuration(base,
+            app.copy(targets = listOf(app.targets.first().copy(compilerOptions = main, testCompilerOptions = test))))
+        val defaults = configured(emptyList())
+        val released = configured(listOf("-Xjdk-release=11"))
+        val effective = effectiveConfiguration(released)
+        assertNotEquals(effectiveConfiguration(defaults).digest, effective.digest)
+        assertFails { projectActionGraph(effective, lock(effectiveConfiguration(defaults)), snapshot(), composition, tools, request(ProjectMode.TEST)) }
+        assertEquals(setOf("11"), effective.requests.filter { it.domain.module == "app" }.map { it.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE) }.toSet())
+        val before = resolved(graph(defaults, request = request(ProjectMode.TEST)))
+        val inherited = resolved(graph(released, request = request(ProjectMode.TEST)))
+        for (id in listOf("app:jvm:main", "app:jvm:test-compile")) {
+            assertEquals(11, JvmCompilation.fromJson(inherited.getValue(id).parameters).jdkRelease)
+            assertNotEquals(before.getValue(id).key(Sha256), inherited.getValue(id).key(Sha256))
+        }
+        assertEquals(before.getValue("base:jvm:main").key(Sha256), inherited.getValue("base:jvm:main").key(Sha256))
+        val testRelease = configured(listOf("-Xjdk-release=11"), listOf("-Xjdk-release", "21"))
+        val changed = resolved(graph(testRelease, request = request(ProjectMode.TEST)))
+        assertEquals(inherited.getValue("app:jvm:main").key(Sha256), changed.getValue("app:jvm:main").key(Sha256))
+        assertNotEquals(inherited.getValue("app:jvm:test-compile").key(Sha256), changed.getValue("app:jvm:test-compile").key(Sha256))
+        assertEquals(21, JvmCompilation.fromJson(changed.getValue("app:jvm:test-compile").parameters).jvmTarget)
+        assertEquals(setOf("21"), effectiveConfiguration(testRelease).requests.filter { it.domain.module == "app" && it.domain.compilation == "test" }.map { it.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE) }.toSet())
+        val cleared = resolved(graph(configured(listOf("-Xjdk-release=11"), emptyList()), request = request(ProjectMode.TEST)))
+        assertNull(JvmCompilation.fromJson(cleared.getValue("app:jvm:test-compile").parameters).jdkRelease)
+        assertFails { effectiveConfiguration(configured(listOf("-Xjdk-release=21"), listOf("-Xjdk-release=11"))) }
+        assertFails { effectiveConfiguration(configuration(base.copy(targets = listOf(base.targets.first().copy(compilerOptions = listOf("-Xjdk-release=21")))), app)) }
+        for (options in listOf(listOf("-Xjdk-release=8"), listOf("-Xjdk-release=17", "-jvm-target=11"), listOf("-Xjdk-release=11", "-Xjdk-release=11"))) {
+            assertFails { graph(configured(options)) }
+        }
+        val native = app.copy(targets = listOf(app.targets.last().copy(compilerOptions = listOf("-Xjdk-release=11"))))
+        assertFails { graph(configuration(base, native), request = request(ProjectMode.BUILD, "macosArm64")) }
+    }
     @Test fun privateRuntimeAndExportedEdgesDriveDifferentActionInputsAndPrerequisites() {
         fun dep(name: String, exported: Boolean = false, runtime: Boolean = false) = Dependency.External(Coordinate("g", name, "1"), if(runtime) DependencyScopeKind.RUNTIME else DependencyScopeKind.COMPILE, exported)
         val leaf = module("leaf", listOf(dep("leaf-public", exported = true), dep("leaf-private")))

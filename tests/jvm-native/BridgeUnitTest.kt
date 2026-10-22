@@ -8,6 +8,22 @@ import kotlin.test.*
 
 class BridgeUnitTest {
     private val digest = Sha256.digest(byteArrayOf())
+    @Test fun releaseIsExplicitTypedAndChangesOnlyOptedInActionIdentity() {
+        val compilation = JvmCompilation("m", listOf(LogicalPath("A.kt")), emptyList(), LogicalPath("classes"))
+        assertFalse("jdkRelease" in compilation.toJson().objectValue())
+        assertEquals(compilation, JvmCompilation.fromJson(compilation.toJson()))
+        val release = compilation.copy(jdkRelease = 11)
+        assertEquals(release, JvmCompilation.fromJson(release.toJson()))
+        assertTrue("-Xjdk-release=11" in release.options())
+        assertTrue(compilation.options().none { it.startsWith("-Xjdk-release") })
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("A.kt"), digest)))
+        val identities = jvmIdentities.associateWith { digest }
+        assertNotEquals(jvmCompileAction(compilation, inputs, digest, identities).key(Sha256), jvmCompileAction(release, inputs, digest, identities).key(Sha256))
+        assertFails { compilation.copy(jdkRelease = 21) }
+        for (invalid in listOf(JsonValue.Null, "11".json(), 8.json(), 21.json())) {
+            assertFails { JvmCompilation.fromJson(JsonValue.Object(compilation.toJson().objectValue() + ("jdkRelease" to invalid))) }
+        }
+    }
     private fun testJson(id: String = "request", exit: Int = 0, status: String = "passed", executed: Int = 1, tests: List<JsonValue> = listOf(TestResult("concrete-id", "m", "jvm", TestStatus.PASSED).toJson())) = obj(
         "schemaVersion" to 1.json(), "requestId" to id.json(), "exitCode" to exit.json(), "status" to status.json(), "tests" to tests.json(),
         "testCounts" to TestCounts(1, executed, 0, 0, true).toJson(), "diagnostics" to emptyList<JsonValue>().json())

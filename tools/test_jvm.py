@@ -114,6 +114,27 @@ def main():
     assert json.loads(process.stdout) == {"text": "hello JVM"}
     print("PASS BTA common/JVM library -> serialization consumer -> actual JVM execution", flush=True)
 
+    # Thread.ofVirtual() is a Java 21 API on the provisioned JDK 25. Bytecode target
+    # alone permits it; release11 must reject it before publishing any output.
+    (work / "src/ModernJdk.kt").write_text("package fixture\nfun modern(): Thread = Thread.ofVirtual().unstarted {}\n")
+    (work / "src/OldJdk.kt").write_text("package fixture\nfun old(): String = java.lang.StringBuilder().append(1).toString()\n")
+    compile_request("target11-modern-api", ["src/ModernJdk.kt"], [std], options=["-jvm-target", "11"])
+    for release in (11, 17):
+        rejected = compile_request(f"release{release}-modern-api", ["src/ModernJdk.kt"], [std], options=[f"-Xjdk-release={release}"], expected=1)
+        assert rejected["status"] == "compilation-error" and any(d["code"] == "KVIK_COMPILATION_ERROR" and "ofVirtual" in d["message"] for d in rejected["diagnostics"]), rejected
+    for release in (11, 17, 21, 25):
+        name = f"release{release}-old-api"
+        compile_request(name, ["src/OldJdk.kt"], [std], options=["-Xjdk-release", str(release), "-jvm-target", str(release)])
+        header = (work / (name + "-classes/fixture/OldJdkKt.class")).read_bytes()[:8]
+        assert header[:4] == b"\xca\xfe\xba\xbe" and int.from_bytes(header[6:8], 'big') == release + 44
+    compile_request("release21-modern-api", ["src/ModernJdk.kt"], [std], options=["-Xjdk-release=21"])
+    for index, options in enumerate((["-Xjdk-release=8"], ["-Xjdk-release=26"], ["-Xjdk-release"],
+                                     ["-Xjdk-release=11", "-Xjdk-release=11"], ["-jvm-target=11", "-Xjdk-release=21"],
+                                     ["-Xjdk-release=11", "-jvm-target=21"])):
+        rejected = compile_request(f"invalid-release-{index}", ["src/OldJdk.kt"], [std], options=options, expected=1)
+        assert rejected["status"] == "infrastructure-error" and rejected["diagnostics"][0]["code"] == "KVIK_UNSUPPORTED_OPTION", rejected
+    print("PASS BTA JDK25 API control; release11/17 reject Java21 API, release21 accepts;11/17/21/25 classfile targets; invalid releases fail before output", flush=True)
+
     (work / "src/Broken.kt").write_text("package fixture\nfun broken(): String = missingSymbol\n")
     result = compile_request("compiler-error", ["src/Broken.kt"], [std], expected=1)
     assert result["status"] == "compilation-error"

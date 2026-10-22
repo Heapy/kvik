@@ -91,6 +91,9 @@ def main():
     broken = output / "Broken.kt"
     broken.write_text("package fixture\nfun broken(): String = absentSymbol\n")
     files["src/Broken.kt"] = broken
+    modern = output / "ModernJdk.kt"
+    modern.write_text("package fixture\nfun modern(): Thread = Thread.ofVirtual().unstarted {}\n")
+    files["src/ModernJdk.kt"] = modern
     for p in [stdlib, junit, plugin, *serialization]:
         files["lib/" + p.name] = p
     std, jun, plug = "lib/" + stdlib.name, "lib/" + junit.name, "lib/" + plugin.name
@@ -105,6 +108,10 @@ def main():
         dict(id="test-classes", dependencies=["library", "consumer"], inputPaths=["src/Tests.kt", "src/SlowTests.kt", std, *ser, jun], compilation=compilation("test-classes", ["src/Tests.kt", "src/SlowTests.kt"], [std, *ser, jun, "library", "consumer"])),
         dict(id="compile-error", dependencies=[], inputPaths=["src/Broken.kt", std], compilation=compilation("broken", ["src/Broken.kt"], [std])),
     ]
+    for release in (11, 21):
+        spec = compilation(f"release{release}", ["src/ModernJdk.kt"], [std])
+        spec.update(jvmTarget=release, jdkRelease=release)
+        nodes.append(dict(id=f"release{release}", dependencies=[], inputPaths=["src/ModernJdk.kt", std], compilation=spec))
     for name, classes in [("passing", ["fixture.PassingTests"]), ("passing-again", ["fixture.PassingTests"]), ("failing", ["fixture.FailingTests"]),
                           ("zero", ["fixture.EmptyTests"]), ("all-skipped", ["fixture.SkippedTests"]), ("assumption", ["fixture.ContainerAssumptionTests"]),
                           ("malformed", ["fixture.MalformedResultTests"]), ("missing", ["fixture.NoResultTests"])]:
@@ -121,7 +128,7 @@ def main():
     command([output / "probe.kexe", request_file])
     result = json.loads(report.read_text())
     observations = result["observations"]
-    for name in ["library", "consumer", "test-classes", "passing", "passing-again"]:
+    for name in ["library", "consumer", "test-classes", "passing", "passing-again", "release21"]:
         assert observations[name]["result"]["status"] == "executed", observations[name]
     assert observations["passing"]["result"]["key"] == observations["passing-again"]["result"]["key"]
     for name in ["passing", "passing-again"]:
@@ -135,6 +142,11 @@ def main():
     assert observations["failing"]["tests"]["status"] == "failed" and observations["failing"]["tests"]["counts"]["failed"] == 1
     assert observations["cancel"]["result"]["status"] == "cancelled" and observations["cancel"]["tests"]["status"] == "cancelled"
     assert any(d["category"] == "compilation" and d["path"] == "src/Broken.kt" and d["line"] == 2 for d in observations["compile-error"]["diagnostics"])
+    assert observations["release11"]["result"]["status"] == "failed"
+    assert any(d["code"] == "KVIK_COMPILATION_ERROR" and "ofVirtual" in d["message"] for d in observations["release11"]["diagnostics"])
+    for release in (11, 21):
+        request = json.loads((Path(observations[f"release{release}"]["directory"]) / "request.json").read_text())
+        assert f"-Xjdk-release={release}" in request["options"]
     for name in ["malformed", "missing"]:
         assert any(d["code"] == "KVIK_JVM_RESULT_INVALID" for d in observations[name]["diagnostics"])
     events = result["events"]

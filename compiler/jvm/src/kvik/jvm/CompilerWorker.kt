@@ -51,6 +51,11 @@ private fun safeOptions(request: WorkerRequest, workspace: Workspace): List<Stri
                 if (target !in setOf("11", "17", "21", "25")) reject("KVIK_UNSUPPORTED_OPTION", "Unsupported JVM target: $target")
                 result += listOf(name, target)
             }
+            "-Xjdk-release" -> {
+                val release = value()
+                if (release !in setOf("11", "17", "21", "25")) reject("KVIK_UNSUPPORTED_OPTION", "Unsupported JDK release: $release")
+                result += "-Xjdk-release=$release"
+            }
             "-module-name" -> {
                 val module = value()
                 if (!module.matches(Regex("[A-Za-z0-9_.-]+"))) reject("KVIK_UNSUPPORTED_OPTION", "Invalid module name")
@@ -83,6 +88,8 @@ private fun safeOptions(request: WorkerRequest, workspace: Workspace): List<Stri
             else -> reject("KVIK_UNSUPPORTED_OPTION", "Unsupported compiler option: $name")
         }
     }
+    try { jvmTargetSettings(result) }
+    catch (failure: Exception) { reject("KVIK_UNSUPPORTED_OPTION", failure.message ?: "Invalid JVM target/release settings") }
     return result
 }
 

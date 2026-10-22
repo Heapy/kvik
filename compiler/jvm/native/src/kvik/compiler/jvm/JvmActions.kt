@@ -23,6 +23,7 @@ data class JvmCompilation(
     val optIns: List<String> = emptyList(),
     val explicitApi: Boolean = false,
     val warningsAsErrors: Boolean = false,
+    val jdkRelease: Int? = null,
 ) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
@@ -33,10 +34,12 @@ data class JvmCompilation(
         require(commonSources.all { it in sources } && friendPaths.all { it in classpath })
         require(plugins.size <= 1 && plugins.all { it.value.endsWith(".jar") && it !in classpath })
         require(jvmTarget in setOf(11, 17, 21, 25))
+        require(jdkRelease == null || jdkRelease == jvmTarget) { "JDK release must equal JVM target" }
         require(optIns.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")) })
     }
     fun options(prefix: String = ""): List<String> = buildList {
         addAll(listOf("-jvm-target", jvmTarget.toString(), "-module-name", module, "-language-version", "2.4", "-api-version", "2.4"))
+        jdkRelease?.let { add("-Xjdk-release=$it") }
         if (commonSources.isNotEmpty()) {
             add("-Xmulti-platform")
             add("-Xcommon-sources=" + commonSources.joinToString(",") { prefix + it.value })
@@ -49,13 +52,16 @@ data class JvmCompilation(
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "sources" to sources.jsonPaths(),
         "classpath" to classpath.jsonPaths(), "output" to output.value.json(), "plugins" to plugins.jsonPaths(),
         "commonSources" to commonSources.jsonPaths(), "friendPaths" to friendPaths.jsonPaths(), "jvmTarget" to jvmTarget.json(),
-        "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json())
+        "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
+            if (jdkRelease == null) it else JsonValue.Object(it.objectValue() + ("jdkRelease" to jdkRelease.json()))
+        }
     companion object {
         fun fromJson(value: JsonValue): JvmCompilation {
-            val d = value.fields(setOf("module", "sources", "classpath", "output", "plugins", "commonSources", "friendPaths", "jvmTarget", "optIns", "explicitApi", "warningsAsErrors"))
+            val d = value.fields(setOf("module", "sources", "classpath", "output", "plugins", "commonSources", "friendPaths", "jvmTarget", "optIns", "explicitApi", "warningsAsErrors"), setOf("jdkRelease"))
             return JvmCompilation(d.getValue("module").stringValue(), d.paths("sources"), d.paths("classpath"), LogicalPath(d.getValue("output").stringValue()),
                 d.paths("plugins"), d.paths("commonSources"), d.paths("friendPaths"), d.getValue("jvmTarget").longValue().also { require(it in 1..25) }.toInt(),
-                d.getValue("optIns").arrayValue().map(JsonValue::stringValue), d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue())
+                d.getValue("optIns").arrayValue().map(JsonValue::stringValue), d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(),
+                d["jdkRelease"]?.longValue()?.also { require(it in 1..25) }?.toInt())
         }
     }
 }

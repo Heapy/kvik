@@ -217,7 +217,8 @@ private class Builder(
             val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles)
             val classpath = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path }
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
-                jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target))
+                jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
+                jdkRelease = options.jdkRelease), inputs, composition, tools.getValue(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target))
         }
@@ -254,7 +255,7 @@ private class Builder(
                 val classpath = linkedModules.map { modulePath(it, target, "main") } + artifacts.map { it.path }
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,
-                    explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target))
+                    explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease), inputs, composition, tools.getValue(target))
                 else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.kexe"), NativeOutput.TEST,
                     options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors), inputs, composition, tools.getValue(target))
             }

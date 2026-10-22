@@ -9,11 +9,13 @@ internal data class CompilerOptions(
     val explicitApi: Boolean,
     val warningsAsErrors: Boolean,
     val multiplatform: Boolean,
+    val jdkRelease: Int?,
 )
 
 /** Parse only settings represented by the typed compiler adapters. No arbitrary flag forwarding. */
 internal fun compilerOptions(module: String, target: String, arguments: List<String>): CompilerOptions {
-    val jvmTarget = if (target == "jvm") jvmTargetFromOptions(arguments) else DEFAULT_JVM_TARGET
+    val jvm = if (target == "jvm") jvmTargetSettings(arguments) else JvmTargetSettings(DEFAULT_JVM_TARGET, null)
+    val jvmTarget = jvm.target
     var nativeModuleName = module
     var explicitApi = false
     var warningsAsErrors = false
@@ -31,6 +33,10 @@ internal fun compilerOptions(module: String, target: String, arguments: List<Str
             "-jvm-target" -> {
                 require(target == "jvm") { "JVM option on $target" }
                 require(supportedJvmTarget(value()) == jvmTarget)
+            }
+            "-Xjdk-release" -> {
+                require(target == "jvm") { "JVM option on $target" }
+                require(supportedJvmTarget(value()) == jvm.jdkRelease)
             }
             "-module-name" -> {
                 require(target == "macosArm64") { "Custom JVM module names are not represented by the adapter" }
@@ -51,5 +57,5 @@ internal fun compilerOptions(module: String, target: String, arguments: List<Str
             else -> error("Unsupported project compiler option: $argument")
         }
     }
-    return CompilerOptions(jvmTarget, nativeModuleName, optIns.toList(), explicitApi, warningsAsErrors, multiplatform)
+    return CompilerOptions(jvmTarget, nativeModuleName, optIns.toList(), explicitApi, warningsAsErrors, multiplatform, jvm.jdkRelease)
 }

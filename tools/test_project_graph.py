@@ -31,7 +31,7 @@ def main():
     env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KVIK_GRAPH_FIXTURE=str(fixture))
     sources = [p for directory in ['core/src', 'integration/resolution/src', 'integration/project-graph/src', 'tests/project-graph']
                for p in sorted((ROOT / directory).rglob('*.kt'))]
-    sources += [ROOT / 'resolution/src/kvik/resolution/MavenResolver.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt',
+    sources += [ROOT / 'resolution/src/kvik/resolution/MavenResolver.kt', ROOT / 'resolution/src/kvik/resolution/PomModel.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt',
                 ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt']
     subprocess.run([str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner', '-o', str(output / 'tests.kexe'), *map(str, sources)], env=env, check=True)
     subprocess.run([str(output / 'tests.kexe')], env=env, check=True)

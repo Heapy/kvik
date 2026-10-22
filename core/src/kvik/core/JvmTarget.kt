@@ -9,20 +9,31 @@ fun supportedJvmTarget(value: String): Int {
     return value.toInt()
 }
 
-/** Shared interpretation of the one target setting used by resolution and compilation. */
-fun jvmTargetFromOptions(arguments: List<String>): Int {
-    var target = DEFAULT_JVM_TARGET
-    var found = false
+data class JvmTargetSettings(val target: Int, val jdkRelease: Int?)
+
+/** Release restricts JDK APIs and sets bytecode target; an explicit target must agree. */
+fun jvmTargetSettings(arguments: List<String>): JvmTargetSettings {
+    var target: Int? = null
+    var release: Int? = null
     for ((index, argument) in arguments.withIndex()) {
-        if (argument == "-jvm-target" || argument.startsWith("-jvm-target=")) {
-            require(!found) { "Repeated compiler option: -jvm-target" }
-            found = true
-            target = supportedJvmTarget(if ('=' in argument) argument.substringAfter('=')
-                else arguments.getOrNull(index + 1) ?: error("Missing value for -jvm-target"))
+        val name = argument.substringBefore('=')
+        if (name in setOf("-jvm-target", "-Xjdk-release")) {
+            val value = supportedJvmTarget(if ('=' in argument) argument.substringAfter('=')
+                else arguments.getOrNull(index + 1) ?: error("Missing value for $name"))
+            if (name == "-jvm-target") {
+                require(target == null) { "Repeated compiler option: $name" }
+                target = value
+            } else {
+                require(release == null) { "Repeated compiler option: $name" }
+                release = value
+            }
         }
     }
-    return target
+    require(target == null || release == null || target == release) { "Conflicting -jvm-target and -Xjdk-release" }
+    return JvmTargetSettings(release ?: target ?: DEFAULT_JVM_TARGET, release)
 }
+
+fun jvmTargetFromOptions(arguments: List<String>): Int = jvmTargetSettings(arguments).target
 
 fun jvmVariantRequest(usage: String, target: Int): VariantRequest {
     supportedJvmTarget(target.toString())
