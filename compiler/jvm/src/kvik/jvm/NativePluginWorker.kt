@@ -7,6 +7,7 @@ import java.lang.reflect.Proxy
 import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.ServiceLoader
 import kotlin.system.exitProcess
 
 /** One owned JVM, one Native compilation. Typed plugin arrays bypass the CLI comma splitter. */
@@ -33,7 +34,7 @@ object NativePluginWorker {
                 Path.of(org.jetbrains.kotlin.buildtools.api.KotlinToolchains::class.java.protectionDomain.codeSource.location.toURI()).toRealPath(),
                 Path.of(Unit::class.java.protectionDomain.codeSource.location.toURI()).toRealPath())
             require(System.getProperty("java.class.path").split(java.io.File.pathSeparator).map { Path.of(it).toRealPath() } == bootstrap) { "Unexpected Native worker bootstrap classpath" }
-            URLClassLoader(arrayOf(nativeJar.toUri().toURL()), ClassLoader.getPlatformClassLoader()).use { loader ->
+            URLClassLoader(arrayOf(nativeJar.toUri().toURL(), bootstrap.first().toUri().toURL()), ClassLoader.getPlatformClassLoader()).use { loader ->
                 val version = loader.loadClass("org.jetbrains.kotlin.config.KotlinCompilerVersion").getField("VERSION").get(null)
                 require(version == "2.4.20") { "Unsupported Native compiler version: $version" }
                 val outputs = prepareOutputRoots(workspace.root.resolve("output"), applications.flatMap { it.outputs })
@@ -58,7 +59,7 @@ object NativePluginWorker {
             fun value() = arguments.getOrNull(index++) ?: reject("KVIK_NATIVE_ARGUMENT", "Missing argument for $argument")
             when (argument) {
                 "-target" -> require(value() == "macos_arm64")
-                "-produce" -> require(value() in setOf("library", "program"))
+                "-produce" -> require(value() == "library") { "Workspace Native plugins require a KLIB compilation before source-free linking" }
                 "-o" -> { val path = value(); require(path.startsWith("output/")); workspace.path(path, false) }
                 "-module-name" -> require(value().matches(Regex("[A-Za-z0-9_.:-]+")))
                 "-entry" -> require(value().matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")))
@@ -79,10 +80,6 @@ object NativePluginWorker {
         val compiler = compilerType.getDeclaredConstructor().newInstance()
         val argumentObject = compilerType.methods.single { it.name == "createArguments" && it.returnType.name.endsWith("K2NativeCompilerArguments") }.invoke(compiler)
         compilerType.methods.single { it.name == "parseArguments" && it.parameterCount == 2 }.invoke(compiler, arguments.toTypedArray(), argumentObject)
-        argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject,
-            plugins.flatMap { it.classpath }.map(Path::toString).toTypedArray() as Any)
-        argumentObject.javaClass.getMethod("setPluginOptions", Array<String>::class.java).invoke(argumentObject,
-            plugins.flatMap { plugin -> plugin.options.map { "plugin:${plugin.id}:$it" } }.toTypedArray() as Any)
         val collectorType = loader.loadClass("org.jetbrains.kotlin.cli.common.messages.MessageCollector")
         val diagnostics = mutableListOf<Diagnostic>()
         var hasErrors = false
@@ -110,11 +107,40 @@ object NativePluginWorker {
             "equals" -> proxy === values?.get(0)
             else -> error("Unsupported MessageCollector method: ${method.name}")
         } }
-        val services = loader.loadClass("org.jetbrains.kotlin.config.Services").getField("EMPTY").get(null)
-        val result = compilerType.methods.single { it.name == "exec" && it.parameterCount == 3 && it.parameterTypes[0] == collectorType }
-            .invoke(compiler, collector, services, argumentObject)
+        val result = withTypedPlugin(plugins.single(), loader, workspace) { serviceDirectory ->
+            argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject, arrayOf(serviceDirectory.toString()) as Any)
+            argumentObject.javaClass.getMethod("setPluginOptions", Array<String>::class.java).invoke(argumentObject, emptyArray<String>() as Any)
+            val services = loader.loadClass("org.jetbrains.kotlin.config.Services").getField("EMPTY").get(null)
+            compilerType.methods.single { it.name == "exec" && it.parameterCount == 3 && it.parameterTypes[0] == collectorType }
+                .invoke(compiler, collector, services, argumentObject)
+        }
         val code = result.javaClass.getMethod("getCode").invoke(result) as Int
         if (code == 0 && hasErrors) reject("KVIK_NATIVE_RESULT", "Native compiler returned success with errors")
         return WorkerResult(requestId, if (code == 0) WorkerStatus.SUCCESS else WorkerStatus.COMPILATION_ERROR, code, diagnostics)
     }
+
+    /** Private service discovery delegates to the full original loader; user values never enter a CLI parser. */
+    private fun <T> withTypedPlugin(plugin: PreparedWorkspacePlugin, compilerLoader: ClassLoader, workspace: Workspace,
+        operation: (Path) -> T): T =
+        URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader).use { pluginLoader ->
+            val registrarType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar")
+            val processorType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor")
+            val registrars = ServiceLoader.load(registrarType, pluginLoader).toList()
+            val processors = ServiceLoader.load(processorType, pluginLoader).toList()
+            require(registrars.size == 1 && processors.size <= 1) { "Validated plugin services changed" }
+            val valueType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CliOptionValue")
+            val values = plugin.options.map { value -> valueType.getConstructor(String::class.java, String::class.java, String::class.java)
+                .newInstance(plugin.id, value.substringBefore('='), value.substringAfter('=')) }
+            val bridgeType = compilerLoader.loadClass("kvik.jvm.NativeTypedPlugin")
+            val origin = Path.of(bridgeType.protectionDomain.codeSource.location.toURI()).toRealPath()
+            val worker = Path.of(NativePluginWorker::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()
+            require(origin == worker) { "Native plugin adapter did not originate from the verified worker bundle" }
+            val serviceDirectory = Files.createDirectory(workspace.root.resolve("native-plugin-service"))
+            val descriptor = serviceDirectory.resolve("META-INF/services/" + registrarType.name)
+            Files.createDirectories(descriptor.parent)
+            Files.writeString(descriptor, bridgeType.name + "\n")
+            bridgeType.getMethod("bind", registrarType, processorType, List::class.java).invoke(null, registrars.single(), processors.singleOrNull(), values)
+            try { operation(serviceDirectory) }
+            finally { bridgeType.getMethod("clear").invoke(null) }
+        }
 }

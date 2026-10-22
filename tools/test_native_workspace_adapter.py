@@ -30,6 +30,8 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--skip-build', type=Path)
     parser.add_argument('--units-only', action='store_true')
+    checks = ('literal-options', 'missing-runtime', 'wrong-api', 'compiler-error', 'multiline-options', 'required-option', 'unknown-option', 'duplicate-option', 'jvm-regression')
+    parser.add_argument('--checks', nargs='+', choices=checks, default=checks)
     args = parser.parse_args()
     output = ROOT/'.kvik/tests/native-workspace-adapter'; output.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
@@ -79,7 +81,7 @@ def main():
     manifest = dict(schemaVersion=1, version='2.4.20', artifacts=[dict(path=p.name,digest=digest(p)) for p in jars], serializationPlugin=None)
     manifest_path = case/'compiler-manifest.json'; manifest_path.write_bytes(canonical(manifest))
     original_cp = json.loads((fixture/'plugin-classpath.json').read_text())
-    for label in ('literal-options', 'missing-runtime', 'wrong-api', 'compiler-error', 'jvm-regression'):
+    for label in args.checks:
         work = case/label; work.mkdir(); (work/'input').mkdir(); (work/'output').mkdir()
         paths = []
         for index, item in enumerate(original_cp):
@@ -100,6 +102,13 @@ def main():
             inputs=['input/message.txt'], outputs=['output/plugins/fixture.rewrite/report'], pathOptions=[
                 dict(name='messageFile',kind='input-file',path='input/message.txt'),
                 dict(name='reportDirectory',kind='output-directory',path='output/plugins/fixture.rewrite/report')])
+        if label == 'required-option': plugin['pathOptions'] = [p for p in plugin['pathOptions'] if p['name'] != 'messageFile']
+        if label == 'unknown-option': plugin['options'].append('unknown=value')
+        if label == 'duplicate-option':
+            shutil.copyfile(work/'input/message.txt',work/'input/second-message.txt')
+            plugin['inputs'].append('input/second-message.txt')
+            plugin['pathOptions'].append(dict(name='messageFile',kind='input-file',path='input/second-message.txt'))
+        if label == 'multiline-options': plugin['options'] = ['value=first,comma', 'value=second=literal', 'value=LF\nCR\rLS\u2028PS\u2029NEL\u0085end']
         request = dict(schemaVersion=1, requestId=label, compiler=digest(manifest_path),
             arguments=['-target','macos_arm64','-produce','library','-o','output/main.klib','-module-name','probe','-Xoverride-konan-properties=airplaneMode=true','input/Native.kt'],
             libraries=[],pluginApplications=[plugin])
@@ -115,11 +124,12 @@ def main():
         main = 'kvik.jvm.CompilerWorkerKt' if label == 'jvm-regression' else 'kvik.jvm.NativePluginWorker'
         result = command(label+'-process', [*bootstrap,main,work,'request.json','result.json',args.artifacts,manifest_path,*([] if label == 'jvm-regression' else [native])], work, expected=None)
         recorded = json.loads((work/'result.json').read_text()); assert recorded['requestId']==label and recorded['exitCode']==result.exit_code
-        if label in ('literal-options','jvm-regression'):
+        if label in ('literal-options','multiline-options','jvm-regression'):
             assert result.exit_code == 0 and recorded['status']=='success', recorded
             assert (work/('output/classes/JvmKt.class' if label=='jvm-regression' else 'output/main.klib')).is_file()
             report = (work/'output/plugins/fixture.rewrite/report/result.txt').read_text()
-            assert report == 'helper:v1:message:runtime\nfirst,comma|second=literal', report
+            expected_report = 'helper:v1:message:runtime\nfirst,comma|second=literal' + ('|LF\nCR\rLS\u2028PS\u2029NEL\u0085end' if label == 'multiline-options' else '')
+            assert (work/'output/plugins/fixture.rewrite/report/result.txt').read_bytes() == expected_report.encode(), repr(report)
             origins = dict(line.split('=', 1) for line in (work/'output/plugins/fixture.rewrite/report/origins.txt').read_text().splitlines())
             expected_parent = args.artifacts/'kotlin-compiler-embeddable-2.4.20.jar' if label=='jvm-regression' else native/'konan/lib/kotlin-native-compiler-embeddable.jar'
             for key in ('api.registrar','api.processor','api.ir'): assert origins[key] == str(expected_parent)
@@ -127,8 +137,12 @@ def main():
         else:
             assert result.exit_code != 0 and not (work/'output/main.klib').exists(), recorded
             if label=='wrong-api': assert recorded['diagnostics'][0]['code']=='KVIK_PLUGIN_INCOMPATIBLE', recorded
+            if label in ('required-option','unknown-option','duplicate-option'):
+                expected = {'required-option':'Required plugin option not present', 'unknown-option':'Unsupported plugin option', 'duplicate-option':'Multiple values are not allowed'}[label]
+                assert recorded['status']=='compilation-error' and any(expected in d['message'] for d in recorded['diagnostics']), recorded
+                assert not list((work/'output/plugins/fixture.rewrite/report').iterdir()), 'Plugin code ran before option validation'
             if label=='compiler-error': assert any(d['code']=='KVIK_NATIVE_ERROR' and 'noSuchSymbol' in d['message'] and d['line'] for d in recorded['diagnostics']), recorded
-    (case/'summary.json').write_bytes(canonical(dict(status='passed',checks=5,worker=str(worker))))
-    print('PASS all five Native/JVM worker checks',flush=True)
+    (case/'summary.json').write_bytes(canonical(dict(status='passed',checks=list(args.checks),worker=str(worker))))
+    print('PASS',len(args.checks),'Native/JVM worker checks',flush=True)
 
 if __name__=='__main__': main()
