@@ -110,7 +110,47 @@ cleanup. The Native probe independently exercises cwd/exec and intentional125/12
 
 Five focused Python schema groups also passed:
 `python -B tests/foreground-applications/test_schema.py -v` (0.008s).
-The pure Unicode and model-invariant tests in `ApplicationLifecycleTest.kt` still
-await their foreground Native build at this evidence freeze; the setup probe does
-not include those tests. A newly composed runtime and correlated real scanner
-reproduction are still needed to diagnose the original foreground exit125.
+The setup probe does not include the foreground Unicode and model-invariant tests;
+the separate matching Native unit gate below covers them. A newly composed runtime
+and correlated real scanner reproduction are still needed to diagnose the original
+foreground exit125.
+
+## Foreground Unicode and model boundary gate
+
+Frozen source `36d9491` (production unchanged from `1781f55`) was tested with:
+
+```sh
+/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python -B tools/test_foreground_applications.py \
+  --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 \
+  --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca \
+  --units-only
+```
+
+Actual handle **65366 terminated0**. All **32 Native tests across five cases
+passed** (69 ms test execution), including Unicode-safe observation truncation and
+setup-result invariants. This invocation compiled the focused binaries but ran no
+synthetic lifecycle or public consumer scenarios. Its compiler log is retained at
+`/private/tmp/kvik-foreground-observation-units.log`.
+
+The case `.kvik/tests/foreground-applications/case-g6d9uhft` retains:
+
+- `summary.json`: 161 bytes, SHA-256
+  `3b0dd3d489bb0ee9a66d5b74658e1a3cb48e9fc1688dd34537fb2246da027d83`.
+- `unit.log`: 7,722 bytes, SHA-256
+  `6fbac761ed8f8af3d22cfbc57d559e79c8029f623a09f95f303feb380dd7d48f`.
+- `build-receipt.json`: 20,819 bytes, SHA-256
+  `39f4f2ab431871a84664217efc5327be5cb84a60e7625589f2d1d6bc5b0574ad`.
+
+The case-local receipt is an exact copy of the receipt referenced by its summary,
+preserved before subsequent builds can replace the harness-level receipt.
+
+## Independent setup evidence review
+
+The independent retained-evidence review approved `1781f55` plus documentation
+`36d9491`, checking 41 source/harness inputs, nine tools, eight commands, six
+binaries and all 29 C plus four Native cases. It preserved the two failed runs and
+the 100 additional trace attempts without claiming the intermittent EPERM fixed.
+Its report is `/private/tmp/kvik-setup-diagnostics-audit-ubpdg4v3/report.json`,
+SHA-256 `9dcfd6b6494cb75ea615994fbd887e84746c17b126296d9bfbeae38b07e1d0ae`.
+The review performed no reruns; the historical Python schema execution was not
+receipt-audited. The later 32-test foreground gate above is separate evidence.
