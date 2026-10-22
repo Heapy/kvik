@@ -131,20 +131,25 @@ data class WorkerRequest(
     val pluginClasspath: List<String>,
     val options: List<String>,
     val outputDirectory: String,
+    val pluginApplications: List<JvmPluginApplication> = emptyList(),
 ) {
-    init { require(requestId.isNotBlank() && operation == "jvm-compile" && sources.isNotEmpty()) }
+    init {
+        require(requestId.isNotBlank() && operation == "jvm-compile" && sources.isNotEmpty())
+        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || pluginClasspath.isEmpty())) { "Only one compiler plugin representation/application is supported" }
+    }
     fun toJson(): JsonValue = obj(
         "schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "operation" to operation.json(),
         "compiler" to compiler.toJson(), "sources" to sources.map { it.json() }.json(),
         "classpath" to classpath.map { it.json() }.json(), "pluginClasspath" to pluginClasspath.map { it.json() }.json(),
         "options" to options.map { it.json() }.json(), "outputDirectory" to outputDirectory.json(),
-    )
+    ).let { if (pluginApplications.isEmpty()) it else JsonValue.Object(it.values + ("pluginApplications" to pluginApplications.map { it.toJson() }.json())) }
     companion object {
-        fun fromJson(value: JsonValue): WorkerRequest = value.fields(setOf("schemaVersion", "requestId", "operation", "compiler", "sources", "classpath", "pluginClasspath", "options", "outputDirectory")).let {
+        fun fromJson(value: JsonValue): WorkerRequest = value.fields(setOf("schemaVersion", "requestId", "operation", "compiler", "sources", "classpath", "pluginClasspath", "options", "outputDirectory"), setOf("pluginApplications")).let {
             it.requireVersion()
             WorkerRequest(it.getValue("requestId").stringValue(), it.getValue("operation").stringValue(), Digest.fromJson(it.getValue("compiler")),
                 it.getValue("sources").arrayValue().map(JsonValue::stringValue), it.getValue("classpath").arrayValue().map(JsonValue::stringValue),
-                it.getValue("pluginClasspath").arrayValue().map(JsonValue::stringValue), it.getValue("options").arrayValue().map(JsonValue::stringValue), it.getValue("outputDirectory").stringValue())
+                it.getValue("pluginClasspath").arrayValue().map(JsonValue::stringValue), it.getValue("options").arrayValue().map(JsonValue::stringValue), it.getValue("outputDirectory").stringValue(),
+                it["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
         }
     }
 }

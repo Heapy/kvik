@@ -50,6 +50,7 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
             require(plugin.targets.all { requested -> module.targets.any { it.name == requested } }) { "Compiler plugin selects an undeclared target in ${module.id}" }
             plugin.module?.let { pluginModule ->
                 require(byId.getValue(pluginModule).targets.any { it.name == "jvm" }) { "Compiler plugin module $pluginModule requires a JVM target" }
+                require("test" !in plugin.scopes || module.targets.single { it.name == "jvm" }.test != null) { "Workspace plugin selects missing test compilation" }
             }
         }
     }
@@ -102,12 +103,14 @@ private fun parseDependency(value: JsonValue): Dependency {
 }
 
 private fun parseCompilerPlugin(value: JsonValue): CompilerPluginSpec {
-    val fields = value.fields(setOf("targets", "scopes", "options", "inputs"), setOf("module", "coordinate"))
+    val fields = value.fields(setOf("targets", "scopes", "options", "inputs"), setOf("module", "coordinate", "id", "compilerVersion", "pathOptions", "outputs"))
     val targets = fields.getValue("targets").strings().unique("plugin target")
     require(targets.all { it in setOf("jvm", "macosArm64") }) { "Unsupported compiler-plugin target" }
     return CompilerPluginSpec(fields["module"]?.identifier(), fields["coordinate"]?.stringValue()?.let(Coordinate::parse),
         targets.toSet(), fields.getValue("scopes").strings().unique("plugin scope").toSet(),
-        fields.getValue("options").strings(), fields.getValue("inputs").paths().unique("plugin input"))
+        fields.getValue("options").strings(), fields.getValue("inputs").paths().unique("plugin input"),
+        fields["id"]?.identifier(), fields["compilerVersion"]?.stringValue(),
+        fields["pathOptions"]?.arrayValue()?.map(PluginPathOption::fromJson) ?: emptyList(), fields["outputs"]?.paths() ?: emptyList())
 }
 
 /** Dependency-first source sets, with shared ancestors included exactly once. */

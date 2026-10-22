@@ -73,10 +73,17 @@ data class TargetSpec(
         else -> error("Unknown compilation: $compilation")
     }
 }
-data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, val targets: Set<String>, val scopes: Set<String>, val options: List<String>, val inputs: List<LogicalPath>) {
+data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, val targets: Set<String>, val scopes: Set<String>, val options: List<String>, val inputs: List<LogicalPath>,
+                              val id: String? = null, val compilerVersion: String? = null,
+                              val pathOptions: List<PluginPathOption> = emptyList(), val outputs: List<LogicalPath> = emptyList()) {
     init {
         require((module == null) != (coordinate == null)) { "Compiler plugin needs exactly one module or coordinate" }
         require(targets.isNotEmpty() && scopes.isNotEmpty() && scopes.all { it in setOf("main", "test", "script") })
+        if (module != null) {
+            require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilerVersion == "2.4.20") { "Workspace plugin requires an id and compilerVersion=2.4.20" }
+            require(targets == setOf("jvm") && scopes.all { it in setOf("main", "test") }) { "Workspace compiler plugins currently support JVM main/test only" }
+            validatePluginOptions(options, inputs, pathOptions, outputs)
+        } else require(id == null && compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions are not supported" }
     }
 }
 data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targets: List<TargetSpec>, val compilerPlugins: List<CompilerPluginSpec>)

@@ -290,6 +290,96 @@
         }
       ]
     },
+    "pluginPathOption": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "kind": {
+          "enum": [
+            "input-file",
+            "output-directory"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "jvmPluginApplication": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "compilerVersion": {
+          "const": "2.4.20"
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*="
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "uniqueItems": true
+        },
+        "pathOptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pluginPathOption"
+          },
+          "uniqueItems": true
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "compilerVersion",
+        "classpath",
+        "options",
+        "inputs",
+        "pathOptions",
+        "outputs"
+      ],
+      "additionalProperties": false
+    },
     "compilerPlugin": {
       "type": "object",
       "properties": {
@@ -336,7 +426,31 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
-          }
+          },
+          "uniqueItems": true
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "compilerVersion": {
+          "const": "2.4.20"
+        },
+        "pathOptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pluginPathOption"
+          },
+          "uniqueItems": true
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -349,12 +463,42 @@
       "oneOf": [
         {
           "required": [
-            "module"
+            "module",
+            "id",
+            "compilerVersion"
           ],
           "not": {
             "required": [
               "coordinate"
             ]
+          },
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "const": "jvm"
+              },
+              "minItems": 1,
+              "maxItems": 1
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "main",
+                  "test"
+                ]
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*="
+              }
+            }
           }
         },
         {
@@ -362,9 +506,31 @@
             "coordinate"
           ],
           "not": {
-            "required": [
-              "module"
+            "anyOf": [
+              {
+                "required": [
+                  "module"
+                ]
+              },
+              {
+                "required": [
+                  "id"
+                ]
+              },
+              {
+                "required": [
+                  "compilerVersion"
+                ]
+              }
             ]
+          },
+          "properties": {
+            "pathOptions": {
+              "maxItems": 0
+            },
+            "outputs": {
+              "maxItems": 0
+            }
           }
         }
       ]
@@ -1858,6 +2024,13 @@
         },
         "outputDirectory": {
           "type": "string"
+        },
+        "pluginApplications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jvmPluginApplication"
+          },
+          "maxItems": 1
         }
       },
       "required": [
@@ -1871,7 +2044,28 @@
         "options",
         "outputDirectory"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "pluginApplications"
+            ],
+            "properties": {
+              "pluginApplications": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "pluginClasspath": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "workerResult": {
       "type": "object",
