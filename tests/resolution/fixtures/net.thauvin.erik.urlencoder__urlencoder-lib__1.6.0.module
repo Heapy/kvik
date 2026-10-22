@@ -1,0 +1,991 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "net.thauvin.erik.urlencoder",
+    "module": "urlencoder-lib",
+    "version": "1.6.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "metadataApiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.platform.type": "common"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "1.9.24"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "urlencoder-lib-metadata-1.6.0.jar",
+          "url": "urlencoder-lib-1.6.0.jar",
+          "size": 4640,
+          "sha512": "b4e0c9f81f6cd478ae439b388ac297bce83fc050d7f3dc3ba9d61120e7a614060b6458ba20dddb577f95eb42757aba9a091937c0108eb8a071630cf40379d6e6",
+          "sha256": "291bc5d7a39ab16a03d747f7e139fcec2235577fcb8d2d074d8bd09ccc76eae8",
+          "sha1": "82691982de7e6195a965cf743beae8209ff9f81f",
+          "md5": "cee52303d1f08df167992664081bc7f0"
+        }
+      ]
+    },
+    {
+      "name": "metadataSourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.platform.type": "common"
+      },
+      "files": [
+        {
+          "name": "urlencoder-lib-kotlin-1.6.0-sources.jar",
+          "url": "urlencoder-lib-1.6.0-sources.jar",
+          "size": 5423,
+          "sha512": "6d272d3a17228486342b6e7c322db1f568837220a122f719a5164cc919d02fe1a88890f71faeee2e90e49b433544684464da0f7726032b81c578b7b38a5e200a",
+          "sha256": "ec107ce47aa4db7ffb9b892cee846dc88ee1cac745b6ecabd7d89de12253edd0",
+          "sha1": "02a5c531e4b4afef02d124c081c41024852eefc4",
+          "md5": "8856ec122a055312165178cefe23d51d"
+        }
+      ]
+    },
+    {
+      "name": "iosArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "ios_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iosarm64/1.6.0/urlencoder-lib-iosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "ios_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iosarm64/1.6.0/urlencoder-lib-iosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "ios_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iosarm64/1.6.0/urlencoder-lib-iosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosSimulatorArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "ios_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iossimulatorarm64/1.6.0/urlencoder-lib-iossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosSimulatorArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "ios_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iossimulatorarm64/1.6.0/urlencoder-lib-iossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosSimulatorArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "ios_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iossimulatorarm64/1.6.0/urlencoder-lib-iossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosX64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "ios_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iosx64/1.6.0/urlencoder-lib-iosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosX64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "ios_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iosx64/1.6.0/urlencoder-lib-iosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "iosX64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "ios_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-iosx64/1.6.0/urlencoder-lib-iosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-iosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "jsApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.js.compiler": "ir",
+        "org.jetbrains.kotlin.platform.type": "js"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-js/1.6.0/urlencoder-lib-js-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-js",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "jsRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.js.compiler": "ir",
+        "org.jetbrains.kotlin.platform.type": "js"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-js/1.6.0/urlencoder-lib-js-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-js",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "jsSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.js.compiler": "ir",
+        "org.jetbrains.kotlin.platform.type": "js"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-js/1.6.0/urlencoder-lib-js-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-js",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "jvmApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-jvm",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "jvmRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-jvm",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "jvmSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-jvm",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "linuxArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "linux_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-linuxarm64/1.6.0/urlencoder-lib-linuxarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-linuxarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "linuxArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "linux_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-linuxarm64/1.6.0/urlencoder-lib-linuxarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-linuxarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "linuxX64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "linux_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-linuxx64/1.6.0/urlencoder-lib-linuxx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-linuxx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "linuxX64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "linux_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-linuxx64/1.6.0/urlencoder-lib-linuxx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-linuxx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "macosArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-macosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "macosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-macosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "macosArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-macosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "macosX64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "macos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-macosx64/1.6.0/urlencoder-lib-macosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-macosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "macosX64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "macos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-macosx64/1.6.0/urlencoder-lib-macosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-macosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "macosX64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "macos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-macosx64/1.6.0/urlencoder-lib-macosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-macosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "mingwX64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "mingw_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-mingwx64/1.6.0/urlencoder-lib-mingwx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-mingwx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "mingwX64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "mingw_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-mingwx64/1.6.0/urlencoder-lib-mingwx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-mingwx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "tvos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvosarm64/1.6.0/urlencoder-lib-tvosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "tvos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvosarm64/1.6.0/urlencoder-lib-tvosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "tvos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvosarm64/1.6.0/urlencoder-lib-tvosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosSimulatorArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "tvos_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvossimulatorarm64/1.6.0/urlencoder-lib-tvossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosSimulatorArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "tvos_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvossimulatorarm64/1.6.0/urlencoder-lib-tvossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosSimulatorArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "tvos_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvossimulatorarm64/1.6.0/urlencoder-lib-tvossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosX64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "tvos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvosx64/1.6.0/urlencoder-lib-tvosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosX64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "tvos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvosx64/1.6.0/urlencoder-lib-tvosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "tvosX64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "tvos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-tvosx64/1.6.0/urlencoder-lib-tvosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-tvosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "wasmJsApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.platform.type": "wasm",
+        "org.jetbrains.kotlin.wasm.target": "js"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-wasm-js/1.6.0/urlencoder-lib-wasm-js-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-wasm-js",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "wasmJsRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.platform.type": "wasm",
+        "org.jetbrains.kotlin.wasm.target": "js"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-wasm-js/1.6.0/urlencoder-lib-wasm-js-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-wasm-js",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "wasmJsSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.platform.type": "wasm",
+        "org.jetbrains.kotlin.wasm.target": "js"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-wasm-js/1.6.0/urlencoder-lib-wasm-js-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-wasm-js",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "wasmWasiApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.platform.type": "wasm",
+        "org.jetbrains.kotlin.wasm.target": "wasi"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-wasm-wasi/1.6.0/urlencoder-lib-wasm-wasi-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-wasm-wasi",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "wasmWasiRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.platform.type": "wasm",
+        "org.jetbrains.kotlin.wasm.target": "wasi"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-wasm-wasi/1.6.0/urlencoder-lib-wasm-wasi-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-wasm-wasi",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "wasmWasiSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.platform.type": "wasm",
+        "org.jetbrains.kotlin.wasm.target": "wasi"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-wasm-wasi/1.6.0/urlencoder-lib-wasm-wasi-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-wasm-wasi",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosArm32ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "watchos_arm32",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosarm32/1.6.0/urlencoder-lib-watchosarm32-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosarm32",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosArm32SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "watchos_arm32",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosarm32/1.6.0/urlencoder-lib-watchosarm32-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosarm32",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosArm32MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "watchos_arm32",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosarm32/1.6.0/urlencoder-lib-watchosarm32-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosarm32",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "watchos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosarm64/1.6.0/urlencoder-lib-watchosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "watchos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosarm64/1.6.0/urlencoder-lib-watchosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "watchos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosarm64/1.6.0/urlencoder-lib-watchosarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosDeviceArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "watchos_device_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosdevicearm64/1.6.0/urlencoder-lib-watchosdevicearm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosdevicearm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosDeviceArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "watchos_device_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosdevicearm64/1.6.0/urlencoder-lib-watchosdevicearm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosdevicearm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosDeviceArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "watchos_device_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosdevicearm64/1.6.0/urlencoder-lib-watchosdevicearm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosdevicearm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosSimulatorArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "watchos_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchossimulatorarm64/1.6.0/urlencoder-lib-watchossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosSimulatorArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "watchos_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchossimulatorarm64/1.6.0/urlencoder-lib-watchossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosSimulatorArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "watchos_simulator_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchossimulatorarm64/1.6.0/urlencoder-lib-watchossimulatorarm64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchossimulatorarm64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosX64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "watchos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosx64/1.6.0/urlencoder-lib-watchosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosX64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "watchos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosx64/1.6.0/urlencoder-lib-watchosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosx64",
+        "version": "1.6.0"
+      }
+    },
+    {
+      "name": "watchosX64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "watchos_x64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "available-at": {
+        "url": "../../urlencoder-lib-watchosx64/1.6.0/urlencoder-lib-watchosx64-1.6.0.module",
+        "group": "net.thauvin.erik.urlencoder",
+        "module": "urlencoder-lib-watchosx64",
+        "version": "1.6.0"
+      }
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+[
+  {
+    "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.11.0/kotlinx-serialization-core-jvm-1.11.0.jar",
+    "digest": {
+      "hash": "f4a801c647d4351327cd9e1ac4113e2be9ea37a64ab0abae269c25a52e28f35d",
+      "sizeBytes": 404509
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.20",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/kotlin/kotlin-stdlib/2.4.20/kotlin-stdlib-2.4.20.jar",
+    "digest": {
+      "hash": "2226de463d309d4a5500a481320b3dea515a6981dcae1def531fbc158884e25f",
+      "sizeBytes": 1853314
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "org.jetbrains:annotations:13.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/annotations/13.0/annotations-13.0.jar",
+    "digest": {
+      "hash": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+      "sizeBytes": 17536
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.11.0/kotlinx-serialization-json-jvm-1.11.0.jar",
+    "digest": {
+      "hash": "563a25b4eb5c9128ae9c2479f3d1a5c44dcd176112b91cf03682e906eba5c935",
+      "sizeBytes": 294166
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "it.krzeminski:snakeyaml-engine-kmp-jvm:5.0.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/it/krzeminski/snakeyaml-engine-kmp-jvm/5.0.0/snakeyaml-engine-kmp-jvm-5.0.0.jar",
+    "digest": {
+      "hash": "506718c275eef4118fc589f95004066079bf72b872850cd8bd89bb6fc08dec1e",
+      "sizeBytes": 473045
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "com.squareup.okio:okio-jvm:3.18.2",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/com/squareup/okio/okio-jvm/3.18.2/okio-jvm-3.18.2.jar",
+    "digest": {
+      "hash": "681fed549d1d2c63710f42c9eab433d642c71af778babd67035c50f8c425aaff",
+      "sizeBytes": 392462
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "net.thauvin.erik.urlencoder:urlencoder-lib-jvm:1.6.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/net/thauvin/erik/urlencoder/urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.jar",
+    "digest": {
+      "hash": "8d0fd2aeb48d19dc49c563ebc00f274947e45f716c107535c12ead63decd688d",
+      "sizeBytes": 6512
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-macosarm64:1.11.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib",
+    "digest": {
+      "hash": "551d11833d5611afe63dac02c05dd21611fe5f43d002e014cbe61b380551e3e4",
+      "sizeBytes": 394849
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-macosarm64:1.11.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.klib",
+    "digest": {
+      "hash": "422eb1c46ccf299e35575cbca2227d23e8873d2da9ce86c5e968a7a3ddedcb2b",
+      "sizeBytes": 382253
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "it.krzeminski:snakeyaml-engine-kmp-macosarm64:5.0.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib",
+    "digest": {
+      "hash": "1eb13bf4ed44eb9154fde79699255efd3b69fa7969eeef24d838780c36ed5260",
+      "sizeBytes": 471557
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "com.squareup.okio:okio-macosarm64:3.18.2",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib",
+    "digest": {
+      "hash": "03eef65b5b017dd01251d45dbc47ccdf3cb66d8ac2741b7ba45e4c091f7edb52",
+      "sizeBytes": 504987
+    },
+    "result": "match"
+  },
+  {
+    "coordinate": "net.thauvin.erik.urlencoder:urlencoder-lib-macosarm64:1.6.0",
+    "file": "/Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache/net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib",
+    "digest": {
+      "hash": "ed10782cf3178f419653a0c7889c88386d8a48130c6fcc56910bdb013daa87c0",
+      "sizeBytes": 19243
+    },
+    "result": "match"
+  }
+]

@@ -1,0 +1,102 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "url": "../../kotlinx-serialization-core/1.11.0/kotlinx-serialization-core-1.11.0.module",
+    "group": "org.jetbrains.kotlinx",
+    "module": "kotlinx-serialization-core",
+    "version": "1.11.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.7"
+    }
+  },
+  "variants": [
+    {
+      "name": "macosArm64ApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.3.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "kotlinx-serialization-core-macosArm64Main-1.11.0.klib",
+          "url": "kotlinx-serialization-core-macosarm64-1.11.0.klib",
+          "size": 394849,
+          "sha512": "0f7a074cfb0a528d30cc2c413c848c79b7c3c603706d2ee541988030e34cbff9477f97a29243f689b42c8bb41061008a0f69fede89967f6708084cc6cee3f546",
+          "sha256": "551d11833d5611afe63dac02c05dd21611fe5f43d002e014cbe61b380551e3e4",
+          "sha1": "f22385c39763fb7c0cf6e129c511b811d18d224d",
+          "md5": "f5ccc00aecae49b7ac0220fd5d3a5074"
+        }
+      ]
+    },
+    {
+      "name": "macosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "files": [
+        {
+          "name": "kotlinx-serialization-core-macosarm64-1.11.0-sources.jar",
+          "url": "kotlinx-serialization-core-macosarm64-1.11.0-sources.jar",
+          "size": 105782,
+          "sha512": "7fd291b744fdc1e346c706a003b61954bc46deeba45d056a5e0f6f691583b684ca1269847d1b28cc0e3ed16ba30334be7e669cf5eca870bb382248485945d8b5",
+          "sha256": "367d0b0dbe61b7785c8454b33709709d1fa5c9b72dc9c2c1c1beebe7cb886076",
+          "sha1": "c7460000798080ccac6f75ca70ebb17ae6501914",
+          "md5": "451fa5c17fbcef5081e69df02fe10a83"
+        }
+      ]
+    },
+    {
+      "name": "macosArm64MetadataElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.3.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "kotlinx-serialization-core-macosarm64-1.11.0-metadata.jar",
+          "url": "kotlinx-serialization-core-macosarm64-1.11.0-metadata.jar",
+          "size": 261,
+          "sha512": "4791927db7822e7422d43315d48725f338544efb0e0be8bc87b2874c1685f7be672c3980d974b639370b5a7eb62d20ea695dc91b82040d77e2a0adcd04e7f959",
+          "sha256": "5ed53bdc6f54afe99d30cf2a780585477afcff7d9c7e208950632992cbf5aa95",
+          "sha1": "24cc88cd9140f3aced4d41a3600855d086221c9c",
+          "md5": "8438fed46502ba32ade7039215725f28"
+        }
+      ]
+    }
+  ]
+}

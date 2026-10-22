@@ -1,0 +1,118 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "url": "../../okio/3.18.2/okio-3.18.2.module",
+    "group": "com.squareup.okio",
+    "module": "okio",
+    "version": "3.18.2",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.6.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "macosArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.21"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.1.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "okio-macosArm64Main-3.18.2.klib",
+          "url": "okio-macosarm64-3.18.2.klib",
+          "size": 504987,
+          "sha512": "4e80304ffe0c0f43ae53393cb703b4a07330677fc6f85d5745e0b686b79ad62d2ff3079f92481cb6c9ce22c9cd5bb2373e97bcaf7cccf0042b815426d737a9d5",
+          "sha256": "03eef65b5b017dd01251d45dbc47ccdf3cb66d8ac2741b7ba45e4c091f7edb52",
+          "sha1": "61273c93476f8cf87c3abc19717dc0ef479c0f15",
+          "md5": "3bc7e418b7553aa6364f5bd971103002"
+        }
+      ]
+    },
+    {
+      "name": "macosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "files": [
+        {
+          "name": "okio-macosarm64-3.18.2-sources.jar",
+          "url": "okio-macosarm64-3.18.2-sources.jar",
+          "size": 174186,
+          "sha512": "53142320634fd6373188eb8c835496ca26a478ccbbe6c1f6b78fda003c0d75e5ed4f6d0e127423eff9b3033b7bc8ed51de627ca4819ac7e88af3f99ac5523be9",
+          "sha256": "b905e3f41d9d4bd47b15b86b65b49da9d3f7e805d6e204f9e51d8cb9c52013e6",
+          "sha1": "8ae9b660c8aa0e8434e12226dd8f3a6a41863b26",
+          "md5": "9eb470e666128b7c9fd147f742f3ef0b"
+        }
+      ]
+    },
+    {
+      "name": "macosArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "non-jvm",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.21"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.1.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "okio-macosarm64-3.18.2-metadata.jar",
+          "url": "okio-macosarm64-3.18.2-metadata.jar",
+          "size": 6848,
+          "sha512": "9887067ffab71ee808f42468b15b6fe6dadcc623bd042b4ccf3bf78ef7aba5812cea273810ce7d68c7ea7ba71d30a157fedc875693ef5e9a789e3b66adeddb76",
+          "sha256": "fb26941aab384a1efcfed21542d29369a80e252a0547b93497aa0d33a8fda359",
+          "sha1": "2aece3ac30f5697038f7221c792c38f0cfb625e2",
+          "md5": "51d9703a6906b118c927164955791d68"
+        }
+      ]
+    }
+  ]
+}

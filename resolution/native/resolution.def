@@ -1,0 +1,4 @@
+headers = resolution.h
+headerFilter = resolution.h
+package = kvik.resolution.native
+linkerOpts = -lcurl -lxml2

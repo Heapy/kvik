@@ -1,0 +1,101 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "url": "../../urlencoder-lib/1.6.0/urlencoder-lib-1.6.0.module",
+    "group": "net.thauvin.erik.urlencoder",
+    "module": "urlencoder-lib",
+    "version": "1.6.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "macosArm64ApiElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-api",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "1.9.24"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "urlencoder-lib.klib",
+          "url": "urlencoder-lib-macosarm64-1.6.0.klib",
+          "size": 19243,
+          "sha512": "2a4710a9cc4579a839400072869686ef453a70c7a2283f24966867d30a02aa1aa01c972c5f2ac83815494909a989f47c5caf048ddd61b2e902053ee2e16e7e95",
+          "sha256": "ed10782cf3178f419653a0c7889c88386d8a48130c6fcc56910bdb013daa87c0",
+          "sha1": "fe0d21aff6e431f5b91e8bfe040405e84b4efb14",
+          "md5": "12a9f8c64355187b6a9cbb1bc7d5c64a"
+        }
+      ]
+    },
+    {
+      "name": "macosArm64SourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "kotlin-runtime",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "files": [
+        {
+          "name": "urlencoder-lib-macosarm64-1.6.0-sources.jar",
+          "url": "urlencoder-lib-macosarm64-1.6.0-sources.jar",
+          "size": 5423,
+          "sha512": "6d272d3a17228486342b6e7c322db1f568837220a122f719a5164cc919d02fe1a88890f71faeee2e90e49b433544684464da0f7726032b81c578b7b38a5e200a",
+          "sha256": "ec107ce47aa4db7ffb9b892cee846dc88ee1cac745b6ecabd7d89de12253edd0",
+          "sha1": "02a5c531e4b4afef02d124c081c41024852eefc4",
+          "md5": "8856ec122a055312165178cefe23d51d"
+        }
+      ]
+    },
+    {
+      "name": "macosArm64MetadataElements-published",
+      "attributes": {
+        "artifactType": "org.jetbrains.kotlin.klib",
+        "org.gradle.category": "library",
+        "org.gradle.usage": "kotlin-metadata",
+        "org.jetbrains.kotlin.native.target": "macos_arm64",
+        "org.jetbrains.kotlin.platform.type": "native"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "1.9.24"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "urlencoder-lib-macosarm64-1.6.0-metadata.jar",
+          "url": "urlencoder-lib-macosarm64-1.6.0-metadata.jar",
+          "size": 261,
+          "sha512": "1487e5a20c9e4d74f298e07c42e96a61be11b7a768c3fbc199ee138cd68e1fc2267d1cfe3f11f288acc05df755315344d052cc5f6f751f126ab4fe1caa5125ea",
+          "sha256": "c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3",
+          "sha1": "2ad14aed781c4a73ed4dbb421966d408a0a06686",
+          "md5": "f43436d6bec321290f6af228ad602604"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,172 @@
+{
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core/1.11.0/kotlinx-serialization-core-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core__1.11.0.module",
+    "hash": "4e011406f2c2285a5a9ba8c3b6471ac168f6e82af82b1a93b71a0731d270364e",
+    "sizeBytes": 47224
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.11.0/kotlinx-serialization-core-jvm-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core-jvm__1.11.0.module",
+    "hash": "d8bee6e8a51d7c169bd6060abbc6b2d4e7bc419a265cd705d47824b83f1bd0b6",
+    "sizeBytes": 4162
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-bom/1.11.0/kotlinx-serialization-bom-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-bom__1.11.0.pom",
+    "hash": "3be221b6da86dcda51cac6c4b2404b89e95ab09cc8d06a05689be2ef36735dec",
+    "sizeBytes": 4132
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.20/kotlin-stdlib-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-stdlib__2.4.20.module",
+    "hash": "afb28052ac6c3d605c0f661816ea653e073eb039682fed35bfa6cdc704c0911c",
+    "sizeBytes": 12431
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.pom": {
+    "file": "org.jetbrains__annotations__13.0.pom",
+    "hash": "965aeb2bedff369819bdde1bf7a0b3b89b8247dd69c88b86375d76163bb8c397",
+    "sizeBytes": 4930
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.20/kotlin-stdlib-2.4.20.pom": {
+    "file": "org.jetbrains.kotlin__kotlin-stdlib__2.4.20.pom",
+    "hash": "bd69b382dba8e2b7ae3846375eb2f1389017eb908987277051ae4e3acec8c938",
+    "sizeBytes": 2301
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.11.0/kotlinx-serialization-core-jvm-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core-jvm__1.11.0.pom",
+    "hash": "83039385976fdc494241f4572558a136e7b21116d7279b26daf335478bfacb57",
+    "sizeBytes": 2068
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core-macosarm64__1.11.0.module",
+    "hash": "eb487f5308ffdf69ec02097e87941859b90ba83851f30852c42dc318393008fa",
+    "sizeBytes": 3680
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core-macosarm64__1.11.0.pom",
+    "hash": "1928428410f0c75e5656c702dcb72b856cabc77e10f7fbb409b1ff1e9533baf1",
+    "sizeBytes": 1769
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core/1.11.0/kotlinx-serialization-core-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core__1.11.0.pom",
+    "hash": "3133773fbcf9822a7f3a5e85ab19941e67bd289bf5fc3182d9db4d1cab86eb22",
+    "sizeBytes": 2112
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json/1.11.0/kotlinx-serialization-json-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-json__1.11.0.module",
+    "hash": "9316b64e1d0de0a8c74134b460916dcf6d19e627941b4c4eeb63e07e907111af",
+    "sizeBytes": 47406
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.11.0/kotlinx-serialization-json-jvm-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-json-jvm__1.11.0.module",
+    "hash": "44ce6b756f93c90ac3da73f35ed0ab036f43b73f57f3563ccac9e152f411272d",
+    "sizeBytes": 4527
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.11.0/kotlinx-serialization-json-jvm-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-json-jvm__1.11.0.pom",
+    "hash": "dc6ffce390f328d9bca740a63b91092afd09f4473a1f2a80d77d64b3c5b505d3",
+    "sizeBytes": 2279
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-json-macosarm64__1.11.0.module",
+    "hash": "49a1b9a4841e1aa2792470f0e079057b06849d4d6fb8fdc4af1f934619475a50",
+    "sizeBytes": 4045
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-json-macosarm64__1.11.0.pom",
+    "hash": "07a66ce465b0c805d9b055cee1e300d8e0d0934a37519d9904bd467584e2ae0b",
+    "sizeBytes": 1987
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json/1.11.0/kotlinx-serialization-json-1.11.0.pom": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-json__1.11.0.pom",
+    "hash": "2bd8c5e79d2fee8183a45ed869024e1d74571936960b18125d603b0718f536e3",
+    "sizeBytes": 2112
+  },
+  "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp/5.0.0/snakeyaml-engine-kmp-5.0.0.module": {
+    "file": "it.krzeminski__snakeyaml-engine-kmp__5.0.0.module",
+    "hash": "09002336f0e51a58a7c967c0d66ef2f6b39d673965c9f2598b51a9ad961bc6ab",
+    "sizeBytes": 34927
+  },
+  "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp-jvm/5.0.0/snakeyaml-engine-kmp-jvm-5.0.0.module": {
+    "file": "it.krzeminski__snakeyaml-engine-kmp-jvm__5.0.0.module",
+    "hash": "43de62654d830c45a4cd69d48769f985f7147721a1b2cbfc302a99dee5a442c1",
+    "sizeBytes": 3810
+  },
+  "https://repo.maven.apache.org/maven2/com/squareup/okio/okio/3.18.2/okio-3.18.2.module": {
+    "file": "com.squareup.okio__okio__3.18.2.module",
+    "hash": "1f56f7f4840cde0ec9e64ca36a98696e3b384e45550eb2d5dc3ae5b12bc625e7",
+    "sizeBytes": 37605
+  },
+  "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/3.18.2/okio-jvm-3.18.2.module": {
+    "file": "com.squareup.okio__okio-jvm__3.18.2.module",
+    "hash": "d4ecee7c2e57bd3155bef0a26bd2eff49b6d7dbc108ee321b4c7be60628730d4",
+    "sizeBytes": 3346
+  },
+  "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/3.18.2/okio-jvm-3.18.2.pom": {
+    "file": "com.squareup.okio__okio-jvm__3.18.2.pom",
+    "hash": "94ef678c6c26f04c380a902951174f216bbae4d3f1bfc421e1830f9aac556d28",
+    "sizeBytes": 1715
+  },
+  "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.module": {
+    "file": "com.squareup.okio__okio-macosarm64__3.18.2.module",
+    "hash": "a1298d6cae145b8d36ba80f84396ebab4938dd4dc01fe8b5d530fc723fdae6f9",
+    "sizeBytes": 3925
+  },
+  "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.pom": {
+    "file": "com.squareup.okio__okio-macosarm64__3.18.2.pom",
+    "hash": "b25352f8dda92f265813988aba10701a65feb8731e76aa3d51a2df34cefeed54",
+    "sizeBytes": 1752
+  },
+  "https://repo.maven.apache.org/maven2/com/squareup/okio/okio/3.18.2/okio-3.18.2.pom": {
+    "file": "com.squareup.okio__okio__3.18.2.pom",
+    "hash": "d63868feb53befeae594494d329bfaabd58cd9c6f0818b1a1daab89ed204b786",
+    "sizeBytes": 1703
+  },
+  "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib/1.6.0/urlencoder-lib-1.6.0.module": {
+    "file": "net.thauvin.erik.urlencoder__urlencoder-lib__1.6.0.module",
+    "hash": "170a1868bfba398d649be2bf50d6cd860350c94b2436772b24cb34bcdea4a1b5",
+    "sizeBytes": 36861
+  },
+  "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.module": {
+    "file": "net.thauvin.erik.urlencoder__urlencoder-lib-jvm__1.6.0.module",
+    "hash": "c51daa5c5b21a2d11f539c1b048af8529f46d6100ca224b32511fb5863dbe82a",
+    "sizeBytes": 3270
+  },
+  "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.pom": {
+    "file": "net.thauvin.erik.urlencoder__urlencoder-lib-jvm__1.6.0.pom",
+    "hash": "d249ba3499c528579efaebdae3731692fd4481d9af9cb877c21d9b7fa5071ebd",
+    "sizeBytes": 2212
+  },
+  "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.module": {
+    "file": "net.thauvin.erik.urlencoder__urlencoder-lib-macosarm64__1.6.0.module",
+    "hash": "1fee6270075453dbe411f4c0bdbf9a82de7086b23bb43e4c368410861d8caf2d",
+    "sizeBytes": 3507
+  },
+  "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.pom": {
+    "file": "net.thauvin.erik.urlencoder__urlencoder-lib-macosarm64__1.6.0.pom",
+    "hash": "3a4573d653112229fb1f624c6b0dc1959261280b85c398e0a3636a54f46eb95c",
+    "sizeBytes": 2249
+  },
+  "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib/1.6.0/urlencoder-lib-1.6.0.pom": {
+    "file": "net.thauvin.erik.urlencoder__urlencoder-lib__1.6.0.pom",
+    "hash": "87ae17c0042da0a402b7c6876c7ef204cd599a279ddf91a9c16df4a89deae7bc",
+    "sizeBytes": 2212
+  },
+  "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp-jvm/5.0.0/snakeyaml-engine-kmp-jvm-5.0.0.pom": {
+    "file": "it.krzeminski__snakeyaml-engine-kmp-jvm__5.0.0.pom",
+    "hash": "56482407c62efff10a9aecdce3bee89d4334110d877e14423f7df751c95fcd6e",
+    "sizeBytes": 2193
+  },
+  "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.module": {
+    "file": "it.krzeminski__snakeyaml-engine-kmp-macosarm64__5.0.0.module",
+    "hash": "87d0c712f4302aca7c5402ce76fd32187823dd0f4aae93d2549eba99dc9608d2",
+    "sizeBytes": 4277
+  },
+  "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.pom": {
+    "file": "it.krzeminski__snakeyaml-engine-kmp-macosarm64__5.0.0.pom",
+    "hash": "97306b3c53243e70bf2972282498a4bd59a34db098edfb92980bd811c28a37ca",
+    "sizeBytes": 2244
+  },
+  "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp/5.0.0/snakeyaml-engine-kmp-5.0.0.pom": {
+    "file": "it.krzeminski__snakeyaml-engine-kmp__5.0.0.pom",
+    "hash": "c544ddbbeb677c447b234f9f280d2a9e20a0fadf46e7b86f3f18ab2f81ae7265",
+    "sizeBytes": 2185
+  }
+}
