@@ -69,6 +69,16 @@ seven legacy identity checks also passed. Independently rerunning the foreground
 contract suite passed all nine Native launch/resume tests; retained evidence is
 `/private/tmp/kvik-k14-foreground-source-flags/.kvik/tests/foreground-bootstrap/case-kngmleds`.
 
+Independent review approved the launcher through source commit `a89b5ae` after
+both corrections. It reran all 16 launcher groups (3.353 seconds), eight schema
+groups, seven identity checks and eleven examples/vectors, plus five independent
+boundary probes. Report:
+`/private/tmp/kvik-source-launcher-final-review-ys68gncc/report.json`.
+The source store's separate review approved `03093d7`, independently passing all
+52 focused groups and rehashing the retained source/snapshot/artifact evidence:
+`/private/tmp/kvik-source-store-final-review-v7w4e5ii/report.json`.
+Neither review ran the full composition compiler gate.
+
 ## Remaining acceptance
 
 This slice does not claim full K14 completion. Actual remote full-runtime
