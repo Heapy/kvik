@@ -6,16 +6,23 @@ import kvik.resolution.*
 
 /** Filters affect display only. The complete lock is verified before any domain is reported. */
 data class ProjectQueryFilter(val modules: List<String> = emptyList(), val targets: List<String> = emptyList(),
-                              val compilation: String? = null, val usage: String? = null) {
+                              val compilation: String? = null, val usage: String? = null, val scripts: List<String> = emptyList()) {
     init {
         require(modules.size <= 1024 && modules.all { it.length <= 4096 } && modules.distinct().size == modules.size && targets.distinct().size == targets.size)
         require(targets.all { it in setOf("jvm", "macosArm64") })
-        require(compilation == null || compilation in setOf("main", "test"))
+        require(scripts.size <= 256 && scripts.distinct().size == scripts.size && scripts.all { it.length in 1..128 && it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) })
+        require(compilation == null || compilation in setOf("main", "test", "script"))
         require(usage == null || usage in setOf("java-api", "java-runtime", "kotlin-api", "kotlin-runtime"))
     }
-    fun includes(domain: ResolutionDomain) = (modules.isEmpty() || domain.module in modules) &&
+    fun includes(domain: ResolutionDomain): Boolean {
+        val selected = if (modules.isEmpty() && scripts.isEmpty()) true else when (val owner = domain.consumer) {
+            is ResolutionConsumer.Module -> owner.name in modules
+            is ResolutionConsumer.Script -> owner.name in scripts
+        }
+        return selected &&
         (targets.isEmpty() || domain.target in targets) && (compilation == null || domain.compilation == compilation) &&
         (usage == null || domain.usage == usage)
+    }
 }
 
 fun projectDeclarations(project: ProjectSpec): List<JsonValue> = buildList {
@@ -45,6 +52,18 @@ fun projectDeclarations(project: ProjectSpec): List<JsonValue> = buildList {
             add(declaration(module.id, null, "symbol-processor", settings.processor, null, "runtime", false, listOf(target.name), listOf("test")))
         }
     }
+    for (name in project.scripts.keys) {
+        val script = expandScript(project, name)
+        fun declared(kind: String, coordinate: Coordinate?, module: String?, scope: String, origin: ScriptOrigin) = obj(
+            "script" to name.json(), "sourceSet" to JsonValue.Null, "kind" to kind.json(),
+            "coordinate" to (coordinate?.toString()?.json() ?: JsonValue.Null), "dependencyModule" to (module?.json() ?: JsonValue.Null),
+            "scope" to scope.json(), "exported" to false.json(), "targets" to listOf("jvm".json()).json(),
+            "compilations" to listOf("script".json()).json(), "origin" to origin.toJson())
+        for ((dependency, origin) in script.dependencies) add(declared(if (dependency is Dependency.External) "external" else "module",
+            (dependency as? Dependency.External)?.coordinate, (dependency as? Dependency.Module)?.module, dependency.scope.name.lowercase(), origin))
+        for ((plugin, origin) in script.compilerPlugins) add(declared("compiler-plugin", plugin.coordinate, plugin.module, "compile", origin))
+    }
+
 }
 
 /** No network or write capability is accepted. Paths are reconstructed from the verified lock's bytes. */
@@ -54,10 +73,12 @@ fun queryProjectDependencies(projectPath: String, lockPath: String, storePath: S
     require(effective.document.objectValue().getValue("project") == configuration.document &&
         parseProjectConfiguration(configuration.document).project == configuration.project) { "Effective configuration and declarations disagree" }
     require(filter.modules.all { id -> configuration.project.modules.any { it.id == id } }) { "Unknown queried module" }
-    require(filter.targets.all { name -> configuration.project.modules.any { module -> module.targets.any { it.name == name } } }) { "Unknown queried target" }
-    val query = obj("project" to projectPath.json(), "lock" to lockPath.json(), "store" to storePath.json(),
+    require(filter.scripts.all { it in configuration.project.scripts }) { "Unknown queried script" }
+    require(filter.targets.all { name -> name == "jvm" && configuration.project.scripts.isNotEmpty() || configuration.project.modules.any { module -> module.targets.any { it.name == name } } }) { "Unknown queried target" }
+    val queryBase = obj("project" to projectPath.json(), "lock" to lockPath.json(), "store" to storePath.json(),
         "modules" to filter.modules.map(String::json).json(), "targets" to filter.targets.map(String::json).json(),
         "compilation" to (filter.compilation?.json() ?: JsonValue.Null), "usage" to (filter.usage?.json() ?: JsonValue.Null))
+    val query = if (filter.scripts.isEmpty()) queryBase else JsonValue.Object(queryBase.objectValue() + ("scripts" to filter.scripts.map(String::json).json()))
     val diagnostics = mutableListOf<QueryDiagnostic>()
     val sources = linkedMapOf<String, QuerySource>()
     val domains = mutableListOf<JsonValue>()

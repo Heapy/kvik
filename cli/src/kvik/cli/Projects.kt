@@ -4,6 +4,7 @@ package kvik.cli
 import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.locking.ResolutionDomain
+import kvik.locking.ResolutionConsumer
 import kvik.locking.ResolverPolicy
 import kvik.locking.ScopedPin
 import kvik.locking.ScopedMetadataExclusion
@@ -50,7 +51,11 @@ internal data class ProjectOptions(
 internal fun ProjectOptions.resolverPolicy() = ResolverPolicy(pins, scopedPins = scopedPins, metadataExclusions = metadataExclusions)
 
 internal fun ScopedPin.argument(): String = with(domain) {
-    "$module:$target:$compilation:$usage:$purpose=$coordinate"
+    val prefix = when (val owner = consumer) {
+        is ResolutionConsumer.Module -> owner.name
+        is ResolutionConsumer.Script -> "script:${owner.name}"
+    }
+    "$prefix:$target:$compilation:$usage:$purpose=$coordinate"
 }
 
 private fun scopedPin(value: String): ScopedPin {
@@ -58,9 +63,13 @@ private fun scopedPin(value: String): ScopedPin {
         "Expected scoped pin MODULE:TARGET:COMPILATION:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION"
     }
     val domain = value.substringBefore('=').split(':')
-    require(domain.size == 5 && domain.all { it.isNotEmpty() }) { "Scoped pin requires five domain components" }
-    return ScopedPin(ResolutionDomain(domain[0], domain[1], domain[2], domain[3], domain[4]),
-        Coordinate.parse(value.substringAfter('=')))
+    require(domain.all { it.isNotEmpty() }) { "Scoped pin has an empty domain component" }
+    val selected = when {
+        domain.size == 5 -> ResolutionDomain(domain[0], domain[1], domain[2], domain[3], domain[4])
+        domain.size == 6 && domain[0] == "script" -> ResolutionDomain(ResolutionConsumer.Script(domain[1]), domain[2], domain[3], domain[4], domain[5])
+        else -> error("Scoped pin requires MODULE:TARGET:COMPILATION:USAGE:PURPOSE or script:NAME:jvm:script:USAGE:PURPOSE")
+    }
+    return ScopedPin(selected, Coordinate.parse(value.substringAfter('=')))
 }
 
 internal fun projectOptions(args: List<String>, lockOptions: Boolean): ProjectOptions {

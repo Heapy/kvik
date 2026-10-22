@@ -2,15 +2,17 @@
 package kvik.cli
 
 import kvik.cache.NativeFiles
+import kvik.projectsnapshot.*
 import kotlinx.cinterop.*
 import platform.posix.*
 import platform.Foundation.*
 
 /** Caller binds capture to project.bytes; only trusted stable ancestors are supported. */
-internal fun requireDisjointStore(project: ProjectFile, store: String, lock: String, tools: String) {
-    val watched = project.configuration.project.modules.flatMap { module ->
-        module.sourceSets.flatMap { it.directories + it.resources } + module.compilerPlugins.flatMap { it.inputs }
-    }.map { projectPath(project.root, it.value) } + listOf(project.path, lock, tools)
+internal fun requireDisjointStore(project: ProjectFile, store: String, lock: String, tools: String, selection: SnapshotSelection = SnapshotSelection.Project) =
+    requireDisjointStore(project.root, project.path, projectInputPlan(project.configuration, selection), store, lock, tools)
+
+internal fun requireDisjointStore(root: String, configurationPath: String, plan: ProjectInputPlan, store: String, lock: String, tools: String) {
+    val watched = plan.paths.map { projectPath(root, it.value) } + listOf(configurationPath, lock, tools)
     val storeAncestry = physicalAncestry(store)
     for (input in watched) {
         val ancestry = physicalAncestry(input)

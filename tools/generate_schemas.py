@@ -178,6 +178,15 @@ DEFS["resolutionDomain"]["allOf"] = [
      "else": {"if": {"properties": {"target": {"const": "jvm"}}}, "then": {"properties": {"usage": enum("java-api", "java-runtime")}}, "else": {"properties": {"usage": enum("kotlin-api", "kotlin-runtime")}}}}]
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"purpose": enum("ksp-runtime", "symbol-processor")}},
     "then": {"properties": {"target": {"const": "macosArm64"}, "compilation": {"const": "test"}}}})
+# Additive consumer union: legacy module wire bytes are unchanged.
+DEFS["moduleResolutionDomain"] = DEFS["resolutionDomain"]
+DEFS["scriptResolutionDomain"] = object_({"script": SCRIPT_ID, "target": {"const": "jvm"}, "compilation": {"const": "script"},
+    "usage": enum("java-api", "java-runtime"), "purpose": enum("dependencies", "compiler-plugin")})
+DEFS["scriptResolutionDomain"]["allOf"] = [{"if": {"properties": {"purpose": {"const": "compiler-plugin"}}},
+    "then": {"properties": {"usage": {"const": "java-runtime"}}}}]
+DEFS["resolutionDomain"] = {"oneOf": [ref("moduleResolutionDomain"), ref("scriptResolutionDomain")]}
+DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
+    object_({"kind": {"const": "script"}, "name": SCRIPT_ID}), object_({"kind": {"const": "standalone-script"}})]}
 DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
 EXCLUSION_COORDINATE = {**COORDINATE, "maxLength": 1024, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
 DEFS["metadataEdgeExclusion"] = object_({"parent": EXCLUSION_COORDINATE, "metadata": ref("digest"),
@@ -270,7 +279,11 @@ DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest"
 DEFS["actionResult"]["allOf"] = [{"if": {"properties": {"status": enum("executed", "local_hit", "remote_hit")}}, "then": {"properties": {"key": ref("digest"), "exitCode": {"const": 0}}}}]
 DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, "status": enum("passed", "failed", "skipped"), "message": nullable(STRING)})
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
-DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(STRING, minItems=1, uniqueItems=True), "completedChecks": array(STRING, uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1)})
+DEFS["requestedCheck"] = {"oneOf": [
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)$(?![\s\S])"},
+    {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
+]}
+DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1)})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
 APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({
@@ -291,7 +304,7 @@ for name in ("applicationReady", "applicationActivation", "applicationStarted"):
     DEFS[name]["description"] = "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
-    "run-started": object_({"requestedChecks": array(STRING), "inputSnapshot": ref("digest")}),
+    "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest")}),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),
     "run-finished": ref("verification"), "session-state": object_({"state": enum("idle", "building", "testing", "failed", "restarting", "stopping"), "runningSnapshot": nullable(ref("digest"))}),

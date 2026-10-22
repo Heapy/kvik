@@ -118,49 +118,14 @@
       "additionalProperties": false
     },
     "domain": {
-      "type": "object",
-      "properties": {
-        "module": {
-          "type": "string",
-          "maxLength": 4096
+      "oneOf": [
+        {
+          "$ref": "#/$defs/moduleDomain"
         },
-        "target": {
-          "enum": [
-            "jvm",
-            "macosArm64"
-          ]
-        },
-        "compilation": {
-          "enum": [
-            "main",
-            "test"
-          ]
-        },
-        "usage": {
-          "enum": [
-            "java-api",
-            "java-runtime",
-            "kotlin-api",
-            "kotlin-runtime"
-          ]
-        },
-        "purpose": {
-          "enum": [
-            "dependencies",
-            "compiler-plugin",
-            "ksp-runtime",
-            "symbol-processor"
-          ]
+        {
+          "$ref": "#/$defs/scriptDomain"
         }
-      },
-      "required": [
-        "module",
-        "target",
-        "compilation",
-        "usage",
-        "purpose"
-      ],
-      "additionalProperties": false
+      ]
     },
     "diagnostic": {
       "type": "object",
@@ -657,96 +622,14 @@
       "additionalProperties": false
     },
     "declaration": {
-      "type": "object",
-      "properties": {
-        "module": {
-          "type": "string",
-          "maxLength": 4096
+      "oneOf": [
+        {
+          "$ref": "#/$defs/moduleDeclaration"
         },
-        "sourceSet": {
-          "anyOf": [
-            {
-              "type": "string",
-              "maxLength": 4096
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "kind": {
-          "enum": [
-            "external",
-            "module",
-            "compiler-plugin",
-            "ksp-runtime",
-            "symbol-processor"
-          ]
-        },
-        "coordinate": {
-          "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
-              "maxLength": 1024
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "dependencyModule": {
-          "anyOf": [
-            {
-              "type": "string",
-              "maxLength": 4096
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "scope": {
-          "enum": [
-            "compile",
-            "runtime"
-          ]
-        },
-        "exported": {
-          "type": "boolean"
-        },
-        "targets": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 4096
-          },
-          "maxItems": 32
-        },
-        "compilations": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "main",
-              "test",
-              "script"
-            ]
-          },
-          "maxItems": 3
+        {
+          "$ref": "#/$defs/scriptDeclaration"
         }
-      },
-      "required": [
-        "module",
-        "sourceSet",
-        "kind",
-        "coordinate",
-        "dependencyModule",
-        "scope",
-        "exported",
-        "targets",
-        "compilations"
-      ],
-      "additionalProperties": false
+      ]
     },
     "scopedGraph": {
       "type": "object",
@@ -912,7 +795,8 @@
             {
               "enum": [
                 "main",
-                "test"
+                "test",
+                "script"
               ]
             },
             {
@@ -934,6 +818,15 @@
               "type": "null"
             }
           ]
+        },
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+          },
+          "maxItems": 256
         }
       },
       "required": [
@@ -944,6 +837,311 @@
         "targets",
         "compilation",
         "usage"
+      ],
+      "additionalProperties": false
+    },
+    "moduleDomain": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "compilation": {
+          "enum": [
+            "main",
+            "test"
+          ]
+        },
+        "usage": {
+          "enum": [
+            "java-api",
+            "java-runtime",
+            "kotlin-api",
+            "kotlin-runtime"
+          ]
+        },
+        "purpose": {
+          "enum": [
+            "dependencies",
+            "compiler-plugin",
+            "ksp-runtime",
+            "symbol-processor"
+          ]
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "compilation",
+        "usage",
+        "purpose"
+      ],
+      "additionalProperties": false
+    },
+    "scriptDomain": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "const": "jvm"
+        },
+        "compilation": {
+          "const": "script"
+        },
+        "usage": {
+          "enum": [
+            "java-api",
+            "java-runtime"
+          ]
+        },
+        "purpose": {
+          "enum": [
+            "dependencies",
+            "compiler-plugin"
+          ]
+        }
+      },
+      "required": [
+        "script",
+        "target",
+        "compilation",
+        "usage",
+        "purpose"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "compiler-plugin"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "const": "java-runtime"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "moduleDeclaration": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "sourceSet": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "external",
+            "module",
+            "compiler-plugin",
+            "ksp-runtime",
+            "symbol-processor"
+          ]
+        },
+        "coordinate": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencyModule": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "enum": [
+            "compile",
+            "runtime"
+          ]
+        },
+        "exported": {
+          "type": "boolean"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 32
+        },
+        "compilations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "main",
+              "test"
+            ]
+          },
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "module",
+        "sourceSet",
+        "kind",
+        "coordinate",
+        "dependencyModule",
+        "scope",
+        "exported",
+        "targets",
+        "compilations"
+      ],
+      "additionalProperties": false
+    },
+    "scriptOrigin": {
+      "type": "object",
+      "properties": {
+        "declaration": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "profileSelection": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "catalog": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "declaration",
+        "profileSelection",
+        "catalog"
+      ],
+      "additionalProperties": false
+    },
+    "scriptDeclaration": {
+      "type": "object",
+      "properties": {
+        "sourceSet": {
+          "type": "null"
+        },
+        "kind": {
+          "enum": [
+            "external",
+            "module",
+            "compiler-plugin"
+          ]
+        },
+        "coordinate": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencyModule": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "enum": [
+            "compile",
+            "runtime"
+          ]
+        },
+        "exported": {
+          "const": false
+        },
+        "targets": {
+          "const": [
+            "jvm"
+          ]
+        },
+        "compilations": {
+          "const": [
+            "script"
+          ]
+        },
+        "script": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "origin": {
+          "$ref": "#/$defs/scriptOrigin"
+        }
+      },
+      "required": [
+        "sourceSet",
+        "kind",
+        "coordinate",
+        "dependencyModule",
+        "scope",
+        "exported",
+        "targets",
+        "compilations",
+        "script",
+        "origin"
       ],
       "additionalProperties": false
     },

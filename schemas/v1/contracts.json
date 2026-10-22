@@ -1598,6 +1598,16 @@
       "additionalProperties": false
     },
     "resolutionDomain": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/moduleResolutionDomain"
+        },
+        {
+          "$ref": "#/$defs/scriptResolutionDomain"
+        }
+      ]
+    },
+    "moduleResolutionDomain": {
       "type": "object",
       "properties": {
         "module": {
@@ -1712,6 +1722,106 @@
               }
             }
           }
+        }
+      ]
+    },
+    "scriptResolutionDomain": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "target": {
+          "const": "jvm"
+        },
+        "compilation": {
+          "const": "script"
+        },
+        "usage": {
+          "enum": [
+            "java-api",
+            "java-runtime"
+          ]
+        },
+        "purpose": {
+          "enum": [
+            "dependencies",
+            "compiler-plugin"
+          ]
+        }
+      },
+      "required": [
+        "script",
+        "target",
+        "compilation",
+        "usage",
+        "purpose"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "compiler-plugin"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "const": "java-runtime"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "snapshotSelection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "project"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "script"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "standalone-script"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -3320,6 +3430,18 @@
       ],
       "additionalProperties": false
     },
+    "requestedCheck": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)$(?![\\s\\S])"
+        },
+        {
+          "type": "string",
+          "pattern": "^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\\s\\S])"
+        }
+      ]
+    },
     "verification": {
       "type": "object",
       "properties": {
@@ -3332,7 +3454,7 @@
         "requestedChecks": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/requestedCheck"
           },
           "minItems": 1,
           "uniqueItems": true
@@ -3340,7 +3462,7 @@
         "completedChecks": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/requestedCheck"
           },
           "uniqueItems": true
         },
@@ -3650,7 +3772,7 @@
                   "requestedChecks": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "$ref": "#/$defs/requestedCheck"
                     }
                   },
                   "inputSnapshot": {

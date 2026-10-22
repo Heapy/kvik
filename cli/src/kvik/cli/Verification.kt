@@ -3,6 +3,7 @@ package kvik.cli
 import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.projectsnapshot.NativeProjectSnapshotter
+import kvik.projectsnapshot.SnapshotSelection
 import kvik.runevidence.verificationRecordFromJson
 import kvik.toolchains.ToolComponent
 
@@ -27,7 +28,7 @@ internal fun checkRun(directory: String): CheckedRun {
     NativeFiles.ensureDirectory(directory, create = false)
     fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
     val record = verificationRecordFromJson(document("verification.json"))
-    val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"))
+    val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"), setOf("inputSelection"))
     metadata.requireVersion()
     require(record.runId == directory.substringAfterLast('/')) { "Verification run identity does not match directory" }
     var current = Freshness.INDETERMINATE
@@ -52,7 +53,8 @@ internal fun checkRun(directory: String): CheckedRun {
             override fun put(bytes: ByteArray): Digest = error("A verification query cannot publish content")
         }
         val snapshots = NativeProjectSnapshotter(metadata.getValue("projectRoot").stringValue(), store)
-        fun fingerprint() = snapshots.currentFingerprint(LogicalPath(metadata.getValue("configurationPath").stringValue()), metadata.getValue("lockPath").stringValue())
+        fun fingerprint() = snapshots.currentFingerprint(LogicalPath(metadata.getValue("configurationPath").stringValue()), metadata.getValue("lockPath").stringValue(),
+            selection = metadata["inputSelection"]?.let(SnapshotSelection::fromJson) ?: SnapshotSelection.Project)
         current = freshness(record.inputSnapshot, fingerprint())
         when {
             current == Freshness.STALE -> reason = "Project configuration, dependency lock or declared source/resource inventory changed"

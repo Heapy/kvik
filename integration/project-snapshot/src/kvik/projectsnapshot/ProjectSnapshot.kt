@@ -28,6 +28,7 @@ class ProjectInputSnapshot internal constructor(
     internal val ownerRoot: String,
     val configurationPath: LogicalPath,
     val lockPath: String,
+    val selection: SnapshotSelection,
     configurationBytes: ByteArray,
     lockBytes: ByteArray,
     val inputs: TreeManifest,
@@ -37,7 +38,14 @@ class ProjectInputSnapshot internal constructor(
     private val lock = lockBytes.copyOf()
     val configurationBytes: ByteArray get() = config.copyOf()
     val lockBytes: ByteArray get() = lock.copyOf()
-    val configuration: ProjectConfiguration get() = parseProjectConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
+    val configuration: ProjectConfiguration get() {
+        require(selection != SnapshotSelection.StandaloneScript) { "Snapshot contains a standalone companion" }
+        return parseProjectConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
+    }
+    val standaloneConfiguration: StandaloneScriptConfiguration get() {
+        require(selection == SnapshotSelection.StandaloneScript) { "Snapshot contains a project" }
+        return parseStandaloneScriptConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
+    }
 }
 
 sealed interface SnapshotCapture {
@@ -53,12 +61,12 @@ sealed interface SnapshotCapture {
 class NativeProjectSnapshotter(private val root: String, private val content: ContentStore, private val limits: SnapshotLimits = SnapshotLimits()) {
     init { physicalDirectory(root) }
 
-    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null): SnapshotCapture {
-        val first = try { scan(configurationPath, lockPath, publish = true, expectedConfiguration) }
+    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project): SnapshotCapture {
+        val first = try { scan(configurationPath, lockPath, publish = true, expectedConfiguration, selection) }
         catch (race: SnapshotRace) { return SnapshotCapture.Indeterminate(race.message ?: "Inputs changed while capturing") }
         catch (failure: SnapshotFailure) { throw failure }
         catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Cannot capture project inputs") }
-        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration) }
+        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration, selection) }
         catch (failure: Exception) { return SnapshotCapture.Indeterminate(failure.message ?: "Inputs changed while confirming capture") }
         if (first.fingerprint != second.fingerprint) return SnapshotCapture.Indeterminate("Project inputs changed between capture observations")
         return SnapshotCapture.Captured(first)
@@ -68,23 +76,23 @@ class NativeProjectSnapshotter(private val root: String, private val content: Co
     fun freshness(snapshot: ProjectInputSnapshot): Freshness {
         require(snapshot.ownerRoot == root) { "Snapshot belongs to a different project root" }
         return try {
-            val current = currentFingerprint(snapshot.configurationPath, snapshot.lockPath)
+            val current = currentFingerprint(snapshot.configurationPath, snapshot.lockPath, selection = snapshot.selection)
             if (current == null) Freshness.INDETERMINATE
             else if (current == snapshot.fingerprint) Freshness.CURRENT else Freshness.STALE
         } catch (_: Exception) { Freshness.INDETERMINATE }
     }
 
     /** Read-only post-exit query; no deserialization of a prior capture or CAS access is required. */
-    fun currentFingerprint(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null): Digest? {
-        val first = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration) }
+    fun currentFingerprint(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project): Digest? {
+        val first = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration, selection) }
         catch (_: SnapshotRace) { return null }
-        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration) }
+        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration, selection) }
         catch (_: Exception) { return null }
         return first.fingerprint.takeIf { it == second.fingerprint }
     }
 
-    private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean, expectedConfiguration: Digest?): ProjectInputSnapshot =
-        Observation(root, content.takeIf { publish }, limits).capture(configurationPath, lockPath, expectedConfiguration)
+    private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean, expectedConfiguration: Digest?, selection: SnapshotSelection): ProjectInputSnapshot =
+        Observation(root, content.takeIf { publish }, limits).capture(configurationPath, lockPath, expectedConfiguration, selection)
 }
 
 private fun physicalDirectory(path: String) {
@@ -116,7 +124,7 @@ private class Observation(private val root: String, private val content: Content
     private var directoryCount = 0
     private var entryCount = 0
 
-    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest?): ProjectInputSnapshot {
+    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest?, selection: SnapshotSelection): ProjectInputSnapshot {
         physicalDirectory(root)
         NativeFiles.validateAbsolute(lockPath)
         physicalDirectory(lockPath.substringBeforeLast('/'))
@@ -127,12 +135,15 @@ private class Observation(private val root: String, private val content: Content
         if (expectedConfiguration != null && Sha256.digest(configurationBytes) != expectedConfiguration)
             throw SnapshotRace("Configuration changed after input/store preflight")
         val lockBytes = readFile(lockPath, minOf(limits.maxFileBytes, 16 * 1024 * 1024), publish = false)
-        val configuration = try { parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true))) }
-        catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Invalid configuration") }
-        val roots = configuration.project.modules.flatMap { module -> module.sourceSets.flatMap { it.directories + it.resources } }.distinct().sortedBy { it.value }
-        val plugins = configuration.project.modules.flatMap { it.compilerPlugins.flatMap { plugin -> plugin.inputs } }.distinct().sortedBy { it.value }
-        if (roots.size + plugins.size > limits.maxEntries) throw SnapshotFailure("Too many declared input paths")
-        for (path in roots + plugins) requireDeclared(path)
+        val plan = try {
+            val document = parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true))
+            if (selection == SnapshotSelection.StandaloneScript) standaloneScriptInputPlan(parseStandaloneScriptConfiguration(document))
+            else projectInputPlan(parseProjectConfiguration(document), selection)
+        } catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Invalid configuration") }
+        val roots = plan.directories
+        val plugins = plan.files
+        if (plan.paths.size > limits.maxEntries) throw SnapshotFailure("Too many declared input paths")
+        for (path in plan.paths) requireDeclared(path)
         publish(configurationBytes); publish(lockBytes)
         for (directory in roots) {
             ancestors(directory.value)
@@ -142,13 +153,24 @@ private class Observation(private val root: String, private val content: Content
             ancestors(file.value)
             addFile(file.value)
         }
+        for (path in plan.scriptRoots) {
+            ancestors(path.value)
+            when (status("$root/${path.value}")?.kind) {
+                S_IFREG -> addFile(path.value)
+                S_IFDIR, null -> visit(path.value, path.value.split('/').size, allowMissing = true)
+                else -> throw SnapshotFailure("Not a physical script input: ${path.value}")
+            }
+        }
         val tree = TreeManifest(entries.values.sortedBy { it.path.value })
         val identity = obj("schemaVersion" to 1.json(), "implementation" to "kvik-project-input-snapshot-v1".json(),
             "configurationPath" to configurationPath.value.json(), "configurationBytes" to Sha256.digest(configurationBytes).toJson(),
             "lockBytes" to Sha256.digest(lockBytes).toJson(), "roots" to roots.map { it.value.json() }.json(),
             "pluginInputs" to plugins.map { it.value.json() }.json(), "inputs" to tree.toJson(),
             "directories" to JsonValue.Object(directories.toMap()))
-        return ProjectInputSnapshot(root, configurationPath, lockPath, configurationBytes, lockBytes, tree, Sha256.digest(identity))
+        val selectedIdentity = JsonValue.Object(identity.objectValue() +
+            (if (plan.scriptRoots.isEmpty()) emptyMap() else mapOf("scriptRoots" to plan.scriptRoots.map { it.value.json() }.json())) +
+            (if (selection == SnapshotSelection.Project) emptyMap() else mapOf("selection" to selection.toJson())))
+        return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree, Sha256.digest(selectedIdentity))
     }
 
     private fun requireDeclared(path: LogicalPath) {
