@@ -3,13 +3,16 @@ package kvik.resolution
 import kvik.core.Coordinate
 import kvik.core.VariantRequest
 
+internal data class PomDependency(val coordinate: Coordinate, val transitive: Boolean)
+
 /** Published POM dependency model only: never executes build/plugins or reads a local relativePath. */
 internal data class EffectivePom(
     val packaging: String,
     val declared: List<Map<String, PomNode>>,
     val management: Map<String, Map<String, PomNode>>,
 ) {
-    fun dependencies(request: VariantRequest): List<Coordinate> = declared.mapNotNull { dependency ->
+    fun dependencies(request: VariantRequest): List<Coordinate> = dependencyEdges(request).map { it.coordinate }
+    fun dependencyEdges(request: VariantRequest): List<PomDependency> = declared.mapNotNull { dependency ->
         val effective = (management[dependencyKey(dependency)].orEmpty() - "optional") + dependency
         val scope = effective.scalar("scope") ?: "compile"
         require(scope in setOf("compile", "runtime", "test", "provided")) { "Unsupported POM scope: $scope" }
@@ -18,7 +21,18 @@ internal data class EffectivePom(
         // These declarations cannot contribute any consumer transitive artifact. Their local
         // test/provided exclusions and versions do not change the published dependency closure.
         if (scope in setOf("test", "provided") || optional == "true" || scope == "runtime" && request.usage != "java-runtime") null
-        else coordinate(effective)
+        else {
+            require("exclusions" !in management[dependencyKey(dependency)].orEmpty()) { "Managed POM exclusion merging is unsupported" }
+            val exclusions = effective["exclusions"]
+            val all = exclusions?.children?.isNotEmpty() == true
+            if (all) {
+                val exclusion = exclusions.children.singleOrNull()
+                require(exclusions.text.isEmpty() && exclusion?.name == "exclusion" && exclusion.text.isEmpty() &&
+                    exclusion.children.map { it.name }.toSet() == setOf("groupId", "artifactId") && exclusion.children.size == 2 &&
+                    exclusion.value("groupId") == "*" && exclusion.value("artifactId") == "*") { "Only literal wildcard-all POM exclusions are supported" }
+            } else require(exclusions == null || exclusions.text.isEmpty()) { "Invalid POM exclusions" }
+            PomDependency(coordinate(effective - "exclusions"), !all)
+        }
     }
 
     fun managementCoordinates(): List<Coordinate> = management.values.map { dependency ->

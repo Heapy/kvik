@@ -243,5 +243,35 @@
     "file": "net.bytebuddy__byte-buddy-parent__1.17.6.pom",
     "hash": "dd15f95fd5605263f065d9dcb8eceecc48ebe4d666c37298ff446001494240bd",
     "sizeBytes": 64800
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-embeddable/2.4.20/kotlin-compiler-embeddable-2.4.20.pom": {
+    "file": "org__jetbrains__kotlin__kotlin-compiler-embeddable__2.4.20__kotlin-compiler-embeddable-2.4.20.pom",
+    "hash": "269d98cc4c68670c11e4aeb404e1c7c6f31b782321908d7268ba25cd236d59b2",
+    "sizeBytes": 2647
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-api/2.4.20/kotlin-build-tools-api-2.4.20.pom": {
+    "file": "org__jetbrains__kotlin__kotlin-build-tools-api__2.4.20__kotlin-build-tools-api-2.4.20.pom",
+    "hash": "e8cd9ffd7d0886ba1a1795cbf4a34a06681f184aa50f25686effeefb3c1f56f5",
+    "sizeBytes": 1137
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-script-runtime/2.4.20/kotlin-script-runtime-2.4.20.pom": {
+    "file": "org__jetbrains__kotlin__kotlin-script-runtime__2.4.20__kotlin-script-runtime-2.4.20.pom",
+    "hash": "dd0e3846b61a6d641300958cc52e4693cd7b47bd1d626505f383b2f9d23ade0e",
+    "sizeBytes": 1134
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/1.6.10/kotlin-reflect-1.6.10.pom": {
+    "file": "org__jetbrains__kotlin__kotlin-reflect__1.6.10__kotlin-reflect-1.6.10.pom",
+    "hash": "57905524274a00ae028aaccc27283f6bc5925a934a046c1cc5d06c8ee4d6d5a9",
+    "sizeBytes": 1375
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-daemon-embeddable/2.4.20/kotlin-daemon-embeddable-2.4.20.pom": {
+    "file": "org__jetbrains__kotlin__kotlin-daemon-embeddable__2.4.20__kotlin-daemon-embeddable-2.4.20.pom",
+    "hash": "ca631ce7c7cc2a8ecb47d3462b429004c1cd3488437b3f739e35eafea2033bfb",
+    "sizeBytes": 1173
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.8.0/kotlinx-coroutines-core-jvm-1.8.0.module": {
+    "file": "org__jetbrains__kotlinx__kotlinx-coroutines-core-jvm__1.8.0__kotlinx-coroutines-core-jvm-1.8.0.module",
+    "hash": "ff6a22da40040938751db0ae21177e76517dbf126a76796f5426727bf76c1228",
+    "sizeBytes": 4278
   }
 }

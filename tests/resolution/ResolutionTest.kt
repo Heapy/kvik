@@ -55,6 +55,59 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun pinnedCompilerPomWildcardEdgesPreserveApiRuntimeAndLockedMetadata() {
+        val transport = FixtureTransport()
+        val coordinate = Coordinate.parse("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20")
+        val expected = parseJson(read("$root/tests/resolution/fixtures/compiler-embeddable-artifacts.json")!!.decodeToString()).objectValue()
+        for (usage in listOf("java-api", "java-runtime")) {
+            val selection = MavenResolver(transport, NativePomParser(), listOf(Coordinate.parse("org.jetbrains.kotlin:kotlin-stdlib:2.4.20"), Coordinate.parse("org.jetbrains:annotations:13.0")))
+                .resolve(coordinate, jvmVariantRequest(usage, 25), listOf(repo))
+            val artifacts = expected.getValue(usage).arrayValue().map { it.objectValue() }
+            assertEquals(artifacts.map { it.getValue("coordinate").stringValue() }, selection.artifacts.map { it.coordinate.toString() })
+            assertEquals(artifacts.map { Digest.fromJson(it.getValue("digest")) }, selection.artifacts.map { it.digest })
+            assertEquals(if (usage == "java-api") 2 else 8, selection.artifacts.size)
+            val compilerTool = parseJson(read("$root/experiments/k01/artifacts.lock.json")!!.decodeToString()).objectValue().getValue("artifacts").arrayValue().map(JsonValue::objectValue)
+            for (artifact in selection.artifacts.take(2)) {
+                val pinned = compilerTool.single { it.getValue("coordinate").stringValue() == artifact.coordinate.toString() }
+                assertEquals(Digest(pinned.getValue("sha256").stringValue(), pinned.getValue("size").longValue()), artifact.digest)
+            }
+            assertTrue(selection.metadata.any { it.url.endsWith("kotlin-compiler-embeddable-2.4.20.pom") })
+            assertEquals(selection.artifacts.map { it.digest }, verifyLocked(selection) { transport.blobs[it] }.map(Sha256::digest))
+            val pomDigest = selection.metadata.first().digest
+            assertFails { verifyLocked(selection) { if (it == pomDigest) byteArrayOf(1) else transport.blobs[it] } }
+        }
+    }
+    @Test fun wildcardAllExclusionsAreEdgeLocalInEitherEncounterOrder() {
+        fun url(name: String, suffix: String) = "${repo.url}/example/$name/1/$name-1.$suffix"
+        fun dependency(name: String, exclusions: String = "") = "<dependency><groupId>example</groupId><artifactId>$name</artifactId><version>1</version>$exclusions</dependency>"
+        val all = "<exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>"
+        fun component(name: String, dependencies: String = "") = mapOf(url(name, "pom") to
+            "<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>$name</artifactId><version>1</version><dependencies>$dependencies</dependencies></project>".encodeToByteArray(), url(name, "jar") to name.encodeToByteArray())
+        val base = component("excluded", dependency("middle", all)) + component("ordinary", dependency("middle")) + component("middle", dependency("leaf")) + component("leaf")
+        fun resolve(names: List<String>, entries: Map<String, ByteArray> = base) = MavenResolver(MemoryTransport(entries), NativePomParser())
+            .resolveAll(names.map { Coordinate("example", it, "1") }, jvm, listOf(repo))
+        assertEquals(listOf("excluded", "middle"), resolve(listOf("excluded")).single().artifacts.map { it.coordinate.name })
+        for (order in listOf(listOf("excluded", "ordinary"), listOf("ordinary", "excluded"))) {
+            val selections = resolve(order).associateBy { it.requested.name }
+            assertEquals(listOf("excluded", "middle"), selections.getValue("excluded").artifacts.map { it.coordinate.name })
+            assertEquals(listOf("ordinary", "middle", "leaf"), selections.getValue("ordinary").artifacts.map { it.coordinate.name })
+            for (children in listOf(order, order.reversed())) {
+                val single = resolve(listOf("root"), base + component("root", children.joinToString("") { dependency(it) })).single()
+                assertEquals(setOf("root", "excluded", "ordinary", "middle", "leaf"), single.artifacts.map { it.coordinate.name }.toSet())
+            }
+        }
+        for (unsupported in listOf(all.replace("<artifactId>*", "<artifactId>leaf"), all.replace("<groupId>*", "<groupId>example"), all.replace("</exclusion>", "<unknown>*</unknown></exclusion>"))) {
+            assertFails { resolve(listOf("excluded"), base + component("excluded", dependency("middle", unsupported))) }
+        }
+        val managed = component("excluded", dependency("middle")).mapValues { (path, bytes) -> if (path.endsWith(".pom")) bytes.decodeToString()
+            .replace("</project>", "<dependencyManagement><dependencies>${dependency("middle", all)}</dependencies></dependencyManagement></project>").encodeToByteArray() else bytes }
+        assertFails { resolve(listOf("excluded"), base + managed) }
+        // Excluding transitives does not bypass producer variant or artifact verification.
+        val wrong = module(Coordinate("example", "middle", "1"), variant(attrs = ",\"unsupported.attribute\":\"x\""))
+        assertFails { resolve(listOf("excluded"), base + (url("middle", "module") to wrong)) }
+        val file = ",\"files\":[{\"name\":\"middle.jar\",\"url\":\"middle-1.jar\",\"size\":0,\"sha256\":\"${"0".repeat(64)}\"}]"
+        assertFails { resolve(listOf("excluded"), base + (url("middle", "module") to module(Coordinate("example", "middle", "1"), variant(extra = file)))) }
+    }
     @Test fun actualParentPomsPreserveExactArtifactAndMetadataClosures() {
         val transport = FixtureTransport()
         val expected = parseJson(read("$root/compiler/jvm/kotaml-artifacts.lock.json")!!.decodeToString()).objectValue().getValue("artifacts").arrayValue()

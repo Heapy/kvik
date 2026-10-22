@@ -73,9 +73,11 @@ class MavenResolver(
             return result
         }
         fun constrain(c: Coordinate) { constraints.getOrPut(c.key()) { mutableListOf() } += c.version }
-        fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null): String {
+        fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null, transitive: Boolean = true): String {
             val c = record(input)
-            val key = "$c|$platform"
+            // Expansion belongs to an incoming edge, not a component-wide suppression flag.
+            // Keep separate closure nodes; both still identify the same capability provider.
+            val key = "$c|$platform|$transitive"
             require(key !in active) { "Dependency/redirect cycle: $c" }
             if (key in visited) {
                 require(expectedOwner == null || graph.getValue(key).owner == expectedOwner) { "Conflicting redirect component ownership" }
@@ -96,7 +98,7 @@ class MavenResolver(
             val artifacts = mutableListOf<LockedArtifact>()
             var metadataOwner = c
             var provided = listOf(c)
-            var provider = key
+            var provider = "$c|$platform"
             if (found.module) {
                 val module = parseJson(found.bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("formatVersion", "component", "variants"), setOf("createdBy"))
                 require(module.string("formatVersion") == "1.1") { "Unsupported Gradle metadata version" }
@@ -124,10 +126,10 @@ class MavenResolver(
                     val r = redirect.fields(setOf("url", "group", "module", "version"))
                     val target = Coordinate(r.string("group"), r.string("module"), r.string("version"))
                     require(target.group == c.group && r.string("url") == "../../${target.name}/${target.version}/${target.name}-${target.version}.module") { "Unsupported available-at URL" }
-                    edges += visit(target, platform, found.repository, owner)
+                    edges += visit(target, platform, found.repository, owner, transitive)
                     provider = graph.getValue(edges.single()).capabilityProvider
                 } else {
-                    chosen.items("dependencyConstraints").forEach { constrain(dependency(it, constraint = true).first) }
+                    if (transitive) chosen.items("dependencyConstraints").forEach { constrain(dependency(it, constraint = true).first) }
                     for (f in chosen.items("files")) {
                         val file = f.fields(setOf("name", "url", "size", "sha256"), setOf("sha512", "sha1", "md5"))
                         val path = file.string("url")
@@ -138,7 +140,7 @@ class MavenResolver(
                         require(Sha256.digest(fetch(url)) == expected) { "Artifact digest mismatch: $url" }
                         artifacts += LockedArtifact(c, name, found.repository.id, url, expected)
                     }
-                    chosen.items("dependencies").forEach { val (d, p) = dependency(it); edges += visit(d, p) }
+                    if (transitive) chosen.items("dependencies").forEach { val (d, p) = dependency(it); edges += visit(d, p) }
                 }
             } else {
                 val pom = effectivePom(c, pomParser.parse(found.bytes)) { parent ->
@@ -153,7 +155,7 @@ class MavenResolver(
                 }
                 val packaging = pom.packaging
                 require(packaging == if (platform) "pom" else "jar") { "Unsupported POM packaging/platform: $packaging" }
-                if (platform) pom.managementCoordinates().forEach(::constrain)
+                if (platform && transitive) pom.managementCoordinates().forEach(::constrain)
                 if (!platform) {
                     // A POM has no producer bytecode version. The known consumer target policy is
                     // retained in the lock, but does not establish a bytecode guarantee for POM jars.
@@ -163,7 +165,7 @@ class MavenResolver(
                     require(bytes.size <= 64 * 1024 * 1024)
                     artifacts += LockedArtifact(c, "maven-$packaging-${variant.usage}", found.repository.id, url, Sha256.digest(bytes))
                 }
-                pom.dependencies(variant).forEach { edges += visit(it) }
+                if (transitive) pom.dependencyEdges(variant).forEach { edges += visit(it.coordinate, transitive = it.transitive) }
             }
             // No capability conflict-resolution policy is implied by a version pin. Redirect
             // aliases share their terminal provider; independent providers must not coexist.

@@ -1,0 +1,106 @@
+{
+  "java-runtime": [
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20",
+      "digest": {
+        "hash": "cf97161430683fb9af96dc6a7017ffae1fe8737b80d12eee11f2fe3e76f8ded8",
+        "sizeBytes": 58593245
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-embeddable/2.4.20/kotlin-compiler-embeddable-2.4.20.jar",
+      "variant": "maven-jar-java-runtime"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-build-tools-api:2.4.20",
+      "digest": {
+        "hash": "47a622dce7231b1916334b69a00bc1094adf6577e6492f9f06b3d9c2450fe459",
+        "sizeBytes": 468126
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-api/2.4.20/kotlin-build-tools-api-2.4.20.jar",
+      "variant": "maven-jar-java-runtime"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.20",
+      "digest": {
+        "hash": "2226de463d309d4a5500a481320b3dea515a6981dcae1def531fbc158884e25f",
+        "sizeBytes": 1853314
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.20/kotlin-stdlib-2.4.20.jar",
+      "variant": "jvmRuntimeElements"
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:13.0",
+      "digest": {
+        "hash": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+        "sizeBytes": 17536
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.jar",
+      "variant": "maven-jar-java-runtime"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-script-runtime:2.4.20",
+      "digest": {
+        "hash": "fc5a19df78be445d84e8352e0d01098a6a8181324aa50c6f7bf850338e81e1b4",
+        "sizeBytes": 46531
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-script-runtime/2.4.20/kotlin-script-runtime-2.4.20.jar",
+      "variant": "maven-jar-java-runtime"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:1.6.10",
+      "digest": {
+        "hash": "3277ac102ae17aad10a55abec75ff5696c8d109790396434b496e75087854203",
+        "sizeBytes": 3038560
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/1.6.10/kotlin-reflect-1.6.10.jar",
+      "variant": "maven-jar-java-runtime"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-daemon-embeddable:2.4.20",
+      "digest": {
+        "hash": "eef72cf8f17e6d98d33e5b7c7e1cab31a1cf5fc34084dd5e563e7b1f3ef53435",
+        "sizeBytes": 393409
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-daemon-embeddable/2.4.20/kotlin-daemon-embeddable-2.4.20.jar",
+      "variant": "maven-jar-java-runtime"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0",
+      "digest": {
+        "hash": "9860906a1937490bf5f3b06d2f0e10ef451e65b95b269f22daf68a3d1f5065c5",
+        "sizeBytes": 1548360
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.8.0/kotlinx-coroutines-core-jvm-1.8.0.jar",
+      "variant": "jvmRuntimeElements-published"
+    }
+  ],
+  "java-api": [
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20",
+      "digest": {
+        "hash": "cf97161430683fb9af96dc6a7017ffae1fe8737b80d12eee11f2fe3e76f8ded8",
+        "sizeBytes": 58593245
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-embeddable/2.4.20/kotlin-compiler-embeddable-2.4.20.jar",
+      "variant": "maven-jar-java-api"
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-build-tools-api:2.4.20",
+      "digest": {
+        "hash": "47a622dce7231b1916334b69a00bc1094adf6577e6492f9f06b3d9c2450fe459",
+        "sizeBytes": 468126
+      },
+      "repository": "central",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-api/2.4.20/kotlin-build-tools-api-2.4.20.jar",
+      "variant": "maven-jar-java-api"
+    }
+  ]
+}
