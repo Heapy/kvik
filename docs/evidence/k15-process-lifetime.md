@@ -74,3 +74,13 @@ process group/session and uninterruptible kernel tasks are not contained by this
 guardian. Zero removes the deadline only; it does not broaden those guarantees.
 No composed CLI, application runner, foreground terminal or compiler consumer was
 changed or tested by this slice.
+
+## Independent integration review
+
+The integration reviewer inspected the implementation and independently replayed
+the retained build with `--no-build`: all ten lifecycle/contract checks, with every observed owned process stopped passed.
+The replay case is `/private/tmp/kvik-k15-unbounded-process/.kvik/tests/process-lifetime/case-t0ym4hdl`. A separate audit rehashed source and harness files
+against their committed blobs, compiler launch inputs, retained binaries, logs
+and receipts: `/private/tmp/kvik-application-support-audit-gd450kun/report.json`
+(script `/private/tmp/kvik-application-support-audit.py`). No compiler was rerun
+for this independent review.

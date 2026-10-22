@@ -77,3 +77,13 @@ Retained case: `/private/tmp/kvik-k15-application-preparation/.kvik/tests/applic
 The case retains the exact source/compiler/support receipt, compiler log, binary,
 test stdout/stderr and all materialized/CAS trees. The independent reviewer can
 use `--no-build` to verify input/log/binary bindings and rerun with fresh case data.
+
+## Independent integration review
+
+The integration reviewer inspected the implementation and independently replayed
+the retained build with `--no-build`: all thirteen Native preparation tests, including the 65 MiB file passed.
+The replay case is `/private/tmp/kvik-k15-application-preparation/.kvik/tests/application-preparation/case-229va7dh`. A separate audit rehashed source and harness files
+against their committed blobs, compiler launch inputs, retained binaries, logs
+and receipts: `/private/tmp/kvik-application-support-audit-gd450kun/report.json`
+(script `/private/tmp/kvik-application-support-audit.py`). No compiler was rerun
+for this independent review.
