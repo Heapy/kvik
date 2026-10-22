@@ -45,15 +45,19 @@ class NativeProcessHost(private val guardianExecutable: String) : ProcessHost {
             val current = checkNotNull(handle) { "Process already closed" }
             return memScoped {
                 val code = alloc<IntVar>(); val timeout = alloc<IntVar>(); val cancelled = alloc<IntVar>()
-                if (kvik_process_poll(current, code.ptr, timeout.ptr, cancelled.ptr) == 0) null
-                else ProcessResult(code.value, timeout.value != 0, cancelled.value != 0).also { result = it }
+                when (kvik_process_poll(current, code.ptr, timeout.ptr, cancelled.ptr)) {
+                    0 -> null
+                    1 -> ProcessResult(code.value, timeout.value != 0, cancelled.value != 0).also { result = it }
+                    else -> error("Ownership guardian did not acknowledge complete cleanup (errno=$errno)")
+                }
             }
         }
         override fun cancel() { handle?.let { kvik_process_cancel(it) } }
         override fun close() {
-            handle?.let { kvik_process_close(it) }
+            val current = handle ?: return
             handle = null
             processes -= this
+            check(kvik_process_close(current) == 0) { "Ownership guardian cleanup could not be verified (errno=$errno)" }
         }
     }
 
@@ -61,7 +65,11 @@ class NativeProcessHost(private val guardianExecutable: String) : ProcessHost {
         if (closed) return
         closed = true
         processes.toList().forEach { it.cancel() }
-        processes.toList().forEach { it.close() }
+        var failure: Exception? = null
+        processes.toList().forEach {
+            try { it.close() } catch (error: Exception) { if (failure == null) failure = error }
+        }
+        failure?.let { throw it }
     }
 }
 

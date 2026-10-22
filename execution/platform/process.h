@@ -1,12 +1,16 @@
 #ifndef KVIK_PROCESS_H
 #define KVIK_PROCESS_H
+/* Recursive guardian/barrier protocol supported by this compiled boundary. */
+int kvik_process_ownership_version(void);
 /* timeout_ms: zero means no deadline, positive means bounded milliseconds; negative is EINVAL.
  * Every lifetime remains owned and cancellable, including when the owner disappears. */
 void *kvik_process_start(const char *helper, const char *cwd, const char *out, const char *err,
                          long long timeout_ms, char *const *argv, char *const *envp);
 int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancelled);
 void kvik_process_cancel(void *handle);
-void kvik_process_close(void *handle);
+/* poll: 0 pending, 1 verified terminal, -1 ownership protocol failure.
+ * close always frees the handle; -1 reports an unverified cleanup result. */
+int kvik_process_close(void *handle);
 /* Caller frees the returned absolute directory. NULL indicates an OS/path error. */
 char *kvik_executable_directory(void);
 /* Foreground coordinator only; handler stores a sig_atomic_t flag, never calls Kotlin. */
@@ -36,6 +40,73 @@ int kvik_foreground_exec_terminal(const char *path, char *const *argv, char *con
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
+/* Internal invocation-local capability; never accepted from a request environment. */
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#define KVIK_BARRIER_ENV "KVIK_PROCESS_BARRIER_V1"
+#define KVIK_BARRIER_FD 6
+#define KVIK_BARRIER_MARKER_BYTES 128
+#define KVIK_PROCESS_RESULT_MAGIC 0x4b565031
+#define KVIK_PROCESS_RESULT_INTS 4
+typedef struct { int fd; uint64_t device, inode; } KvikBarrier;
+static inline int kvik_barrier_validate(const KvikBarrier *cap) {
+    if (cap->fd < 0) return 0;
+    struct stat value;
+    if (fstat(cap->fd, &value) || !S_ISFIFO(value.st_mode) ||
+        (uint64_t)value.st_dev != cap->device || (uint64_t)value.st_ino != cap->inode ||
+        (fcntl(cap->fd, F_GETFL) & O_ACCMODE) != O_WRONLY ||
+        !(fcntl(cap->fd, F_GETFL) & O_NONBLOCK)) { errno = EPROTO; return -1; }
+    return 0;
+}
+static inline void kvik_barrier_poison(const KvikBarrier *cap) {
+    if (cap->fd < 0 || kvik_barrier_validate(cap)) return;
+    char byte = '!'; ssize_t size;
+    do { size = write(cap->fd, &byte, 1); } while (size < 0 && errno == EINTR);
+}
+static inline int kvik_barrier_capture(KvikBarrier *cap) {
+    cap->fd = -1;
+    const char *text = getenv(KVIK_BARRIER_ENV);
+    if (!text) return 0;
+    char copy[KVIK_BARRIER_MARKER_BYTES];
+    if (strnlen(text, sizeof(copy)) >= sizeof(copy)) { unsetenv(KVIK_BARRIER_ENV); errno = EPROTO; return -1; }
+    strcpy(copy, text); unsetenv(KVIK_BARRIER_ENV);
+    if (strncmp(copy, "6:", 2) || copy[2] < '0' || copy[2] > '9') { errno = EPROTO; return -1; }
+    int fd = KVIK_BARRIER_FD; char *end;
+    errno = 0; unsigned long long device = strtoull(copy + 2, &end, 10);
+    if (errno == ERANGE || *end != ':' || end[1] < '0' || end[1] > '9') { errno = EPROTO; return -1; }
+    char *inode_text = end + 1;
+    errno = 0; unsigned long long inode = strtoull(inode_text, &end, 10);
+    if (errno == ERANGE || *end) { errno = EPROTO; return -1; }
+    char canonical[KVIK_BARRIER_MARKER_BYTES];
+    snprintf(canonical, sizeof(canonical), "%d:%llu:%llu", fd, device, inode);
+    if (strcmp(copy, canonical)) { errno = EPROTO; return -1; }
+    cap->fd = fd; cap->device = device; cap->inode = inode;
+    if (kvik_barrier_validate(cap) || fcntl(fd, F_SETFD, FD_CLOEXEC) || fcntl(fd, F_SETNOSIGPIPE, 1)) { cap->fd = -1; errno = EPROTO; return -1; }
+    return 0;
+}
+/* Returned array borrows original strings and marker; caller frees only the array. */
+static inline char **kvik_barrier_environment(char *const *env, const KvikBarrier *cap,
+                                              char marker[KVIK_BARRIER_MARKER_BYTES]) {
+    if (kvik_barrier_validate(cap)) return NULL;
+    size_t count = 0;
+    while (env[count]) {
+        if (!strncmp(env[count], KVIK_BARRIER_ENV "=", sizeof(KVIK_BARRIER_ENV))) { errno = EINVAL; return NULL; }
+        ++count;
+    }
+    char **result = calloc(count + 2, sizeof(char *));
+    if (!result) return NULL;
+    for (size_t i = 0; i < count; ++i) result[i] = env[i];
+    if (cap->fd >= 0) {
+        snprintf(marker, KVIK_BARRIER_MARKER_BYTES, KVIK_BARRIER_ENV "=%d:%llu:%llu", KVIK_BARRIER_FD,
+                 (unsigned long long)cap->device, (unsigned long long)cap->inode);
+        result[count] = marker;
+    }
+    return result;
+}
 #define KVIK_TERMINAL_MAGIC UINT64_C(0x4b56494b54545931)
 #define KVIK_TERMINAL_VERSION 1
 #define KVIK_TERMINAL_ENTER 1

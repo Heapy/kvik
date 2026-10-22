@@ -16,6 +16,8 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/proc.h>
 
 extern char **environ;
 static volatile sig_atomic_t interrupted;
@@ -30,7 +32,7 @@ static int owner_gone(void) {
     return interrupted != 0;
 }
 static void report(int code, int timeout, int cancelled) {
-    int result[3] = {code, timeout, cancelled};
+    int result[KVIK_PROCESS_RESULT_INTS] = {KVIK_PROCESS_RESULT_MAGIC, code, timeout, cancelled};
     (void)write(4, result, sizeof(result));
 }
 
@@ -116,10 +118,32 @@ static int terminal_main(int argc, char **argv) {
     return terminal_restore(&original) ? 125 : 0;
 }
 
-int main(int argc, char **argv) {
-    if (argc > 1 && !strcmp(argv[1], "--terminal")) return terminal_main(argc, argv);
+/* Bounded per-level acknowledgement: empty EOF is success, any byte poisons it.
+ * Writers are nonblocking; EAGAIN already means the pipe is nonempty, and EPIPE
+ * means the upstream owner is gone. No signal path performs this IO. */
+static KvikBarrier upstream_barrier = {.fd = -1};
+/* Keep allocation bounded and never equate a query error with an empty group. */
+static int group_quiet(pid_t group) {
+    int query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, group};
+    size_t size = 0;
+    if (sysctl(query, 4, NULL, &size, NULL, 0)) return -1;
+    const size_t limit = 4 * 1024 * 1024;
+    if (size > limit - 32 * sizeof(struct kinfo_proc)) { errno = EOVERFLOW; return -1; }
+    size += 32 * sizeof(struct kinfo_proc);
+    struct kinfo_proc *members = malloc(size);
+    if (!members) return -1;
+    if (sysctl(query, 4, members, &size, NULL, 0)) {
+        int error = errno; free(members); errno = error;
+        return error == ENOMEM || error == EINTR ? 0 : -1;
+    }
+    if (size % sizeof(*members)) { free(members); errno = EPROTO; return -1; }
+    int quiet = 1;
+    for (size_t i = 0; i < size / sizeof(*members); ++i)
+        if (members[i].kp_proc.p_stat != SZOMB) quiet = 0;
+    free(members); return quiet;
+}
+static int process_main(int argc, char **argv) {
     if (argc < 6) return 125;
-    signal(SIGPIPE, SIG_IGN);
     struct sigaction action = {0}; action.sa_handler = on_signal;
     sigemptyset(&action.sa_mask);
     sigaction(SIGINT, &action, NULL); sigaction(SIGTERM, &action, NULL); sigaction(SIGHUP, &action, NULL);
@@ -130,12 +154,30 @@ int main(int argc, char **argv) {
     if (argv[4][0] < '0' || argv[4][0] > '9' || errno == ERANGE ||
             !timeout_end || *timeout_end || timeout_ms < 0) { report(125, 0, 0); return 0; }
     if (owner_gone()) { report(130, 0, 1); return 0; }
+    int pipe_fds[2];
+    if (pipe(pipe_fds)) { report(125, 0, 0); return 0; }
+    int barrier_read = fcntl(pipe_fds[0], F_DUPFD_CLOEXEC, 10);
+    int barrier_write = fcntl(pipe_fds[1], F_DUPFD_CLOEXEC, 10);
+    close(pipe_fds[0]); close(pipe_fds[1]);
+    struct stat barrier_stat;
+    if (barrier_read < 0 || barrier_write < 0 || fstat(barrier_write, &barrier_stat) ||
+        fcntl(barrier_read, F_SETFL, O_NONBLOCK) || fcntl(barrier_write, F_SETFL, O_NONBLOCK)) {
+        if (barrier_read >= 0) close(barrier_read);
+        if (barrier_write >= 0) close(barrier_write);
+        report(125, 0, 0); return 0;
+    }
+    KvikBarrier downstream = {barrier_write, (uint64_t)barrier_stat.st_dev, (uint64_t)barrier_stat.st_ino};
+    char marker[KVIK_BARRIER_MARKER_BYTES];
+    char **environment = kvik_barrier_environment(environ, &downstream, marker);
+    if (!environment) { close(barrier_read); close(barrier_write); report(125, 0, 0); return 0; }
     pid_t child = fork();
-    if (child < 0) { report(125, 0, 0); return 0; }
+    if (child < 0) { free(environment); close(barrier_read); close(barrier_write); report(125, 0, 0); return 0; }
     if (!child) {
-        /* Establish ownership before any adapter code can run. */
         if (setpgid(0, 0)) _exit(125);
-        close(3); close(4);
+        close(3); close(4); close(barrier_read);
+        if (upstream_barrier.fd >= 0) close(upstream_barrier.fd);
+        if (dup2(barrier_write, KVIK_BARRIER_FD) < 0) _exit(125);
+        close(barrier_write);
         signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL); signal(SIGHUP, SIG_DFL); signal(SIGPIPE, SIG_DFL);
         if (chdir(argv[1])) _exit(125);
         int in = open("/dev/null", O_RDONLY);
@@ -146,31 +188,55 @@ int main(int argc, char **argv) {
         if (in > 2) close(in);
         if (out > 2) close(out);
         if (err > 2) close(err);
-        execve(argv[5], argv + 5, environ);
+        execve(argv[5], argv + 5, environment);
         _exit(127);
     }
-    /* Both sides set the group: cancellation can never race an ungrouped worker. */
-    if (setpgid(child, child) && errno != EACCES && errno != ESRCH) {
-        kill(child, SIGKILL); waitpid(child, NULL, 0); report(125, 0, 0); return 0;
-    }
+    /* The guardian never retains its own downstream writer. */
+    close(barrier_write); free(environment);
     int code = 125, timed_out = 0, cancelled = 0;
-    for (;;) {
+    int setup_failed = setpgid(child, child) && errno != EACCES && errno != ESRCH;
+    if (setup_failed) kill(child, SIGKILL);
+    while (!setup_failed) {
         siginfo_t info = {0};
-        /* Keep the leader unreaped until group cleanup, reserving its PID/PGID. */
         if (waitid(P_PID, child, &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == child) {
-            code = info.si_code == CLD_EXITED ? info.si_status : 128 + info.si_status;
-            break;
+            code = info.si_code == CLD_EXITED ? info.si_status : 128 + info.si_status; break;
         }
         if (owner_gone()) { cancelled = 1; code = 130; break; }
         if (timeout_ms > 0 && now_ms() - start >= timeout_ms) { timed_out = 1; code = 124; break; }
         usleep(10000);
     }
-    /* Also clean descendants after ordinary leader exit; success cannot leave servers behind. */
     kill(-child, SIGTERM);
     long long deadline = now_ms() + 200;
     while (now_ms() < deadline) usleep(10000);
     kill(-child, SIGKILL);
-    while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
-    report(code, timed_out, cancelled);
-    return 0;
+    int poisoned = 0, eof = 0, quiet = 0;
+    /* Drain while waiting; never block waitpid ahead of nested acknowledgements. */
+    while (!eof || !quiet) {
+        if (!eof) {
+            char bytes[256]; ssize_t count = read(barrier_read, bytes, sizeof(bytes));
+            if (count > 0) poisoned = 1;
+            else if (!count) eof = 1;
+            else if (errno != EAGAIN && errno != EINTR) { poisoned = 1; eof = 1; }
+        }
+        if (!quiet) {
+            int observed = group_quiet(child);
+            if (observed < 0) { poisoned = 1; quiet = 1; }
+            else quiet = observed;
+        }
+        if (!eof || !quiet) usleep(10000);
+    }
+    close(barrier_read);
+    pid_t reaped;
+    do { reaped = waitpid(child, NULL, 0); } while (reaped < 0 && errno == EINTR);
+    if (reaped != child) poisoned = 1;
+    if (poisoned) return 125;
+    report(code, timed_out, cancelled); return 0;
+}
+int main(int argc, char **argv) {
+    signal(SIGPIPE, SIG_IGN);
+    if (kvik_barrier_capture(&upstream_barrier)) return 125;
+    int result = argc > 1 && !strcmp(argv[1], "--terminal") ? terminal_main(argc, argv) : process_main(argc, argv);
+    if (result) kvik_barrier_poison(&upstream_barrier);
+    /* Release upstream only through process exit, after all user-space cleanup. */
+    return result;
 }

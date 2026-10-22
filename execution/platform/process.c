@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <mach-o/dyld.h>
 
+int kvik_process_ownership_version(void) { return 1; }
+
 static volatile sig_atomic_t interrupted = 0;
 static int interrupt_installed = 0;
 static struct sigaction previous_int, previous_term;
@@ -56,90 +58,118 @@ char *kvik_executable_directory(void) {
     return resolved;
 }
 
+/* Captured before Kotlin/user code runs; unrelated execs cannot inherit it. */
+static KvikBarrier inherited_barrier = {.fd = -1};
+static int barrier_error;
+__attribute__((constructor)) static void capture_barrier(void) {
+    if (kvik_barrier_capture(&inherited_barrier)) barrier_error = EPROTO;
+}
+static int barrier_ready(void) {
+    if (barrier_error) { errno = barrier_error; return -1; }
+    return kvik_barrier_validate(&inherited_barrier);
+}
 typedef struct {
     pid_t guardian;
-    int control, result, received, reaped;
-    int values[3];
+    int control, result, eof, reaped, failed, notified;
+    size_t received;
+    unsigned char bytes[sizeof(int) * KVIK_PROCESS_RESULT_INTS + 1];
 } Process;
 
-/* All pipe ends are CLOEXEC; only the guardian's declared 3/4 descriptors survive spawn.
- * POSIX_SPAWN_CLOEXEC_DEFAULT also prevents leaking other invocations' ownership pipes. */
+/* All pipes are CLOEXEC. Only declared 3/4 and the optional upstream capability 6
+ * survive spawn; every process guardian has a group distinct from its owner. */
 void *kvik_process_start(const char *helper, const char *cwd, const char *out, const char *err,
                          long long timeout_ms, char *const *argv, char *const *envp) {
     if (timeout_ms < 0) { errno = EINVAL; return NULL; }
-    int control[2], result[2];
-    if (pipe(control)) return NULL;
-    if (pipe(result)) { close(control[0]); close(control[1]); return NULL; }
-    for (int i = 0; i < 2; ++i) { fcntl(control[i], F_SETFD, FD_CLOEXEC); fcntl(result[i], F_SETFD, FD_CLOEXEC); }
-    /* Move sources above fixed child FDs to avoid dup2 source/target collisions. */
-    int input = fcntl(control[0], F_DUPFD_CLOEXEC, 10);
-    int output = fcntl(result[1], F_DUPFD_CLOEXEC, 10);
-    close(control[0]); close(result[1]);
-    Process *p = calloc(1, sizeof(*p));
-    size_t count = 0;
-    while (argv[count]) ++count;
-    char **args = calloc(count + 7, sizeof(char *));
-    if (input < 0 || output < 0 || !p || !args) {
-        close(input); close(output); close(control[1]); close(result[0]); free(p); free(args); return NULL;
+    if (barrier_ready()) return NULL;
+    char marker[KVIK_BARRIER_MARKER_BYTES];
+    char **environment = kvik_barrier_environment(envp, &inherited_barrier, marker);
+    if (!environment) return NULL;
+    int control[2] = {-1, -1}, result[2] = {-1, -1};
+    int input = -1, output = -1, upstream = -1, error = 0;
+    Process *p = NULL; char **args = NULL;
+    if (pipe(control) || pipe(result)) { error = errno; goto fail; }
+    for (int i = 0; i < 2; ++i) {
+        if (fcntl(control[i], F_SETFD, FD_CLOEXEC) || fcntl(result[i], F_SETFD, FD_CLOEXEC)) { error = errno; goto fail; }
     }
-    char timeout[32];
-    snprintf(timeout, sizeof(timeout), "%lld", timeout_ms);
+    if (fcntl(control[1], F_SETNOSIGPIPE, 1) || fcntl(result[0], F_SETFL, O_NONBLOCK)) { error = errno; goto fail; }
+    input = fcntl(control[0], F_DUPFD_CLOEXEC, 10);
+    output = fcntl(result[1], F_DUPFD_CLOEXEC, 10);
+    if (inherited_barrier.fd >= 0) upstream = fcntl(inherited_barrier.fd, F_DUPFD_CLOEXEC, 10);
+    if (input < 0 || output < 0 || (inherited_barrier.fd >= 0 && upstream < 0)) { error = errno; goto fail; }
+    close(control[0]); control[0] = -1; close(result[1]); result[1] = -1;
+    p = calloc(1, sizeof(*p));
+    size_t count = 0; while (argv[count]) ++count;
+    args = calloc(count + 6, sizeof(char *));
+    if (!p || !args) { error = ENOMEM; goto fail; }
+    char timeout[32]; snprintf(timeout, sizeof(timeout), "%lld", timeout_ms);
     args[0] = (char *)helper; args[1] = (char *)cwd; args[2] = (char *)out;
     args[3] = (char *)err; args[4] = timeout;
     for (size_t i = 0; i < count; ++i) args[i + 5] = argv[i];
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, input, 3);
-    posix_spawn_file_actions_adddup2(&actions, output, 4);
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    sigset_t empty, defaults;
-    sigemptyset(&empty); sigfillset(&defaults);
-    posix_spawnattr_setsigmask(&attributes, &empty);
-    posix_spawnattr_setsigdefault(&attributes, &defaults);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
-    int error = posix_spawn(&p->guardian, helper, &actions, &attributes, args, envp);
+    posix_spawn_file_actions_t actions; posix_spawnattr_t attributes;
+    if ((error = posix_spawn_file_actions_init(&actions))) goto fail;
+    if ((error = posix_spawnattr_init(&attributes))) { posix_spawn_file_actions_destroy(&actions); goto fail; }
+    sigset_t empty, defaults; sigemptyset(&empty); sigfillset(&defaults);
+    if ((error = posix_spawn_file_actions_adddup2(&actions, input, 3)) ||
+        (error = posix_spawn_file_actions_adddup2(&actions, output, 4)) ||
+        (upstream >= 0 && (error = posix_spawn_file_actions_adddup2(&actions, upstream, KVIK_BARRIER_FD))) ||
+        (error = posix_spawnattr_setsigmask(&attributes, &empty)) ||
+        (error = posix_spawnattr_setsigdefault(&attributes, &defaults)) ||
+        (error = posix_spawnattr_setpgroup(&attributes, 0)) ||
+        (error = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP))) {
+        /* No child exists on any setup failure. */
+    } else error = posix_spawn(&p->guardian, helper, &actions, &attributes, args, environment);
     posix_spawnattr_destroy(&attributes); posix_spawn_file_actions_destroy(&actions);
-    close(input); close(output); free(args);
-    if (error) { close(control[1]); close(result[0]); free(p); errno = error; return NULL; }
+    if (error) goto fail;
+    close(input); close(output); if (upstream >= 0) close(upstream); free(args); free(environment);
     p->control = control[1]; p->result = result[0];
-    /* Suppress SIGPIPE on a guardian that has already completed. */
-    fcntl(p->control, F_SETNOSIGPIPE, 1);
-    fcntl(p->result, F_SETFL, O_NONBLOCK);
     return p;
+fail:
+    if (input >= 0) close(input);
+    if (output >= 0) close(output);
+    if (upstream >= 0) close(upstream);
+    for (int i = 0; i < 2; ++i) { if (control[i] >= 0) close(control[i]); if (result[i] >= 0) close(result[i]); }
+    free(p); free(args); free(environment); errno = error ? error : EIO; return NULL;
 }
 
 int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancelled) {
     Process *p = handle;
-    if (!p->received) {
-        ssize_t count = read(p->result, p->values, sizeof(p->values));
-        if (count == sizeof(p->values)) p->received = 1;
-        else if (count >= 0 || (errno != EAGAIN && errno != EINTR)) {
-            p->values[0] = 125; p->values[1] = p->values[2] = 0; p->received = 1;
+    if (!p->eof) {
+        ssize_t count = read(p->result, p->bytes + p->received, sizeof(p->bytes) - p->received);
+        if (count > 0) {
+            p->received += (size_t)count;
+            if (p->received == sizeof(p->bytes)) { p->failed = 1; p->eof = 1; kvik_process_cancel(p); }
+        } else if (count == 0 || (errno != EAGAIN && errno != EINTR)) {
+            p->eof = 1;
+            if (count < 0 || p->received != sizeof(int) * KVIK_PROCESS_RESULT_INTS) p->failed = 1;
         }
     }
     if (!p->reaped) {
-        int status;
-        pid_t observed = waitpid(p->guardian, &status, WNOHANG);
-        if (observed == p->guardian || (observed < 0 && errno == ECHILD)) p->reaped = 1;
+        int status = 0; pid_t observed = waitpid(p->guardian, &status, WNOHANG);
+        if (observed == p->guardian) {
+            p->reaped = 1;
+            if (!WIFEXITED(status) || WEXITSTATUS(status)) p->failed = 1;
+        } else if (observed < 0 && errno != EINTR) { p->reaped = 1; p->failed = 1; }
     }
-    if (!p->received || !p->reaped) return 0;
-    *exit_code = p->values[0]; *timed_out = p->values[1]; *cancelled = p->values[2];
-    return 1;
+    if (!p->eof || !p->reaped) return 0;
+    int values[KVIK_PROCESS_RESULT_INTS]; memcpy(values, p->bytes, sizeof(values));
+    if (p->failed || values[0] != KVIK_PROCESS_RESULT_MAGIC || values[1] < 0 || values[1] > 255 ||
+        values[2] < 0 || values[2] > 1 || values[3] < 0 || values[3] > 1 || (values[2] && values[3])) {
+        if (!p->notified) { kvik_barrier_poison(&inherited_barrier); p->notified = 1; }
+        errno = EPROTO; return -1;
+    }
+    *exit_code = values[1]; *timed_out = values[2]; *cancelled = values[3]; return 1;
 }
-
 void kvik_process_cancel(void *handle) {
     Process *p = handle;
-    /* EOF is idempotent and cannot block even if the guardian has not read yet. */
     if (p->control >= 0) { close(p->control); p->control = -1; }
 }
-
-void kvik_process_close(void *handle) {
-    Process *p = handle;
-    kvik_process_cancel(p);
-    int code, timeout, cancelled;
-    while (!kvik_process_poll(p, &code, &timeout, &cancelled)) usleep(10000);
+int kvik_process_close(void *handle) {
+    Process *p = handle; kvik_process_cancel(p);
+    int code, timeout, cancelled, result;
+    while (!(result = kvik_process_poll(p, &code, &timeout, &cancelled))) usleep(10000);
     close(p->result); free(p);
+    if (result < 0) { errno = EPROTO; return -1; }
+    return 0;
 }
 
 #include <poll.h>
@@ -284,10 +314,12 @@ static int terminal_decode(const char *encoded, KvikTerminalLease *lease) {
     return 0;
 }
 void *kvik_foreground_open_keys(const char *guardian) {
+    if (barrier_ready()) return NULL;
     Foreground *f = foreground_open(0);
     if (!f) return NULL;
     int error = 0, control[2] = {-1, -1}, reply[2] = {-1, -1};
-    int input = -1, output = -1, tty = -1, backup_valid = 0;
+    int input = -1, output = -1, tty = -1, upstream = -1, backup_valid = 0;
+    char **owned_environment = NULL;
     if (!isatty(f->input) || !f->own_input || tcgetpgrp(f->input) != getpgrp() ||
         (isatty(f->output) && (!f->own_output))) { error = ENOTTY; goto fail; }
     struct stat tty_status, output_status;
@@ -314,18 +346,28 @@ void *kvik_foreground_open_keys(const char *guardian) {
     snprintf(owner, sizeof(owner), "%d", (int)getpid());
     char *arguments[] = {(char *)guardian, "--terminal", owner, cookie, NULL};
     char *environment[] = {"PATH=/usr/bin:/bin", NULL};
+    char marker[KVIK_BARRIER_MARKER_BYTES];
+    owned_environment = kvik_barrier_environment(environment, &inherited_barrier, marker);
+    if (!owned_environment) { error = errno; goto fail; }
+    if (inherited_barrier.fd >= 0) {
+        upstream = fcntl(inherited_barrier.fd, F_DUPFD_CLOEXEC, 10);
+        if (upstream < 0) { error = errno; goto fail; }
+    }
     posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, input, 3); posix_spawn_file_actions_adddup2(&actions, output, 4);
     posix_spawn_file_actions_adddup2(&actions, tty, 5);
+    if (upstream >= 0) posix_spawn_file_actions_adddup2(&actions, upstream, KVIK_BARRIER_FD);
     posix_spawnattr_t attributes; posix_spawnattr_init(&attributes);
     sigset_t empty, defaults; sigemptyset(&empty); sigfillset(&defaults);
     posix_spawnattr_setsigmask(&attributes, &empty); posix_spawnattr_setsigdefault(&attributes, &defaults);
     posix_spawnattr_setpgroup(&attributes, 0);
     posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP);
-    error = posix_spawn(&lease->helper, guardian, &actions, &attributes, arguments, environment);
+    error = posix_spawn(&lease->helper, guardian, &actions, &attributes, arguments, owned_environment);
     posix_spawnattr_destroy(&attributes); posix_spawn_file_actions_destroy(&actions);
     close(input); input = -1; close(output); output = -1; close(tty); tty = -1;
     close(control[0]); control[0] = -1; close(reply[1]); reply[1] = -1;
+    if (upstream >= 0) { close(upstream); upstream = -1; }
+    free(owned_environment); owned_environment = NULL;
     if (error) goto fail;
     fcntl(lease->control, F_SETNOSIGPIPE, 1); fcntl(lease->reply, F_SETFL, O_NONBLOCK);
     struct stat cs, rs;
@@ -346,6 +388,8 @@ fail:
     if (input >= 0) close(input);
     if (output >= 0) close(output);
     if (tty >= 0) close(tty);
+    if (upstream >= 0) close(upstream);
+    free(owned_environment);
     for (int i = 0; i < 2; ++i) { if (control[i] >= 0) close(control[i]); if (reply[i] >= 0) close(reply[i]); }
     if (backup_valid) (void)terminal_backup(f);
     kvik_foreground_close(f); errno = error ? error : EIO; return NULL;
@@ -454,8 +498,16 @@ int kvik_foreground_exec(const char *path, char *const *argv, char *const *envp)
     sigemptyset(&blocked); sigaddset(&blocked, SIGINT); sigaddset(&blocked, SIGTERM);
     if (sigprocmask(SIG_BLOCK, &blocked, &previous)) return -1;
     if (interrupted) { sigprocmask(SIG_SETMASK, &previous, NULL); errno = EINTR; return -1; }
-    execve(path, argv, envp);
+    if (barrier_ready()) { int error = errno; sigprocmask(SIG_SETMASK, &previous, NULL); errno = error; return -1; }
+    char marker[KVIK_BARRIER_MARKER_BYTES];
+    char **environment = kvik_barrier_environment(envp, &inherited_barrier, marker);
+    if (!environment) { int error = errno; sigprocmask(SIG_SETMASK, &previous, NULL); errno = error; return -1; }
+    int flags = inherited_barrier.fd >= 0 ? fcntl(inherited_barrier.fd, F_GETFD) : 0;
+    if (inherited_barrier.fd < 0 || (flags >= 0 && !fcntl(inherited_barrier.fd, F_SETFD, flags & ~FD_CLOEXEC)))
+        execve(path, argv, environment);
     int error = errno;
+    if (inherited_barrier.fd >= 0 && flags >= 0) (void)fcntl(inherited_barrier.fd, F_SETFD, flags);
+    free(environment);
     sigprocmask(SIG_SETMASK, &previous, NULL); errno = error; return -1;
 }
 void kvik_foreground_resume_signals(void) {
