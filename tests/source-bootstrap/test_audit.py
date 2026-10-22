@@ -49,7 +49,7 @@ class ReceiptAuditTest(unittest.TestCase):
                         'executable':False, 'roles':['metadata']})
             native_sources = [str(build/'sources'/item['path']) for item in inputs if 'native-kotlin' in item['roles']]
             workers = [str(build/'sources'/item['path']) for item in inputs if 'jvm-worker' in item['roles']]
-            libraries = [str(build/'bridge'/(name+'.klib')) for name in ('process','resolution','toolchains')] + [
+            libraries = [str(build/'bridge'/(name+'.klib')) for name in ['process', *document['runtime']['nativeLibraries']]] + [
                 str(build/'sources/libraries'/(name+'.klib')) for name in document['nativeLibraryOrder']]
             commands = [{'command':['/tools/konanc','-o',str(build/'kvik.kexe'),'-Xoverride-konan-properties=airplaneMode=true',
                 *[part for library in libraries for part in ('-library',library)], *native_sources,str(build/'sources/Registry.kt')]},
