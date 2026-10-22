@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvik.dev/schemas/jvm-adapter/v1.json",
+  "$defs": {
+    "compilerDistribution": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "version": {
+          "const": "2.4.20"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "digest": {
+                "$ref": "https://kvik.dev/schemas/v1/contracts.json#/$defs/digest"
+              }
+            },
+            "required": [
+              "path",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "serializationPlugin": {
+          "anyOf": [
+            {
+              "$ref": "https://kvik.dev/schemas/v1/contracts.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "version",
+        "artifacts",
+        "serializationPlugin"
+      ],
+      "additionalProperties": false
+    },
+    "testRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "module": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "const": "jvm"
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "testClasses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_.$]*$"
+          },
+          "uniqueItems": true
+        },
+        "engines": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "junit-jupiter",
+              "kotest"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "module",
+        "target",
+        "classpath",
+        "testClasses",
+        "engines"
+      ],
+      "additionalProperties": false
+    },
+    "testResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete"
+          ]
+        },
+        "exitCode": {
+          "enum": [
+            0,
+            1,
+            3
+          ]
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "https://kvik.dev/schemas/v1/contracts.json#/$defs/testResult"
+          }
+        },
+        "testCounts": {
+          "$ref": "https://kvik.dev/schemas/v1/contracts.json#/$defs/testCounts"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "https://kvik.dev/schemas/v1/contracts.json#/$defs/diagnostic"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "status",
+        "exitCode",
+        "tests",
+        "testCounts",
+        "diagnostics"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exitCode": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exitCode": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exitCode": {
+                "const": 3
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

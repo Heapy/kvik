@@ -1,0 +1,458 @@
+{
+  "schemaVersion": 1,
+  "fixtureCommit": "a5c94c77b220cfc7b6335668766e8f26930968c3",
+  "classpaths": {
+    "main": {
+      "compileClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+        "okio-jvm-3.18.2.jar",
+        "annotations-13.0.jar"
+      ],
+      "runtimeClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+        "okio-jvm-3.18.2.jar",
+        "annotations-13.0.jar",
+        "urlencoder-lib-jvm-1.6.0.jar"
+      ]
+    },
+    "test": {
+      "compileClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlin-test-junit5-2.4.20.jar",
+        "kotlin-test-2.4.20.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+        "okio-jvm-3.18.2.jar",
+        "kotest-framework-engine-jvm-6.2.5.jar",
+        "kotest-assertions-core-jvm-6.2.5.jar",
+        "kotest-runner-junit5-jvm-6.2.5.jar",
+        "annotations-23.0.0.jar",
+        "junit-jupiter-api-5.13.4.jar",
+        "opentest4j-1.3.0.jar",
+        "kotlinx-coroutines-debug-1.11.0.jar",
+        "junit-platform-engine-1.13.4.jar",
+        "junit-platform-suite-api-1.13.4.jar",
+        "junit-platform-launcher-1.13.4.jar",
+        "junit-platform-commons-1.13.4.jar",
+        "apiguardian-api-1.1.2.jar",
+        "kotest-common-jvm-6.2.5.jar",
+        "kotlinx-coroutines-core-jvm-1.11.0.jar",
+        "jna-5.9.0.jar",
+        "jna-platform-5.9.0.jar",
+        "kotest-assertions-shared-jvm-6.2.5.jar",
+        "kotest-runner-junit-platform-jvm-6.2.5.jar",
+        "kotest-extensions-jvm-6.2.5.jar"
+      ],
+      "runtimeClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlin-test-junit5-2.4.20.jar",
+        "kotlin-test-2.4.20.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+        "okio-jvm-3.18.2.jar",
+        "kotest-framework-engine-jvm-6.2.5.jar",
+        "kotest-assertions-core-jvm-6.2.5.jar",
+        "kotlinx-coroutines-core-jvm-1.11.0.jar",
+        "kotlinx-io-core-jvm-0.9.1.jar",
+        "kotest-runner-junit5-jvm-6.2.5.jar",
+        "annotations-23.0.0.jar",
+        "junit-jupiter-engine-5.13.4.jar",
+        "junit-platform-launcher-1.13.4.jar",
+        "opentest4j-1.3.0.jar",
+        "kotlinx-coroutines-debug-1.11.0.jar",
+        "kotlin-reflect-2.2.21.jar",
+        "classgraph-4.8.186.jar",
+        "kotlinx-coroutines-jdk8-1.11.0.jar",
+        "java-diff-utils-4.16.jar",
+        "junit-platform-engine-1.13.4.jar",
+        "junit-platform-suite-api-1.13.4.jar",
+        "junit-jupiter-api-5.13.4.jar",
+        "urlencoder-lib-jvm-1.6.0.jar",
+        "kotest-common-jvm-6.2.5.jar",
+        "byte-buddy-1.17.6.jar",
+        "byte-buddy-agent-1.17.6.jar",
+        "jna-5.9.0.jar",
+        "jna-platform-5.9.0.jar",
+        "kotest-assertions-shared-jvm-6.2.5.jar",
+        "kotlinx-coroutines-test-jvm-1.11.0.jar",
+        "serialization-jvm-0.91.3.jar",
+        "kotlinx-io-bytestring-jvm-0.9.1.jar",
+        "kotest-runner-junit-platform-jvm-6.2.5.jar",
+        "junit-platform-commons-1.13.4.jar",
+        "core-jvmcommon-0.91.3.jar",
+        "kotest-extensions-jvm-6.2.5.jar"
+      ]
+    },
+    "json-main": {
+      "compileClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlinx-serialization-json-jvm-1.11.0.jar",
+        "annotations-13.0.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar"
+      ],
+      "runtimeClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlinx-serialization-json-jvm-1.11.0.jar",
+        "annotations-13.0.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+        "okio-jvm-3.18.2.jar",
+        "urlencoder-lib-jvm-1.6.0.jar"
+      ]
+    },
+    "json-test": {
+      "compileClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlin-test-junit5-2.4.20.jar",
+        "kotlin-test-2.4.20.jar",
+        "kotlinx-serialization-json-jvm-1.11.0.jar",
+        "kotest-framework-engine-jvm-6.2.5.jar",
+        "kotest-assertions-core-jvm-6.2.5.jar",
+        "kotest-runner-junit5-jvm-6.2.5.jar",
+        "annotations-23.0.0.jar",
+        "junit-jupiter-api-5.13.4.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "opentest4j-1.3.0.jar",
+        "kotlinx-coroutines-debug-1.11.0.jar",
+        "junit-platform-engine-1.13.4.jar",
+        "junit-platform-suite-api-1.13.4.jar",
+        "junit-platform-launcher-1.13.4.jar",
+        "junit-platform-commons-1.13.4.jar",
+        "apiguardian-api-1.1.2.jar",
+        "kotest-common-jvm-6.2.5.jar",
+        "kotlinx-coroutines-core-jvm-1.11.0.jar",
+        "jna-5.9.0.jar",
+        "jna-platform-5.9.0.jar",
+        "kotest-assertions-shared-jvm-6.2.5.jar",
+        "kotest-runner-junit-platform-jvm-6.2.5.jar",
+        "kotest-extensions-jvm-6.2.5.jar"
+      ],
+      "runtimeClasspath": [
+        "kotlin-stdlib-2.4.20.jar",
+        "kotlin-test-junit5-2.4.20.jar",
+        "kotlin-test-2.4.20.jar",
+        "kotlinx-serialization-json-jvm-1.11.0.jar",
+        "kotest-framework-engine-jvm-6.2.5.jar",
+        "kotest-assertions-core-jvm-6.2.5.jar",
+        "kotlinx-coroutines-core-jvm-1.11.0.jar",
+        "kotlinx-io-core-jvm-0.9.1.jar",
+        "kotest-runner-junit5-jvm-6.2.5.jar",
+        "annotations-23.0.0.jar",
+        "junit-jupiter-engine-5.13.4.jar",
+        "junit-platform-launcher-1.13.4.jar",
+        "kotlinx-serialization-core-jvm-1.11.0.jar",
+        "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+        "okio-jvm-3.18.2.jar",
+        "opentest4j-1.3.0.jar",
+        "kotlinx-coroutines-debug-1.11.0.jar",
+        "kotlin-reflect-2.2.21.jar",
+        "classgraph-4.8.186.jar",
+        "kotlinx-coroutines-jdk8-1.11.0.jar",
+        "java-diff-utils-4.16.jar",
+        "junit-platform-engine-1.13.4.jar",
+        "junit-platform-suite-api-1.13.4.jar",
+        "junit-jupiter-api-5.13.4.jar",
+        "kotest-common-jvm-6.2.5.jar",
+        "byte-buddy-1.17.6.jar",
+        "byte-buddy-agent-1.17.6.jar",
+        "jna-5.9.0.jar",
+        "jna-platform-5.9.0.jar",
+        "kotest-assertions-shared-jvm-6.2.5.jar",
+        "kotlinx-coroutines-test-jvm-1.11.0.jar",
+        "serialization-jvm-0.91.3.jar",
+        "kotlinx-io-bytestring-jvm-0.9.1.jar",
+        "kotest-runner-junit-platform-jvm-6.2.5.jar",
+        "junit-platform-commons-1.13.4.jar",
+        "urlencoder-lib-jvm-1.6.0.jar",
+        "core-jvmcommon-0.91.3.jar",
+        "kotest-extensions-jvm-6.2.5.jar"
+      ]
+    }
+  },
+  "artifacts": [
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.20",
+      "filename": "kotlin-stdlib-2.4.20.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.20/kotlin-stdlib-2.4.20.jar",
+      "sha256": "2226de463d309d4a5500a481320b3dea515a6981dcae1def531fbc158884e25f",
+      "size": 1853314
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
+      "filename": "kotlinx-serialization-core-jvm-1.11.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.11.0/kotlinx-serialization-core-jvm-1.11.0.jar",
+      "sha256": "f4a801c647d4351327cd9e1ac4113e2be9ea37a64ab0abae269c25a52e28f35d",
+      "size": 404509
+    },
+    {
+      "coordinate": "it.krzeminski:snakeyaml-engine-kmp-jvm:5.0.0",
+      "filename": "snakeyaml-engine-kmp-jvm-5.0.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/it/krzeminski/snakeyaml-engine-kmp-jvm/5.0.0/snakeyaml-engine-kmp-jvm-5.0.0.jar",
+      "sha256": "506718c275eef4118fc589f95004066079bf72b872850cd8bd89bb6fc08dec1e",
+      "size": 473045
+    },
+    {
+      "coordinate": "com.squareup.okio:okio-jvm:3.18.2",
+      "filename": "okio-jvm-3.18.2.jar",
+      "url": "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/3.18.2/okio-jvm-3.18.2.jar",
+      "sha256": "681fed549d1d2c63710f42c9eab433d642c71af778babd67035c50f8c425aaff",
+      "size": 392462
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:13.0",
+      "filename": "annotations-13.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.jar",
+      "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+      "size": 17536
+    },
+    {
+      "coordinate": "net.thauvin.erik.urlencoder:urlencoder-lib-jvm:1.6.0",
+      "filename": "urlencoder-lib-jvm-1.6.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/net/thauvin/erik/urlencoder/urlencoder-lib-jvm/1.6.0/urlencoder-lib-jvm-1.6.0.jar",
+      "sha256": "8d0fd2aeb48d19dc49c563ebc00f274947e45f716c107535c12ead63decd688d",
+      "size": 6512
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-test-junit5:2.4.20",
+      "filename": "kotlin-test-junit5-2.4.20.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-test-junit5/2.4.20/kotlin-test-junit5-2.4.20.jar",
+      "sha256": "07d93fe7fdc4ec5c09df4b1a65db0d8a33c66fdec1469168e4e9a641f9186f06",
+      "size": 5183
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-test:2.4.20",
+      "filename": "kotlin-test-2.4.20.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-test/2.4.20/kotlin-test-2.4.20.jar",
+      "sha256": "fa281d657898a34f6b0c7383f374f0a0161e61b6cea0095f135d917721d63f22",
+      "size": 183223
+    },
+    {
+      "coordinate": "io.kotest:kotest-framework-engine-jvm:6.2.5",
+      "filename": "kotest-framework-engine-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-framework-engine-jvm/6.2.5/kotest-framework-engine-jvm-6.2.5.jar",
+      "sha256": "7e08ec4e7c88b9e19cb24037654991b6375e0ede0c1415d4e7db66d6d809b7fa",
+      "size": 1972528
+    },
+    {
+      "coordinate": "io.kotest:kotest-assertions-core-jvm:6.2.5",
+      "filename": "kotest-assertions-core-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-assertions-core-jvm/6.2.5/kotest-assertions-core-jvm-6.2.5.jar",
+      "sha256": "bb5cf76b7dcfa4c6e974d3758b2ddec268abf339c53c4d8d213a2c6ec7710dc4",
+      "size": 1806249
+    },
+    {
+      "coordinate": "io.kotest:kotest-runner-junit5-jvm:6.2.5",
+      "filename": "kotest-runner-junit5-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-runner-junit5-jvm/6.2.5/kotest-runner-junit5-jvm-6.2.5.jar",
+      "sha256": "7d0a6cb0dee0c8186860154240911fcde3a1d00158ab0dea9a7c14570f7e5c64",
+      "size": 611
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:23.0.0",
+      "filename": "annotations-23.0.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/23.0.0/annotations-23.0.0.jar",
+      "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05",
+      "size": 29371
+    },
+    {
+      "coordinate": "org.junit.jupiter:junit-jupiter-api:5.13.4",
+      "filename": "junit-jupiter-api-5.13.4.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/junit/jupiter/junit-jupiter-api/5.13.4/junit-jupiter-api-5.13.4.jar",
+      "sha256": "d1bb81abfd9e03418306b4e6a3390c8db52c58372e749c2980ac29f0c08278f1",
+      "size": 240237
+    },
+    {
+      "coordinate": "org.opentest4j:opentest4j:1.3.0",
+      "filename": "opentest4j-1.3.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar",
+      "sha256": "48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b",
+      "size": 14304
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-debug:1.11.0",
+      "filename": "kotlinx-coroutines-debug-1.11.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-debug/1.11.0/kotlinx-coroutines-debug-1.11.0.jar",
+      "sha256": "8de3d5f6f938e58a5bca46270a8ef6448c99548510be7e3f798bca813462afcf",
+      "size": 40795
+    },
+    {
+      "coordinate": "org.junit.platform:junit-platform-engine:1.13.4",
+      "filename": "junit-platform-engine-1.13.4.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-engine/1.13.4/junit-platform-engine-1.13.4.jar",
+      "sha256": "390c5f77b84283a64b644f88251b397e0b0debb80bdcc50f899881aecff43a5a",
+      "size": 268584
+    },
+    {
+      "coordinate": "org.junit.platform:junit-platform-suite-api:1.13.4",
+      "filename": "junit-platform-suite-api-1.13.4.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-suite-api/1.13.4/junit-platform-suite-api-1.13.4.jar",
+      "sha256": "9a05bf77e128371f5b3e25ffc89f7af467a9f68dd365fdfced469ebcf533abc9",
+      "size": 26108
+    },
+    {
+      "coordinate": "org.junit.platform:junit-platform-launcher:1.13.4",
+      "filename": "junit-platform-launcher-1.13.4.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-launcher/1.13.4/junit-platform-launcher-1.13.4.jar",
+      "sha256": "0b0beaeb6880a31149641d2d848b863712885469670c12099586d7f798522564",
+      "size": 223100
+    },
+    {
+      "coordinate": "org.junit.platform:junit-platform-commons:1.13.4",
+      "filename": "junit-platform-commons-1.13.4.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-commons/1.13.4/junit-platform-commons-1.13.4.jar",
+      "sha256": "1c25ca641ebaae44ff3ad21ca1b2ef68d0dd84bfeb07c4805ba7840899b77408",
+      "size": 158512
+    },
+    {
+      "coordinate": "org.apiguardian:apiguardian-api:1.1.2",
+      "filename": "apiguardian-api-1.1.2.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar",
+      "sha256": "b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38",
+      "size": 6806
+    },
+    {
+      "coordinate": "io.kotest:kotest-common-jvm:6.2.5",
+      "filename": "kotest-common-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-common-jvm/6.2.5/kotest-common-jvm-6.2.5.jar",
+      "sha256": "63bc3ea21a48ada93475a1bb7322aedf0b6c60167962b224c253bb1d2b818892",
+      "size": 57803
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
+      "filename": "kotlinx-coroutines-core-jvm-1.11.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.11.0/kotlinx-coroutines-core-jvm-1.11.0.jar",
+      "sha256": "d1d75aa01dffbb4d1c520e67e4c4e7f5f6174718e7cb4632412503f2f0e604fa",
+      "size": 1577052
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna:5.9.0",
+      "filename": "jna-5.9.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/net/java/dev/jna/jna/5.9.0/jna-5.9.0.jar",
+      "sha256": "eafcc780b445434d3c5ae7fa2fb6665de1a7560d537d2c408a8e80cd14d27161",
+      "size": 1729586
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna-platform:5.9.0",
+      "filename": "jna-platform-5.9.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/net/java/dev/jna/jna-platform/5.9.0/jna-platform-5.9.0.jar",
+      "sha256": "1903bc6d87f3ab92023957b91f45a9c8eb3515bad030356ce977201e5141b724",
+      "size": 1343236
+    },
+    {
+      "coordinate": "io.kotest:kotest-assertions-shared-jvm:6.2.5",
+      "filename": "kotest-assertions-shared-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-assertions-shared-jvm/6.2.5/kotest-assertions-shared-jvm-6.2.5.jar",
+      "sha256": "bde902e67f750d398a91cb3f81c792d1a5b8a60499a54eae2915e33666ee03d1",
+      "size": 73843
+    },
+    {
+      "coordinate": "io.kotest:kotest-runner-junit-platform-jvm:6.2.5",
+      "filename": "kotest-runner-junit-platform-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-runner-junit-platform-jvm/6.2.5/kotest-runner-junit-platform-jvm-6.2.5.jar",
+      "sha256": "eed527b008aa3c4274288e0cf4dff47678f7f20ed4e0131e8c9854bc6f83548a",
+      "size": 88148
+    },
+    {
+      "coordinate": "io.kotest:kotest-extensions-jvm:6.2.5",
+      "filename": "kotest-extensions-jvm-6.2.5.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/kotest/kotest-extensions-jvm/6.2.5/kotest-extensions-jvm-6.2.5.jar",
+      "sha256": "acd1e9134a7dfe972ef9f428400ad45e53dcaf270ad9f2fcd864e17f5cd482dd",
+      "size": 56970
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-io-core-jvm:0.9.1",
+      "filename": "kotlinx-io-core-jvm-0.9.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-io-core-jvm/0.9.1/kotlinx-io-core-jvm-0.9.1.jar",
+      "sha256": "765d8851d8ca694706931331b92386844800867e041b720f1f193dbda874d370",
+      "size": 153576
+    },
+    {
+      "coordinate": "org.junit.jupiter:junit-jupiter-engine:5.13.4",
+      "filename": "junit-jupiter-engine-5.13.4.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/junit/jupiter/junit-jupiter-engine/5.13.4/junit-jupiter-engine-5.13.4.jar",
+      "sha256": "027404a92fe618b72465792a257951495c503a7d5751e2791e0f51c87f67f5bc",
+      "size": 341150
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:2.2.21",
+      "filename": "kotlin-reflect-2.2.21.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/2.2.21/kotlin-reflect-2.2.21.jar",
+      "sha256": "44380abf37d245ce5c0f294f43512d1c39a59642bfa463922c74e96877cf49f8",
+      "size": 3349363
+    },
+    {
+      "coordinate": "io.github.classgraph:classgraph:4.8.186",
+      "filename": "classgraph-4.8.186.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/github/classgraph/classgraph/4.8.186/classgraph-4.8.186.jar",
+      "sha256": "fde2862e4efd279dfe17f8e2b26329fec336999b0b507b0de5c637bca451a923",
+      "size": 590749
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.11.0",
+      "filename": "kotlinx-coroutines-jdk8-1.11.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-jdk8/1.11.0/kotlinx-coroutines-jdk8-1.11.0.jar",
+      "sha256": "1238f179da55360725ec49b887225317f31ae89bd29b652cbe139ff59f5d45cb",
+      "size": 1018
+    },
+    {
+      "coordinate": "io.github.java-diff-utils:java-diff-utils:4.16",
+      "filename": "java-diff-utils-4.16.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/github/java-diff-utils/java-diff-utils/4.16/java-diff-utils-4.16.jar",
+      "sha256": "620403030d676a4a27f780a3acec7438dee1b1651a1c804fa6bb11bb07399a6f",
+      "size": 78743
+    },
+    {
+      "coordinate": "net.bytebuddy:byte-buddy:1.17.6",
+      "filename": "byte-buddy-1.17.6.jar",
+      "url": "https://repo.maven.apache.org/maven2/net/bytebuddy/byte-buddy/1.17.6/byte-buddy-1.17.6.jar",
+      "sha256": "d26382a839cb26d5c62a0b0f04715bcef55a531f96ac6ce40de452a1c0539e70",
+      "size": 9014029
+    },
+    {
+      "coordinate": "net.bytebuddy:byte-buddy-agent:1.17.6",
+      "filename": "byte-buddy-agent-1.17.6.jar",
+      "url": "https://repo.maven.apache.org/maven2/net/bytebuddy/byte-buddy-agent/1.17.6/byte-buddy-agent-1.17.6.jar",
+      "sha256": "8a80959465bb09848cd41a89301490c55b9d940dc6ec30d8abac0f63b39fd5d0",
+      "size": 366249
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-test-jvm:1.11.0",
+      "filename": "kotlinx-coroutines-test-jvm-1.11.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-test-jvm/1.11.0/kotlinx-coroutines-test-jvm-1.11.0.jar",
+      "sha256": "d4f7ee71da708af4719dceb6d3200c8f9dc5146ea1a812cb628ed53c64196f96",
+      "size": 105295
+    },
+    {
+      "coordinate": "io.github.pdvrieze.xmlutil:serialization-jvm:0.91.3",
+      "filename": "serialization-jvm-0.91.3.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/github/pdvrieze/xmlutil/serialization-jvm/0.91.3/serialization-jvm-0.91.3.jar",
+      "sha256": "c8165f1f1b5c2c8c3bba7672429ca3813c1a4ab855dd8ee4086b4a3062b9b4e6",
+      "size": 591221
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.9.1",
+      "filename": "kotlinx-io-bytestring-jvm-0.9.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-io-bytestring-jvm/0.9.1/kotlinx-io-bytestring-jvm-0.9.1.jar",
+      "sha256": "8589de0b7c476bfdd02a24641685f609ade72f5e595cf2909c168acdba7e6ba4",
+      "size": 22776
+    },
+    {
+      "coordinate": "io.github.pdvrieze.xmlutil:core-jvmcommon:0.91.3",
+      "filename": "core-jvmcommon-0.91.3.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/github/pdvrieze/xmlutil/core-jvmcommon/0.91.3/core-jvmcommon-0.91.3.jar",
+      "sha256": "420a8e863b8475389690e7953568e176f17f8c6fc4f3f213b84127dcb0f1f574",
+      "size": 536014
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0",
+      "filename": "kotlinx-serialization-json-jvm-1.11.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.11.0/kotlinx-serialization-json-jvm-1.11.0.jar",
+      "sha256": "563a25b4eb5c9128ae9c2479f3d1a5c44dcd176112b91cf03682e906eba5c935",
+      "size": 294166
+    }
+  ]
+}

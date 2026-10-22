@@ -1,0 +1,327 @@
+{
+  "schemaVersion": 1,
+  "commit": "a5c94c77b220cfc7b6335668766e8f26930968c3",
+  "archiveSha256": "c92e561c3afd38810dab0b3837a24615a2fb670703fb9dc17f7685ab081ee77d",
+  "roots": [
+    "src",
+    "src@jvm",
+    "test",
+    "test@jvm",
+    "kotaml-json/src",
+    "kotaml-json/src@jvm",
+    "kotaml-json/test",
+    "kotaml-json/test@jvm",
+    "testResources",
+    "testResources@jvm",
+    "kotaml-json/testResources",
+    "kotaml-json/testResources@jvm"
+  ],
+  "files": {
+    "kotaml-json/src/com/charleskorn/kaml/json/JsonToYaml.kt": {
+      "hash": "7e2dc6e6c801a3494163ae8cd17f91ef1ac889e3c99e174284dd2e258809708d",
+      "sizeBytes": 3500
+    },
+    "kotaml-json/src/com/charleskorn/kaml/json/ScalarClassifier.kt": {
+      "hash": "1e698095c77ec4c07eca4a0e17211c179bc64dbadf8909a46fc8d484a27ff658",
+      "sizeBytes": 7764
+    },
+    "kotaml-json/src/com/charleskorn/kaml/json/YamlToJson.kt": {
+      "hash": "54b949a911afcdf90b11d704de155a970355f417966e16a54df13cf98ba518c4",
+      "sizeBytes": 8645
+    },
+    "kotaml-json/test/com/charleskorn/kaml/json/JsonToYamlTest.kt": {
+      "hash": "0331d69fc30ae221a951aca1de03b50e91118b841212611767e76c3024649eca",
+      "sizeBytes": 5239
+    },
+    "kotaml-json/test/com/charleskorn/kaml/json/ScalarClassifierTest.kt": {
+      "hash": "07e43a6a4e26c4425de6eb1ec8866c6885b318d7ec185783e6d7e3f95f4b74f4",
+      "sizeBytes": 6430
+    },
+    "kotaml-json/test/com/charleskorn/kaml/json/YamlToJsonTest.kt": {
+      "hash": "c6e9140d8f7352fc3c742e21e80dfed84a21f01c9cc23a0ef55f3dd4ae707098",
+      "sizeBytes": 12747
+    },
+    "src/com/charleskorn/kaml/Annotations.kt": {
+      "hash": "171007b162956a248d80e04949d32b30cf81db4be9fb0ea4b4766a07c061fa77",
+      "sizeBytes": 1859
+    },
+    "src/com/charleskorn/kaml/Location.kt": {
+      "hash": "a8015296f5fa82760010fb39f14c2ec38d75d73e37c69e644c68f169128fad8c",
+      "sizeBytes": 735
+    },
+    "src/com/charleskorn/kaml/Yaml.kt": {
+      "hash": "b2e01e9e84eac9d61d66b82617c24e3a2c84a54551d28f62ada0ed177b3a1f7d",
+      "sizeBytes": 4875
+    },
+    "src/com/charleskorn/kaml/YamlConfiguration.kt": {
+      "hash": "3d3a5cec4ea73c22d33c265d2c2e2e2e05a5cd7fdeada63e93c1801d2388b1e1",
+      "sizeBytes": 6711
+    },
+    "src/com/charleskorn/kaml/YamlContentPolymorphicSerializer.kt": {
+      "hash": "453c89c41bf26463b0a869c234a4fde2aafaf6699310e0b4b0480a9f909202a0",
+      "sizeBytes": 3017
+    },
+    "src/com/charleskorn/kaml/YamlContextualInput.kt": {
+      "hash": "983dd9296b44f982957fccc58a7cc2f0202a4e8ed8835c87cc1b8de776dc5722",
+      "sizeBytes": 2746
+    },
+    "src/com/charleskorn/kaml/YamlException.kt": {
+      "hash": "81c09ad48e911cb594bfd2bf719b46d9b0faeac04b0fbd1018ee7470e92fdcb0",
+      "sizeBytes": 4066
+    },
+    "src/com/charleskorn/kaml/YamlInput.kt": {
+      "hash": "262ab351800e66248a1f5dd02834887d47e04646189fd937f2a92ba21c2f8c06",
+      "sizeBytes": 12323
+    },
+    "src/com/charleskorn/kaml/YamlListInput.kt": {
+      "hash": "3e6485de7c243e78222d55cee20419bbb3023427661121bf35dede4bbe77f661",
+      "sizeBytes": 3722
+    },
+    "src/com/charleskorn/kaml/YamlMapInput.kt": {
+      "hash": "d1dc77a5652b5362adca56831e13b9208141c8f8e61479365e2ac14c7cad36fb",
+      "sizeBytes": 2568
+    },
+    "src/com/charleskorn/kaml/YamlMapLikeInputBase.kt": {
+      "hash": "0e7b43ac8127a11a182926608e5f7a0b0a7d4ae993f62bba39668d26d5066f41",
+      "sizeBytes": 3302
+    },
+    "src/com/charleskorn/kaml/YamlNamingStrategy.kt": {
+      "hash": "eb19a3de6f80bf17b6e1bb439349e5a5f3b0b0e096381f56e15bfec3a58dd142",
+      "sizeBytes": 4217
+    },
+    "src/com/charleskorn/kaml/YamlNode.kt": {
+      "hash": "f2fb7fd932029d34eca6f7047c113ce1d24785f8f99550a7ea1b2367f282fe82",
+      "sizeBytes": 15430
+    },
+    "src/com/charleskorn/kaml/YamlNodeReader.kt": {
+      "hash": "8a554c85e466a77102da486222bcb3b907b771a25cf8ef2029a992e1ad0233e2",
+      "sizeBytes": 12583
+    },
+    "src/com/charleskorn/kaml/YamlNodeSerializer.kt": {
+      "hash": "94e17593440ff9818ea5c6e4c6dfc99ac4eee1dfd7f8582995bb4a9661897013",
+      "sizeBytes": 6652
+    },
+    "src/com/charleskorn/kaml/YamlNullInput.kt": {
+      "hash": "049d3ac40152e7aa6d4e707c8d4a73d195432159a05ec493af46e7c5854ed7bc",
+      "sizeBytes": 1709
+    },
+    "src/com/charleskorn/kaml/YamlObjectInput.kt": {
+      "hash": "262de372329f42931785c723b33abcf7af0be30f21d9edc2bb27280323265fd9",
+      "sizeBytes": 3393
+    },
+    "src/com/charleskorn/kaml/YamlOutput.kt": {
+      "hash": "ea2c5f5e8687207222bf0a116e4d432c022c6fdd1454e808635331ade813ce31",
+      "sizeBytes": 13590
+    },
+    "src/com/charleskorn/kaml/YamlParser.kt": {
+      "hash": "0a6e820d10af88f39d1b3d1483b44e0d4c5000af14dee18133304d23516e1d4f",
+      "sizeBytes": 4937
+    },
+    "src/com/charleskorn/kaml/YamlPath.kt": {
+      "hash": "c49d3755f96bf9a9a313c45b20435bb3a2c0a86bd5fe651296a4e887858970da",
+      "sizeBytes": 5969
+    },
+    "src/com/charleskorn/kaml/YamlPolymorphicInput.kt": {
+      "hash": "9aade0321fc0d6f51391c2256809ff46719af6a6b7e8509f6fa88d37080b606e",
+      "sizeBytes": 9044
+    },
+    "src/com/charleskorn/kaml/YamlReadCompatibility.kt": {
+      "hash": "80a7e8e81c0627a568893e13278ecf0389014d9f0f7501d6caf2bd17c481b5d9",
+      "sizeBytes": 3045
+    },
+    "src/com/charleskorn/kaml/YamlScalarInput.kt": {
+      "hash": "dbaa28dd35d5385d900e97e296a628119251d527c3ff1d9f6380cdd4ea739043",
+      "sizeBytes": 2901
+    },
+    "src/com/charleskorn/kaml/internal/LegacyScalarConversions.kt": {
+      "hash": "b15c093492dae797fb1217442fa18b6bfa70233be69d95b03065c62fa74d4104",
+      "sizeBytes": 8462
+    },
+    "src/com/charleskorn/kaml/internal/OkioUtils.kt": {
+      "hash": "e898991432123dab187dc6f40e97cf9d7074159315d4ed541f0e93edbadf2ee1",
+      "sizeBytes": 1020
+    },
+    "src/com/charleskorn/kaml/internal/ScalarKind.kt": {
+      "hash": "8dd5ac3eaac6ea0a5958781a1326576cbdb092f1fcc15005a3c8f6e767d291d8",
+      "sizeBytes": 5318
+    },
+    "src@jvm/com/charleskorn/kaml/JvmYamlReading.kt": {
+      "hash": "773485a3ada7bb8a3e640b6f112f92c254018e8593928196aad1158697610c76",
+      "sizeBytes": 1776
+    },
+    "src@jvm/com/charleskorn/kaml/JvmYamlWriting.kt": {
+      "hash": "2891e00ba8810e9b150c51badb40878b248a1739ac0a683d973190ffa3e9b1c9",
+      "sizeBytes": 1524
+    },
+    "test/com/charleskorn/kaml/FlatFunSpec.kt": {
+      "hash": "5ffb6734da76d0cd73ac60f5368c3be97df4bae9dc08f5b87a72812a93e67327",
+      "sizeBytes": 4405
+    },
+    "test/com/charleskorn/kaml/TestInlineClasses.kt": {
+      "hash": "3395c4655091dd96722b961125501aa9e248e18f392f52339747b686a97bb56c",
+      "sizeBytes": 7317
+    },
+    "test/com/charleskorn/kaml/TestSerializers.kt": {
+      "hash": "f0654c500317c16448ba3a7e2c018c81ce02d201558536eb726184201be55f44",
+      "sizeBytes": 2685
+    },
+    "test/com/charleskorn/kaml/YamlBlockScalarWritingTest.kt": {
+      "hash": "596a080f05e63fd115f4846c54a67b0d73b4b0a1b25b2250d6c1ca68375e51ee",
+      "sizeBytes": 5860
+    },
+    "test/com/charleskorn/kaml/YamlContentPolymorphicSerializerTest.kt": {
+      "hash": "a4be12284c58cbb5ccdc6afdfdd470a2165726d53bda90a721d40e86fa76c8ad",
+      "sizeBytes": 9537
+    },
+    "test/com/charleskorn/kaml/YamlEmptyMapKeyReadingTest.kt": {
+      "hash": "8333d1d217243117111e2f4953a8013498d5ef1762558323c820452e43114e9d",
+      "sizeBytes": 6636
+    },
+    "test/com/charleskorn/kaml/YamlExceptionTest.kt": {
+      "hash": "50bd1c1083d416895610c449de5321d9dbb92d2b270e236f1ad1afbc5ba0fa8d",
+      "sizeBytes": 1282
+    },
+    "test/com/charleskorn/kaml/YamlListTest.kt": {
+      "hash": "911421a5a7f860ac4232bc9e6708a6e9293d86d702f139613bdb96a88ae9b9b3",
+      "sizeBytes": 5502
+    },
+    "test/com/charleskorn/kaml/YamlMapTest.kt": {
+      "hash": "eb5490089b92eadf998c5d1dd954c2f6459ed452f377dad41f036104b560ed05",
+      "sizeBytes": 18703
+    },
+    "test/com/charleskorn/kaml/YamlMergeKeyReadingTest.kt": {
+      "hash": "e35274134ad4f94af003150023aede2535081e83a7239b8f781bed7bd3d293bd",
+      "sizeBytes": 5082
+    },
+    "test/com/charleskorn/kaml/YamlNodeTest.kt": {
+      "hash": "8c9b9eba473fbf82bd081c2220195893d31b62eaa0e7e73e5d7e54725286d31e",
+      "sizeBytes": 4317
+    },
+    "test/com/charleskorn/kaml/YamlNullLikeTextWritingTest.kt": {
+      "hash": "96ee5a29c06cc6b2b99ec9324b9cbb2794de31ac8c100231ba6632c7e2a5f2d5",
+      "sizeBytes": 7192
+    },
+    "test/com/charleskorn/kaml/YamlNullReadingTest.kt": {
+      "hash": "2975a954f4743e51a5d08aeaca5e83c7f3b26e8e3f40fc9c9185ae9b430f29cf",
+      "sizeBytes": 15004
+    },
+    "test/com/charleskorn/kaml/YamlNullTest.kt": {
+      "hash": "a1cac475507aa0794c2077e637a2a0c77fd34b7caa6e8df86e6dd2bbba37fa38",
+      "sizeBytes": 2549
+    },
+    "test/com/charleskorn/kaml/YamlPathTest.kt": {
+      "hash": "2e0e972d86518b01dac874804f7b216d43ac0a954eda131bbd937e8aaf02424c",
+      "sizeBytes": 15714
+    },
+    "test/com/charleskorn/kaml/YamlPropertyNameWritingTest.kt": {
+      "hash": "d64ae5d0b2dfa0898bf0eff83efc5606b98cc7c7b00dee8ede0fe8905d969343",
+      "sizeBytes": 6592
+    },
+    "test/com/charleskorn/kaml/YamlReadCompatibilityTest.kt": {
+      "hash": "5378f02d784394f26be52237d8f4194052ec480867bb1a5ce3f0f82027071569",
+      "sizeBytes": 15928
+    },
+    "test/com/charleskorn/kaml/YamlReadingTest.kt": {
+      "hash": "4ad226798b8a4b724042062d308ad7d82b49ba3bb805c282a9351805e20cdf2e",
+      "sizeBytes": 130557
+    },
+    "test/com/charleskorn/kaml/YamlScalarReadingTest.kt": {
+      "hash": "e5cbcd15675b58222f362b634ee0081184b1db72ab704641bf1e65e08973bbb0",
+      "sizeBytes": 12577
+    },
+    "test/com/charleskorn/kaml/YamlScalarTest.kt": {
+      "hash": "eed57823b00781882ffb3a2a095409a10d283a7a86560ff1c03d6087a6781452",
+      "sizeBytes": 20165
+    },
+    "test/com/charleskorn/kaml/YamlScalarTextPreservationTest.kt": {
+      "hash": "33768f91ebcdf65b578fa9855d12a81a5d668ce7fa0066a014f2cb6cd58f24fc",
+      "sizeBytes": 4634
+    },
+    "test/com/charleskorn/kaml/YamlScalarWritingTest.kt": {
+      "hash": "2e6e3e7addace40212bd4b15e808b69c9ec0f3a6823c6dec4ac4347dad67b5f8",
+      "sizeBytes": 10484
+    },
+    "test/com/charleskorn/kaml/YamlStringStyleAnnotationTest.kt": {
+      "hash": "96e5617d2bb7a41ee95fe837d67e333dfb0f3b6edd51d534fa06e3044b48dba3",
+      "sizeBytes": 6872
+    },
+    "test/com/charleskorn/kaml/YamlStringTagReadingTest.kt": {
+      "hash": "3b647690a02ee81d11eb2bf42f1232ad05d08dd6d02ca33de6c85af9252c75f8",
+      "sizeBytes": 5797
+    },
+    "test/com/charleskorn/kaml/YamlTaggedNodeTest.kt": {
+      "hash": "e04b8a0320f6e6bde824b58cf3f921d5dfa57c407562448eec678d06f1ab2b83",
+      "sizeBytes": 2563
+    },
+    "test/com/charleskorn/kaml/YamlWritingTest.kt": {
+      "hash": "2eaf73f0c8e8c19402557091be7432bfa1dd2f288852ee8c12e245d7c525fa10",
+      "sizeBytes": 70816
+    },
+    "test/com/charleskorn/kaml/internal/ScalarClassifierTest.kt": {
+      "hash": "8076e32693825794f847141c4a7bc008dba9ed5d1735e5517575fd254b8a887c",
+      "sizeBytes": 10953
+    },
+    "test/com/charleskorn/kaml/testobjects/PolymorphicTestObjects.kt": {
+      "hash": "99ebcecbafe807dabe8ba9719fdf39f26be9fb03f6106d61b8872c6146d3c22c",
+      "sizeBytes": 7290
+    },
+    "test/com/charleskorn/kaml/testobjects/TestObjects.kt": {
+      "hash": "d525909563e5a22d4e3b96e0b01d98c2bed45efc586638c29db382bb2412a7d8",
+      "sizeBytes": 2926
+    },
+    "test@jvm/com/charleskorn/kaml/JvmYamlReadingTest.kt": {
+      "hash": "4c0043efce3f8578096794588aa0e5b7c477f8dbcbca0a6e780282f617319df9",
+      "sizeBytes": 2289
+    },
+    "test@jvm/com/charleskorn/kaml/JvmYamlWritingTest.kt": {
+      "hash": "730c29dfa817cbac9523e977425fdb0eefb08e900bfa68231bca24553ca91d68",
+      "sizeBytes": 15145
+    },
+    "test@jvm/com/charleskorn/kaml/LegacyFloatingPointOracleTest.kt": {
+      "hash": "31d1f2a1d60c0a8ddf3aad5a01d00a163736cd88e78a4b23a4f38c63844a4871",
+      "sizeBytes": 1833
+    },
+    "test@jvm/com/charleskorn/kaml/YamlNodeReaderTest.kt": {
+      "hash": "8b6ceecbafb8e298b4543cbf2fdf6cab90fdc0a91172e4c62453e6a189c26c36",
+      "sizeBytes": 82901
+    }
+  },
+  "testClasses": {
+    "kotaml": [
+      "com.charleskorn.kaml.JvmYamlReadingTest",
+      "com.charleskorn.kaml.JvmYamlWritingTest",
+      "com.charleskorn.kaml.LegacyFloatingPointOracleTest",
+      "com.charleskorn.kaml.TestInlineClasses",
+      "com.charleskorn.kaml.YamlBlockScalarWritingTest",
+      "com.charleskorn.kaml.YamlContentPolymorphicSerializerTest",
+      "com.charleskorn.kaml.YamlEmptyMapKeyReadingTest",
+      "com.charleskorn.kaml.YamlExceptionTest",
+      "com.charleskorn.kaml.YamlListTest",
+      "com.charleskorn.kaml.YamlMapTest",
+      "com.charleskorn.kaml.YamlMergeKeyReadingTest",
+      "com.charleskorn.kaml.YamlNodeReaderTest",
+      "com.charleskorn.kaml.YamlNodeTest",
+      "com.charleskorn.kaml.YamlNullLikeTextWritingTest",
+      "com.charleskorn.kaml.YamlNullReadingTest",
+      "com.charleskorn.kaml.YamlNullTest",
+      "com.charleskorn.kaml.YamlPathTest",
+      "com.charleskorn.kaml.YamlPropertyNameWritingTest",
+      "com.charleskorn.kaml.YamlReadCompatibilityTest",
+      "com.charleskorn.kaml.YamlReadingTest",
+      "com.charleskorn.kaml.YamlScalarReadingTest",
+      "com.charleskorn.kaml.YamlScalarTest",
+      "com.charleskorn.kaml.YamlScalarTextPreservationTest",
+      "com.charleskorn.kaml.YamlScalarWritingTest",
+      "com.charleskorn.kaml.YamlStringStyleAnnotationTest",
+      "com.charleskorn.kaml.YamlStringTagReadingTest",
+      "com.charleskorn.kaml.YamlTaggedNodeTest",
+      "com.charleskorn.kaml.YamlWritingTest",
+      "com.charleskorn.kaml.internal.ScalarClassifierTest"
+    ],
+    "kotaml-json": [
+      "com.charleskorn.kaml.json.JsonToYamlTest",
+      "com.charleskorn.kaml.json.ScalarClassifierTest",
+      "com.charleskorn.kaml.json.YamlToJsonTest"
+    ]
+  }
+}
