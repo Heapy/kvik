@@ -14,12 +14,9 @@ internal fun parseTestResult(value: JsonValue, requestId: String, module: String
     d.requireVersion()
     require(d.getValue("requestId").stringValue() == requestId) { "Test result/request identity mismatch" }
     require(d.getValue("exitCode").longValue() == exitCode.toLong()) { "Test result/process exit mismatch" }
-    val tests = d.getValue("tests").arrayValue().map { raw ->
-        val t = raw.fields(setOf("id", "module", "target", "status", "message"))
-        TestResult(t.getValue("id").stringValue(), t.getValue("module").stringValue(), t.getValue("target").stringValue(),
-            TestStatus.valueOf(t.getValue("status").stringValue().uppercase()), t.getValue("message").let { if (it == JsonValue.Null) null else it.stringValue() })
-    }
+    val tests = d.getValue("tests").arrayValue().map(TestResult::fromJson)
     require(tests.all { it.module == module && it.target == "jvm" } && tests.map { it.id }.distinct().size == tests.size) { "Invalid/duplicate test identity or scope" }
+    require(tests.all { test -> test.details?.attempts?.all { it.logs.isEmpty() } != false }) { "Worker cannot supply retained log references" }
     val c = d.getValue("testCounts").fields(setOf("discovered", "executed", "failed", "skipped", "discoveryComplete"))
     fun count(name: String) = c.getValue(name).longValue().also { require(it in 0..Int.MAX_VALUE.toLong()) }.toInt()
     val counts = TestCounts(if (c.getValue("discovered") == JsonValue.Null) null else count("discovered"), count("executed"), count("failed"), count("skipped"), c.getValue("discoveryComplete").booleanValue())
@@ -29,10 +26,11 @@ internal fun parseTestResult(value: JsonValue, requestId: String, module: String
     // TestWorker chooses failures before incomplete execution and only adds this diagnostic
     // after deciding that neither concrete tests nor containers/infrastructure failed.
     val failureDiagnostic = diagnostics.any { it.code != "KVIK_TEST_INCOMPLETE" || it.category != DiagnosticCategory.TEST }
+    val failedAttempt = tests.any { it.hasFailedAttempt }
     val status = when (d.getValue("status").stringValue()) {
-        "passed" -> VerificationStatus.PASSED.also { require(exitCode == 0 && counts.satisfiesExecution && diagnostics.isEmpty()) { "Inconsistent passing test result" } }
-        "failed" -> VerificationStatus.FAILED.also { require(exitCode == 1 && (counts.failed > 0 || failureDiagnostic)) { "Inconsistent failed test result" } }
-        "incomplete" -> VerificationStatus.INCOMPLETE.also { require(exitCode == 3 && counts.failed == 0 && !failureDiagnostic && !counts.satisfiesExecution) { "Inconsistent incomplete test result" } }
+        "passed" -> VerificationStatus.PASSED.also { require(exitCode == 0 && counts.satisfiesExecution && !failedAttempt && diagnostics.isEmpty()) { "Inconsistent passing test result" } }
+        "failed" -> VerificationStatus.FAILED.also { require(exitCode == 1 && (counts.failed > 0 || failedAttempt || failureDiagnostic)) { "Inconsistent failed test result" } }
+        "incomplete" -> VerificationStatus.INCOMPLETE.also { require(exitCode == 3 && counts.failed == 0 && !failedAttempt && !failureDiagnostic && !counts.satisfiesExecution) { "Inconsistent incomplete test result" } }
         else -> error("Unsupported worker test status")
     }
     return ParsedTestResult(JvmTestReport(tests, counts, status), diagnostics)

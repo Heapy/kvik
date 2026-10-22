@@ -62,49 +62,78 @@ object TestWorker {
                     val discovery = LauncherDiscoveryRequestBuilder.request().enableImplicitConfigurationParameters(false)
                         .selectors(classes.map(::selectClass)).configurationParameter("junit.jupiter.execution.parallel.enabled", "false").build()
                     val plan = launcher.discover(discovery)
-                    val discovered = plan.roots.flatMap { plan.getDescendants(it) }.filter { it.isTest }.associateBy { it.uniqueId }.toMutableMap()
+                    val identifiers = (plan.roots + plan.roots.flatMap { plan.getDescendants(it) }).associateBy { it.uniqueId }.toMutableMap()
+                    val discovered = identifiers.filterValues { it.isTest }.toMutableMap()
+                    val started = mutableMapOf<String, Long>()
+                    val limited = mutableSetOf<String>()
                     var finished = false
                     val lock = Any()
+                    fun record(identifier: TestIdentifier, state: TestStatus, throwable: Throwable? = null, skipReason: String? = null) {
+                        discovered[identifier.uniqueId] = identifier
+                        identifiers[identifier.uniqueId] = identifier
+                        val prior = tests[identifier.uniqueId]?.details?.attempts.orEmpty()
+                        val duration = started.remove(identifier.uniqueId)?.let { (System.nanoTime() - it).coerceAtLeast(0) }
+                        if (prior.size >= TEST_ATTEMPT_LIMIT) {
+                            if (limited.add(identifier.uniqueId)) diagnostics += Diagnostic("KVIK_TEST_ATTEMPT_LIMIT", DiagnosticCategory.TEST,
+                                "Test exceeded the supported $TEST_ATTEMPT_LIMIT attempts: ${reportText(identifier.uniqueId)}", module = module, target = target)
+                            return
+                        }
+                        val failure = if (state == TestStatus.FAILED) reportFailure(throwable) else null
+                        val reason = if (state == TestStatus.SKIPPED) reportText(skipReason ?: throwable?.message ?: "Test aborted") else null
+                        val attempt = TestAttempt(prior.size + 1, state, duration, reason, failure)
+                        val parent = identifier.parentId.orElse(null)?.let(identifiers::get)
+                        val suite = parent?.takeUnless { it.uniqueId in plan.roots.map { root -> root.uniqueId } }?.displayName?.let(::reportText)
+                        val message = reason ?: throwable?.let { reportText("${it.javaClass.name}: ${it.message}") }
+                        tests[identifier.uniqueId] = TestResult(identifier.uniqueId, module, target, state, message,
+                            TestDetails(suite, reportText(identifier.displayName), prior + attempt))
+                    }
                     val listener = object : TestExecutionListener {
                         override fun dynamicTestRegistered(identifier: TestIdentifier) = synchronized(lock) {
+                            identifiers[identifier.uniqueId] = identifier
                             if (identifier.isTest) discovered[identifier.uniqueId] = identifier
                         }
-                        override fun executionSkipped(identifier: TestIdentifier, reason: String) = synchronized(lock) {
-                            val skipped = if (identifier.isTest) listOf(identifier) else plan.getDescendants(identifier).filter { it.isTest }
-                            for (test in skipped) {
-                                discovered[test.uniqueId] = test
-                                tests[test.uniqueId] = TestResult(test.uniqueId, module, target, TestStatus.SKIPPED, reason)
+                        override fun executionStarted(identifier: TestIdentifier) = synchronized(lock) {
+                            identifiers[identifier.uniqueId] = identifier
+                            if (identifier.isTest) {
+                                if (started.put(identifier.uniqueId, System.nanoTime()) != null) {
+                                    diagnostics += Diagnostic("KVIK_TEST_ATTEMPT_OVERLAP", DiagnosticCategory.TEST,
+                                        "Test started again before its prior attempt finished: ${reportText(identifier.uniqueId)}", module = module, target = target)
+                                }
                             }
+                        }
+                        override fun executionSkipped(identifier: TestIdentifier, reason: String) = synchronized(lock) {
+                            val skipped = if (identifier.isTest) listOf(identifier) else plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in tests }
+                            for (test in skipped) record(test, TestStatus.SKIPPED, skipReason = reason)
                         }
                         override fun executionFinished(identifier: TestIdentifier, result: TestExecutionResult) = synchronized(lock) {
                             if (identifier.isTest) {
-                                discovered[identifier.uniqueId] = identifier
                                 val state = when (result.status) {
                                     TestExecutionResult.Status.SUCCESSFUL -> TestStatus.PASSED
                                     TestExecutionResult.Status.FAILED -> TestStatus.FAILED
                                     TestExecutionResult.Status.ABORTED -> TestStatus.SKIPPED
                                 }
-                                tests[identifier.uniqueId] = TestResult(identifier.uniqueId, module, target, state,
-                                    result.throwable.orElse(null)?.let { "${it::class.qualifiedName}: ${it.message}" })
+                                record(identifier, state, result.throwable.orElse(null))
                             } else if (result.status == TestExecutionResult.Status.ABORTED) {
-                                for (test in plan.getDescendants(identifier).filter { it.isTest }) {
-                                    discovered[test.uniqueId] = test
-                                    tests.putIfAbsent(test.uniqueId, TestResult(test.uniqueId, module, target, TestStatus.SKIPPED,
-                                        result.throwable.orElse(null)?.message ?: "Container aborted"))
+                                for (test in plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in tests }) {
+                                    record(test, TestStatus.SKIPPED, skipReason = result.throwable.orElse(null)?.message ?: "Container aborted")
                                 }
                             } else if (result.status == TestExecutionResult.Status.FAILED) {
                                 diagnostics += Diagnostic("KVIK_TEST_CONTAINER_FAILURE", DiagnosticCategory.TEST,
-                                    "${identifier.uniqueId}: ${result.status}: ${result.throwable.orElse(null)?.message ?: ""}", module = module, target = target)
+                                    reportText("${identifier.uniqueId}: ${result.status}: ${result.throwable.orElse(null)?.message ?: ""}"), module = module, target = target)
                             }
                         }
-                        override fun testPlanExecutionFinished(testPlan: TestPlan) { finished = true }
+                        override fun testPlanExecutionFinished(testPlan: TestPlan) = synchronized(lock) { finished = true }
                     }
                     launcher.execute(plan, listener)
-                    val allDiscoveredReported = finished && discovered.keys == tests.keys
+                    for (test in tests.values.filter { it.hasFailedAttempt && it.status != TestStatus.FAILED }) {
+                        diagnostics += Diagnostic("KVIK_TEST_RETRY_FAILURE", DiagnosticCategory.TEST,
+                            "Test had a failed attempt before its final ${test.status.name.lowercase()} result: ${reportText(test.id)}", module = module, target = target)
+                    }
+                    val allDiscoveredReported = finished && started.isEmpty() && discovered.keys == tests.keys
                     counts = TestCounts(discovered.size, tests.values.count { it.status != TestStatus.SKIPPED },
                         tests.values.count { it.status == TestStatus.FAILED }, tests.values.count { it.status == TestStatus.SKIPPED }, allDiscoveredReported)
                     when {
-                        counts.failed > 0 || diagnostics.isNotEmpty() -> { status = "failed"; exit = 1 }
+                        tests.values.any { it.hasFailedAttempt } || counts.failed > 0 || diagnostics.isNotEmpty() -> { status = "failed"; exit = 1 }
                         counts.satisfiesExecution -> { status = "passed"; exit = 0 }
                         else -> diagnostics += Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST,
                             "Selected scope has no completed passing execution or discovery is incomplete", module = module, target = target)
@@ -129,4 +158,45 @@ object TestWorker {
             "testCounts" to counts.toJson(), "diagnostics" to diagnostics.map { it.toJson() }.json()))
         exitProcess(exit)
     }
+}
+
+/** Sanitize engine/throwable text before applying the shared UTF-16 bound. */
+private fun reportText(value: String, limit: Int = TEST_TEXT_LIMIT): String {
+    val result = StringBuilder(minOf(value.length, limit))
+    var index = 0
+    while (index < value.length && result.length < limit) {
+        val char = value[index++]
+        when {
+            char.isHighSurrogate() && index < value.length && value[index].isLowSurrogate() -> {
+                if (result.length + 2 > limit) break
+                result.append(char).append(value[index++])
+            }
+            char.isSurrogate() -> result.append('\uFFFD')
+            else -> result.append(char)
+        }
+    }
+    return result.toString()
+}
+
+private fun reportFailure(failure: Throwable?): TestFailure {
+    if (failure == null) return TestFailure(TestFailureKind.UNKNOWN)
+    val stack = StringBuilder()
+    val seen = java.util.IdentityHashMap<Throwable, Boolean>()
+    var current: Throwable? = failure
+    var causes = 0
+    while (current != null && causes < 8 && stack.length < TEST_STACK_TRACE_LIMIT && seen.put(current, true) == null) {
+        if (causes++ != 0) stack.append("Caused by: ")
+        stack.append(reportText("${current.javaClass.name}: ${current.message}")).append('\n')
+        val frames = current.stackTrace
+        for (frame in frames.take(64)) {
+            if (stack.length >= TEST_STACK_TRACE_LIMIT) break
+            stack.append("\tat ").append(reportText(frame.toString())).append('\n')
+        }
+        if (frames.size > 64) stack.append("\t... remaining frames omitted\n")
+        if (current.suppressed.isNotEmpty()) stack.append("\t... suppressed exceptions omitted\n")
+        current = current.cause
+    }
+    if (current != null) stack.append("... remaining causes omitted\n")
+    return TestFailure(if (failure is AssertionError) TestFailureKind.ASSERTION else TestFailureKind.EXCEPTION,
+        reportText(failure.javaClass.name), failure.message?.let(::reportText), reportText(stack.toString(), TEST_STACK_TRACE_LIMIT))
 }
