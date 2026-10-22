@@ -1,0 +1,58 @@
+package kvik.compiler.native
+
+import kvik.core.*
+import kvik.cache.NativeContentStore
+import kvik.execution.NativeRunDirectory
+import kotlin.test.*
+
+class KotestExecutorTest {
+    @Test fun eagerRunnerLaunchesOnceAndLateCancellationCannotTurnIntoSuccess() {
+        for (cancel in listOf(false, true)) {
+            val directory = NativeRunDirectory("/private/tmp").path
+            val content = NativeContentStore("$directory/store")
+            val digest = content.put(byteArrayOf(1))
+            val inputs = TreeManifest(listOf(FileEntry(LogicalPath("test.kexe"), digest, true)))
+            val tools = listOf("native", "jdk", "sdk", "native-dependencies").associateWith { digest }
+            val action = kotestNativeTestAction("module", LogicalPath("test.kexe"), inputs, digest, tools)
+            var starts = 0; var closes = 0; var cancels = 0
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess {
+                    starts++
+                    assertEquals(1, request.arguments.size)
+                    assertTrue(request.environment.keys.none { it.startsWith("KOTEST_") })
+                    val token = request.environment.getValue("KVIK_KOTEST_REQUEST")
+                    val events = listOf(obj("event" to "inventory".json(), "specs" to listOf("s.S".json()).json()),
+                        obj("event" to "engine-start".json()), obj("event" to "engine-initialized".json()), obj("event" to "spec-start".json(), "spec" to "s.S".json()),
+                        obj("event" to "test-start".json(), "spec" to "s.S".json(), "id" to "s.S.test".json(), "type" to "leaf".json()),
+                        obj("event" to "test-finish".json(), "spec" to "s.S".json(), "id" to "s.S.test".json(), "type" to "leaf".json(), "status" to "Success".json(), "message" to "".json()),
+                        obj("event" to "spec-finish".json(), "spec" to "s.S".json(), "status" to "Success".json(), "message" to "".json()),
+                        obj("event" to "engine-finish".json(), "errors" to 0.json(), "message" to "".json()), obj("event" to "engine-return".json(), "errors" to 0.json()), obj("event" to "process-main".json()))
+                    val journal = events.mapIndexed { index, event -> JsonValue.Object(event.objectValue() + mapOf("version" to 1.json(), "request" to token.json(), "sequence" to index.json())).canonical() }.joinToString("\n", postfix = "\n")
+                    writeNativeFile(request.environment.getValue("KVIK_KOTEST_REPORT"), journal.encodeToByteArray())
+                    writeNativeFile(request.stdoutFile, byteArrayOf()); writeNativeFile(request.stderrFile, byteArrayOf())
+                    return object : OwnedProcess {
+                        override fun poll() = ProcessResult(0)
+                        override fun cancel() { cancels++ }
+                        override fun close() { closes++ }
+                    }
+                }
+                override fun close() = Unit
+            }
+            var verifications = 0
+            val executor = KotestNativeExecutor("run", directory, host, content, NativeToolchainProvider { requested ->
+                verifications++; assertEquals(tools, requested); NativeToolchainLayout("/native/bin/konanc", "/jdk", "/sdk", "/konan", "/developer")
+            })
+            assertFails { executor.start("run", "invalid", action.copy(environment = action.environment + ("KOTEST_INCLUDE_PATTERN" to "none"))) }
+            assertEquals(0, verifications)
+            executor.start("run", "test", action).use { running ->
+                if (cancel) running.cancel()
+                val result = assertNotNull(running.poll())
+                assertEquals(if (cancel) ActionStatus.CANCELLED else ActionStatus.EXECUTED, result.status)
+                assertEquals(result, running.poll())
+                assertEquals(if (cancel) 0 else 1, result.outputs.files.size)
+            }
+            assertEquals(1, starts); assertEquals(1, closes); assertEquals(if (cancel) 1 else 0, cancels)
+            assertEquals(if (cancel) VerificationStatus.CANCELLED else VerificationStatus.PASSED, executor.observations.getValue("test").tests!!.status)
+        }
+    }
+}

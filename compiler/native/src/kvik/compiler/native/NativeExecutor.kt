@@ -51,6 +51,13 @@ class NativeCompilerExecutor(
         val trees = NativeOutputTrees(content)
         trees.materialize(action.inputs, "$directory/input")
         mkdirNew("$directory/output"); mkdirNew("$directory/home")
+        compile?.kotestLauncher?.let { launcher ->
+            val raw = readNativeFile("$directory/input/${launcher.value}", 1024 * 1024).decodeToString(throwOnInvalidSequence = true)
+            val adapted = adaptKotestLauncher(raw)
+            mkdirNew("$directory/prepared")
+            writeNativeFile("$directory/prepared/kotest.kt", adapted.encodeToByteArray())
+            writeNativeFile("$directory/prepared/KvikKotestRuntime.kt", kotestRuntimeSource.encodeToByteArray())
+        }
         compile?.output?.value?.substringBeforeLast('/', "")?.takeIf { it.isNotEmpty() }?.let { parent ->
             var current = "$directory/output"
             parent.split('/').forEach { current += "/$it"; mkdirNew(current) }

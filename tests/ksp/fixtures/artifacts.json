@@ -1,0 +1,239 @@
+{
+  "libraries": [
+    {
+      "digest": {
+        "hash": "422eb1c46ccf299e35575cbca2227d23e8873d2da9ce86c5e968a7a3ddedcb2b",
+        "sizeBytes": 382253
+      },
+      "path": "org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.klib"
+    },
+    {
+      "digest": {
+        "hash": "551d11833d5611afe63dac02c05dd21611fe5f43d002e014cbe61b380551e3e4",
+        "sizeBytes": 394849
+      },
+      "path": "org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib"
+    },
+    {
+      "digest": {
+        "hash": "1eb13bf4ed44eb9154fde79699255efd3b69fa7969eeef24d838780c36ed5260",
+        "sizeBytes": 471557
+      },
+      "path": "it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib"
+    },
+    {
+      "digest": {
+        "hash": "03eef65b5b017dd01251d45dbc47ccdf3cb66d8ac2741b7ba45e4c091f7edb52",
+        "sizeBytes": 504987
+      },
+      "path": "com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib"
+    },
+    {
+      "digest": {
+        "hash": "ed10782cf3178f419653a0c7889c88386d8a48130c6fcc56910bdb013daa87c0",
+        "sizeBytes": 19243
+      },
+      "path": "net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib"
+    },
+    {
+      "digest": {
+        "hash": "343237ad8a2d1d456116f1fb962676f922fad5ff361f3769f1135c6bea51e249",
+        "sizeBytes": 1145866
+      },
+      "path": "io/kotest/kotest-framework-engine-macosarm64/6.2.5/kotest-framework-engine-macosarm64-6.2.5.klib"
+    },
+    {
+      "digest": {
+        "hash": "13251c8fbb90d63b41a671da85f84b630a3e2aa45fa67037f6f80ae2a3f25562",
+        "sizeBytes": 910091
+      },
+      "path": "io/kotest/kotest-assertions-core-macosarm64/6.2.5/kotest-assertions-core-macosarm64-6.2.5.klib"
+    },
+    {
+      "digest": {
+        "hash": "a84cd4b763e5a3c28cd028127e57416683684ea88809932a1588b965123a5517",
+        "sizeBytes": 36337
+      },
+      "path": "io/kotest/kotest-common-macosarm64/6.2.5/kotest-common-macosarm64-6.2.5.klib"
+    },
+    {
+      "digest": {
+        "hash": "782a837c8593af70135378fb90b999cf0cb9880dc746619f64d6c5c224d014d0",
+        "sizeBytes": 1054676
+      },
+      "path": "org/jetbrains/kotlinx/kotlinx-coroutines-core-macosarm64/1.11.0/kotlinx-coroutines-core-macosarm64-1.11.0.klib"
+    },
+    {
+      "digest": {
+        "hash": "f8bcb2c0c5c386e705ec62e221b0820791456271951b5a96e9b0ba3e977a3c2e",
+        "sizeBytes": 3856
+      },
+      "path": "com/github/ajalt/mordant/mordant-macosarm64/3.0.2/mordant-macosarm64-3.0.2.klib"
+    },
+    {
+      "digest": {
+        "hash": "ca7284b3a4fae356ad94b48aab8065b945eac102b56221f69d640db0798e926f",
+        "sizeBytes": 61469
+      },
+      "path": "io/kotest/kotest-assertions-shared-macosarm64/6.2.5/kotest-assertions-shared-macosarm64-6.2.5.klib"
+    },
+    {
+      "digest": {
+        "hash": "1e9602d5d7750e1bcde2480494c9ae65a3d1d19f966eb755731db9b359cc9039",
+        "sizeBytes": 86793
+      },
+      "path": "org/jetbrains/kotlinx/kotlinx-coroutines-test-macosarm64/1.11.0/kotlinx-coroutines-test-macosarm64-1.11.0.klib"
+    },
+    {
+      "digest": {
+        "hash": "8c76f871629425cfc501c9ab408eb933dcd37c965c390f22d0eeab4186d0e0e0",
+        "sizeBytes": 664374
+      },
+      "path": "io/github/pdvrieze/xmlutil/serialization-macosarm64/0.91.3/serialization-macosarm64-0.91.3.klib"
+    },
+    {
+      "digest": {
+        "hash": "8af9ce3402b639aebcb029539cc7b71e2bada133e46c0f3be8793570223978bd",
+        "sizeBytes": 233905
+      },
+      "path": "org/jetbrains/kotlinx/kotlinx-io-core-macosarm64/0.9.1/kotlinx-io-core-macosarm64-0.9.1.klib"
+    },
+    {
+      "digest": {
+        "hash": "368865987bfa5da765e40b15b4df60fd12f257688ed65a96ca71ebf2cf1a5261",
+        "sizeBytes": 83073
+      },
+      "path": "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1.klib"
+    },
+    {
+      "digest": {
+        "hash": "165c584c77f7c716cdc5a083093ef235c9bacfeabad6ed32ca9f7b928acbe292",
+        "sizeBytes": 3545
+      },
+      "path": "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1-cinterop-interop.klib"
+    },
+    {
+      "digest": {
+        "hash": "17b6544387ead72df9bcebd5f9dac5da5782296a986ac4c494ed24c81e55df60",
+        "sizeBytes": 712456
+      },
+      "path": "com/github/ajalt/mordant/mordant-core-macosarm64/3.0.2/mordant-core-macosarm64-3.0.2.klib"
+    },
+    {
+      "digest": {
+        "hash": "1cd4196dd703fd0412a32a40b6686fc8318388fa0c3602df9c68582c57373c2c",
+        "sizeBytes": 720727
+      },
+      "path": "io/github/pdvrieze/xmlutil/core-macosarm64/0.91.3/core-macosarm64-0.91.3.klib"
+    },
+    {
+      "digest": {
+        "hash": "b20ec12601f9bd20c346be668b5d0429fa960f22782b73955891273913c6db04",
+        "sizeBytes": 40404
+      },
+      "path": "org/jetbrains/kotlinx/kotlinx-io-bytestring-macosarm64/0.9.1/kotlinx-io-bytestring-macosarm64-0.9.1.klib"
+    },
+    {
+      "digest": {
+        "hash": "e53f6334bd3a14204b42561ab822e60f87dbfc19a38726f54429212ff6776cc8",
+        "sizeBytes": 342225
+      },
+      "path": "com/github/ajalt/colormath/colormath-macosarm64/3.6.0/colormath-macosarm64-3.6.0.klib"
+    }
+  ],
+  "processor": [
+    {
+      "digest": {
+        "hash": "8e1617666fdda757c94e8566e8e2c8a97b74ec814b52bea4411e7f86cd52dda6",
+        "sizeBytes": 17429
+      },
+      "path": "io/kotest/kotest-framework-symbol-processor-jvm/6.2.5/kotest-framework-symbol-processor-jvm-6.2.5.jar"
+    },
+    {
+      "digest": {
+        "hash": "0ae12504a5040ebaf37703908483420d1a5624dd1d93f357665f8c77c848a01e",
+        "sizeBytes": 1804720
+      },
+      "path": "org/jetbrains/kotlin/kotlin-stdlib/2.3.20/kotlin-stdlib-2.3.20.jar"
+    },
+    {
+      "digest": {
+        "hash": "53e4bb74b7e65d065222739735f9f2f57eedbaebbd314fa69167bd43dadcb659",
+        "sizeBytes": 105488
+      },
+      "path": "com/google/devtools/ksp/symbol-processing-api/2.3.9/symbol-processing-api-2.3.9.jar"
+    },
+    {
+      "digest": {
+        "hash": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+        "sizeBytes": 17536
+      },
+      "path": "org/jetbrains/annotations/13.0/annotations-13.0.jar"
+    },
+    {
+      "digest": {
+        "hash": "696c9ad8c08d9363c63f06d87054c6159de620829b83cd1b9f9d3abfa04257dc",
+        "sizeBytes": 361440
+      },
+      "path": "com/squareup/kotlinpoet-jvm/2.3.0/kotlinpoet-jvm-2.3.0.jar"
+    },
+    {
+      "digest": {
+        "hash": "e346fa3c3ff4451f5f707a312887fd4c8555da48cc15fa9db2ba93c33f89f813",
+        "sizeBytes": 3631428
+      },
+      "path": "org/jetbrains/kotlin/kotlin-reflect/2.3.20/kotlin-reflect-2.3.20.jar"
+    }
+  ],
+  "provenance": {
+    "commands": {
+      "compile-command.json": {
+        "hash": "b21cdebbcc5759c03018f120f7a9f7f77b65a9dc0e7f9caaf1233b2d077694bc",
+        "sizeBytes": 4162
+      },
+      "ksp-command.json": {
+        "hash": "4a4ae082bedd5ee68e98ffb49e7ed99ea16470381974e590188c05163ca4e899",
+        "sizeBytes": 43584
+      }
+    },
+    "description": "Read-only cached artifacts from successful direct lifecycle KSP and Native probe commands. Only Maven cache libraries retained; copied kotaml project libraries excluded. Fixture classpaths, not a production resolver lock."
+  },
+  "runtime": [
+    {
+      "digest": {
+        "hash": "fc7d11cea3bcd873589c8914ad6320bdc877bce14cc7c2f717394646af56bd37",
+        "sizeBytes": 114298
+      },
+      "path": "com/google/devtools/ksp/symbol-processing-api/2.3.12/symbol-processing-api-2.3.12.jar"
+    },
+    {
+      "digest": {
+        "hash": "862f0042fc2467cdcf7752e15880f97396a29e2469741dc6453f37584f1b4c69",
+        "sizeBytes": 80992357
+      },
+      "path": "com/google/devtools/ksp/symbol-processing-aa-embeddable/2.3.12/symbol-processing-aa-embeddable-2.3.12.jar"
+    },
+    {
+      "digest": {
+        "hash": "30510a4364e02880ce2fbf0c4f0ef564dead3818eef4fc0500cbcee23fc362af",
+        "sizeBytes": 124281
+      },
+      "path": "com/google/devtools/ksp/symbol-processing-common-deps/2.3.12/symbol-processing-common-deps-2.3.12.jar"
+    },
+    {
+      "digest": {
+        "hash": "0ae12504a5040ebaf37703908483420d1a5624dd1d93f357665f8c77c848a01e",
+        "sizeBytes": 1804720
+      },
+      "path": "org/jetbrains/kotlin/kotlin-stdlib/2.3.20/kotlin-stdlib-2.3.20.jar"
+    },
+    {
+      "digest": {
+        "hash": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+        "sizeBytes": 17536
+      },
+      "path": "org/jetbrains/annotations/13.0/annotations-13.0.jar"
+    }
+  ],
+  "schemaVersion": 1
+}
