@@ -36,6 +36,18 @@ class PackageSchemaTest(unittest.TestCase):
         value['versions'][0]['channel']='probably-stable'
         with self.assertRaises(jsonschema.ValidationError): self.validator('versions').validate(value)
 
+    def test_coordinate_package_and_digest_patterns_require_absolute_end(self):
+        for suffix in ['\n', '\r', '\r\n']:
+            with self.subTest(suffix=repr(suffix)):
+                root = dict(requested='example:root:1' + suffix, node='node')
+                with self.assertRaises(jsonschema.ValidationError): self.validator('root').validate(root)
+                value = self.versions(); value['query']['coordinate'] += suffix
+                with self.assertRaises(jsonschema.ValidationError): self.validator('versions').validate(value)
+                digest = dict(hash='a' * 64 + suffix, sizeBytes=1)
+                with self.assertRaises(jsonschema.ValidationError): self.validator('digest').validate(digest)
+        self.validator('root').validate(dict(requested='example:root:1', node='node'))
+        self.validator('digest').validate(dict(hash='a' * 64, sizeBytes=1))
+
     def test_host_tool_domains_and_requirement_selection_are_distinct(self):
         for purpose in ['dependencies','compiler-plugin','ksp-runtime','symbol-processor']:
             self.validator('domain').validate(dict(module='library',target='macosArm64',compilation='test',usage='java-runtime',purpose=purpose))

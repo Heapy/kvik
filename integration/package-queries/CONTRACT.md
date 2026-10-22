@@ -123,7 +123,7 @@ distinct listed versions, at most 200 rows/page; existing resolver 256 component
 1,024 requests, 64 MiB/artifact and 256 MiB aggregate bytes (locked project KSP-runtime domains retain their explicit 128 MiB policy); graph/path/output
 bounds (1,024 nodes, 8,192 edges, 4,096 paths per graph, 256 reported project
 domains, 16 MiB total JSON) are enforced before publication. Truncation is explicit incomplete
-evidence, never an apparently complete shortened graph. Unsupported Maven/KMP
+evidence, never an apparently complete shortened graph. `truncated` describes bounded query output; a transport byte-limit failure instead reports incomplete evidence with an explicit diagnostic and no dependency graph, without publishing partial artifact bytes. Unsupported Maven/KMP
 semantics retain the resolver's existing fail-closed behavior. Available versions
 are not a compatibility, support, vulnerability or upgrade recommendation.
 

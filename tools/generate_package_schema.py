@@ -8,13 +8,14 @@ def obj(**properties): return {'type':'object','properties':properties,'required
 def arr(items, maximum=8192): return {'type':'array','items':items,'maxItems':maximum}
 def enum(*values): return {'enum':list(values)}
 def nullable(value): return {'anyOf':[value,{'type':'null'}]}
+STRICT_END=r'$(?![\s\S])'
 text={'type':'string','maxLength':4096}; boolean={'type':'boolean'}; nonnegative={'type':'integer','minimum':0}
-coordinate={'type':'string','pattern':r'^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$','maxLength':1024}
-package={'type':'string','pattern':r'^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$','maxLength':512}
+coordinate={'type':'string','pattern':r'^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+'+STRICT_END,'maxLength':1024}
+package={'type':'string','pattern':r'^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+'+STRICT_END,'maxLength':512}
 channel=enum('stable','prerelease','unclassified'); freshness=enum('fresh','stale','missing','indeterminate')
 time={'type':'string','format':'date-time','maxLength':64}; mode=enum('cache','refresh','offline')
 defs={
- 'digest':obj(hash={'type':'string','pattern':'^[0-9a-f]{64}$'},sizeBytes=nonnegative),
+ 'digest':obj(hash={'type':'string','pattern':'^[0-9a-f]{64}'+STRICT_END},sizeBytes=nonnegative),
  'repository':obj(id=text,url=text),
  'metadata':obj(url=text,digest=ref('digest')),
  'artifact':obj(coordinate=coordinate,variant=text,repository=text,url=text,digest=ref('digest')),

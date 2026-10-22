@@ -69,7 +69,7 @@ for each CLI probe are retained beside the summary. The final build used the
 The existing resolver regression separately returned 0: 27 Native groups and all
 12 selected artifact identities matched the KTC cache. Logs are retained at
 `/private/tmp/kvik-k16-queries-final.log` and
-`/private/tmp/kvik-k16-resolver-regression.log`. Four independent package-schema
+`/private/tmp/kvik-k16-resolver-regression.log`. Five independent package-schema
 unit tests and Python syntax checks also passed. No composed public runtime gate
 is claimed by this isolated probe evidence.
 
@@ -113,3 +113,9 @@ channels are the documented numeric/known-qualifier convention, not Maven versio
 precedence or an upgrade recommendation. POM-only metadata does not prove JVM
 bytecode compatibility. No consumer source compilation or package code execution
 is performed by a query.
+
+Independent review found and reproduced one schema-only issue: a trailing newline
+was accepted by end-anchored coordinate/hash patterns despite runtime rejection.
+The generator now uses an absolute-end assertion for package, coordinate and
+digest patterns, with newline/CR/CRLF regression cases. All retained positive
+query outputs still validate. Runtime query sources and binaries are unchanged.

@@ -7,7 +7,7 @@
       "properties": {
         "hash": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
         },
         "sizeBytes": {
           "type": "integer",
@@ -60,7 +60,7 @@
       "properties": {
         "coordinate": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 1024
         },
         "variant": {
@@ -310,7 +310,7 @@
       "properties": {
         "coordinate": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 1024
         },
         "semantics": {
@@ -337,7 +337,7 @@
         },
         "coordinate": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 1024
         },
         "platform": {
@@ -413,7 +413,7 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
               "maxLength": 1024
             },
             {
@@ -440,7 +440,7 @@
       "properties": {
         "requested": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 1024
         },
         "node": {
@@ -459,7 +459,7 @@
       "properties": {
         "root": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 1024
         },
         "node": {
@@ -612,7 +612,7 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+              "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
               "maxLength": 1024
             },
             {
@@ -698,7 +698,7 @@
         },
         "coordinate": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 512
         },
         "repositories": {
@@ -759,7 +759,7 @@
         },
         "coordinate": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
           "maxLength": 1024
         },
         "repositories": {
@@ -776,7 +776,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$",
+            "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$(?![\\s\\S])",
             "maxLength": 1024
           },
           "maxItems": 256
