@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real composed Native CLI: locked multi-module compilation, resources, tests and local reuse."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,10 +21,21 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--konan-data', type=Path, default=Path.home()/'.konan')
     parser.add_argument('--developer-directory', type=Path, default=Path('/Applications/Xcode.app/Contents/Developer'))
+    parser.add_argument('--runtime', type=Path, help='Use this existing Native executable directly; do not query or build the default launcher.')
+    parser.add_argument('--artifact-cache', type=Path, default=ROOT/'.kvik/tool-artifacts',
+                        help='Existing compiler artifact cache used by the tool installation.')
+    parser.add_argument('--output-dir', type=Path, default=ROOT/'.kvik/tests/build-cli',
+                        help='Parent directory for a fresh isolated fixture and retained evidence.')
     args = parser.parse_args()
-    result = subprocess.run([ROOT/'kvik', '--offline', '--no-build', '--print-runtime'], check=True, capture_output=True, text=True)
-    executable = Path(result.stdout.strip())
-    output = ROOT/'.kvik/tests/build-cli'
+    if args.runtime is None:
+        result = subprocess.run([ROOT/'kvik', '--offline', '--no-build', '--print-runtime'], check=True, capture_output=True, text=True)
+        executable = Path(result.stdout.strip()).resolve(strict=True)
+    else:
+        executable = args.runtime.resolve(strict=True)
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        parser.error('--runtime must identify an executable regular file')
+    artifact_cache = args.artifact_cache.resolve()
+    output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     project = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
     schema = json.loads((ROOT/'schemas/v1/contracts.json').read_text())
@@ -33,6 +45,17 @@ def main():
         path = project/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
+    runtime_hash = hashlib.sha256()
+    with executable.open('rb') as runtime_file:
+        for chunk in iter(lambda: runtime_file.read(1024 * 1024), b''):
+            runtime_hash.update(chunk)
+    runtime_digest = runtime_hash.hexdigest()
+    write('invocation.json', json.dumps(dict(
+        runtime=str(executable), runtimeSha256=runtime_digest, runtimeSizeBytes=executable.stat().st_size,
+        explicitRuntime=args.runtime is not None, artifactCache=str(artifact_cache),
+        harnessSha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        toolLockSha256=hashlib.sha256((ROOT/'bootstrap/toolchains.lock.json').read_bytes()).hexdigest(),
+    ), indent=2))
     write('library/common/Common.kt', 'package fixture\nexpect fun platformName(): String\nfun greeting() = "hello " + platformName()\n')
     write('library/jvm/Platform.kt', 'package fixture\nactual fun platformName(): String = "JVM"\n')
     write('consumer/main/Consumer.kt', 'package fixture\nfun message() = greeting()\n')
@@ -68,7 +91,7 @@ class PassingTests {
                    llvm=str(data/'dependencies/llvm-21-aarch64-macos-essentials-97'), libffi=str(data/'dependencies/libffi-3.3-1-macos-arm64'),
                    sdk=str((developer/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk').resolve()),
                    xcodeToolchain=str(developer/'Toolchains/XcodeDefault.xctoolchain')),
-        konanData=str(data), compilerArtifacts=str(ROOT/'.kvik/tool-artifacts'))
+        konanData=str(data), compilerArtifacts=str(artifact_cache))
     validate(installations, 'toolInstallation')
     write('tools.json', json.dumps(installations))
     environment = dict(os.environ)
