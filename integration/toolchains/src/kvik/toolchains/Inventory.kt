@@ -16,18 +16,21 @@ data class InventoryLimits(val maxEntries: Int = 2_000_000, val maxDirectoryEntr
 
 data class InventorySummary(val digest: Digest, val regularFiles: Long, val symlinks: Long, val fileBytes: Long)
 
-internal class StreamHash : AutoCloseable {
+internal class StreamHash(private val checkpoint: () -> Unit = {}) : AutoCloseable {
     private val context = kvik_sha_new() ?: throw ToolchainVerificationFailure("Cannot allocate SHA-256 context")
     private var finished = false
     var size: Long = 0; private set
     fun update(bytes: ByteArray, count: Int = bytes.size) {
+        checkpoint()
         check(!finished)
         require(count in 0..bytes.size && size <= Long.MAX_VALUE - count)
         if (count > 0) bytes.usePinned { check(kvik_sha_update(context, it.addressOf(0), count.toUInt()) == 1) }
         size += count
+        checkpoint()
     }
     fun text(text: String) = update(text.encodeToByteArray(throwOnInvalidSequence = true))
     fun finish(): Digest {
+        checkpoint()
         check(!finished)
         val bytes = ByteArray(32)
         bytes.usePinned { check(kvik_sha_finish(context, it.addressOf(0).reinterpret()) == 1) }
@@ -46,11 +49,13 @@ internal fun physicalPath(path: String): String {
     return try { resolved.readBytes(strlen(resolved).toInt()).decodeToString(throwOnInvalidSequence = true) } finally { free(resolved) }
 }
 
-private fun names(path: String, limit: Int): List<String> {
+private fun names(path: String, limit: Int, checkpoint: () -> Unit): List<String> {
+    checkpoint()
     val directory = opendir(path) ?: ioFailure("opendir $path")
     try {
         val result = mutableListOf<String>()
         while (true) {
+            checkpoint()
             __error()!!.pointed.value = 0
             val entry = readdir(directory)
             if (entry == null) { if (errno != 0) ioFailure("readdir $path"); break }
@@ -61,6 +66,7 @@ private fun names(path: String, limit: Int): List<String> {
         }
         // Python Path sorting compares path components by Unicode code point, not UTF-16.
         return result.sortedWith { left, right ->
+            checkpoint()
             val a = left.encodeToByteArray(); val b = right.encodeToByteArray()
             var result = 0
             for (i in 0 until minOf(a.size, b.size)) {
@@ -75,9 +81,11 @@ private fun names(path: String, limit: Int): List<String> {
 internal data class CapturedInventory(val root: String, val summary: InventorySummary, val sdkSettings: ByteArray?)
 
 /** Matches bootstrap.identity.inventory(root, True); symlink directories are recorded, never traversed. */
-fun inventory(root: String, limits: InventoryLimits = InventoryLimits()): InventorySummary = captureInventory(root, limits, false).summary
+fun inventory(root: String, limits: InventoryLimits = InventoryLimits(), checkpoint: () -> Unit = {}): InventorySummary =
+    captureInventory(root, limits, false, checkpoint).summary
 
-internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, captureSdkSettings: Boolean): CapturedInventory {
+internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, captureSdkSettings: Boolean, checkpoint: () -> Unit = {}): CapturedInventory {
+    checkpoint()
     val root = physicalPath(suppliedRoot)
     require(root != "/") { "Filesystem root is not a tool installation" }
     memScoped {
@@ -88,7 +96,7 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
     val buffer = ByteArray(65536)
     var entries = 0; var files = 0L; var links = 0L; var fileBytes = 0L
     var settings: ByteArray? = null
-    StreamHash().use { stream ->
+    StreamHash(checkpoint).use { stream ->
         stream.text("{\"files\":[")
         var first = true
         fun emit(value: JsonValue) {
@@ -97,8 +105,10 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
             stream.text(value.canonical())
         }
         fun walk(directory: String, prefix: String, depth: Int) {
+            checkpoint()
             require(depth <= limits.maxDepth) { "Inventory depth limit exceeded: $directory" }
-            for (name in names(directory, limits.maxDirectoryEntries)) {
+            for (name in names(directory, limits.maxDirectoryEntries, checkpoint)) {
+                checkpoint()
                 require(++entries <= limits.maxEntries) { "Inventory entry limit exceeded" }
                 val path = "$directory/$name"
                 val relative = if (prefix.isEmpty()) name else "$prefix/$name"
@@ -126,9 +136,10 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
                                 val capture = captureSdkSettings && relative == "SDKSettings.json"
                                 if (capture) require(before.st_size in 0..1048576L) { "SDKSettings.json exceeds 1 MiB" }
                                 val captured = if (capture) ByteArray(before.st_size.toInt()) else null
-                                val digest = StreamHash().use { hash ->
+                                val digest = StreamHash(checkpoint).use { hash ->
                                     buffer.usePinned { pinned ->
                                         while (true) {
+                                            checkpoint()
                                             val count = read(fd, pinned.addressOf(0), buffer.size.convert()).toInt()
                                             if (count < 0 && errno == EINTR) continue
                                             if (count < 0) ioFailure("read $path")
@@ -158,6 +169,7 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
         }
         walk(root, "", 0)
         stream.text("],\"schemaVersion\":1}")
+        checkpoint()
         return CapturedInventory(root, InventorySummary(stream.finish(), files, links, fileBytes), settings)
     }
 }

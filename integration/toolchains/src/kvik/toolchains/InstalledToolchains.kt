@@ -28,12 +28,14 @@ class VerifiedToolchains internal constructor(
 
 /** No memoization: each call re-reads every regular file in the requested installations. */
 class InstalledToolchainVerifier(private val limits: InventoryLimits = InventoryLimits()) {
-    fun verify(lockJson: String, roots: Map<ToolComponent, String>): VerifiedToolchains {
+    fun verify(lockJson: String, roots: Map<ToolComponent, String>, checkpoint: () -> Unit = {}): VerifiedToolchains {
+        checkpoint()
         val lock = parseLock(lockJson)
+        checkpoint()
         require(roots.keys == ToolComponent.entries.toSet()) { "Explicit roots for all six tool components are required" }
         val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
         for (component in ToolComponent.entries) {
-            val captured = captureInventory(roots.getValue(component), limits, component == ToolComponent.SDK)
+            val captured = captureInventory(roots.getValue(component), limits, component == ToolComponent.SDK, checkpoint)
             require(captured.summary.digest == lock.components.getValue(component)) { "Tool inventory mismatch: ${component.lockName}; expected ${lock.components.getValue(component)}, actual ${captured.summary.digest}" }
             if (component == ToolComponent.SDK) {
                 val settings = captured.sdkSettings ?: throw ToolchainVerificationFailure("Unsupported SDK host data: regular SDKSettings.json is required")
@@ -43,15 +45,19 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
             }
             verified[component] = VerifiedToolComponent(captured.root, captured.summary)
         }
+        checkpoint()
         return VerifiedToolchains(lock.host, lock.kotlinVersion, verified)
     }
 
     /** A JVM worker consumes the JDK, not Native/LLVM/Xcode. No SDK verification is claimed. */
-    fun verifyJdk(lockJson: String, root: String): VerifiedToolComponent {
+    fun verifyJdk(lockJson: String, root: String, checkpoint: () -> Unit = {}): VerifiedToolComponent {
+        checkpoint()
         val lock = parseLock(lockJson)
-        val captured = captureInventory(root, limits, false)
+        checkpoint()
+        val captured = captureInventory(root, limits, false, checkpoint)
         val expected = lock.components.getValue(ToolComponent.JDK)
         require(captured.summary.digest == expected) { "Tool inventory mismatch: jdk; expected $expected, actual ${captured.summary.digest}" }
+        checkpoint()
         return VerifiedToolComponent(captured.root, captured.summary)
     }
 

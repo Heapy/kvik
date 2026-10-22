@@ -16,28 +16,33 @@ class VerifiedJvmWorkerBundle internal constructor(
 )
 
 /** Caller supplies the trusted manifest digest and a physical, stable bundle root. No discovery. */
-fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest): VerifiedJvmWorkerBundle {
+fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: () -> Unit = {}): VerifiedJvmWorkerBundle {
+    checkpoint()
     NativeFiles.ensureDirectory(root, create = false)
     NativeFiles.ensureDirectory("$root/classes", create = false)
     NativeFiles.ensureDirectory("$root/lib", create = false)
-    require(CompilerFiles.names(root).toSet() == setOf("classes", "lib", "manifest.json", "compiler-manifest.json")) {
+    require(CompilerFiles.names(root, checkpoint).toSet() == setOf("classes", "lib", "manifest.json", "compiler-manifest.json")) {
         "Unexpected JVM worker bundle entries"
     }
     val bytes = NativeFiles.read("$root/manifest.json", 1024 * 1024)
+    checkpoint()
     require(Sha256.digest(bytes) == expectedManifest) {
         "JVM worker manifest differs from the compiled runtime composition"
     }
     val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(
         setOf("schemaVersion", "classes", "api", "stdlib", "junit", "compilerManifest", "worker"))
     fields.requireVersion()
+    checkpoint()
     val expectedTree = TreeManifest.fromJson(fields.getValue("classes"))
     require(expectedTree.files.size <= 4096) { "JVM worker class tree exceeds 4096 files" }
     val actual = mutableListOf<FileEntry>()
     var entriesVisited = 0
     var classBytes = 0L
     fun visit(directory: String, prefix: String, depth: Int) {
+        checkpoint()
         require(depth <= 64) { "JVM worker class tree exceeds 64 directories" }
-        for (name in CompilerFiles.names(directory)) {
+        for (name in CompilerFiles.names(directory, checkpoint)) {
+            checkpoint()
             require(++entriesVisited <= 8192) { "JVM worker tree exceeds 8192 entries" }
             val path = "$directory/$name"
             val logical = LogicalPath(prefix + name)
@@ -46,7 +51,7 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest): VerifiedJvmWo
             else {
                 require(NativeFiles.regular(info)) { "Symlink or special JVM worker file" }
                 require(actual.size < 4096) { "JVM worker class tree exceeds 4096 files" }
-                val digest = CompilerFiles.digest(path, 8 * 1024 * 1024L)
+                val digest = CompilerFiles.digest(path, 8 * 1024 * 1024L, checkpoint)
                 classBytes += digest.sizeBytes
                 require(classBytes <= 256L * 1024 * 1024) { "JVM worker classes exceed 256 MiB" }
                 actual += FileEntry(logical, digest, info.mode and 73 != 0)
@@ -56,23 +61,25 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest): VerifiedJvmWo
     visit("$root/classes", "", 0)
     require(TreeManifest(actual).toJson() == expectedTree.toJson()) { "JVM worker classes differ from the compiled runtime composition" }
     val entries = listOf("api", "stdlib", "junit", "compilerManifest").associateWith { role ->
+        checkpoint()
         val entry = FileEntry.fromJson(fields.getValue(role))
         val path = entry.path.value
         require(!entry.executable && if (role == "compilerManifest") path == "compiler-manifest.json"
             else path.matches(Regex("lib/[A-Za-z0-9][A-Za-z0-9_.-]*\\.jar"))) { "Invalid JVM worker artifact path" }
         val info = NativeFiles.info("$root/$path") ?: error("Missing JVM worker artifact")
         require(NativeFiles.regular(info) && info.mode and 73 == 0 &&
-            CompilerFiles.digest("$root/$path", 8 * 1024 * 1024L) == entry.digest) { "JVM worker artifact differs from the compiled runtime composition" }
+            CompilerFiles.digest("$root/$path", 8 * 1024 * 1024L, checkpoint) == entry.digest) { "JVM worker artifact differs from the compiled runtime composition" }
         entry
     }
     require(entries.values.map { it.path }.distinct().size == 4) { "Duplicate JVM worker artifact" }
-    require(CompilerFiles.names("$root/lib").toSet() == entries.filterKeys { it != "compilerManifest" }.values.map { it.path.value.substringAfter('/') }.toSet()) {
+    require(CompilerFiles.names("$root/lib", checkpoint).toSet() == entries.filterKeys { it != "compilerManifest" }.values.map { it.path.value.substringAfter('/') }.toSet()) {
         "Unexpected JVM worker libraries"
     }
     val identity = Sha256.digest(obj("schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
         "workerTree" to Sha256.digest(expectedTree.toJson()).toJson(), "api" to entries.getValue("api").digest.toJson(),
         "stdlib" to entries.getValue("stdlib").digest.toJson(), "junit" to entries.getValue("junit").digest.toJson()))
     require(identity == Digest.fromJson(fields.getValue("worker"))) { "JVM worker identity differs from bundle" }
+    checkpoint()
     fun path(role: String) = "$root/${entries.getValue(role).path.value}"
     return VerifiedJvmWorkerBundle("$root/classes", path("api"), path("stdlib"), path("junit"), path("compilerManifest"),
         entries.getValue("compilerManifest").digest, identity, entries.getValue("junit").digest)
