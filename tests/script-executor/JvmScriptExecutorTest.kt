@@ -54,6 +54,8 @@ class JvmScriptExecutorTest {
         assertEquals(1234L, request.timeoutMillis)
         assertEquals(listOf("@file", "space argument", ""), request.arguments.takeLast(3))
         assertTrue("--disable-@files" in request.arguments)
+        assertTrue("-Dstdout.encoding=UTF-8" in request.arguments)
+        assertTrue("-Dstderr.encoding=UTF-8" in request.arguments)
         val cp = request.arguments[request.arguments.indexOf("-cp") + 1]
         assertEquals(listOf("${observed.directory}/input/own", "${observed.directory}/input/dependency", "/tool/std.jar"), cp.split(':'))
         assertEquals(setOf("PATH", "LANG", "LC_ALL", "TZ", "HOME", "TMPDIR", "DECLARED"), request.environment.keys)

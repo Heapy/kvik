@@ -76,12 +76,12 @@ class JvmScriptRealTest {
     }
 
     @Test fun realJavaUsesEofDeclaredEnvironmentWorkingDirectoryAndSeparateStreams() {
-        val (cwd, observed) = scenario("ordinary", listOf("ordinary", "@not-expanded", "two words", ""))
+        val (cwd, observed) = scenario("ordinary", listOf("ordinary", "@not-expanded", "two words", "", "snowman ☃", "astral 🚀"))
         assertEquals(ActionStatus.EXECUTED, observed.result.status)
         assertEquals(ProcessResult(0), observed.processResult)
         assertEquals("effect\n", NativeFiles.read("$cwd/effects.txt", 64).decodeToString())
-        assertEquals("@not-expanded|two words|\nuses pinned stdlib\n", NativeFiles.read(observed.stdoutFile!!, 1024).decodeToString())
-        assertEquals("separate-stderr\n", NativeFiles.read(observed.stderrFile!!, 1024).decodeToString())
+        assertEquals("@not-expanded|two words||snowman ☃|astral 🚀\nuses pinned stdlib\n", NativeFiles.read(observed.stdoutFile!!, 1024).decodeToString())
+        assertEquals("separate-stderr ☃ 🚀\n", NativeFiles.read(observed.stderrFile!!, 1024).decodeToString())
     }
     @Test fun sameInputsAlwaysRunAgainInFreshOwnedDirectory() {
         val (_, first) = scenario("repeat-one", listOf("ordinary"))

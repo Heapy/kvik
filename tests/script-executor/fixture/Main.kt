@@ -13,7 +13,7 @@ fun main(args: Array<String>) {
             check(File("resource.txt").readText() == "working-directory-resource")
             File("effects.txt").appendText("effect\n")
             println(args.drop(1).joinToString("|"))
-            System.err.println("separate-stderr")
+            System.err.println("separate-stderr ☃ 🚀")
             println(listOf("uses", "pinned", "stdlib").joinToString(" "))
         }
         "exit" -> exitProcess(args[1].toInt())

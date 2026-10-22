@@ -108,7 +108,9 @@ class JvmScriptExecutor(
                 file.path.value.removePrefix(prefix) to bytes
             }, launch.mainClass)
             phase = JvmScriptPhase.SETUP
-            arguments = listOf(layout.javaExecutable, "--disable-@files", "-Djava.io.tmpdir=$reserved/tmp",
+            // Java streams otherwise inherit the ASCII encoding of the fixed C locale.
+            arguments = listOf(layout.javaExecutable, "--disable-@files", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
+                "-Djava.io.tmpdir=$reserved/tmp",
                 "-Duser.home=$reserved/home", "-cp",
                 (launch.classpath.map { "$reserved/input/${it.value}" } + layout.stdlibJar).joinToString(":"),
                 checkNotNull(mainClass)) + launch.arguments
