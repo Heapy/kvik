@@ -23,8 +23,11 @@ data class NativeCompilation(
     val warningsAsErrors: Boolean = false,
     val kotestLauncher: LogicalPath? = null,
     val includedLibrary: LogicalPath? = null,
+    val entryPoint: String? = null,
 ) {
     init {
+        require(entryPoint == null || produce == NativeOutput.PROGRAM && entryPoint.length in 1..1024 &&
+            entryPoint.matches(Regex("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))) { "Explicit Native entry point requires a PROGRAM and a qualified function name" }
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(moduleName.matches(Regex("[A-Za-z0-9_.:-]+")))
         require(sources.distinct().size == sources.size && sources.all { it.value.endsWith(".kt") })
@@ -46,6 +49,7 @@ data class NativeCompilation(
     fun arguments(): List<String> = buildList {
         addAll(listOf("-target", "macos_arm64", "-produce", if (produce == NativeOutput.LIBRARY) "library" else "program", "-o", "output/${output.value}", "-module-name", moduleName))
         add("-Xoverride-konan-properties=airplaneMode=true")
+        entryPoint?.let { addAll(listOf("-entry", it)) }
         if (produce == NativeOutput.TEST) add("-generate-test-runner")
         if (produce == NativeOutput.KOTEST_TEST) addAll(listOf("-entry", "kvik.kotest.runtime.main"))
         if (commonSources.isNotEmpty()) {
@@ -69,13 +73,13 @@ data class NativeCompilation(
         "commonSources" to commonSources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
         "plugins" to plugins.map { it.value.json() }.json(), "output" to output.value.json(), "produce" to produce.name.json(),
         "moduleName" to moduleName.json(), "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
-            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }).toMap())
+            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }).toMap())
         }
     companion object {
         fun fromJson(value: JsonValue): NativeCompilation {
-            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary"))
+            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint"))
             fun paths(name: String) = d.getValue(name).arrayValue().map { LogicalPath(it.stringValue()) }
-            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath))
+            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue())
         }
     }
 }

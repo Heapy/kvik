@@ -31,7 +31,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
         "modules" to modules.map { m -> obj("id" to m.id.json(), "sourceSets" to m.sourceSets.map { s -> obj("name" to s.name.json(),
             "directories" to paths(s.directories), "resources" to paths(s.resources), "dependsOn" to strings(s.dependsOn), "dependencies" to s.dependencies.map { d -> when(d) {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
-            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) } }.json(),
+            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
                 if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()) }.json()))
 }
@@ -63,7 +63,7 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
-    "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) listOf(FileEntry(LogicalPath("tests.kexe"), digest(salt), true), FileEntry(LogicalPath("tests.kexe.dSYM/Contents/Info.plist"), digest("symbols")))
+    "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).output.let { output -> listOf(FileEntry(output, digest(salt), true), FileEntry(LogicalPath(output.value + ".dSYM/Contents/Info.plist"), digest("symbols"))) }
         else listOf(FileEntry(NativeCompilation.fromJson(action.parameters).output, digest(salt)))
     else -> listOf(FileEntry(LogicalPath("test-results.json"), digest("report")))
 })
@@ -77,7 +77,155 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
     return actions
 }
 
+private fun modulePathForTest(module: String, target: String) = LogicalPath("modules/$module/$target/main" + if (target == "jvm") "" else ".klib")
+private fun applicationFixture(settings: (String) -> ApplicationSpec = { target -> ApplicationSpec(if (target == "jvm") "fixture.MainKt" else "fixture.main") }): Pair<ProjectConfiguration, TreeManifest> {
+    val hidden = module("hidden", listOf(Dependency.External(Coordinate.parse("g:hidden:1"))))
+    val library = module("base", listOf(external("g:public:1"), Dependency.External(Coordinate.parse("g:private:1")), Dependency.Module("hidden")))
+    val runtime = module("runtime", listOf(Dependency.External(Coordinate.parse("g:runtime-private:1"))))
+    val main = module("app", listOf(Dependency.Module("base"), Dependency.Module("runtime", DependencyScopeKind.RUNTIME),
+        Dependency.External(Coordinate.parse("g:library:1")), Dependency.External(Coordinate.parse("g:only-runtime:1"), DependencyScopeKind.RUNTIME)))
+        .let { it.copy(targets = it.targets.map { target -> target.copy(application = settings(target.name)) }) }
+    val additional = listOf("hidden", "runtime").flatMap { id -> listOf("common/Common.kt", "jvm/Actual.kt", "native/Actual.kt", "resources/config.txt")
+        .map { FileEntry(LogicalPath("$id/$it"), digest("$id/$it")) } }
+    return configuration(library, hidden, runtime, main) to TreeManifest(snapshot().files + additional)
+}
+
 class ProjectGraphTest {
+    @Test fun applicationRuntimeClosuresPreservePrivateAndRuntimeOnlyBoundaries() {
+        val (config, files) = applicationFixture()
+        for (target in listOf("jvm", "macosArm64")) {
+            val plan = graph(config, files, request(ProjectMode.APPLICATION, target))
+            val actions = resolved(plan)
+            val terminal = "app:$target:application"
+            assertEquals(setOf(terminal), plan.requestedChecks)
+            assertEquals(mapOf(terminal to terminal), plan.terminalActions)
+            val compile = actions.getValue("app:$target:main")
+            val apiPaths = if (target == "jvm") JvmCompilation.fromJson(compile.parameters).classpath else NativeCompilation.fromJson(compile.parameters).libraries
+            assertTrue(modulePathForTest("base", target) in apiPaths)
+            assertFalse(modulePathForTest("hidden", target) in apiPaths)
+            assertFalse(modulePathForTest("runtime", target) in apiPaths)
+            for (name in listOf("private", "hidden", "runtime-private", "only-runtime")) {
+                val hidden = artifact("g:$name:1", target, if (target == "jvm") "java-runtime" else "kotlin-api").digest
+                assertTrue(compile.inputs.files.none { it.digest == hidden })
+            }
+            val prepared = actions.getValue(terminal)
+            assertEquals("kvik-application-bundle-v1", prepared.implementation)
+            assertEquals(ActionKind.PACKAGE, prepared.kind)
+            assertEquals(CachePolicy.LOCAL, prepared.cachePolicy)
+            val launch = ApplicationLaunch.fromJson(prepared.parameters)
+            launch.requireInputs(prepared.inputs)
+            for (producer in listOf("app", "base", "hidden", "runtime")) assertTrue(prepared.inputs.files.any { it.path.value == "runtime/$producer/main/config.txt" })
+            assertTrue(prepared.inputs.files.none { it.path.value.startsWith("src/") || it.path.value.startsWith("plugins/") || "/test/" in it.path.value })
+            if (target == "jvm") {
+                val expectedPrefixes = listOf("app", "base", "hidden", "runtime").flatMap { listOf(LogicalPath("modules/$it/jvm/main"), LogicalPath("runtime/$it/main")) }
+                assertEquals(expectedPrefixes, launch.classpath.take(expectedPrefixes.size))
+                assertTrue(launch.classpath.drop(expectedPrefixes.size).all { it.value.startsWith("deps/") && it.value.endsWith(".jar") })
+                val expectedArtifacts = listOf("public", "private", "hidden", "runtime-private", "library", "only-runtime", "runtime-only")
+                    .map { artifact("g:$it:1", target, "java-runtime").digest }.toSet()
+                assertEquals(expectedArtifacts, prepared.inputs.files.filter { it.path.value.startsWith("deps/") }.map { it.digest }.toSet())
+                assertEquals(setOf("app:jvm:main", "base:jvm:main", "hidden:jvm:main", "runtime:jvm:main"), plan.nodes.single { it.id == terminal }.dependencies)
+            } else {
+                val link = actions.getValue("app:$target:application-link")
+                val spec = NativeCompilation.fromJson(link.parameters)
+                assertEquals(NativeOutput.PROGRAM, spec.produce)
+                assertEquals("fixture.main", spec.entryPoint)
+                assertEquals(modulePathForTest("app", target), spec.includedLibrary)
+                assertEquals(listOf("base", "hidden", "runtime").map { modulePathForTest(it, target) }, spec.libraries.take(3))
+                assertTrue(spec.sources.isEmpty() && spec.plugins.isEmpty())
+                for (name in listOf("public", "private", "hidden", "runtime-private", "library", "only-runtime")) {
+                    assertTrue(link.inputs.files.any { it.digest == artifact("g:$name:1", target, "kotlin-api").digest })
+                }
+                assertEquals(LogicalPath("modules/app/macosArm64/application.kexe"), launch.executable)
+                assertTrue(launch.classpath.isEmpty())
+                assertTrue(prepared.inputs.files.none { it.path.value.endsWith(".klib") || it.path.value.endsWith(".jar") })
+                assertEquals(setOf("app:$target:application-link"), plan.nodes.single { it.id == terminal }.dependencies)
+            }
+        }
+    }
+
+    @Test fun applicationArgumentsEnvironmentAndEntrypointsInvalidateOnlyTheirConsumers() {
+        val (original, files) = applicationFixture()
+        val (changed, _) = applicationFixture { target -> ApplicationSpec(if (target == "jvm") "fixture.MainKt" else "fixture.main", listOf("a", "argument with spaces"), mapOf("SETTING" to "changed")) }
+        assertNotEquals(effectiveConfiguration(original).digest, effectiveConfiguration(changed).digest)
+        assertEquals(effectiveConfiguration(original).requests, effectiveConfiguration(changed).requests)
+        for (target in listOf("jvm", "macosArm64")) {
+            val before = resolved(graph(original, files, request(ProjectMode.APPLICATION, target)))
+            val after = resolved(graph(changed, files, request(ProjectMode.APPLICATION, target)))
+            assertEquals(before.keys, after.keys)
+            for ((id, action) in before) {
+                if (id.endsWith(":application")) assertNotEquals(action.key(Sha256), after.getValue(id).key(Sha256))
+                else assertEquals(action, after.getValue(id), "Run settings changed compiler/link inputs: $id")
+            }
+            assertEquals(resolved(graph(original, files, request(ProjectMode.BUILD, target))), resolved(graph(changed, files, request(ProjectMode.BUILD, target))))
+            assertEquals(resolved(graph(original, files, request(ProjectMode.TEST, target))), resolved(graph(changed, files, request(ProjectMode.TEST, target))))
+            val (differentEntry, _) = applicationFixture { platform -> ApplicationSpec(if (platform == "jvm") "fixture.OtherKt" else "fixture.other") }
+            val entryActions = resolved(graph(differentEntry, files, request(ProjectMode.APPLICATION, target)))
+            assertEquals(before.getValue("app:$target:main"), entryActions.getValue("app:$target:main"))
+            if (target == "macosArm64") assertNotEquals(before.getValue("app:$target:application-link").key(Sha256), entryActions.getValue("app:$target:application-link").key(Sha256))
+        }
+    }
+
+    @Test fun applicationBindingsFollowProducerBytesAndRejectWrongPrerequisites() {
+        val (config, files) = applicationFixture()
+        for (target in listOf("jvm", "macosArm64")) {
+            val plan = graph(config, files, request(ProjectMode.APPLICATION, target))
+            val before = resolved(plan)
+            val changed = resolved(plan, "runtime:$target:main")
+            assertEquals(before.getValue("app:$target:main"), changed.getValue("app:$target:main"))
+            val consumer = if (target == "jvm") "app:$target:application" else "app:$target:application-link"
+            assertNotEquals(before.getValue(consumer).key(Sha256), changed.getValue(consumer).key(Sha256))
+            val terminal = plan.nodes.single { it.id == "app:$target:application" }
+            assertFails { terminal.resolve(emptyMap()) }
+            val results = terminal.dependencies.associateWith { id -> ActionResult(id, digest("key"), ActionStatus.EXECUTED, outputs(before.getValue(id), id), 0) }
+            assertFails { terminal.resolve(results.mapValues { (_, result) -> result.copy(status = ActionStatus.FAILED) }) }
+            assertFails { terminal.resolve(results + ("unrequested" to results.values.first())) }
+            if (target == "jvm") {
+                val withPluginOutput = results.mapValues { (_, result) -> result.copy(outputs = TreeManifest(result.outputs.files +
+                    FileEntry(LogicalPath("plugins/example/report.txt"), digest("plugin-only output")))) }
+                val bundle = terminal.resolve(withPluginOutput)
+                assertTrue(bundle.inputs.files.none { "plugins/" in it.path.value })
+                assertEquals(before.getValue(terminal.id), bundle)
+            }
+            if (target == "macosArm64") {
+                for (bad in listOf(TreeManifest(emptyList()), TreeManifest(listOf(FileEntry(LogicalPath("application.kexe"), digest("program"), false))),
+                    TreeManifest(listOf(FileEntry(LogicalPath("application.kexe"), digest("program"), true), FileEntry(LogicalPath("extra.txt"), digest("extra")))))) {
+                    assertFails { terminal.resolve(results.mapValues { (_, result) -> result.copy(outputs = bad) }) }
+                }
+                val linkChanged = resolved(plan, "app:$target:application-link")
+                assertNotEquals(before.getValue(terminal.id).key(Sha256), linkChanged.getValue(terminal.id).key(Sha256))
+            }
+        }
+    }
+
+    @Test fun applicationUsesExactRuntimeDomainAndDeclaredScopeAndNativeBudget() {
+        val (config, files) = applicationFixture()
+        for (target in listOf("jvm", "macosArm64")) {
+            val usage = if (target == "jvm") "java-runtime" else "kotlin-runtime"
+            val effective = effectiveConfiguration(config)
+            val original = lock(effective)
+            val replacement = artifact("g:library:2", target, usage)
+            val changed = original.copy(selections = original.selections.map { selected ->
+                if (selected.domain == ResolutionDomain("app", target, "main", usage) && selected.selection.requested.name == "library")
+                    selected.copy(selection = selected.selection.copy(artifacts = listOf(replacement))) else selected
+            })
+            val before = resolved(projectActionGraph(effective, original, files, composition, tools, request(ProjectMode.APPLICATION, target)))
+            val after = resolved(projectActionGraph(effective, changed, files, composition, tools, request(ProjectMode.APPLICATION, target)))
+            assertEquals(before.getValue("app:$target:main"), after.getValue("app:$target:main"))
+            val consumer = after.getValue(if (target == "jvm") "app:$target:application" else "app:$target:application-link")
+            assertTrue(consumer.inputs.files.any { it.digest == replacement.digest })
+            assertNotEquals(before.getValue(if (target == "jvm") "app:$target:application" else "app:$target:application-link").key(Sha256), consumer.key(Sha256))
+            val api = if (target == "jvm") "java-api" else "kotlin-api"
+            val apiOnly = effectiveConfiguration(config, scopes = listOf(DependencyScope("app", target, "main", api)))
+            assertFails { projectActionGraph(apiOnly, lock(apiOnly), files, composition, tools, request(ProjectMode.APPLICATION, target)) }
+        }
+        val timed = parseProjectConfiguration(parseJson(config.document.canonical().replace("\"name\":\"macosArm64\"", "\"name\":\"macosArm64\",\"nativeTimeouts\":{\"linkMillis\":600000}")))
+        val actions = resolved(graph(timed, files, request(ProjectMode.APPLICATION, "macosArm64")))
+        assertEquals(600_000L, actions.getValue("app:macosArm64:application-link").timeoutMillis)
+        assertEquals(180_000L, actions.getValue("app:macosArm64:main").timeoutMillis)
+        assertFails { graph(request = request(ProjectMode.APPLICATION)) }
+    }
+
+
     @Test fun nativeTimeoutOverridesBindOnlyTheirCompilerPhaseAndKeepDefaultIdentities() {
         for (kotest in listOf(false, true)) {
             val document = if (kotest) project.document.canonical().replace("\"name\":\"macosArm64\"",

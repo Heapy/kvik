@@ -5,8 +5,9 @@ import kvik.locking.*
 import kvik.compiler.jvm.*
 import kvik.compiler.native.*
 import kvik.compiler.ksp.*
+import kvik.application.applicationBundleAction
 
-enum class ProjectMode { BUILD, TEST }
+enum class ProjectMode { BUILD, TEST, APPLICATION }
 data class JvmTests(val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"))
 data class ProjectGraphRequest(
     val modules: Set<String>,
@@ -58,7 +59,9 @@ private class Builder(
                 else setOf("native", "jdk", "sdk", "native-dependencies")) { "Missing/incompatible tool identities: $target" }
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
-            val usages = if (target == "jvm") if (scope == "test") listOf("java-api", "java-runtime") else listOf("java-api") else if (scope == "test") listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
+            if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
+            val runtime = scope == "test" || this.request.mode == ProjectMode.APPLICATION
+            val usages = if (target == "jvm") if (runtime) listOf("java-api", "java-runtime") else listOf("java-api") else if (runtime) listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
         }
     }
@@ -68,7 +71,11 @@ private class Builder(
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
             ensureMain(module, target)
             val check = "$module:$target:${request.mode.name.lowercase()}"
-            terminals[check] = if (request.mode == ProjectMode.BUILD) mainId(module, target) else ensureTest(module, target)
+            terminals[check] = when (request.mode) {
+                ProjectMode.BUILD -> mainId(module, target)
+                ProjectMode.TEST -> ensureTest(module, target)
+                ProjectMode.APPLICATION -> ensureApplication(module, target)
+            }
         }
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
     }
@@ -261,6 +268,52 @@ private class Builder(
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
+    }
+
+    private fun ensureApplication(module: String, target: String): String {
+        val application = target(module, target).application ?: error("No application settings: $module:$target")
+        val runtimeDependencies = closure(module, target, "main", true).modules
+        runtimeDependencies.forEach { ensureMain(it, target) }
+        val runtimeIds = listOf(module) + runtimeDependencies
+        val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-runtime" else "kotlin-runtime"), target)
+        val resource = runtimeIds.flatMap { resources(it, target, "main") }
+        val id = "$module:$target:application"
+        if (target == "jvm") {
+            val edges = runtimeIds.map { mainId(it, target) }.toSet()
+            nodes[id] = ActionNode(id, edges) { results ->
+                validateResults(results, edges)
+                val classes = runtimeIds.flatMap { remap(results, it, target, "main") }
+                val classpath = runtimeIds.flatMap { producer -> listOfNotNull(modulePath(producer, target, "main"),
+                    LogicalPath("runtime/$producer/main").takeIf { root -> resource.any { it.path.value.startsWith(root.value + "/") } }) } + artifacts.map { it.path }
+                applicationBundleAction(ApplicationLaunch(module, target, application, classpath),
+                    merge(classes, resource, artifacts), composition, tools.getValue(target))
+            }
+        } else {
+            val linkId = "$module:$target:application-link"
+            val linkEdges = runtimeIds.map { mainId(it, target) }.toSet()
+            val options = options(module, target, "main", mainSources.getValue(module to target))
+            nodes[linkId] = ActionNode(linkId, linkEdges) { results ->
+                validateResults(results, linkEdges)
+                val libraries = runtimeIds.flatMap { remap(results, it, target, "main") }
+                nativeCompileAction(NativeCompilation(module, emptyList(), libraries = runtimeDependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
+                    output = LogicalPath("application.kexe"), produce = NativeOutput.PROGRAM, moduleName = options.nativeModuleName,
+                    warningsAsErrors = options.warningsAsErrors, includedLibrary = modulePath(module, target, "main"), entryPoint = application.entryPoint),
+                    merge(libraries, artifacts), composition, tools.getValue(target), timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
+            }
+            nodes[id] = ActionNode(id, setOf(linkId)) { results ->
+                validateResults(results, setOf(linkId))
+                val linked = results.getValue(linkId).outputs.files
+                require(linked.any { it.path.value == "application.kexe" && it.executable } && linked.all {
+                    it.path.value == "application.kexe" || it.path.value.startsWith("application.kexe.dSYM/")
+                }) { "Unexpected Native application output" }
+                val prefix = "modules/$module/$target/"
+                val executable = LogicalPath(prefix + "application.kexe")
+                val program = linked.map { it.copy(path = LogicalPath(prefix + it.path.value)) }
+                applicationBundleAction(ApplicationLaunch(module, target, application, executable = executable),
+                    merge(program, resource), composition, tools.getValue(target))
+            }
+        }
+        return id
     }
 
     private fun ensureTest(module: String, target: String): String {
