@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import pty
 import queue
+import select
 import shutil
 import signal
 import subprocess
@@ -151,15 +152,23 @@ else:
             self.wait('operation-started');deadline=time.monotonic()+5
             while not (self.path/'descendant.pid').exists() and time.monotonic()<deadline:time.sleep(.01)
             assert (self.path/'descendant.pid').exists();self.tracked.update(descendants(self.pid))
-        def finish(self,reason='q',expected=0):
+        def finish(self,reason='q',expected=0,queued=b'',during_shutdown=b''):
             self.tracked.update(descendants(self.pid));start=time.monotonic()
-            if reason=='q':self.key(b'q')
-            elif reason=='ctrl-d':self.key(b'\x04')
+            if reason=='q':self.key(b'q'+queued)
+            elif reason=='ctrl-d':self.key(b'\x04'+queued)
             elif reason=='ctrl-c':self.key(b'\x03');expected=130
             elif reason=='term':os.kill(self.pid,signal.SIGTERM);expected=130
             elif reason=='kill':os.kill(self.pid,signal.SIGKILL);expected=-9
+            if during_shutdown:
+                self.wait('closing')
+                assert not any(e['type']=='operation-finished' for e in self.events), 'Child completion must still be pending'
+                self.key(during_shutdown)
             self.proc.stdin.write('wait\n');self.proc.stdin.flush();assert self.line('exit')=='exit '+str(expected)
             after=self.line('state');assert after==self.before,(self.before,after)
+            preserved=queued+during_shutdown
+            if preserved:
+                assert select.select([self.slave],[],[],1)[0], 'Queued terminal input disappeared'
+                assert os.read(self.slave,4096)==preserved, 'Session consumed terminal input after shutdown began'
             elapsed=time.monotonic()-start;assert elapsed<4,elapsed
             self.proc.stdin.write('end\n');self.proc.stdin.flush();os.close(self.master);os.close(self.slave)
             self.proc.wait(timeout=5);self.thread.join(timeout=5);self.log.close();self.error.close()
@@ -167,7 +176,7 @@ else:
                 deadline=time.monotonic()+5
                 while alive(pid) and time.monotonic()<deadline:time.sleep(.01)
                 assert not alive(pid),('surviving owned process',pid)
-            results.append(dict(case=self.path.name,seconds=elapsed,pid=self.pid,original=self.before,restored=after))
+            results.append(dict(case=self.path.name,seconds=elapsed,pid=self.pid,original=self.before,restored=after,preservedInput=preserved.decode()))
             print('PASS',self.path.name,round(elapsed,3),flush=True)
     def cleanup():
         for session in sessions:
@@ -184,6 +193,9 @@ else:
         session=Session(reason);session.busy();session.key(b'rt?')
         status=session.wait('control',lambda e:e['payload']['command']=='?');assert status['payload']['pending']=='test'
         assert 'immediate' in status['payload']['help'];session.finish(reason)
+    for reason in ('q','ctrl-d'):
+        session=Session('queued-after-'+reason);session.busy();session.finish(reason,queued=b'kept\n')
+        session=Session('queued-during-'+reason+'-cancellation');session.busy();session.finish(reason,during_shutdown=b'after\n')
     first,second=Session('independent-a'),Session('independent-b');first.busy();second.busy();first.finish()
     second.key(b'?');second.wait('control');second.finish()
     session=Session('handoff',mode='fast',descriptor=True);session.wait('operation-finished')

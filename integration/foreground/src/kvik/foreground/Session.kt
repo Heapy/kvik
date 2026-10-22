@@ -112,8 +112,10 @@ class ForegroundSession(
             "active" to (operation?.operation?.command?.json() ?: JsonValue.Null), "pending" to (pending.pending?.command?.json() ?: JsonValue.Null)))
     }
     private fun pollInput() = memScoped {
+        if (closing != null) return@memScoped
         val buffer = allocArray<ByteVar>(4096)
-        when (val count = kvik_foreground_read(boundary, buffer, 4096)) {
+        // Leave bytes after a raw quit/EOF key in the terminal for its next owner.
+        when (val count = kvik_foreground_read(boundary, buffer, if (keys) 1 else 4096)) {
             -4 -> stop("terminal-failure")
             -3 -> stop("parent-exit")
             -2 -> stop("end-of-input")

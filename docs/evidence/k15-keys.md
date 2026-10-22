@@ -109,6 +109,22 @@ slot. No successful public-gate result is implied by the prepared harness.
 The first integration-probe compile found a test-only POSIX `read` size literal
 type error; it was corrected to `1uL` before the passing run. No test was weakened.
 
+Independent review subsequently exposed a gap between the C boundary probe and
+the Native controller: the C probe read one key, while the controller read up to
+4,096 bytes and discarded bytes after q/Ctrl-D. Continued polling during child
+cancellation could consume later terminal input too. The actual Native regression
+fails against the original retained binary with `Queued terminal input disappeared`
+after atomically sending `qkept\n`; review evidence is retained under
+`.kvik/tests/foreground-keys/review-queued-895wta6f/result.json`.
+The narrow follow-up reads one byte in keys mode and stops input polling once
+closing begins. Four Native regressions check q/Ctrl-D with queued input and input
+arriving during cancellation of a previously active child. The rebuilt actual Native
+suite passes all seven protocol tests and fourteen PTY cases, including all four
+new regressions, at `.kvik/tests/foreground-keys/native-o9a56rim/summary.json`.
+The original failing run and the independent review reproduction remain retained.
+The C guardian is unchanged by this follow-up, so its already-passing nineteen
+boundary cases were not redundantly rebuilt for this controller-only fix.
+
 ## Boundaries
 
 The guardian restores using TCSANOW, never an input flush. On Darwin a nonconsuming
