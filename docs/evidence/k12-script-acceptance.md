@@ -161,9 +161,9 @@ The latter independently confirms the owner-loss first table still held four liv
 owned descendants, followed by bounded cleanup; no ordinary terminal claim uses
 that exception.
 
-Source-only extension preparation adds published serialization, successful workspace
-plugin-option/helper invalidation, and two Git worktrees sharing a CAS. These are
-pending actual execution on the refreshed composed runtime. The original phase
+The source-only extension freeze added published serialization, successful
+workspace plugin-option/helper invalidation, and two Git worktrees sharing a CAS.
+They were pending at that freeze; the actual results follow below. The original phase
 receipts remain bound to their original frozen harness and runtime.
 
 Extension source freeze `a82b24e` passed 14 light checks (11 central harness and
@@ -173,3 +173,68 @@ SHA-256 `7570c6b51a84fd708ac479e7135a3731c6fb072ad07f20b2b75e388ec8808e5f`.
 These checks forbid process launches during preparation and challenge substituted
 extension source and lost/replaced survivor processes. They do not prove actual
 shared-worktree execution.
+
+## Completed refreshed-runtime extension phases
+
+Frozen harness `3adf54a` (including the reviewed peer module correction) ran the
+following phases against runtime A composition
+`2f5b5ccdd270b064b4829fb631b18187b1aff5cc300e771036e89c6894f70e53`.
+Both this runtime and alternate B composition
+`a42334fed9e958864b3f949c650d398bbe4ce388fce183c32edd13be0b3608a6`
+were bound from the first invocation. B was not executed by these phases.
+Case: `/private/tmp/kvik-k12-script-acceptance/.kvik/tests/scripts-cli/case-pics68_s`.
+
+The first published attempt (`82650`, `published-h0om6fxj`) stopped at a harness
+policy mismatch after four successful serializer executions: it expected offline
+resolve to update the lock after a configuration change. Production correctly
+returned `KVIK_LOCK_INVALID`, with the exact stale-configuration diagnostic. All
+original commands, streams, partial successful runs and `failure.json` remain.
+The reviewed correction explicitly proves offline refusal without writes, performs
+an explicit resolve, then checks the resulting lock offline. The retry began a
+fresh phase directory; it did not synthesize a continuation of the failed attempt.
+
+Published retry `93917` exited 0. `published-74g94ekw/summary.json` is SHA-256
+`5b40b907f792e43639850be1a772d527479addb5beb1cb4673d2f2c7da69d596`
+(105,212 bytes), binding 414 files, 25 commands and eight run records. Five actual
+fresh effects prove generated serializer execution. Exact pinned runtime/plugin
+artifacts, complete classpaths and CAS bytes, offline warm reuse, source/helper
+invalidation, missing-plugin compilation failure, specific options/version
+refusals and restored cache reuse all passed. Published plugin options remain
+unsupported and are explicitly tested as refusals. Independent read-only audit:
+`/private/tmp/kvik-script-published-audit-xjzxs0tr/report.json`, SHA-256
+`f14de7640ed7b383d75943be136c69a61f1a97e210b3b56a803d6e7be1bc56ff`.
+
+Named invalidation `29626` exited 0. `named-invalidation-mbxgybgx/summary.json` is
+SHA-256 `9ac4439d8d913f877352cd8664a88951849faca4c6a9f1c94bdc8f1b52c1a472`
+(210,870 bytes), binding 689 files, ten commands and five fresh successful runs.
+The workspace plugin accepts changed options and produces the exact changed
+report while module compilations remain cache hits. A helper body change affects
+helper/producer/script compilation. An independent ordinary library body change,
+with exact unchanged configuration and dependency-lock bytes, changes library
+output bytes plus library/script compilation keys; other module keys and hits
+remain unchanged. Program output reflects each change. Final compilation reuses
+all seven eligible compile records and still executes the script freshly.
+
+Concurrency `86618` exited 0. `concurrency-hw6hta69/summary.json` is SHA-256
+`c592dc584a8f18e109d75af648644daa89a55c640ceb481942a39f122760676c`
+(59,256 bytes), binding 247 files including two child summaries, six run records
+and all eight actual CLI invocation streams/commands. Fixture-only Git revision
+`29514511edc6c2b39e947d8f7c59419344770c8c` was checked out into two detached worktrees.
+They share a CAS but have separate configuration locks, run directories and effects.
+The relocated warm compile uses the same key
+`c15523fe9f1728956cf9285a3396f0dc3025d399a6c5442a47c76fd73edf10e8`.
+Both live invocation trees were captured: ten PIDs including two guardians and
+separate application process groups. After cancelling A, its first terminal table
+is drained while B's exact captured tree remains alive. Only then is B released
+through its own project-local file and allowed to complete normally. Both worktrees
+subsequently execute freshly using cached compilation. This proves warm shared-CAS
+cancellation isolation, not simultaneous cold cache publication contention.
+
+The complete final extension source passed 18 light checks (12 central, three
+published and three compiler-identity guards), receipt
+`light-offline-policy-k0put5is/receipt.json`, SHA-256
+`c51d5922783406cc1c45eb5a1ef0e30c55052ad22cf2be467c5a1afb6d423f55`.
+The compiler-identity phase remains unexecuted: the A/B legacy bootstrap receipts
+bind source, launcher invocation/events and artifacts but do not capture complete
+compiler subprocess argv/environment. That required provenance remains pending;
+the bounded source/order audit does not replace it or establish full K12 completion.

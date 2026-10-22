@@ -131,12 +131,11 @@ catalog invalidation and rejection of a private transitive import. Lifecycle cov
 timeout, SIGINT, SIGTERM and owner SIGKILL with captured descendants. See the separate
 acceptance evidence for exact commands and observations.
 
-Remaining explicit K12 gates include an actual serialization compiler-plugin script
-with locked external dependencies and offline reuse, independent source/helper,
-compiler identity and plugin-option invalidation, and concurrent-worktree isolation.
 The standalone phase above has no external dependency; the workspace plugin is not
-the published serialization compiler plugin. Full installed tool inventories and
-historical filesystem no-write assertions have the limits described in the audit.
+the published serialization compiler plugin. Subsequent extension results below cover
+those additional cases. Compiler-identity execution with complete build provenance
+remains pending. Full installed tool inventories and historical filesystem no-write
+assertions have the limits described in the audits.
 
 ## Published-plugin diagnostic follow-up
 
@@ -165,3 +164,43 @@ Executable SHA-256:
 (5,585,480 bytes). The guardian digest is unchanged from the prior runtime. This
 build establishes the executable for the next published-plugin acceptance phase;
 it does not itself prove consumer compilation or execution.
+
+## Reviewed extension acceptance
+
+Runtime `2f5b5c…` subsequently passed published serialization, independent invalidation
+and concurrent-worktree phases in
+`/private/tmp/kvik-k12-script-acceptance/.kvik/tests/scripts-cli/case-pics68_s`.
+The frozen acceptance source was `3adf54a`; detailed commands, summary digests and
+scope are in [the acceptance evidence](k12-script-acceptance.md).
+
+- Published serialization: direct generated `Payload.serializer()` use, exact plugin/
+  runtime classpaths and locked artifact bytes, offline compile reuse, source/helper
+  invalidation, plugin removal failure, specific unsupported-options/version diagnostics,
+  restored lock/cache reuse and five fresh UUID effects. Independent audit:
+  `/private/tmp/kvik-script-published-audit-xjzxs0tr/report.json`, SHA-256
+  `f14de7640ed7b383d75943be136c69a61f1a97e210b3b56a803d6e7be1bc56ff`.
+- Named invalidation: changing plugin options, helper implementation and ordinary
+  library implementation invalidated the expected compilations. The library change
+  preserved configuration and lock bytes and left unrelated module actions as hits.
+  Independent audit: `/private/tmp/kvik-script-named-invalidation-audit-rywh6p83/report.json`,
+  SHA-256 `4498a58a8f9c2ae40c0d65b08d0cc8e1c3830c3ce5e33e6cbcb0acbdd2fdc7e0`.
+- Concurrency: two real Git worktrees shared compilation CAS but retained distinct
+  run roots and effects. Both process trees were observed live together; cancelling
+  one drained it before the surviving tree was released to finish normally. Both
+  later reran with cached compilation and fresh effects. Independent audit:
+  `/private/tmp/kvik-script-concurrency-audit-kls3w19a/report.json`, SHA-256
+  `feb75c78300bde8f20244206ed40bd62a31de063ce9779099351f02b86f154ae`.
+  This covers warm shared-cache isolation, not concurrent cold publication.
+
+The first published attempt remains a failed harness case: it incorrectly expected
+`resolve-script --offline` to replace a stale lock. The corrected attempt asserts
+offline refusal without writes, explicitly resolves the changed configuration and
+then checks/runs offline. It does not reinterpret that failure as a pass.
+
+The ordered compiler-distribution variant has separately verified original artifact
+bytes and source/build identities. Its actual public execution gate is still held
+until the requested bootstrap compiler-command/environment traces are retained.
+The trace helper delegates synchronously to the unchanged owned-process boundary;
+its environment is labeled as the requested compiler environment, before the guardian
+adds reserved transport metadata. Trace records must bind new builds, never earlier
+executables. Full K12 completion remains unclaimed.
