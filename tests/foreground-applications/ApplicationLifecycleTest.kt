@@ -10,9 +10,11 @@ class ApplicationLifecycleTest {
         var result: ProcessResult? = null
         var cancels = 0
         var closed = false
-        override fun poll() = result
+        var pollFailure: Exception? = null
+        var closeFailure: Exception? = null
+        override fun poll(): ProcessResult? { pollFailure?.let { throw it }; return result }
         override fun cancel() { cancels++ }
-        override fun close() { check(result != null); closed = true }
+        override fun close() { check(result != null); closeFailure?.let { throw it }; closed = true }
         fun finish(code: Int = 0) { result = ProcessResult(code, cancelled = cancels > 0) }
     }
     private class Host : ProcessHost {
@@ -132,6 +134,35 @@ class ApplicationLifecycleTest {
         val wrong = f.ready(prepared = old.copy(verification = Sha256.digest("other".encodeToByteArray())))
         assertNotEquals(old.token, wrong.token)
         f.tick(); assertFalse(f.activated()); assertTrue(f.host.processes.last().cancels > 0)
+    }
+    @Test fun missingOrMalformedOldOwnerAcknowledgementCannotAuthorizeReplacement() = fixture { f ->
+        f.active(); f.start(); f.ready(); f.tick()
+        val failure = IllegalStateException("Missing owned cleanup acknowledgement")
+        f.host.processes[0].pollFailure = failure
+        assertSame(failure, assertFails { f.tick() })
+        assertFalse(f.activated(1)); assertTrue(f.lifecycle.busy)
+    }
+    @Test fun failedOldOwnerCloseCannotAuthorizeReplacement() = fixture { f ->
+        f.active(); f.start(); f.ready(); f.tick(); f.host.processes[0].finish()
+        val failure = IllegalStateException("Owned cleanup not established")
+        f.host.processes[0].closeFailure = failure
+        assertSame(failure, assertFails { f.tick() })
+        assertFalse(f.activated(1)); assertTrue(f.lifecycle.busy)
+    }
+    @Test fun allSessionCleanupRunsAndRetainsOriginalFailure() {
+        val order = mutableListOf<String>()
+        val primary = IllegalStateException("protocol")
+        val host = IllegalStateException("host close")
+        val terminal = IllegalStateException("terminal restore")
+        closeSessionResources(primary, { order += "host"; throw host }, { order += "journal" }, { order += "terminal"; throw terminal })
+        assertEquals(listOf("host", "journal", "terminal"), order)
+        assertEquals(listOf(host, terminal), primary.suppressedExceptions)
+        order.clear()
+        assertSame(host, assertFails {
+            closeSessionResources(null, { order += "host"; throw host }, { order += "journal" }, { order += "terminal"; throw terminal })
+        })
+        assertEquals(listOf("host", "journal", "terminal"), order)
+        assertEquals(listOf(terminal), host.suppressedExceptions)
     }
     @Test fun twoOwnersNeverActivateOrCancelEachOthersCandidates() = fixture { first -> fixture { second ->
         first.active(); second.active(); first.start(); first.ready(); first.tick()

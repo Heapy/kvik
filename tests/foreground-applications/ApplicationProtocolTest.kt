@@ -5,7 +5,7 @@ import kotlin.test.*
 
 class ApplicationProtocolTest {
     private val digest = Digest("a".repeat(64), 42)
-    private val launchBytes = obj("schemaVersion" to 1.json(), "sourceRoot" to "/source".json(),
+    private val launchBytes = obj("schemaVersion" to 1.json(), "processOwnershipVersion" to 1.json(), "sourceRoot" to "/source".json(),
         "python" to "/python".json(), "launcher" to "/source/kvik".json(),
         "bootstrapArguments" to listOf("--konan-data", "/data", "--cache-dir", "/cache", "--artifact-cache", "/artifacts", "--offline").map { it.json() }.json(),
         "composition" to digest.toJson(), "runtime" to "/cache/executables/${digest.hash}/kvik.kexe".json()).canonical().encodeToByteArray()
@@ -49,13 +49,33 @@ class ApplicationProtocolTest {
         val legacy = state().copy(mode = SessionMode.LIBRARY)
         assertFails { SessionResume.parse(legacy.toJson().canonical().encodeToByteArray()) }
     }
+    @Test fun bootstrapBridgeCapabilityCannotBeInferredFromRuntimeResumeSupport() {
+        val current = BootstrapLaunch.parse(launchBytes)
+        current.requireApplicationOwnership()
+        val fields = parseJson(launchBytes.decodeToString()).objectValue()
+        val legacyBytes = JsonValue.Object(fields - "processOwnershipVersion").canonical().encodeToByteArray()
+        val legacy = BootstrapLaunch.parse(legacyBytes)
+        assertNull(legacy.processOwnershipVersion)
+        assertFails { legacy.requireApplicationOwnership() }
+        assertFails { legacy.requireReplacement(current, digest) }
+        assertFails { current.requireReplacement(legacy, digest) }
+        assertFails { SessionResume.parse(state().copy(launchBytes = legacyBytes).toJson().canonical().encodeToByteArray()) }
+        for (invalid in listOf(0.json(), 2.json(), "1".json(), JsonValue.Null, true.json())) {
+            assertFails { BootstrapLaunch.parse(JsonValue.Object(fields + ("processOwnershipVersion" to invalid)).canonical().encodeToByteArray()) }
+        }
+    }
     @Test fun applicationCapabilityRequiredEvenWithoutTerminalLease() {
         val selected = BootstrapLaunch.parse(launchBytes)
         fun capabilities(versions: List<Int>) = obj("schemaVersion" to 1.json(), "composition" to digest.toJson(),
-            "runtime" to selected.runtime.json(), "resumeVersions" to versions.map { it.json() }.json(),
+            "runtime" to selected.runtime.json(), "processOwnershipVersion" to 1.json(), "resumeVersions" to versions.map { it.json() }.json(),
             "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to "macos-arm64".json(), "sizeBytes" to 256.json())).canonical().encodeToByteArray()
         assertFails { requireSessionCapabilities(capabilities(listOf(1, 2)), selected, 3) }
         requireSessionCapabilities(capabilities(listOf(1, 2, 3)), selected, 3)
+        val complete = parseJson(capabilities(listOf(1, 2, 3)).decodeToString()).objectValue()
+        for (ownership in listOf(null, 0.json(), 2.json(), "1".json())) {
+            val changed = JsonValue.Object((complete - "processOwnershipVersion") + if (ownership == null) emptyMap() else mapOf("processOwnershipVersion" to ownership))
+            for (lease in listOf(null, 256)) assertFails { requireSessionCapabilities(changed.canonical().encodeToByteArray(), selected, 3, lease) }
+        }
         requireSessionCapabilities(capabilities(listOf(1, 2, 3)), selected, 3, 256)
         assertFails { requireSessionCapabilities(capabilities(listOf(1, 2, 3)), selected, 3, 512) }
     }

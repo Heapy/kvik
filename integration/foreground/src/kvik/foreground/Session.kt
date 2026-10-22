@@ -9,6 +9,16 @@ import kvik.execution.platform.*
 import platform.posix.*
 import kotlin.time.TimeSource
 
+/** Each cleanup boundary runs even when another fails; the original session failure remains primary. */
+internal fun closeSessionResources(primary: Throwable?, closeOwned: () -> Unit, closeJournal: () -> Unit, restoreTerminal: () -> Unit) {
+    var cleanup: Throwable? = null
+    for (close in listOf(closeOwned, closeJournal, restoreTerminal)) try { close() } catch (failure: Throwable) {
+        if (primary != null) primary.addSuppressed(failure)
+        else if (cleanup == null) cleanup = failure else cleanup.addSuppressed(failure)
+    }
+    if (primary == null) cleanup?.let { throw it }
+}
+
 /** No compiler, source hashing, tool verification, or dependency resolution runs on this loop. */
 class ForegroundSession(
     private val host: ProcessHost,
@@ -37,7 +47,11 @@ class ForegroundSession(
     initialIntents: List<Operation>? = null,
     preparedApplication: ApplicationReady? = null,
 ) {
-    init { require(!keys || !jsonControls); require(inheritedTerminalLease == null || keys) }
+    init {
+        require(!keys || !jsonControls); require(inheritedTerminalLease == null || keys)
+        if (mode == SessionMode.APPLICATION) bootstrap?.requireApplicationOwnership()
+        require(mode != SessionMode.APPLICATION || kvik_process_ownership_version() == 1) { "Application sessions require recursive process ownership version 1" }
+    }
     private val pending = PendingOperation(initial, mode, initialIntents)
     private val applications = if (mode == SessionMode.APPLICATION) ApplicationLifecycle(host, directory, workingDirectory, arguments,
         checkNotNull(applicationModule), checkNotNull(applicationTarget), ::event) else null
@@ -242,7 +256,7 @@ class ForegroundSession(
         if (closing != null || runtime == null || composition == null || observedRuntime != runtime || !observedOnce || operation != null || apps.preparing) return
         if (!gate) {
             val attempt = composition to revision
-            if (observed != null && attempt != replacementAttempt) {
+            if (observed != null && !watchPending && attempt != replacementAttempt) {
                 replacementAttempt = attempt
                 pending.remove(Operation.APPLICATION)
                 generation++
@@ -266,6 +280,7 @@ class ForegroundSession(
         check(kvik_interrupt_install() == 0) { "Cannot install session interrupt handler" }
         val previousPipe = signal(SIGPIPE, SIG_IGN)
         if (resumed) kvik_foreground_resume_signals()
+        var primaryFailure: Throwable? = null
         try {
             boundary = if (keys) {
                 if (inheritedTerminalLease != null) kvik_foreground_resume_keys(inheritedTerminalLease) else kvik_foreground_open_keys(terminalGuardian)
@@ -337,16 +352,23 @@ class ForegroundSession(
             // Never wait indefinitely for a disconnected or non-reading stdout consumer.
             while (output.isNotEmpty() && now() - closingAt < 1000) { flushOutput(); usleep(10_000u) }
             return if (closing == "signal" || closing == "parent-exit") 130 else if (closing in setOf("quit", "end-of-input")) 0 else 1
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
         } finally {
-            try {
-                host.close()
-                if (journal >= 0) { fsync(journal); close(journal) }
-            } finally {
+            closeSessionResources(primaryFailure, { host.close() }, {
+                if (journal >= 0) {
+                    val descriptor = journal; journal = -1
+                    val syncResult = fsync(descriptor); val syncError = errno
+                    val closeResult = close(descriptor); val closeError = errno
+                    check(syncResult == 0 && closeResult == 0) { "Session journal cleanup failed (fsync=$syncError, close=$closeError)" }
+                }
+            }, {
                 val restored = kvik_foreground_close_checked(boundary)
                 val restoreError = errno
                 kvik_interrupt_restore(); signal(SIGPIPE, previousPipe)
                 check(restored == 0) { "Terminal restoration failed (errno=$restoreError)" }
-            }
+            })
         }
     }
 }

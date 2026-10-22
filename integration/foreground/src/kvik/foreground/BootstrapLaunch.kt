@@ -14,6 +14,7 @@ class BootstrapLaunch private constructor(
     private val arguments: List<String>,
     val composition: Digest,
     val runtime: String,
+    val processOwnershipVersion: Int?,
 ) {
     /** Invoke this argv directly through the owned process host, never a shell. */
     fun command(query: BootstrapQuery): List<String> = listOf(python, launcher) + arguments + query.argument
@@ -24,10 +25,14 @@ class BootstrapLaunch private constructor(
         }
     }
 
+    fun requireApplicationOwnership() {
+        require(processOwnershipVersion == 1) { "Application recomposition requires bootstrap process ownership version 1" }
+    }
+
     /** A query may select new sources, but must not change invocation policy or source ownership. */
     fun requireReplacement(previous: BootstrapLaunch, expectedComposition: Digest) {
         require(sourceRoot == previous.sourceRoot && python == previous.python && launcher == previous.launcher &&
-            arguments == previous.arguments && composition == expectedComposition) {
+            arguments == previous.arguments && processOwnershipVersion == previous.processOwnershipVersion && composition == expectedComposition) {
             "Bootstrap replacement does not match the requested composition and launch policy"
         }
     }
@@ -39,7 +44,7 @@ class BootstrapLaunch private constructor(
         fun parse(bytes: ByteArray): BootstrapLaunch {
             require(bytes.size <= 32 * 1024) { "Bootstrap launch context exceeds 32 KiB" }
             val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(
-                setOf("schemaVersion", "sourceRoot", "python", "launcher", "bootstrapArguments", "composition", "runtime"))
+                setOf("schemaVersion", "sourceRoot", "python", "launcher", "bootstrapArguments", "composition", "runtime"), setOf("processOwnershipVersion"))
             fields.requireVersion()
             val root = absolute(fields.getValue("sourceRoot").stringValue())
             val python = absolute(fields.getValue("python").stringValue())
@@ -71,7 +76,10 @@ class BootstrapLaunch private constructor(
             require(runtime == child(paths.getValue("--cache-dir"), "executables/${composition.hash}/kvik.kexe")) {
                 "Bootstrap runtime path does not match its cache and composition"
             }
-            return BootstrapLaunch(root, python, launcher, arguments, composition, runtime)
+            val ownership = fields["processOwnershipVersion"]?.longValue()?.also {
+                require(it == 1L) { "Unsupported bootstrap process ownership version" }
+            }?.toInt()
+            return BootstrapLaunch(root, python, launcher, arguments, composition, runtime, ownership)
         }
 
         fun parseComposition(bytes: ByteArray): Digest {

@@ -11,12 +11,16 @@ fun requireKeySessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, l
 fun requireSessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, version: Int, leaseBytes: Int? = null) {
     require(bytes.size <= 8192) { "Session capabilities exceed 8 KiB" }
     val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(
-        setOf("schemaVersion", "composition", "runtime", "resumeVersions", "terminalLease"))
+        setOf("schemaVersion", "composition", "runtime", "resumeVersions", "terminalLease"), setOf("processOwnershipVersion"))
     fields.requireVersion()
     require(Digest.fromJson(fields.getValue("composition")) == selected.composition &&
         fields.getValue("runtime").stringValue() == selected.runtime) { "Session capability composition/runtime mismatch" }
     val versions = fields.getValue("resumeVersions").arrayValue().map { it.longValue() }
     require(versions.size <= 8 && versions.all { it > 0 } && versions.distinct().size == versions.size && version.toLong() in versions) { "Replacement cannot resume session version $version" }
+    if (version >= 3) selected.requireApplicationOwnership()
+    val ownership = fields["processOwnershipVersion"]?.longValue()
+    require(ownership == null || ownership == 1L) { "Unsupported recursive process ownership capability" }
+    if (version >= 3) require(ownership == 1L) { "Replacement lacks recursive process ownership version 1" }
     val terminal = fields.getValue("terminalLease").fields(setOf("schemaVersion", "platform", "sizeBytes"))
     terminal.requireVersion()
     val size = terminal.getValue("sizeBytes").longValue()

@@ -126,7 +126,7 @@ def main():
                 launcher = self.root/'kvik'
                 launcher.write_text("import json,pathlib,sys\np=pathlib.Path(__file__).parent\nkey=(p/'desired').read_text()\nif (p/'bootstrap-failure').exists():sys.exit(1)\nv=json.loads((p/'launch.json').read_text());v['composition']={'hash':key,'sizeBytes':42};v['runtime']=str(p/'cache/executables'/key/'kvik.kexe')\nprint(json.dumps({'schemaVersion':1,'composition':v['composition']} if '--print-composition' in sys.argv else v))\n")
                 (self.root/'desired').write_text(self.key)
-                launch=dict(schemaVersion=1,sourceRoot=str(self.root),python=sys.executable,launcher=str(launcher),
+                launch=dict(schemaVersion=1,processOwnershipVersion=1,sourceRoot=str(self.root),python=sys.executable,launcher=str(launcher),
                             bootstrapArguments=['--konan-data',str(self.root/'konan'),'--cache-dir',str(self.cache),'--artifact-cache',str(self.root/'artifacts'),'--offline'],
                             composition=dict(hash=self.key,sizeBytes=42),runtime=command[0])
                 write(self.root/'launch.json',launch); command.append(str(self.root/'launch.json'))

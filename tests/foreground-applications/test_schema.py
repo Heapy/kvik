@@ -32,4 +32,21 @@ class SchemaTest(unittest.TestCase):
             value=dict(schemaVersion=1,sessionId='s',sequence=1,type=kind,payload=payload);validator.validate(value)
             invalid=copy.deepcopy(value);del invalid['payload']['composition'];self.assertFalse(validator.is_valid(invalid))
 
+    def test_bootstrap_ownership_is_optional_for_library_and_required_for_application(self):
+        launch=dict(schemaVersion=1,sourceRoot='/source',python='/python',launcher='/source/kvik',
+            bootstrapArguments=['--konan-data','/data','--cache-dir','/cache','--artifact-cache','/artifacts'],
+            composition=dict(hash='a'*64,sizeBytes=42),runtime='/cache/executables/'+'a'*64+'/kvik.kexe')
+        validator=jsonschema.Draft202012Validator(json.loads((ROOT/'schemas/v1/bootstrap-launch.json').read_text()))
+        validator.validate(launch)
+        launch['processOwnershipVersion']=1;validator.validate(launch)
+        for invalid in (None,0,2,'1',True):
+            changed=copy.deepcopy(launch);changed['processOwnershipVersion']=invalid
+            self.assertFalse(validator.is_valid(changed))
+        resume=dict(schemaVersion=3,directory='/next',previousDirectory='/old',workingDirectory='/project',arguments=[],
+            jsonControls=True,watchMillis=500,pending='application',watched='application',partialInput=[],launch=launch,
+            mode='application',pendingIntents=['application'],preparedApplication=None,applicationModule='app',applicationTarget='jvm')
+        validator=jsonschema.Draft202012Validator({**SCHEMA,'$ref':'#/$defs/resume'},registry=REGISTRY)
+        validator.validate(resume)
+        del resume['launch']['processOwnershipVersion'];self.assertFalse(validator.is_valid(resume))
+
 if __name__=='__main__':unittest.main()

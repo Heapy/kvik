@@ -29,6 +29,7 @@
         "python": {"$ref": "#/$defs/path"},
         "launcher": {"$ref": "#/$defs/path"},
         "runtime": {"$ref": "#/$defs/path"},
+        "processOwnershipVersion": {"type": "integer", "const": 1},
         "composition": {"$ref": "#/$defs/digest"},
         "bootstrapArguments": {
           "type": "array", "minItems": 6, "maxItems": 18,

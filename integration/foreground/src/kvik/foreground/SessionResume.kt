@@ -59,7 +59,8 @@ data class SessionResume(
             require(partial.size <= 4096 && partial.none { it.toInt() == 10 }) { "Invalid partial control line" }
             val interval = fields.getValue("watchMillis").longValue().also { require(it in 100..60_000) }
             val launch = fields.getValue("launch").canonical().encodeToByteArray()
-            BootstrapLaunch.parse(launch)
+            val launchContext = BootstrapLaunch.parse(launch)
+            if (version == 3L) launchContext.requireApplicationOwnership()
             val terminal = if ("terminalLease" !in fields) null else fields.getValue("terminalLease").fields(setOf("schemaVersion", "platform", "state")).let { lease ->
                 lease.requireVersion()
                 require(lease.getValue("platform").stringValue() == "macos-arm64") { "Unsupported terminal lease platform" }
@@ -86,7 +87,7 @@ data class SessionResume(
             val target = if (version == 3L) fields.getValue("applicationTarget").stringValue().also { require(it in setOf("jvm", "macosArm64")) } else null
             if (version == 3L) {
                 require(watched == Operation.APPLICATION && pending == (intents.firstOrNull() ?: Operation.APPLICATION))
-                prepared?.let { require(it.module == module && it.target == target && it.composition == BootstrapLaunch.parse(launch).composition) }
+                prepared?.let { require(it.module == module && it.target == target && it.composition == launchContext.composition) }
             }
             return SessionResume(path("directory"), path("previousDirectory"), path("workingDirectory"), arguments,
                 fields.getValue("jsonControls").booleanValue(), interval, pending, watched, partial, launch, terminal, mode, intents, prepared, module, target)

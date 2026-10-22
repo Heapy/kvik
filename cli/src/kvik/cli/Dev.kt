@@ -4,6 +4,7 @@ package kvik.cli
 import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.execution.platform.kvik_foreground_terminal_lease_bytes
+import kvik.execution.platform.kvik_process_ownership_version
 import kvik.execution.NativeRunDirectory
 import kvik.foreground.*
 import platform.posix.*
@@ -12,7 +13,7 @@ internal fun devCommand(args: List<String>): Int {
     if (args.firstOrNull() == "--resume") return resumeDev(args)
     if (args == listOf("--session-capabilities")) {
         println(obj("schemaVersion" to 1.json(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
-            "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "resumeVersions" to listOf(1.json(), 2.json(), 3.json()).json(),
+            "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "processOwnershipVersion" to kvik_process_ownership_version().json(), "resumeVersions" to listOf(1.json(), 2.json(), 3.json()).json(),
             "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to "macos-arm64".json(),
                 "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
         return 0
@@ -39,6 +40,8 @@ internal fun devCommand(args: List<String>): Int {
     val mode = when (session["--mode"] ?: "library") {
         "library" -> SessionMode.LIBRARY; "application" -> SessionMode.APPLICATION; else -> error("Invalid session mode")
     }
+    require(mode != SessionMode.APPLICATION || kvik_process_ownership_version() == 1) { "Application sessions require recursive process ownership version 1" }
+    if (mode == SessionMode.APPLICATION) bootstrap?.requireApplicationOwnership()
     val initial = when (session["--initial"] ?: "build") { "build" -> if (mode == SessionMode.APPLICATION) Operation.APPLICATION else Operation.BUILD; "test" -> Operation.TEST; else -> error("Invalid initial operation") }
     val options = buildOptions(build)
     val project = readProject(options.project.project)

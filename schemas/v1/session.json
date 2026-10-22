@@ -1263,6 +1263,9 @@
             "sizeBytes"
           ],
           "additionalProperties": false
+        },
+        "processOwnershipVersion": {
+          "const": 1
         }
       },
       "required": [
@@ -1338,7 +1341,10 @@
           }
         },
         "launch": {
-          "$ref": "bootstrap-launch.json#/$defs/launch"
+          "$ref": "bootstrap-launch.json#/$defs/launch",
+          "required": [
+            "processOwnershipVersion"
+          ]
         },
         "mode": {
           "const": "application"
