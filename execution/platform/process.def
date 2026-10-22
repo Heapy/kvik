@@ -1,0 +1,3 @@
+headers = process.h
+package = kvik.execution.platform
+staticLibraries = libkvik-process.a
