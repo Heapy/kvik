@@ -1,0 +1,55 @@
+package kvik.runevidence
+
+import kvik.core.*
+
+/** Strict v1 persisted-record parsing. Reuses core invariants; does not rerun execution proofs. */
+fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
+    val fields = value.fields(setOf("schemaVersion", "runId", "requestedChecks", "completedChecks", "inputSnapshot", "configuration", "dependencyLock",
+        "composition", "toolchains", "actions", "tests", "testCounts", "status", "freshnessAtCompletion", "reproduction"))
+    fields.requireVersion()
+    fun checks(name: String): Set<String> {
+        val values = fields.getValue(name).arrayValue().map { it.stringValue() }
+        require(values.distinct().size == values.size) { "Duplicate $name in verification record" }
+        return values.toSet()
+    }
+    return VerificationRecord(fields.getValue("runId").stringValue(), checks("requestedChecks"), checks("completedChecks"),
+        Digest.fromJson(fields.getValue("inputSnapshot")), Digest.fromJson(fields.getValue("configuration")),
+        Digest.fromJson(fields.getValue("dependencyLock")), Digest.fromJson(fields.getValue("composition")),
+        fields.getValue("toolchains").objectValue().mapValues { Digest.fromJson(it.value) },
+        fields.getValue("actions").arrayValue().map(::actionResultFromJson).also { actions ->
+            require(actions.map { it.actionId }.distinct().size == actions.size) { "Duplicate action result in verification record" }
+        }, fields.getValue("tests").arrayValue().map(::testResultFromJson), testCountsFromJson(fields.getValue("testCounts")),
+        fields.getValue("status").enumValue(), fields.getValue("freshnessAtCompletion").enumValue(),
+        fields.getValue("reproduction").arrayValue().map { it.stringValue() })
+}
+
+private fun actionResultFromJson(value: JsonValue): ActionResult {
+    val fields = value.fields(setOf("actionId", "key", "status", "outputs", "exitCode", "diagnostic"))
+    val id = fields.getValue("actionId").stringValue()
+    require(id.isNotBlank()) { "Action result requires an identity" }
+    return ActionResult(id, fields.getValue("key").let { if (it == JsonValue.Null) null else Digest.fromJson(it) },
+        fields.getValue("status").enumValue(), TreeManifest.fromJson(fields.getValue("outputs")),
+        fields.getValue("exitCode").let { if (it == JsonValue.Null) null else it.intValue() }, fields.getValue("diagnostic").nullableString())
+}
+
+private fun testResultFromJson(value: JsonValue): TestResult {
+    val fields = value.fields(setOf("id", "module", "target", "status", "message"))
+    return TestResult(fields.getValue("id").stringValue(), fields.getValue("module").stringValue(), fields.getValue("target").stringValue(),
+        fields.getValue("status").enumValue(), fields.getValue("message").nullableString())
+}
+
+private fun testCountsFromJson(value: JsonValue): TestCounts {
+    val fields = value.fields(setOf("discovered", "executed", "failed", "skipped", "discoveryComplete"))
+    val discovered = fields.getValue("discovered").let { if (it == JsonValue.Null) null else it.intValue() }
+    val executed = fields.getValue("executed").intValue()
+    val skipped = fields.getValue("skipped").intValue()
+    require(discovered == null || discovered.toLong() >= executed.toLong() + skipped) { "Discovered count is smaller than executed plus skipped" }
+    return TestCounts(discovered, executed, fields.getValue("failed").intValue(), skipped, fields.getValue("discoveryComplete").booleanValue())
+}
+
+private fun JsonValue.intValue(): Int = longValue().also { require(it in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) { "Value exceeds the v1 integer range" } }.toInt()
+private fun JsonValue.nullableString(): String? = if (this == JsonValue.Null) null else stringValue()
+private inline fun <reified T : Enum<T>> JsonValue.enumValue(): T {
+    val text = stringValue()
+    return enumValues<T>().singleOrNull { it.name.lowercase() == text } ?: throw IllegalArgumentException("Unsupported enum value: $text")
+}
