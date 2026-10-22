@@ -68,16 +68,40 @@ def policies(reference):
     return sorted(values), sorted(scoped)
 
 
+# Exact producer bytes from the pinned KTC metadata cache; reverified against
+# the production lock/CAS before any consumer action. Each is a separate edge.
+REFLECTION_PRODUCERS = (
+    ('kotest-common-macosarm64', 'fec23c54a9a7fae891d8697b34e3a17ed79cc3e71fe59e5ee40ae290e78bbe2e', 4708),
+    ('kotest-framework-engine-macosarm64', '9b378db5439180e9a0de9b5d4237e16601f732e08b13a3ba62e00bf13a211559', 6476),
+    ('kotest-assertions-core-macosarm64', '6baae8acf2bbebca67ce040b3d826bc3b2c7509d82c80c4a1c019e9022a7d348', 5081),
+)
+
+
 def metadata_exclusions():
-    # Deliberate, narrowly pinned correction of unsupported upstream metadata.
-    # This differs from KTC's blanket jar filtering; it never claims JVM reflection
-    # is supplied by the Native distribution and never applies to other edges.
+    # This differs from KTC's blanket jar filtering and never claims JVM reflection
+    # is supplied by Native. Rules apply only to these raw published edges.
     return [dict(domain=dict(module=module, target=TARGET, compilation='test', usage=usage, purpose='dependencies'),
-                 parent='io.kotest:kotest-common-macosarm64:6.2.5',
-                 metadata=dict(hash='fec23c54a9a7fae891d8697b34e3a17ed79cc3e71fe59e5ee40ae290e78bbe2e', sizeBytes=4708),
+                 parent=f'io.kotest:{producer}:6.2.5', metadata=dict(hash=sha, sizeBytes=size),
                  variant='macosArm64ApiElements-published', dependency='org.jetbrains.kotlin:kotlin-reflect:2.2.21',
                  reason='Kotest 6.2.5 non-JVM BasicReflection uses Native stdlib interfaces; published JVM kotlin-reflect edge is unsupported. Reproduce the retained KTC Native artifact set without its blanket JAR filter.')
-            for module in MODULES for usage in ('kotlin-api', 'kotlin-runtime')]
+            for module in MODULES for usage in ('kotlin-api', 'kotlin-runtime')
+            for producer, sha, size in REFLECTION_PRODUCERS]
+
+
+def audit_metadata_corrections(lock, store, exclusions):
+    evidence = []
+    for rule in exclusions:
+        group, name, version = rule['parent'].split(':')
+        url = f'https://repo.maven.apache.org/maven2/{group.replace(".", "/")}/{name}/{version}/{name}-{version}.module'
+        metadata = dict(url=url, digest=rule['metadata'])
+        assert any(metadata in selection['metadata'] for selection in lock['selections'] if selection['domain'] == rule['domain']), rule
+        d = rule['metadata']; path = store/'blobs'/f"{d['hash']}-{d['sizeBytes']}"
+        assert not path.is_symlink() and digest(path) == d
+        document = json.loads(path.read_bytes())
+        variant, = [v for v in document['variants'] if v['name'] == rule['variant']]
+        dependency, = [d for d in variant['dependencies'] if ':'.join((d['group'], d['module'], d.get('version', {}).get('requires', ''))) == rule['dependency']]
+        evidence.append(dict(rule=rule, source=metadata, declaredDependency=dependency, attributes=variant['attributes']))
+    return evidence
 
 
 def value_digest(value):
@@ -101,21 +125,31 @@ def domain_artifacts(lock, domain):
     return list(result.values())
 
 
+def expected_native_artifacts(reference, module, scope, usage):
+    paths = [path for path in reference['classpaths'][module+':'+scope] if path.endswith('.klib')]
+    # The downstream JSON module inherits only root's exported serialization API.
+    # Its tests own the same main edges plus Kotest API. Engine's published Native
+    # API itself requires coroutines/io, so those remain visible despite our own
+    # runtime-only version overrides; they are not promoted from runtime scope.
+    if module == 'kotaml-json' and usage == 'kotlin-api':
+        private = ('snakeyaml-engine-kmp-macosarm64', 'okio-macosarm64', 'urlencoder-lib-macosarm64')
+        paths = [path for path in paths if path.rsplit('/', 3)[1] not in private]
+    return {identity(reference['artifacts'][path]) for path in paths}
+
+
 def audit_lock(lock, reference, host):
     assert lock['schemaVersion'] == 2
     comparisons = []
     for module in MODULES:
         for scope in ('main', 'test'):
-            expected = {identity(reference['artifacts'][path]) for path in reference['classpaths'][module+':'+scope] if path.endswith('.klib')}
             domains = {}
             for usage in ('kotlin-api', 'kotlin-runtime'):
                 domain = dict(module=module, target=TARGET, compilation=scope, usage=usage, purpose='dependencies')
                 artifacts = domain_artifacts(lock, domain)
                 actual = {identity(a['digest']) for a in artifacts}
                 assert len(actual) == len(artifacts), ('Duplicate artifact bytes', domain)
-                assert actual <= expected, ('Unexpected Native bytes', domain, actual-expected)
-                if usage == 'kotlin-runtime':
-                    assert actual == expected, ('Native link closure differs', domain, expected-actual, actual-expected)
+                expected = expected_native_artifacts(reference, module, scope, usage)
+                assert actual == expected, ('Native closure differs', domain, expected-actual, actual-expected)
                 domains[usage] = actual
                 comparisons.append(dict(domain=domain, artifacts=artifacts))
             assert domains['kotlin-api'] <= domains['kotlin-runtime']
@@ -130,6 +164,38 @@ def audit_lock(lock, reference, host):
             assert {identity(a['digest']) for a in artifacts} == {identity(a['digest']) for a in host[key]}, (domain, artifacts)
             comparisons.append(dict(domain=domain, artifacts=artifacts))
     return comparisons
+
+
+def audit_producer_bindings(module, phase, parameters, inputs, results):
+    expected = {}
+    library_modules = []
+    if phase not in ('test',):
+        if phase == 'ksp-test':
+            library_modules.append(module)
+        if module == 'kotaml-json':
+            library_modules.append('kotaml')
+        for producer in library_modules:
+            entry, = results[f'{producer}:{TARGET}:main']['outputs']['files']
+            assert entry['path'] == 'module.klib' and not entry['executable']
+            path = f'modules/{producer}/{TARGET}/main.klib'
+            expected[path] = dict(entry, path=path)
+        assert [path for path in parameters['libraries'] if path.startswith('modules/')] == list(expected)
+        if phase == 'test-link':
+            compiled, = results[f'{module}:{TARGET}:test-compile']['outputs']['files']
+            assert compiled['path'] == 'tests.klib' and not compiled['executable']
+            path = f'modules/{module}/{TARGET}/test.klib'
+            assert parameters['includedLibrary'] == path and path not in parameters['libraries']
+            expected[path] = dict(compiled, path=path)
+    else:
+        prefix = f'modules/{module}/{TARGET}/test/'
+        for entry in results[f'{module}:{TARGET}:test-link']['outputs']['files']:
+            assert entry['path'] == 'tests.kexe' or entry['path'].startswith('tests.kexe.dSYM/')
+            path = prefix + entry['path']
+            expected[path] = dict(entry, path=path)
+        assert expected[prefix+'tests.kexe']['executable']
+        assert parameters['executable'] == prefix+'tests.kexe'
+        assert inputs == expected, 'This fixture declares no Native runtime resources'
+    assert {path: entry for path, entry in inputs.items() if path.startswith('modules/')} == expected, (module, phase, 'Producer output binding differs')
 
 
 def audit_actions(run, record, store, reference, host, source_files, tools, lock):
@@ -156,6 +222,7 @@ def audit_actions(run, record, store, reference, host, source_files, tools, lock
         assert target == TARGET and action['target'] == TARGET
         assert action['cachePolicy'] == ('never' if phase == 'test' else 'local')
         parameters = action['parameters']; inputs = {entry['path']: entry for entry in action['inputs']['files']}
+        audit_producer_bindings(module, phase, parameters, inputs, results)
         if phase not in ('test', 'test-link'):
             prefix = '' if module == 'kotaml' else 'kotaml-json/'
             roots = [prefix+'src/'] if phase == 'main' else [prefix+'test/'] if phase == 'ksp-test' else [prefix+'src/', prefix+'test/']
@@ -172,12 +239,16 @@ def audit_actions(run, record, store, reference, host, source_files, tools, lock
             assert {identity(inputs[path]['digest']) for path in parameters['libraries'] if path.startswith('deps/')} == {
                 identity(entry['digest']) for entry in domain_artifacts(lock, api_domain)}
             assert action['implementation'] == 'kvik-ksp-native-v1'
+            assert set(parameters['libraries']) == {path for path in inputs if path.startswith(('modules/', 'deps/'))}
             for field, group in (('runtimeClasspath', 'runtime'), ('processorClasspath', 'processor')):
                 assert {identity(inputs[path]['digest']) for path in parameters[field]} == {identity(entry['digest']) for entry in host[group]}
             raw, = result['outputs']['files']
             assert raw['path'] == 'generated/kotlin/io/kotest/framework/runtime/kotest.kt'
             assert b'import io.kotest.engine.launcher.invokeTestEngine\n' in blob(raw).read_bytes()
         elif phase in ('main', 'test-compile', 'test-link'):
+            assert action['implementation'] == 'kvik-native-compiler-v1'
+            assert set(parameters['libraries']) == {path for path in inputs if path.startswith('deps/') or path.startswith('modules/') and path != parameters.get('includedLibrary')}
+            assert set(parameters['plugins']) == {path for path in inputs if path.startswith('plugins/')}
             scope = 'main' if phase == 'main' else 'test'
             domain = dict(module=module, target=TARGET, compilation=scope,
                           usage='kotlin-runtime' if phase == 'test-link' else 'kotlin-api', purpose='dependencies')
@@ -188,13 +259,17 @@ def audit_actions(run, record, store, reference, host, source_files, tools, lock
             assert actual == expected, ('Compiler artifact inputs differ', action_id, expected-actual, actual-expected)
             assert parameters['explicitApi'] == (scope == 'main')
             assert parameters['moduleName'] == 'io.heapy.kotaml:'+module+('' if scope == 'main' else '-test')
-            if phase == 'test-compile':
+            if phase == 'main':
+                assert parameters['produce'] == 'LIBRARY' and parameters['output'] == 'module.klib'
+            elif phase == 'test-compile':
                 assert parameters['produce'] == 'LIBRARY' and parameters['output'] == 'tests.klib'
                 raw = results[f'{module}:{TARGET}:ksp-test']['outputs']['files'][0]
                 assert inputs[parameters['kotestLauncher']]['digest'] == raw['digest']
             elif phase == 'test-link':
                 assert parameters['sources'] == parameters['commonSources'] == parameters['plugins'] == []
                 assert parameters['produce'] == 'KOTEST_TEST' and parameters['output'] == 'tests.kexe'
+                assert '-Xpartial-linkage-loglevel=error' in action['arguments']
+                assert '-Xinclude=input/'+parameters['includedLibrary'] in action['arguments']
                 compiled, = results[f'{module}:{TARGET}:test-compile']['outputs']['files']
                 assert compiled['path'] == 'tests.klib'
                 assert inputs[parameters['includedLibrary']]['digest'] == compiled['digest']
@@ -283,6 +358,7 @@ def main():
         lock_path=project/'kvik.lock.json'; lock=json.loads(lock_path.read_text());validate(lock,'dependencyLock')
         assert lock['metadataExclusions'] == exclusions
         write('domain-comparison.json',audit_lock(lock,reference,host))
+        write('metadata-correction-evidence.json',audit_metadata_corrections(lock,store,exclusions))
         lock_digest=digest(lock_path)
         checked,=invoke('check-lock-offline','check-lock',['--offline']);validate(checked,'dependencyResolution')
         invoke('resolve-offline','resolve',['--offline']);assert digest(lock_path)==lock_digest

@@ -19,18 +19,32 @@ stdlib remains 2.4.20. Version pins do not add dependency roots or exports.
 
 Resolution uses the production CLI, metadata resolver and CAS, then checks
 exact Native runtime/link artifact digests against retained KTC classpaths,
-API subsets, and exact independent KSP/processor artifact closures. Offline
+exact API artifact sets, and exact independent KSP/processor artifact closures.
+The API expectations are 4/19 klibs for kotaml main/test and 2/17 for
+kotaml-json main/test. Runtime sets remain 4/19 and 5/20 respectively.
+JSON's exported root-module edge exposes serialization-core but not the root's
+private SnakeYAML, Okio or transitive urlencoder. Tests inherit that same main
+visibility. Coroutines and io still appear in the test API closure because the
+published Kotest engine API declares them independently; their presence does
+not promote this project's runtime-only overrides into compile roots.
+Artifact byte sets are compared exactly; baseline classpath order is not claimed. Offline
 check-lock and resolve must replay the same lock. The action cache begins empty.
 The full test gate uses the production installed-tool providers and executors.
 It does not invoke the fixture adapter probe or precompiled reference binaries.
 
-The pending API/link split has five actions per module: main, KSP generation,
+The reviewed API/link split has five actions per module: main, KSP generation,
 test klib compilation, source-free test link, and test execution. The harness
 requires all ten cold actions to execute; the eight reusable warm actions must
 hit local cache, while both test actions execute again. It verifies the full
 source membership, canonical action keys, exact verified tool identities, raw
 KSP launcher preservation, API-only compilation inputs and runtime link inputs.
-Every action input/output blob is independently rehashed from CAS. Warm reusable
+Every action input/output blob is independently rehashed from CAS. Every
+module klib input is matched to the exact producer output digest and logical
+namespace, including own-main KSP inputs, JSON's root-module prerequisite,
+test-klib inclusion and executable/debug outputs consumed by the test action.
+Extra stale module inputs are rejected. Passed library/plugin paths must match
+the audited declared inputs, and source-free link recipes must retain strict
+partial-linkage errors. Warm reusable
 outputs must exactly match cold outputs; tests are checked by exact identities,
 not callback ordering or aggregate totals alone.
 
@@ -61,9 +75,43 @@ FIXME, while dependency resolution reports unsupported non-JVM POM libraries.
 This is not evidence that the Native distribution implements full JVM reflection.
 The published Kotest non-JVM sources use basic reflection interfaces and explicitly
 return unsupported/default results for full reflection operations. A narrowly
-scoped, digest-bound explicit metadata correction policy is now declared by the harness for the four module test API/runtime domains. Each rule pins those exact metadata bytes, the `macosArm64ApiElements-published` variant, and the raw `kotlin-reflect:2.2.21` edge before version pins. It is persisted with an explicit reason in `metadata-exclusions.json`, passed as `--exclude-metadata-edge`, and required in the lock and reproduction arguments. This policy deliberately differs from KTC's blanket JAR filtering; unchanged fixture sources do not imply unchanged dependency metadata policy. Its separate production service candidate passed the combined Native resolver/locking/query checks; integration into the public runtime is pending. The faithful Native API/link graph split is also
-pending. Consequently this document makes no public Native execution success
-claim yet.
+scoped, digest-bound explicit metadata correction policy is declared for the
+four module test API/runtime domains. Review of the pinned primary metadata
+found the same raw `kotlin-reflect:2.2.21` edge in three producers, so there are
+12 explicit rules (not a blanket reflection filter):
+
+| Producer (`io.kotest`, version 6.2.5) | Metadata SHA-256 | Bytes |
+| --- | --- | --- |
+| kotest-common-macosarm64 | `fec23c54a9a7fae891d8697b34e3a17ed79cc3e71fe59e5ee40ae290e78bbe2e` | 4708 |
+| kotest-framework-engine-macosarm64 | `9b378db5439180e9a0de9b5d4237e16601f732e08b13a3ba62e00bf13a211559` | 6476 |
+| kotest-assertions-core-macosarm64 | `6baae8acf2bbebca67ce040b3d826bc3b2c7509d82c80c4a1c019e9022a7d348` | 5081 |
+
+All three rules name `macosArm64ApiElements-published` and the raw edge before
+pins. The corresponding Maven Central `.module` URLs are retained in
+`metadata-correction-evidence.json`, alongside rehashed CAS content identities,
+selected variant attributes and the original dependency requirement. Every
+rule's producer metadata must be present in the same domain's lock selections.
+Rules and reasons are persisted in `metadata-exclusions.json`, passed as
+`--exclude-metadata-edge`, and checked exactly in both lock and reproduction.
+This deliberately differs from KTC's blanket JAR filtering: unchanged fixture
+sources do not imply unchanged dependency metadata policy.
+
+Light validation of the stronger harness passed 35 controls/mutations,
+including missing API bytes, private API leaks, changed/stale module outputs,
+all 12 exact producer metadata rules, and a mismatched raw requirement.
+Retained script `/private/tmp/kvik-native-cli-harness-audit.py` was run with
+`/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python`; its report is
+`/var/folders/yh/h124ks9x1vqd0v6sz6slshkc0000gn/T/kvik-native-cli-audit-_2twlw1r/report.json`.
+Preparation `case-295emnl9` again verified all 61 source hashes and 1,880 IDs.
+No compiler ran for this review.
+
+The production metadata policy and API/link split are integrated, but a new
+public resolve-only attempt (`case-pkxxb5hr`, runtime `47bd832...`) reached an
+unsupported `version: {prefers: "2.2.0"}` stdlib dependency in atomicfu 0.32.1
+metadata. That needs a separate bounded rich-version resolver implementation,
+not another exclusion. Full public Native execution remains pending; this
+document makes no public execution success claim.
+
 
 ## Reproduction
 
