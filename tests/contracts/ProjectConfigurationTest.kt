@@ -3,6 +3,23 @@ package kvik.core
 import kotlin.test.*
 
 class ProjectConfigurationTest {
+    @Test fun nativeKotestSelectionIsPinnedExplicitAndDoesNotChangeLegacyTargets() {
+        val settings = """{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}"""
+        val native = example.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")
+        fun selected(value: String = settings) = native.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"nativeTestSettings\":$value")
+        val configuration = parse(selected())
+        assertEquals(NativeTestSettings("kotest", "2.3.12", Coordinate.parse("io.kotest:kotest-framework-symbol-processor:6.2.5")),
+            configuration.project.modules.single().targets.single().nativeTestSettings)
+        assertNull(parse(native).project.modules.single().targets.single().nativeTestSettings)
+        assertNotEquals(parse(native).digest, configuration.digest)
+        assertEquals(configuration, parse(configuration.document.canonical()))
+        for (value in listOf("null", "{}", settings.replace("2.3.12", "2.3.13"), settings.replace("6.2.5", "6.2.4"),
+            settings.replace("kotest\"", "junit\""), settings.replace("{", "{\"filter\":\"*\","))) {
+            assertFails { parse(selected(value)) }
+        }
+        assertFails { parse(selected().replace("\"name\":\"macosArm64\"", "\"name\":\"jvm\"")) }
+        assertFails { parse(selected().replace("\"test\":\"jvmTest\"", "\"test\":null")) }
+    }
     @Test fun dependencyScopeVisibilityAndTestOptionsAreExplicitAndStrict() {
         fun document(dependency: String) = example.replace("\"dependencies\":[]", "\"dependencies\":[$dependency]")
         val private = parse(document("""{"coordinate":"g:api:1"}""")).project.modules.single().sourceSets.first().dependencies.single()

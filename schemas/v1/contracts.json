@@ -245,6 +245,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "nativeTestSettings": {
+          "$ref": "#/$defs/nativeTestSettings"
         }
       },
       "required": [
@@ -281,6 +284,24 @@
           },
           "then": {
             "properties": {
+              "test": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "nativeTestSettings"
+            ]
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "macosArm64"
+              },
               "test": {
                 "type": "string",
                 "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
@@ -944,7 +965,9 @@
         "purpose": {
           "enum": [
             "dependencies",
-            "compiler-plugin"
+            "compiler-plugin",
+            "ksp-runtime",
+            "symbol-processor"
           ]
         }
       },
@@ -961,7 +984,11 @@
           "if": {
             "properties": {
               "purpose": {
-                "const": "compiler-plugin"
+                "enum": [
+                  "compiler-plugin",
+                  "ksp-runtime",
+                  "symbol-processor"
+                ]
               }
             }
           },
@@ -998,6 +1025,28 @@
                     "kotlin-runtime"
                   ]
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "enum": [
+                  "ksp-runtime",
+                  "symbol-processor"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "const": "macosArm64"
+              },
+              "compilation": {
+                "const": "test"
               }
             }
           }
@@ -2270,6 +2319,26 @@
         "selections",
         "artifacts",
         "metadata"
+      ],
+      "additionalProperties": false
+    },
+    "nativeTestSettings": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "const": "kotest"
+        },
+        "kspVersion": {
+          "const": "2.3.12"
+        },
+        "processor": {
+          "const": "io.kotest:kotest-framework-symbol-processor:6.2.5"
+        }
+      },
+      "required": [
+        "engine",
+        "kspVersion",
+        "processor"
       ],
       "additionalProperties": false
     }

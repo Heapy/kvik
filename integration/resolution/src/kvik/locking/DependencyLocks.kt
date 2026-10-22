@@ -13,8 +13,8 @@ data class ScopedSelection(val domain: ResolutionDomain, val selection: LockedSe
     val artifacts get() = selection.artifacts
     val metadata get() = selection.metadata
     init {
-        require(variant.platform == if (domain.purpose == "compiler-plugin") "jvm" else domain.target) { "Domain/producer platform differs" }
-        require(variant.usage == if (domain.purpose == "compiler-plugin") "java-runtime" else if (domain.target == "jvm") domain.usage else "kotlin-api") { "Domain/producer usage differs" }
+        require(variant.platform == if (domain.isHostTool) "jvm" else domain.target) { "Domain/producer platform differs" }
+        require(variant.usage == if (domain.isHostTool) "java-runtime" else if (domain.target == "jvm") domain.usage else "kotlin-api") { "Domain/producer usage differs" }
     }
     fun request() = ResolutionRequest(requested, variant, domain)
 }

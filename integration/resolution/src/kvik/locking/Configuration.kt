@@ -7,9 +7,11 @@ data class ResolutionDomain(val module: String, val target: String, val compilat
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid resolution domain module" }
         require(target in setOf("jvm", "macosArm64") && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
-        require(purpose in setOf("dependencies", "compiler-plugin")) { "Invalid resolution domain purpose" }
-        require(usage in if (purpose == "compiler-plugin") setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
+        require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")) { "Invalid resolution domain purpose" }
+        require(purpose !in setOf("ksp-runtime", "symbol-processor") || target == "macosArm64" && compilation == "test") { "KSP domains currently require macosArm64 tests" }
+        require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
     }
+    val isHostTool: Boolean get() = purpose != "dependencies"
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "target" to target.json(), "compilation" to compilation.json(), "usage" to usage.json(), "purpose" to purpose.json())
     companion object {
         fun fromJson(value: JsonValue): ResolutionDomain {
@@ -90,6 +92,17 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
         val api = if (target.name == "jvm") "java-api" else "kotlin-api"
         closure.modules.forEach { visit(ResolutionDomain(it, target.name, "main", api)) }
         if (domain.compilation == "test") visit(ResolutionDomain(module.id, target.name, "main", api))
+        if (domain.compilation == "test") target.nativeTestSettings?.let { settings ->
+            val runtimeDomain = domain.copy(usage = "java-runtime", purpose = "ksp-runtime")
+            val processorDomain = domain.copy(usage = "java-runtime", purpose = "symbol-processor")
+            domains += runtimeDomain
+            domains += processorDomain
+            val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
+            for (artifact in listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps")) {
+                requests += ResolutionRequest(Coordinate("com.google.devtools.ksp", artifact, settings.kspVersion), host, runtimeDomain)
+            }
+            requests += ResolutionRequest(settings.processor, host, processorDomain)
+        }
         val selectedPlugins = module.compilerPlugins.filter { target.name in it.targets &&
             (domain.compilation in it.scopes || target.name == "macosArm64" && domain.compilation == "test" && "main" in it.scopes) }
         if (selectedPlugins.isNotEmpty()) {

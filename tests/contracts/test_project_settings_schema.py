@@ -12,6 +12,22 @@ VALIDATOR = Draft202012Validator({**SCHEMA, "$ref": "#/$defs/target"})
 
 
 class ProjectSettingsSchemaTest(unittest.TestCase):
+    def test_native_kotest_settings_and_separate_host_domains(self):
+        settings = dict(engine='kotest', kspVersion='2.3.12', processor='io.kotest:kotest-framework-symbol-processor:6.2.5')
+        target = {**self.target(), 'name': 'macosArm64', 'nativeTestSettings': settings}
+        VALIDATOR.validate(target)
+        for value in [None, {}, {**settings, 'filter': '*'}, {**settings, 'kspVersion': '2.3.13'},
+                      {**settings, 'processor': 'io.kotest:kotest-framework-symbol-processor:6.2.4'}, {**settings, 'engine': 'junit'}]:
+            self.assertFalse(VALIDATOR.is_valid({**target, 'nativeTestSettings': value}), value)
+        for changes in [dict(name='jvm'), dict(test=None), dict(testSettings={'classes': []})]:
+            self.assertFalse(VALIDATOR.is_valid({**target, **changes}))
+        domain = dict(module='sample', target='macosArm64', compilation='test', usage='java-runtime')
+        validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/resolutionDomain'})
+        for purpose in ['ksp-runtime', 'symbol-processor']:
+            validator.validate({**domain, 'purpose': purpose})
+            for changes in [dict(target='jvm'), dict(compilation='main'), dict(usage='kotlin-api')]:
+                self.assertFalse(validator.is_valid({**domain, 'purpose': purpose, **changes}))
+
     def test_dependency_scopes_visibility_and_test_options(self):
         dependency = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/dependency'})
         for value in [{'coordinate': 'g:a:1'}, {'module': 'library', 'exported': True},

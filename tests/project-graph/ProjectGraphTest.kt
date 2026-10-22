@@ -76,6 +76,12 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun nativeKotestContractCannotFallBackToTheBuiltinRunner() {
+        val configured = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"name\":\"macosArm64\"",
+            """"name":"macosArm64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")))
+        assertFailsWith<IllegalArgumentException> { graph(configured, request = request(ProjectMode.TEST, "macosArm64")) }
+        assertTrue(graph(configured, request = request(ProjectMode.BUILD, "macosArm64")).nodes.isNotEmpty())
+    }
     @Test fun workspacePluginHasHostRuntimeClosureAndContentSensitivePrerequisites() {
         val plugin = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main", "test"), listOf("value=first", "value=second"), listOf(LogicalPath("config.txt")),
             "example.plugin", "2.4.20", listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))

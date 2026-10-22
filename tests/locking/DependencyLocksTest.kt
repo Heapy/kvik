@@ -50,6 +50,34 @@ private fun component(coordinate: String, dependencies: List<String> = emptyList
 private val smallEntries get() = component("example:root:1.0", listOf("example:leaf:1.0")) + component("example:leaf:1.0")
 
 class DependencyLocksTest {
+    @Test fun nativeKspAndProcessorsHaveSeparateHostDomainsAndOfflineReplay() {
+        val legacy = config(emptyList(), native = true)
+        val settings = """"nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"},"""
+        val project = parseProjectConfiguration(parseJson(legacy.document.canonical().replace("\"name\":\"macosArm64\"", settings + "\"name\":\"macosArm64\"")))
+        val configuration = effectiveConfiguration(project)
+        val runtime = ResolutionDomain("sample", "macosArm64", "test", "java-runtime", "ksp-runtime")
+        val processor = runtime.copy(purpose = "symbol-processor")
+        assertEquals(setOf(runtime, processor), configuration.requests.map { it.domain }.toSet())
+        assertEquals(4, configuration.requests.size)
+        assertTrue(configuration.requests.all { it.variant == jvmVariantRequest("java-runtime", 25) })
+        val entries = configuration.requests.flatMap { request -> component(request.coordinate.toString(),
+            listOf("com.google.devtools.ksp:symbol-processing-api:" + if (request.domain == runtime) "2.3.12" else "2.3.9")).entries }
+            .associate { it.toPair() } + component("com.google.devtools.ksp:symbol-processing-api:2.3.12") + component("com.google.devtools.ksp:symbol-processing-api:2.3.9")
+        val service = DependencyLocks(store(), NativePomParser())
+        val transport = MemoryTransport(entries)
+        val lock = service.resolve(configuration, transport)
+        for (selection in lock.selections) assertEquals(setOf(if (selection.domain == runtime) "2.3.12" else "2.3.9"),
+            selection.artifacts.filter { it.coordinate.name == "symbol-processing-api" }.map { it.coordinate.version }.toSet())
+        val calls = transport.calls.toList()
+        assertEquals(lock, service.loadLocked(lock.bytes(), configuration))
+        assertEquals(calls, transport.calls)
+        assertFails { service.loadLocked(lock.bytes(), effectiveConfiguration(legacy)) }
+        assertFails { runtime.copy(target = "jvm") }
+        assertFails { runtime.copy(compilation = "main") }
+        assertFails { runtime.copy(usage = "kotlin-api") }
+        assertFails { ScopedSelection(runtime, lock.selections.first().selection.copy(variant = VariantRequest("macosArm64", "kotlin-api", emptyMap()))) }
+        assertEquals(runtime, ResolutionDomain.fromJson(runtime.toJson()))
+    }
     @Test fun compilationDomainsPreserveDifferentVersionsAndReplayTheirOwnPins() {
         val project = config(listOf("example:main:1.0"), listOf("example:tests:1.0"))
         val testDomains = listOf("java-api", "java-runtime").map { ResolutionDomain("sample", "jvm", "test", it) }

@@ -55,6 +55,16 @@ data class JvmTestSettings(val classes: List<String>, val engines: List<String> 
     }
 }
 
+/** The initial Native Kotest integration pins the generator/runtime protocol versions explicitly. */
+data class NativeTestSettings(val engine: String, val kspVersion: String, val processor: Coordinate) {
+    init {
+        require(engine == "kotest" && kspVersion == "2.3.12" &&
+            processor == Coordinate("io.kotest", "kotest-framework-symbol-processor", "6.2.5")) {
+            "Native tests currently require Kotest 6.2.5 and KSP 2.3.12"
+        }
+    }
+}
+
 data class TargetSpec(
     val name: String,
     val main: String,
@@ -62,10 +72,12 @@ data class TargetSpec(
     val compilerOptions: List<String>,
     val testSettings: JvmTestSettings? = null,
     val testCompilerOptions: List<String>? = null,
+    val nativeTestSettings: NativeTestSettings? = null,
 ) {
     init {
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
+        require(nativeTestSettings == null || name == "macosArm64" && test != null) { "nativeTestSettings requires a macosArm64 target with a test source set" }
     }
     fun optionsFor(compilation: String): List<String> = when (compilation) {
         "main" -> compilerOptions

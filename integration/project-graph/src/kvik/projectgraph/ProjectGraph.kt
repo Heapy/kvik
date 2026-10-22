@@ -57,6 +57,7 @@ private class Builder(
                 else setOf("native", "jdk", "sdk", "native-dependencies")) { "Missing/incompatible tool identities: $target" }
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
+            if (scope == "test") require(target(module, target).nativeTestSettings == null) { "Native Kotest execution adapter is not integrated yet" }
             val usages = if (target == "jvm") if (scope == "test") listOf("java-api", "java-runtime") else listOf("java-api") else if (scope == "test") listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
         }
