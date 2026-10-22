@@ -37,7 +37,7 @@ def main():
     manifest = json.loads((runtime.parent/'manifest.json').read_bytes())
     assert manifest['composition'] == expected_composition and manifest['executable'] == file_digest(runtime)
     assert json.loads((runtime.parent/'runtime.lock.json').read_bytes()) == expected_lock
-    subprocess.run(['/bin/ps', '-axo', 'pid=,stat='], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,command='], check=True, stdout=subprocess.DEVNULL)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=args.output_dir.resolve()))
     print('Evidence:', case, flush=True)
@@ -135,16 +135,41 @@ def main():
         while not all((project/name).exists() for name in ('app.pid','child.pid','grandchild.pid')):
             assert time.monotonic()<deadline;time.sleep(.02)
         return [int((project/name).read_text()) for name in ('app.pid','child.pid','grandchild.pid')]
-    def assert_stopped(pids):
+    def process_table():
+        output=subprocess.run(['/bin/ps','-axo','pid=,ppid=,pgid=,stat=,command='],capture_output=True,text=True,check=True)
+        table={}
+        for line in output.stdout.splitlines():
+            pid,parent,group,state,command=line.split(None,4)
+            table[int(pid)]=dict(pid=int(pid),ppid=int(parent),pgid=int(group),state=state,command=command)
+        return table
+    def alive(row): return row is not None and not row['state'].startswith('Z')
+    def capture_owned(item,pids):
+        table=process_table();owned={item['process'].pid}
+        while True:
+            expanded=owned|{pid for pid,row in table.items() if row['ppid'] in owned}
+            if expanded==owned:break
+            owned=expanded
+        rows={pid:table[pid] for pid in owned if pid in table}
+        assert all(pid in rows and alive(rows[pid]) for pid in pids)
+        guardians=[pid for pid,row in rows.items() if row['command'].startswith(str(runtime.parent/'guardian')+' ')]
+        assert len(guardians)==1 and table[pids[0]]['ppid']==guardians[0],rows
+        pgid=table[pids[0]]['pgid']
+        assert pgid==pids[0] and all(table[pid]['pgid']==pgid for pid in pids)
+        item['owned']=rows;item['pgid']=pgid;item['pids']=pids;item['guardians']=guardians
+        write_json(item['path']/'owned-before.json',rows)
+        return item
+    def assert_stopped(item):
         deadline=time.monotonic()+10
         while True:
-            live=[]
-            for pid in pids:
-                result=subprocess.run(['/bin/ps','-p',str(pid),'-o','stat='],capture_output=True,text=True)
-                if result.returncode==0 and result.stdout.strip() and not result.stdout.strip().startswith('Z'):live.append(pid)
-            if not live:return
-            assert time.monotonic()<deadline,('remaining processes',live)
+            table=process_table()
+            remaining={pid:row for pid,row in table.items() if pid in item['owned'] or row['pgid']==item['pgid']}
+            if not any(alive(row) for row in remaining.values()):break
+            assert time.monotonic()<deadline,('remaining owned processes',remaining)
             time.sleep(.05)
+        write_json(item['path']/'owned-after.json',remaining)
+        write_json(item['path']/'ownership.json',dict(owner=item['process'].pid,childPids=item['pids'],guardians=item['guardians'],
+            pgid=item['pgid'],capturedPids=sorted(item['owned']),remaining=remaining,before=file_digest(item['path']/'owned-before.json'),
+            after=file_digest(item['path']/'owned-after.json')))
     try:
         run_command('resolve',[str(runtime),'resolve',*shared])
         # Gate syntax/ownership errors must precede the build stream.
@@ -169,16 +194,16 @@ def main():
         cls=next((Path(value['preparationDirectory'])/'prepared/application/input').rglob('MainKt.class'))
         content=cls.read_bytes();cls.chmod(0o644);cls.write_bytes(bytes([content[0]^1])+content[1:]);activate(corrupted);finish(corrupted,1);no_start(corrupted)
         tamper=start('tampered-ready',prepared=saved);ready(tamper);(tamper['gate']/'ready.json').chmod(0o644);(tamper['gate']/'ready.json').write_bytes(b'{}');activate(tamper);finish(tamper,1);no_start(tamper)
-        old=start('old-running',prepared=saved);ready(old);(project/'wait.txt').write_text('wait');activate(old);started(old);old_pids=wait_pids()
+        old=start('old-running',prepared=saved);ready(old);(project/'wait.txt').write_text('wait');activate(old);started(old);old_pids=wait_pids();capture_owned(old,old_pids)
         replacement=start('replacement',prepared=saved);ready(replacement)
         assert len(effects())==len(old['before'])+1
-        old['process'].send_signal(signal.SIGTERM);finish(old,130);assert_stopped(old_pids)
+        old['process'].send_signal(signal.SIGTERM);finish(old,130);assert_stopped(old)
         (project/'wait.txt').unlink()
         activate(replacement);started(replacement);finish(replacement,0)
         assert len(effects())==len(old['before'])+2
         for name in ('app.pid','child.pid','grandchild.pid'):(project/name).unlink()
-        killed=start('owner-loss-running',prepared=saved);ready(killed);(project/'wait.txt').write_text('wait');activate(killed);started(killed);pids=wait_pids()
-        killed['process'].kill();finish(killed,-signal.SIGKILL);assert_stopped(pids);(project/'wait.txt').unlink()
+        killed=start('owner-loss-running',prepared=saved);ready(killed);(project/'wait.txt').write_text('wait');activate(killed);started(killed);pids=wait_pids();capture_owned(killed,pids)
+        killed['process'].kill();finish(killed,-signal.SIGKILL);assert_stopped(killed);(project/'wait.txt').unlink()
         if not args.skip_timeout:
             timeout=start('activation-deadline',prepared=saved);ready(timeout);value=finish(timeout,1,timeout=90);no_start(timeout)
             assert value['seconds']>=60
@@ -187,7 +212,7 @@ def main():
         before=len(effects());run_command('public-replay',[str(runtime),'run-prepared','--run',saved['preparationDirectory'],'--descriptor',canonical(saved['descriptor']).decode()]);assert len(effects())==before+1
         assert (project/'main/Main.kt').read_bytes()==original_source
         assert composition()[3]==expected_composition and file_digest(runtime)==manifest['executable']
-        write_json(case/'summary.json',dict(passed=True,composition=expected_composition,runtime=file_digest(runtime),results=results,effects=effects(),timeoutCovered=not args.skip_timeout))
+        write_json(case/'summary.json',dict(passed=True,composition=expected_composition,runtime=file_digest(runtime),results=results,effects=effects(),timeoutCovered=not args.skip_timeout,ownership={name:file_digest(case/name/'ownership.json') for name in ('old-running','owner-loss-running')}))
         print('PASS',len(results),'actual supervisor scenarios',case,flush=True)
     finally:
         for process in active:
