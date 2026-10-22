@@ -94,6 +94,19 @@ fun aggregateCoverage(scope: CoverageAggregationScope, contributions: List<Cover
             }
         }
     }
+    // A shared baseline fixes each production module's complete source inventory. A second
+    // report may add other modules, but cannot silently omit sources from a shared module.
+    val moduleInventories = mutableMapOf<String, Set<CoverageSource>>()
+    ordered.forEach { contribution ->
+        val specification = contribution.report.specification
+        val sourcesByModule = specification.sources.groupBy { it.module }
+        specification.classDirectories.forEach { root ->
+            val inventory = sourcesByModule[root.module].orEmpty().toSet()
+            val previous = moduleInventories[root.module]
+            require(previous == null || previous == inventory) { "Incompatible coverage source inventory for shared production module: ${root.module}" }
+            moduleInventories[root.module] = inventory
+        }
+    }
     val diagnostics = mutableListOf<String>()
     val targets = scope.expectedChecks.groupBy { it.split(':')[1] }.entries.sortedBy { it.key }.map { (target, checks) ->
         val expected = checks.sorted()
@@ -123,9 +136,10 @@ fun aggregateCoverage(scope: CoverageAggregationScope, contributions: List<Cover
             CoverageMergedSource(path, first.source.digest, owners, observations.map { it.first }.distinct().sorted(), first.lineCount, lines,
                 observations.all { it.second.complete } && lines.none { it.state == LineCoverageState.UNKNOWN })
         }
-        val complete = missing.isEmpty() && unsupported.isEmpty() && reports.all { it.complete } && sources.isNotEmpty() && sources.all { it.complete }
+        val complete = missing.isEmpty() && unsupported.isEmpty() && reports.all { it.complete && it.sources.isNotEmpty() } && sources.isNotEmpty() && sources.all { it.complete }
         if (missing.isNotEmpty()) diagnostics += "$target is missing ${missing.size} expected coverage checks."
         if (unsupported.isNotEmpty()) diagnostics += "$target coverage is unsupported for ${unsupported.size} expected checks."
+        reports.filter { it.sources.isEmpty() }.forEach { diagnostics += "${it.check} has no retained source measurements." }
         if (sources.isEmpty()) diagnostics += "$target has no retained source measurements."
         if (reports.any { !it.complete } || sources.any { !it.complete }) diagnostics += "$target contains incomplete coverage measurements."
         reports.filter { it.status != VerificationStatus.PASSED }.forEach { diagnostics += "${it.check} retains ${it.status.name.lowercase()} source verification." }

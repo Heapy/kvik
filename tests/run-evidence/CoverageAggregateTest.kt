@@ -86,6 +86,37 @@ class CoverageAggregateTest {
         assertEquals(VerificationStatus.INCOMPLETE, empty.status)
     }
 
+    @Test fun everyRequiredContributorMustContainMeasurements() {
+        val a = report("a", listOf(source("a", "A.kt", hit)))
+        val empty = report("b", emptyList())
+        val result = aggregate(a, empty)
+        assertFalse(result.complete)
+        assertEquals(VerificationStatus.INCOMPLETE, result.status)
+        assertTrue(result.targets.single().missingChecks.isEmpty())
+        assertNull(result.targets.single().covered)
+        assertNull(result.targets.single().executable)
+        assertTrue(result.diagnostics.any { "b:jvm:test has no retained source measurements" in it })
+    }
+
+    @Test fun sharedProductionModulesMustHaveTheSameCompleteSourceInventory() {
+        val foo = source("library", "library/Foo.kt", hit)
+        val bar = source("library", "library/Bar.kt", miss)
+        val a = report("a", listOf(foo, bar))
+        for (inventory in listOf(listOf(foo), emptyList(), listOf(foo, bar.copy(source = bar.source.copy(sourceSet = "commonMain"))))) {
+            val b = report("b", inventory).let { report ->
+                if (report.specification.classDirectories.any { it.module == "library" }) report
+                else report.copy(specification = report.specification.copy(classDirectories = report.specification.classDirectories + CoverageClassRoot("library", LogicalPath("modules/library/main"))))
+            }
+            val failure = assertFails { aggregate(a, b) }
+            assertTrue(failure.message.orEmpty().contains("source inventory for shared production module: library"))
+        }
+        val b = report("b", listOf(bar, foo))
+        val result = aggregate(a, b)
+        assertTrue(result.complete)
+        assertEquals(2L, result.targets.single().executable)
+        assertEquals(1L, result.targets.single().covered)
+    }
+
     @Test fun baselineToolsAndExclusionsCannotBeMixedEvenWithDisjointSources() {
         val a = report("a", listOf(source("a", "A.kt", hit)))
         val b = report("b", listOf(source("b", "B.kt", hit)))
