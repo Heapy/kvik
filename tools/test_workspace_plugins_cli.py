@@ -80,21 +80,38 @@ def assert_transition(previous, current, changed):
             assert result['status'] == ('executed' if action_id in changed else 'local_hit'), (action_id, result)
 
 
+def verify_cold_resume(project, fixture, document, tools):
+    expected = {p.relative_to(fixture).as_posix(): p.read_bytes() for p in fixture.rglob('*') if p.is_file()
+                and p.relative_to(fixture).parts[0] not in {'consumer-test', 'unrelated-test', 'kvik.json', 'tools.json'}}
+    for name in ['consumer-test', 'unrelated-test']:
+        root = ROOT / 'tests/workspace-plugins/native' / name
+        expected.update({name + '/' + p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+    expected.update({'kvik.json': canonical(document), 'tools.json': tools.read_bytes()})
+    actual = {p.relative_to(project).as_posix(): p.read_bytes() for p in project.rglob('*') if p.is_file()
+              and p.relative_to(project).as_posix() not in {'kvik.lock.json', '.kvik-dependency-publication.lock'}}
+    assert actual == expected, 'Cold continuation requires unchanged fixture, configuration and tool inputs'
+
+
 def run_native(args):
     runtime, fixture = args.runtime.resolve(), args.fixture.resolve()
     output = (args.output_dir or ROOT / '.kvik/tests/workspace-plugins-cli').resolve()
     output.mkdir(parents=True, exist_ok=True)
-    case = Path(tempfile.mkdtemp(prefix='native-', dir=output))
+    case = args.resume_native_cold.resolve() if args.resume_native_cold else Path(tempfile.mkdtemp(prefix='native-', dir=output))
     project = case / 'project'
     original = {p.relative_to(fixture).as_posix(): digest(p.read_bytes()) for p in fixture.rglob('*') if p.is_file()}
-    shutil.copytree(fixture, project)
-    for name in ['consumer-test', 'unrelated-test']:
-        shutil.rmtree(project / name)
-        shutil.copytree(ROOT / 'tests/workspace-plugins/native' / name, project / name)
     request_bytes = args.graph_request.read_bytes()
     document = native_project(json.loads(request_bytes)['project'])
-    (project / 'kvik.json').write_bytes(canonical(document))
-    shutil.copyfile(args.tools, project / 'tools.json')
+    if args.resume_native_cold:
+        assert {p.name for p in case.glob('*.command.json')} == {'resolve.command.json', 'cold.command.json'}, 'Only an unfinished cold audit can continue'
+        verify_cold_resume(project, fixture, document, args.tools)
+        assert not (case / 'summary.json').exists()
+    else:
+        shutil.copytree(fixture, project)
+        for name in ['consumer-test', 'unrelated-test']:
+            shutil.rmtree(project / name)
+            shutil.copytree(ROOT / 'tests/workspace-plugins/native' / name, project / name)
+        (project / 'kvik.json').write_bytes(canonical(document))
+        shutil.copyfile(args.tools, project / 'tools.json')
     schema = json.loads((args.schema_root / 'schemas/v1/contracts.json').read_bytes())
 
     def validate(value, kind):
@@ -108,6 +125,10 @@ def run_native(args):
 
     def invoke(label, arguments):
         command = [str(runtime), *arguments]
+        if args.resume_native_cold and label == 'cold':
+            assert json.loads((case / 'cold.command.json').read_bytes()) == command
+            print('Rechecking retained cold run:', case, flush=True)
+            return (case / 'cold.stdout.jsonl').read_bytes()
         (case / (label + '.command.json')).write_bytes(canonical(command))
         started = time.monotonic()
         process = subprocess.run(command, env=env, capture_output=True, timeout=1800)
@@ -122,7 +143,8 @@ def run_native(args):
         validate(json.loads(invoke(label, ['resolve', *shared])), 'dependencyResolution')
 
     print('Evidence:', case, flush=True)
-    resolve('resolve')
+    if not args.resume_native_cold:
+        resolve('resolve')
     commands = ['test', *shared, '--tools', str(project / 'tools.json'), '--runs', str(runs),
                 '--target', 'macosArm64', '--offline', '--jobs', '3', '--memory-mib', '6144']
     commands += [flag for module in SELECTED for flag in ('--module', module)]
@@ -197,7 +219,8 @@ def run_native(args):
                     worker = json.loads((directory / 'request.json').read_bytes())
                     app, = worker['pluginApplications']
                     assert app['id'] == 'fixture.rewrite' and app['options'] == options
-                    assert worker['compiler']['version'] == '2.4.20'
+                    assert worker['compiler'] == action['toolchains']['jvm-compiler']
+                    assert app['compilerVersion'] == '2.4.20'
                     assert len(app['classpath']) >= 5  # producer/private/helper/runtime + compiler API artifact(s)
                     assert all(p.startswith('input/') for p in app['classpath'] + app['inputs'])
                     assert {p.split('/modules/', 1)[1].split('/', 1)[0] for p in app['classpath'] if '/modules/' in p} == {
@@ -260,7 +283,10 @@ def main():
     parser.add_argument('--schema-root', type=Path, default=ROOT)
     parser.add_argument('--target', choices=['jvm', 'macosArm64'], default='jvm')
     parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--resume-native-cold', type=Path, help='Recheck an unchanged retained cold run, then continue remaining Native scenarios')
     args = parser.parse_args()
+    if args.resume_native_cold and args.target != 'macosArm64':
+        parser.error('--resume-native-cold requires --target macosArm64')
     if args.target == 'macosArm64':
         return run_native(args)
     runtime, fixture = args.runtime.resolve(), args.fixture.resolve()

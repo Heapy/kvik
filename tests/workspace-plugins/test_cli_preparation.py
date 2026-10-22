@@ -1,6 +1,8 @@
 import copy
 import importlib.util
 from pathlib import Path
+import shutil
+import tempfile
 import unittest
 
 
@@ -24,6 +26,31 @@ def project():
 
 
 class NativePreparationTest(unittest.TestCase):
+    def test_cold_continuation_rejects_modified_or_extra_input(self):
+        fixture = ROOT / 'tests/workspace-plugins/fixture'
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / 'project'
+            shutil.copytree(fixture, directory)
+            for name in ['consumer-test', 'unrelated-test']:
+                shutil.rmtree(directory / name)
+                shutil.copytree(ROOT / 'tests/workspace-plugins/native' / name, directory / name)
+            tools = Path(temp) / 'tools.json'
+            tools.write_text('{}')
+            shutil.copyfile(tools, directory / 'tools.json')
+            document = cli.native_project(project())
+            (directory / 'kvik.json').write_bytes(cli.canonical(document))
+            (directory / 'kvik.lock.json').write_text('retained lock')
+            cli.verify_cold_resume(directory, fixture, document, tools)
+            message = directory / 'message.txt'
+            original = message.read_bytes()
+            message.write_bytes(b'changed')
+            with self.assertRaises(AssertionError):
+                cli.verify_cold_resume(directory, fixture, document, tools)
+            message.write_bytes(original)
+            (directory / 'extra.txt').write_text('unexpected')
+            with self.assertRaises(AssertionError):
+                cli.verify_cold_resume(directory, fixture, document, tools)
+
     def test_multiline_options_and_core_canonical_escaping(self):
         self.assertEqual(cli.EDITED_NATIVE_OPTIONS,
                          ['value=changed,comma\nsecond=literal\rthird\u2028fourth', 'value=second=literal'])
