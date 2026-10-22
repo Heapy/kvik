@@ -33,10 +33,10 @@ def descendants(owner):
         found = updated
 
 
-def coordinator_pids(session):
+def coordinator_pids(session, runtime):
     rows = subprocess.run(['/bin/ps', '-axo', 'pid=,command='], check=True, capture_output=True, text=True).stdout.splitlines()
     return {int(line.strip().split(maxsplit=1)[0]) for line in rows
-            if ' session-coordinator --directory ' in line and str(session) in line}
+            if line.strip().split(maxsplit=1)[1].startswith(str(runtime) + ' session-coordinator --directory ') and str(session) in line}
 
 
 def wait_absent(pids, groups):
@@ -68,7 +68,7 @@ def main():
     registry = Registry()
     for name in ('session', 'contracts', 'bootstrap-launch'):
         document = json.loads((ROOT / f'schemas/v1/{name}.json').read_text())
-        registry = registry.with_resource(document['$id'], Resource.from_contents(document))
+        registry = registry.with_resource(document.get('$id', f'https://kvik.dev/schemas/v1/{name}.json'), Resource.from_contents(document))
     validator = jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/event'}, registry=registry)
     sessions = []
 
@@ -132,7 +132,7 @@ def main():
     try:
         session = Session('reuse')
         first = session.operation(reused=False); assert not first['modelReused']
-        initial_workers = coordinator_pids(project / '.kvik/sessions'); assert len(initial_workers) == 1
+        initial_workers = coordinator_pids(project / '.kvik/sessions', runtime); assert len(initial_workers) == 1
         session.control('t'); second = session.operation(reused=True); assert second['modelReused']
         session.control('r'); session.operation('build', reused=False)
         session.control('r'); session.operation('build', reused=True)
@@ -149,7 +149,7 @@ def main():
         worker_commands = [path for path in (project / '.kvik/sessions').glob('*/*/command.json')
                            if json.loads(path.read_text())[1] == 'session-coordinator']
         assert len(worker_commands) == 1, worker_commands
-        assert coordinator_pids(project / '.kvik/sessions') == initial_workers
+        assert coordinator_pids(project / '.kvik/sessions', runtime) == initial_workers
         worker = worker_commands[0].parent
         assert len(list((worker / 'requests').glob('*.json'))) == 9
         session.quit()
@@ -158,9 +158,9 @@ def main():
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             owner_loss.capture()
-            if coordinator_pids(project / '.kvik/sessions') & owner_loss.tracked: break
+            if coordinator_pids(project / '.kvik/sessions', runtime) & owner_loss.tracked: break
             time.sleep(.01)
-        assert coordinator_pids(project / '.kvik/sessions') & owner_loss.tracked
+        assert coordinator_pids(project / '.kvik/sessions', runtime) & owner_loss.tracked
         owner_loss.process.kill(); owner_loss.process.wait(timeout=15)
         wait_absent(owner_loss.tracked, owner_loss.groups)
         print(f'PASS retained worker r/t, source/config/lock invalidation, fresh tests and owner cleanup: {case}')
