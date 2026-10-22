@@ -5,7 +5,10 @@ import kvik.core.*
 /** append must durably persist before returning; listeners may observe only persisted events. */
 fun interface EventJournal { fun append(event: RunEvent) }
 
-/** Single-thread-confined, cooperative run. Call tick regularly; no background scheduler exists. */
+/** Single-thread-confined, cooperative run. Call tick regularly; no background scheduler exists.
+ * Emits action events only. The run coordinator owns authoritative run boundaries and verification,
+ * and assigns run-wide sequence numbers when combining this action stream with other event sources.
+ */
 class SchedulerRun(
     val runId: String,
     nodes: List<ActionNode>,
@@ -33,7 +36,6 @@ class SchedulerRun(
         require(this.nodes.size == nodes.size) { "Duplicate action IDs" }
         require(nodes.all { it.id.isNotBlank() })
         validateGraph(this.nodes.mapValues { it.value.dependencies })
-        emit("run-started", obj())
     }
 
     private fun emit(type: String, payload: JsonValue.Object) {
@@ -115,7 +117,6 @@ class SchedulerRun(
                 }
             }
             if (completed.size == nodes.size) {
-                emit("run-finished", obj("successful" to completed.values.all { it.successful }.json(), "cancelled" to cancelled.json()))
                 finished = true
             }
             return finished

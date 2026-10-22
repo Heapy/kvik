@@ -39,9 +39,6 @@ fun main(args: Array<String>) {
     val request = ProcessRequest(listOf("/bin/sh", "-c", args[3]), directory.path,
         mapOf("KVIK_TEST_ENV" to "declared", "PATH" to "/usr/bin:/bin"), "${directory.path}/stdout", "${directory.path}/stderr", args[4].toLong())
     val process = host.start(request)
-    NativeEventJournal("${directory.path}/events.jsonl").use {
-        it.append(RunEvent(directory.runId, 1, "run-started", obj()))
-    }
     println("STARTED"); fflush(stdout)
     if (args[2] == "hold") while (true) usleep(10000u)
     if (args[2] == "cancel") { usleep(150000u); process.cancel() }

@@ -9,6 +9,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,6 +18,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--konan-home", type=Path, required=True)
     parser.add_argument("--java-home", type=Path, required=True)
+    parser.add_argument("--scheduler-only", action="store_true", help="Run native scheduler and real-process DAG/schema checks, skipping the lifecycle matrix")
     args = parser.parse_args()
     output = ROOT / ".kvik/tests/execution"
     output.mkdir(parents=True, exist_ok=True)
@@ -68,14 +70,6 @@ def main():
             assert proc.stdout.readline().strip() == "STARTED"
             return proc, directory
 
-        proc, directory = launch("normal", 'printf "%s|%s|%s" "$KVIK_TEST_ENV" "${KVIK_UNDECLARED-unset}" "$PWD"; printf error >&2; exit 7')
-        stdout, stderr = proc.communicate(timeout=5)
-        assert proc.returncode == 0 and "RESULT 7 false false" in stdout, (stdout, stderr)
-        assert (directory / "stdout").read_text() == f"declared|unset|{directory.resolve()}"
-        assert (directory / "stderr").read_text() == "error"
-        assert json.loads((directory / "events.jsonl").read_text())["sequence"] == 1
-        print("PASS explicit environment/cwd/logs, child exit, durable journal")
-
         proc, directory = launch("dag", "unused")
         stdout, stderr = proc.communicate(timeout=10)
         assert proc.returncode == 0 and "DAG COMPLETE" in stdout, (stdout, stderr)
@@ -83,7 +77,26 @@ def main():
         events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
         assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
         assert len([event for event in events if event["type"] == "action-finished"]) == 6
-        print("PASS native process DAG: blocking, successful deduplication, repeated effects, persisted events")
+        assert {event["type"] for event in events} == {"action-started", "action-finished"}
+        schema = json.loads((ROOT / "schemas/v1/contracts.json").read_text())
+        validator = Draft202012Validator({**schema, "$ref": "#/$defs/event"})
+        for event in events:
+            validator.validate(event)
+        finished = {event["payload"]["actionId"]: event for event in events if event["type"] == "action-finished"}
+        for event in events:
+            if event["type"] == "action-started":
+                assert event["sequence"] < finished[event["payload"]["actionId"]]["sequence"]
+        print("PASS native process DAG: blocking, deduplication, repeated effects, durable ordered schema-valid action events")
+        if args.scheduler_only:
+            print("K03 native scheduler and DAG/schema checks passed; lifecycle matrix not rerun")
+            return
+
+        proc, directory = launch("normal", 'printf "%s|%s|%s" "$KVIK_TEST_ENV" "${KVIK_UNDECLARED-unset}" "$PWD"; printf error >&2; exit 7')
+        stdout, stderr = proc.communicate(timeout=5)
+        assert proc.returncode == 0 and "RESULT 7 false false" in stdout, (stdout, stderr)
+        assert (directory / "stdout").read_text() == f"declared|unset|{directory.resolve()}"
+        assert (directory / "stderr").read_text() == "error"
+        print("PASS explicit environment/cwd/logs and child exit")
 
         # Both shell and its descendant ignore TERM; only bounded forced cleanup can pass.
         script = 'trap "" TERM; echo $$ > leader.pid; /bin/sh -c \'trap "" TERM; echo $$ > descendant.pid; while :; do sleep 1; done\' & wait'

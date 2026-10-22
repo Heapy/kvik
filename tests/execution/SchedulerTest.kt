@@ -44,7 +44,15 @@ class SchedulerTest {
         assertTrue(run.results.values.all { it.successful })
         assertEquals((1L..events.size.toLong()).toList(), events.map { it.sequence })
         assertEquals(listOf("a", "c"), events.filter { it.type == "action-started" }.map { it.payload.objectValue().getValue("actionId").stringValue() })
-        assertEquals("run-finished", events.last().type)
+        assertTrue(events.all { it.type in setOf("action-started", "action-finished") })
+        val finished = events.filter { it.type == "action-finished" }.associateBy { it.payload.objectValue().getValue("actionId").stringValue() }
+        assertEquals(run.results.keys, finished.keys)
+        for (event in events.filter { it.type == "action-started" }) {
+            val id = event.payload.objectValue().getValue("actionId").stringValue()
+            assertTrue(event.sequence < finished.getValue(id).sequence)
+        }
+        val childStarted = events.single { it.type == "action-started" && it.payload.objectValue().getValue("actionId").stringValue() == "c" }
+        assertTrue(finished.getValue("b").sequence < childStarted.sequence)
     }
 
     @Test fun effectsAndSeparateRunsNeverDeduplicate() {
@@ -105,5 +113,19 @@ class SchedulerTest {
         })
         assertFails { run.tick() }
         assertTrue(executor.running.getValue("a").closed)
+    }
+
+    @Test fun completionJournalFailureStopsOtherWorkAndPreventsDependentLaunch() {
+        val executor = ManualExecutor()
+        val nodes = listOf(ActionNode("a", emptySet()) { spec("a") },
+            ActionNode("b", setOf("a")) { spec("b") }, ActionNode("c", emptySet()) { spec("c") })
+        val run = SchedulerRun("run", nodes, executor, ResourceBudget(2, 2), EventJournal {
+            if (it.type == "action-finished") error("disk full")
+        })
+        run.tick(); executor.finish("a")
+        assertFails { run.tick() }
+        assertFalse("b" in executor.started)
+        assertTrue(executor.running.values.all { it.closed })
+        assertEquals(ActionStatus.CANCELLED, executor.running.getValue("c").status)
     }
 }
