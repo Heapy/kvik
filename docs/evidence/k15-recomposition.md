@@ -121,3 +121,32 @@ test, exact ID and current verification query. An immediate retry
 (`consumer-9c9noe8h`) was interrupted to reduce concurrent host load; neither
 attempt is counted as a passing consumer test. Subsequent process checks found
 no remaining children from either attempt.
+
+## Successful consumer after handoff
+
+The final isolated `tools/test_foreground_recomposition_consumer.py` run passed
+with the valid immutable Native fixture's tool document and a new private CAS:
+
+- Evidence: `.kvik/tests/foreground-recomposition/consumer-7frum2vd/`.
+- PID 45861 remained the foreground owner across initial composition `b871ef9b…`
+  to plugin v1 `3669e3bb…`; sessions `kvik-run-NsmuJN` → `kvik-run-QGTnvZ` link
+  through the retained handoff.
+- Child `kvik-run-nDPk3W`, authoritative run `kvik-run-mQ7sFK`: all four actions
+  executed (two production klibs, Native test executable, fresh test execution).
+- Exact test ID `fixture.AnswerTest.dependencyAndInternalDeclaration` passed;
+  discovered/executed 1, failed/skipped 0, complete discovery.
+- `freshnessAtCompletion=current`; a separate full verification query returned
+  `current`. Child stdout exactly matches its retained run journal and record.
+- The session accepted q, exited 0, and every tracked owned descendant stopped.
+  No source-unavailable cancellation occurred in this successful retry.
+
+`summary.json`, `verification-query.json`, literal `command.json`, both session
+journals/handoff and full child run evidence are retained at that path. This
+closes the successful post-handoff consumer gate; it does not extend the slice to
+application restart or raw-key terminal behavior.
+
+Independent review of frozen implementation `7677509` found no production
+issues. The reviewer rebuilt its C boundary in a separate checkout and passed
+pending INT/TERM across same-PID exec, already-observed INT refusing exec, and
+ENOENT restoring the original signal mask and handler. Retained source handoff,
+partial controls and output-backpressure evidence were independently audited.
