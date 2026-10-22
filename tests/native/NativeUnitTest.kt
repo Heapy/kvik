@@ -90,6 +90,87 @@ class NativeUnitTest {
         assertFailsWith<IllegalArgumentException> { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "relative/developer") }
     }
 
+    @Test fun compilerTimeoutsDistinguishExit124AndCancellationAndDiscardPartialOutputs() {
+        val root = NativeRunDirectory("/private/tmp").path
+        val store = NativeContentStore("$root/store")
+        val digest = store.put("class Example".encodeToByteArray())
+        val identities = listOf("native", "jdk", "sdk", "native-dependencies").associateWith { digest }
+        val source = LogicalPath("Example.kt")
+        val included = LogicalPath("compiled.klib")
+        for (link in listOf(false, true)) {
+            val compilation = if (link) NativeCompilation("example", emptyList(), output = LogicalPath("tests.kexe"),
+                produce = NativeOutput.TEST, includedLibrary = included)
+                else NativeCompilation("example", listOf(source), output = LogicalPath("example.klib"))
+            val input = TreeManifest(listOf(FileEntry(if (link) included else source, digest)))
+            val action = nativeCompileAction(compilation, input, digest, identities, timeoutMillis = 12_345)
+            for (scenario in listOf("timeout", "timeout-with-error", "exit124", "host-cancelled", "late-cancelled")) {
+                val phase = if (link) "link" else "compile"
+                val id = "$phase-$scenario"
+                val partial = "partial output from $id".encodeToByteArray()
+                var cancelled = false
+                var closed = false
+                val host = object : ProcessHost {
+                    override fun start(request: ProcessRequest): OwnedProcess {
+                        assertTrue(request.timeoutMillis in 1..action.timeoutMillis)
+                        writeNativeFile(request.stdoutFile, byteArrayOf())
+                        writeNativeFile(request.stderrFile,
+                            (if (scenario == "timeout-with-error") "error: compiler emitted a prior error" else "").encodeToByteArray())
+                        writeNativeFile("${request.workingDirectory}/output/${compilation.output.value}", partial)
+                        return object : OwnedProcess {
+                            override fun poll() = ProcessResult(124, timedOut = scenario != "exit124", cancelled = scenario == "host-cancelled")
+                            override fun cancel() { cancelled = true }
+                            override fun close() { closed = true }
+                        }
+                    }
+                    override fun close() = Unit
+                }
+                val executor = NativeCompilerExecutor("timeouts", root, host, store,
+                    NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer") })
+                executor.start("timeouts", id, action).use { running ->
+                    if (scenario == "late-cancelled") running.cancel()
+                    val result = assertNotNull(running.poll())
+                    assertEquals(result, running.poll())
+                    assertTrue(result.outputs.files.isEmpty())
+                    assertNull(store.get(Sha256.digest(partial)), "Failed/cancelled partial output must not enter CAS")
+                    val observation = executor.observations.getValue(id)
+                    assertEquals(result, observation.result)
+                    assertNull(observation.tests)
+                    when (scenario) {
+                        "timeout", "timeout-with-error" -> {
+                            assertEquals(ActionStatus.FAILED, result.status)
+                            assertEquals(124, result.exitCode)
+                            val timeout = observation.diagnostics.single { it.code == "KVIK_NATIVE_TIMEOUT" }
+                            assertEquals("Native $phase timed out after 12345 ms", timeout.message)
+                            assertEquals(timeout.message, result.diagnostic)
+                            assertEquals(DiagnosticCategory.INFRASTRUCTURE, timeout.category)
+                            assertEquals(id, timeout.actionId)
+                            assertEquals("example", timeout.module)
+                            assertEquals("macosArm64", timeout.target)
+                            assertFalse(observation.diagnostics.any { it.code == "KVIK_NATIVE_PROCESS_FAILED" })
+                            assertEquals(scenario == "timeout-with-error", observation.diagnostics.any { it.code == "KVIK_NATIVE_ERROR" })
+                        }
+                        "exit124" -> {
+                            assertEquals(ActionStatus.FAILED, result.status)
+                            assertEquals(124, result.exitCode)
+                            val failure = observation.diagnostics.single()
+                            assertEquals("KVIK_NATIVE_PROCESS_FAILED", failure.code)
+                            assertEquals("Native process exited 124", failure.message)
+                            assertNull(result.diagnostic)
+                        }
+                        else -> {
+                            assertEquals(ActionStatus.CANCELLED, result.status)
+                            assertNull(result.diagnostic)
+                            assertTrue(observation.diagnostics.isEmpty())
+                            if (scenario == "late-cancelled") assertEquals(130, result.exitCode)
+                        }
+                    }
+                }
+                assertTrue(closed)
+                assertEquals(scenario == "late-cancelled", cancelled)
+            }
+        }
+    }
+
     @Test fun malformedSuiteFinishProducesIncompleteReport() {
         for (events in listOf("##teamcity[testSuiteFinished]", "##teamcity[testSuiteFinished name='absent']",
             "##teamcity[testSuiteStarted name='suite']\n##teamcity[testSuiteFinished]")) {

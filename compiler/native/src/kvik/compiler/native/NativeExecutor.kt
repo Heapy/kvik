@@ -109,7 +109,9 @@ class NativeCompilerExecutor(
             }
             private fun finish(exit: ProcessResult, diagnostics: List<Diagnostic>, report: NativeTestReport?, stdout: String, stderr: String, failure: String?): ActionResult {
                 if (report != null) writeNativeFile("$directory/output/test-results.json", report.toJson().canonical().encodeToByteArray())
-                var diagnostic = failure ?: report?.diagnostic
+                val timeout = if (compile != null && exit.timedOut && !exit.cancelled)
+                    "Native ${action.kind.name.lowercase()} timed out after ${action.timeoutMillis} ms" else null
+                var diagnostic = timeout ?: failure ?: report?.diagnostic
                 var status = when {
                     exit.cancelled -> ActionStatus.CANCELLED
                     exit.timedOut || exit.exitCode != 0 || failure != null -> ActionStatus.FAILED
@@ -123,7 +125,9 @@ class NativeCompilerExecutor(
                         status = ActionStatus.FAILED; diagnostic = "Native compiler did not produce exactly the declared outputs"; outputs = TreeManifest(emptyList())
                     }
                 }
-                val finalDiagnostics = diagnostics + if (status == ActionStatus.FAILED && diagnostics.none { it.code == "KVIK_NATIVE_ERROR" }) listOf(Diagnostic(
+                val finalDiagnostics = diagnostics + if (timeout != null) listOf(Diagnostic(
+                    "KVIK_NATIVE_TIMEOUT", DiagnosticCategory.INFRASTRUCTURE, timeout, actionId, module, "macosArm64"))
+                else if (status == ActionStatus.FAILED && diagnostics.none { it.code == "KVIK_NATIVE_ERROR" }) listOf(Diagnostic(
                     if (report != null) "KVIK_NATIVE_TEST_RESULT" else "KVIK_NATIVE_PROCESS_FAILED", if (report != null) DiagnosticCategory.TEST else DiagnosticCategory.INFRASTRUCTURE,
                     diagnostic ?: "Native process exited ${exit.exitCode}", actionId, module, "macosArm64")) else emptyList()
                 return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostic).also {
