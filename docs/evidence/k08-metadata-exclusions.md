@@ -40,4 +40,31 @@ The harness writes a build stamp only after successful compilation and unchanged
 
 The positive direct-root regression proves an excluded parent→child edge does not suppress the same valid Native child when separately requested as a root. A redirect/owner-alias regression proves the rule binds terminal lookup coordinate and exact terminal metadata bytes, including when the published component owner names the common module. Full-domain resolution also rejects an additional unvisited rule even when another rule applied successfully.
 
-This slice does not claim successful public Native kotaml resolution or its full 1,880-test CLI gate; those require the separate CLI policy wiring and Native API/link visibility integration.
+## Composed CLI validation
+
+The public policy wiring and Native API/link split are integrated. Source composition
+`47bd83259a1cfccc9e0a6a669945cbfd719a8c3ef4e5f5dde7c083caed49230f`
+built successfully in 43,047 ms. Its executable SHA-256 is
+`2e1d09a155bff4f68518ce8b3d425d520292f1c97424ec969ae2ffc69a81615b`
+(4,740,760 bytes). The source launcher invocation and logs are retained in
+`/private/tmp/kvik-native-policy-build.{stdout,stderr}` and the composition's
+runtime cache manifest/log.
+
+Forty public rejection commands passed against that executable: malformed JSON,
+unknown fields, ASCII and UTF-8 byte overflow, excess rule count, duplicate and
+conflicting rules, and an absent domain across `resolve`, `build`, `test`, `dev`
+and `dependencies`. Each check requires its specific policy diagnostic, so an
+unrelated missing tool or lock cannot satisfy it. The project inventory remained
+unchanged. Retained commands, exit statuses and diagnostics are in
+`.kvik/tests/metadata-exclusions-cli/negative-cv1f9tx9/results.json`; the driver is
+`/private/tmp/kvik-policy-negative-preflight.py`. Two initial preflight attempts
+corrected test expectations for the existing absent-domain and query argument
+length diagnostics; no production change was needed.
+
+Successful public Native kotaml resolution and its 1,880-test gate remain open.
+The composed resolver reached atomicfu's unsupported `prefers` version field
+(`case-pkxxb5hr` in the Native CLI worktree); bounded preference semantics are
+being implemented separately. The complete 47-command CLI harness additionally
+requires successful lock replay, canonical configuration identity, exact scoped
+query corrections and changed/missing-policy rejection. Those positive and
+lock-dependent checks have not passed yet.

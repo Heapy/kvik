@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only composed CLI policy gate using a resolved Native kotaml fixture copy."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -29,7 +30,9 @@ def main():
     project = work/'project'
     shutil.copytree(fixture, project)
     rules = json.loads((project/'metadata-exclusions.json').read_text())
-    assert len(rules) == 4
+    assert 1 <= len(rules) <= 32
+    assert {(rule['domain']['module'], rule['domain']['usage']) for rule in rules} == {
+        (module, usage) for module in ('kotaml', 'kotaml-json') for usage in ('kotlin-api', 'kotlin-runtime')}
     pins = [part for value in json.loads((project/'pins.json').read_text()) for part in ('--pin', value)]
     pins += [part for value in json.loads((project/'scoped-pins.json').read_text()) for part in ('--scope-pin', value)]
     project_args = ['--project', str(project/'kvik.json')]
@@ -71,8 +74,16 @@ def main():
     assert alternative['configuration'] == checked['configuration']
     query = invoke('dependencies', ['dependencies', *project_args, *store_args, *pins, *rule_args, '--offline', '--json'])
     query_schema.validate(query)
-    exclusions = [edge['exclusion'] for domain in query['domains'] for edge in domain['graph']['edges'] if 'exclusion' in edge]
-    assert len(exclusions) >= len(rules), 'Corrected published edges must be visible to agents'
+    observed_rules = set()
+    for domain in query['domains']:
+        for edge in domain['graph']['edges']:
+            if 'exclusion' not in edge:
+                continue
+            exclusion = edge['exclusion']
+            data = canonical(exclusion['rule']).encode()
+            assert exclusion['digest'] == dict(hash=hashlib.sha256(data).hexdigest(), sizeBytes=len(data))
+            observed_rules.add(canonical(dict(domain=domain['domain'], **exclusion['rule'])))
+    assert observed_rules == set(map(canonical, rules)), 'Every exact scoped correction must be visible to agents'
     invoke('missing-policy', ['check-lock', *project_args, *store_args, *pins, '--offline'], expected=2)
     changed = [{**rules[0], 'reason':rules[0]['reason']+' Changed.'}, *rules[1:]]
     changed_args = [part for rule in changed for part in ('--exclude-metadata-edge', canonical(rule))]
@@ -93,6 +104,16 @@ def main():
         'conflict': [canonical(rules[0]), canonical({**rules[0], 'reason':'different'})],
         'absent-domain': [canonical(absent)],
     }
+    expected_errors = {
+        'malformed': 'Expected JSON string',
+        'unknown-field': 'Unknown fields: [extra]',
+        'oversized-ascii': 'Metadata exclusion exceeds 4 KiB',
+        'oversized-utf8': 'Metadata exclusion exceeds 4 KiB',
+        'too-many': 'At most 32 metadata edge exclusions are supported',
+        'duplicate': 'Duplicate/conflicting metadata exclusions',
+        'conflict': 'Duplicate/conflicting metadata exclusions',
+        'absent-domain': 'Metadata exclusion refers to an empty or unselected resolution domain',
+    }
     for command in ('resolve', 'build', 'test', 'dev', 'dependencies'):
         additional = []
         if command in ('build', 'test', 'dev'):
@@ -100,7 +121,10 @@ def main():
         if command == 'dev': additional += ['--control','jsonl']
         for name, values in bad_rules.items():
             invalid = [part for value in values for part in ('--exclude-metadata-edge', value)]
-            invoke(command+'-'+name, [command, *project_args, *store_args, *pins, *additional, *invalid], expected=2)
+            rejected = invoke(command+'-'+name, [command, *project_args, *store_args, *pins, *additional, *invalid], expected=2)
+            expected_error = ('Missing or oversized value for --exclude-metadata-edge'
+                              if command == 'dependencies' and name == 'oversized-ascii' else expected_errors[name])
+            assert expected_error in rejected['diagnostic']['message'], (command, name, rejected)
     invoke('raw-package-rejects-policy', ['packages','dependencies','io.kotest:kotest-common-macosarm64:6.2.5',
         *project_args,'--target','macosArm64','--usage','kotlin-api',*rule_args], expected=2)
     after = snapshot(project)
