@@ -72,6 +72,23 @@ The first Native build succeeded; its retained run
 `case-u5ol_9u4` passed 12 of 13 groups. The cold/warm comparison exposed
 output-list ordering (identical entries and canonical digest): cold metadata
 was first, while cache decoding sorted paths. The executor now sorts its final
-manifest globally. A matching corrected Native rebuild is pending.
+manifest globally. The corrected source/test freeze is `c15791e`. A matching
+Native rebuild and run completed with exit 0: all 13 groups passed in 73 ms,
+including exact cold/warm manifest equality. No production or test source changed
+after that build.
 Application running/restarting, public CLI integration and foreground lifecycle
 remain separate required slices.
+
+Retained passing case:
+`/private/tmp/kvik-k15-application-bundle/.kvik/tests/application-bundle/case-b0vkle1m`.
+The invocation was `python3 -B tools/test_application_bundle.py` from this
+worktree with the documented default Java/Native roots. Its build receipt binds
+18 Kotlin source files, five compiler inputs and 18 Python harness/support files.
+
+- Native executable SHA-256: `ebdf2598229eba0d6585f4bf9ecbea69c70398409d7d4056261d65791c3b2177` (2,531,592 bytes).
+- Build receipt SHA-256: `440aa09c22cf30ab1749586f9478676b44856771363455338d168a169910ef6c`.
+- Summary SHA-256: `10bb8005228005b2d21b282d2c5dfe658c13dc9452a387be46b291aab340c4fe`.
+
+The case retains the compiler log, exact build/runtime command and environments,
+Native binary, test output and real filesystem cache trees. The initial failing
+case is retained separately; it is not used as passing proof.
