@@ -40,15 +40,53 @@ inputs, and reports corruption as failure. The graph selects the runtime closure
 and excludes unrelated source/compiler-plugin outputs. Packaged outputs can be
 reused; application execution cannot.
 
-## Invocation and continuous-mode integration to implement
+## One-shot application commands
 
-A public preparation operation will use the existing snapshot/lock/tool
-verification and run-evidence path, materialize the verified terminal bundle in
-an invocation-owned directory, and publish a bounded digest-bound handoff only
-after successful, current evidence. A separate owned application runner will
-validate that handoff, bundle and consumed runtime tools before launching.
-Large hashing/materialization stays in owned children, outside the terminal
-control loop. The session must not turn cached preparation into a claimed run.
+`prepare-application` uses the build options with exactly one explicit module and
+target. It materializes the terminal bundle under the retained run's `prepared/`
+directory and writes `prepared.json`, binding the run, terminal action, complete
+verification record and output tree by digest. An `application-prepared` event
+publishes the run directory and descriptor digest. The following `run-finished`
+event and committed journal boundary must succeed before that handoff is usable.
+If declared inputs change during materialization, the run becomes incomplete.
+
+`run-application` prepares then executes the application once. Both phases share
+one interruption-handler lifetime, so cancellation cannot be reset between them.
+`run-prepared --run PATH --descriptor DIGEST_JSON` explicitly replays a retained
+preparation. Every execution rehashes the complete materialized tree, verifies
+the canonical descriptor and reconstructed package key, checks the committed
+verification journal, and rechecks current project inputs, runtime composition
+and tool installations. A cached or old preparation is not evidence of program
+execution, and stale preparations cannot run.
+
+The application uses the project root as its working directory and `/dev/null`
+as stdin. Its stdout/stderr go to private files in a fresh application-run
+directory; JSONL reports their paths in `application-started` and
+`application-finished`. The application phase has its own run identity and
+journal. Failures after an event stream starts are reported on stderr without
+inserting non-event diagnostics into stdout. The application exit code propagates
+to the caller; cancellation returns 130.
+
+The runner inherits no ambient environment. Its baseline is
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin`, `LANG=C`, `LC_ALL=C`, and `TZ=UTC`, overridden
+only by declared application settings. It additionally provides the reserved
+`KVIK_APPLICATION_INPUTS` path to the materialized input tree; Native resources
+are available beneath `runtime/<module>/main/`. Declaring that reserved variable
+is an error. JVM arguments remain literal, with argument-file expansion disabled
+before the main class. JVM bundle directories containing the classpath separator
+`:` are rejected. Native applications execute their declared verified executable.
+
+Application processes have no deadline, but retain ownership: interruption,
+owner loss, close and ordinary leader exit reap remaining descendants within the
+existing process-group boundary. Compilation, testing and packaging keep positive
+action deadlines. These commands do not create a background service.
+
+## Continuous-mode integration still required
+
+Foreground integration will use the same preparation and runner validation
+contracts. Large hashing/materialization stays in owned children, outside the
+terminal control loop. The session must not turn cached preparation into a
+claimed run, and candidate validation must finish before replacing the old app.
 
 `dev` application mode will own an additional process independently of its
 snapshot/build child. Source observations can mark the running application old;

@@ -4,6 +4,25 @@ import kvik.core.*
 import kotlin.test.*
 
 class ContractTest {
+    @Test fun applicationLifecycleEventsAreAcceptedWithoutAdmittingUnknownTypes() {
+        val digest = Sha256.digest(byteArrayOf()).toJson()
+        val payloads = mapOf(
+            "application-prepared" to obj("directory" to "/run".json(), "descriptor" to digest, "actionId" to "app:jvm:application".json()),
+            "application-started" to obj("preparationRun" to "prepared".json(), "descriptor" to digest, "module" to "app".json(),
+                "target" to "jvm".json(), "stdout" to "/run/out".json(), "stderr" to "/run/err".json()),
+            "application-finished" to obj("preparationRun" to "prepared".json(), "exitCode" to 17.json(),
+                "cancelled" to false.json(), "timedOut" to false.json(), "stdout" to "/run/out".json(), "stderr" to "/run/err".json()),
+        )
+        for ((kind, payload) in payloads) {
+            val event = RunEvent("run", 1, kind, payload)
+            val document = parseJson(event.toJson().canonical()).objectValue()
+            assertEquals(kind.json(), document.getValue("type"))
+            assertEquals(payload, document.getValue("payload"))
+        }
+        assertFails { RunEvent("run", 1, "application-unknown", obj()) }
+        assertFails { RunEvent("run", 0, "application-started", payloads.getValue("application-started")) }
+    }
+
     @Test fun sha256KnownAnswers() {
         assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", Sha256.digest(byteArrayOf()).hash)
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Sha256.digest("abc".encodeToByteArray()).hash)
