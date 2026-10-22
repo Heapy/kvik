@@ -62,7 +62,7 @@ Retained evidence under `/private/tmp/kvik-k15-foreground-applications`:
   recorded tracked PIDs/groups and harness-observed cleanup times 0.345–0.593 s.
 - `case-grw9dmto/unit.log`: 25 RUN/OK results, 83 ms, SHA-256
   `ad26b846e43f6db00443ebba14b14611d9a7ad7e0aeb436df9eeb78909e9da1d`.
-- `.kvik/tests/foreground-applications/receipt.json`: 21,033 bytes, SHA-256
+- `.kvik/tests/foreground-applications/case-grw9dmto/receipt.json`: preserved historical copy, 21,033 bytes, SHA-256
   `8c016119ba2e9c1d15d9cef6ba4f82ebd7e17e1262acca0fdfd82bd3423ce348`;
   source, compiler launcher/JAR inputs, controlled environment, commands and
   binary digests. SDK/JDK tracking is a focused test-build receipt, not a complete
@@ -122,7 +122,7 @@ uses an actual JVM application; Native application reload/ownership is separate,
 and an actual Native application across source exec remains unclaimed until
 specifically exercised. No unexecuted harness assertion is evidence of success.
 
-## Follow-up source preparation (not yet compiled)
+## Follow-up source preparation before the second focused gate
 
 Application admission and replacement now separately require Native recursive
 process ownership version 1 and, when source recomposition is enabled, bootstrap
@@ -133,7 +133,42 @@ acknowledgement or close failure cannot authorize activation. Session cleanup
 attempts owned-child closure, journal closure and terminal restoration even when
 an earlier boundary fails, preserving the original exception.
 
-Three focused Python schema groups passed after these additions. Their Native
-regressions and the public entry witnesses have not yet been compiled or run;
+Three focused Python schema groups passed after these additions. At source freeze,
+their Native regressions and public entry witnesses had not been compiled or run;
 the earlier 25-test receipt remains bound only to `02e65f0`. The actual recursive
 C boundary and Python bridge are separate dependencies undergoing review.
+
+## Updated focused gate with recursive Native ownership
+
+The second gate ran from clean `b633dc3`: controller follow-ups `efdeded`,
+`43403df`, `2a9a6e9`, plus reviewed recursive boundary `f48694b` cherry-picked as
+`b633dc3`. It used the same focused command above; process-inventory permission
+was granted. Actual handle `24012` terminated with exit 0. No source changed
+while compiling. The two compiler invocations reported only the existing
+unnecessary-safe-call warning in `Session.kt`.
+
+- **29 Native tests passed** in 150 ms. The four additional tests cover old-owner
+  poll/close failures preventing activation, complete cleanup with primary error
+  preservation, and bootstrap ownership capability admission. Existing capability
+  tests also reject missing/wrong Native ownership versions.
+- **Nine synthetic lifecycle scenarios passed**, using the real corrected Native
+  process host and protocol-fixture workers. They cover reload/test intent
+  retention, ownership signals/EOF/owner loss, independent owners and same-PID
+  synthetic handoff. Observed cleanup times were 0.488–0.685 s.
+- `.kvik/tests/foreground-applications/case-dgn89hkl/summary.json`: 3,699 bytes,
+  SHA-256 `b69c66decad16eef788d26ea7bac2234e43d57530e34002b887a278c3bfec118`.
+- `case-dgn89hkl/unit.log`: 7,013 bytes,
+  SHA-256 `8890f85d2218c5f1c5f35f054e72bbe48706b1b520ad008784f9c89a59b6e526`.
+- `case-dgn89hkl/receipt.json`: retained source/tool/environment/command/binary
+  receipt, 21,035 bytes,
+  SHA-256 `133865bb3494866b27ddd22f2d75b9283fb46837159676b1f8c7b08d4c6d4010`.
+  All 42 recorded inputs were checked again after compilation. The matching
+  binaries remain in the parent output directory.
+
+This focused gate does not build or exercise the real Python bootstrap bridge;
+its handoff descriptor is explicitly produced by the synthetic fixture. The
+public entry witnesses, actual JVM/Native foreground programs and compiled-source
+handoff remain unexecuted. Those gates require the final reviewed Python bridge
+and a composed runtime containing both ownership boundaries. The first gate's
+summary/log and historical receipt remain retained; rebuilding reused its binary
+output directory, so the second receipt identifies the current binaries.
