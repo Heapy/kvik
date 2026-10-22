@@ -110,6 +110,44 @@ class ScriptGraphTest {
         assertNotEquals(actions.getValue(scriptCompile).key(Sha256), scriptActions(graph, "task:jvm:main").getValue(scriptCompile).key(Sha256))
     }
 
+    @Test fun compilerIdentityInvalidatesScriptWithFixedCompositionAndInputs() {
+        val effective = effectiveConfiguration(scriptConfig(scriptSpec))
+        val lock = scriptLock(effective)
+        val files = scriptFiles("task.kt")
+        val composition = scriptDigest("composition")
+        fun actions(tools: Map<String, Digest>) = scriptActions(scriptActionGraph(
+            effective, lock, files, composition, tools, ScriptGraphRequest("task")))
+        val original = actions(scriptTools)
+        val changed = actions(scriptTools + ("jvm-compiler" to scriptDigest("different compiler distribution")))
+        for (id in listOf(scriptCompile, scriptRun)) {
+            val before = original.getValue(id)
+            val after = changed.getValue(id)
+            assertNotEquals(before.key(Sha256), after.key(Sha256), id)
+            assertEquals(before, after.copy(toolchains = before.toolchains), id)
+        }
+        assertEquals(CachePolicy.NEVER, changed.getValue(scriptRun).cachePolicy)
+    }
+
+    @Test fun publishedPluginDiagnosticsDistinguishCoordinateVersionOptionsAndInputs() {
+        val coordinate = Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")
+        val plugin = CompilerPluginSpec(null, coordinate, setOf("jvm"), setOf("script"), emptyList(), emptyList())
+        fun compile(value: CompilerPluginSpec) = scriptActions(scriptPlan(
+            scriptSpec.copy(compilerPlugins = listOf(value)), scriptFiles("task.kt", "plugin-input.txt"))).getValue(scriptCompile)
+        val action = compile(plugin)
+        assertEquals(listOf(LogicalPath("plugins/${scriptDigest(coordinate.toString()).hash}-${scriptDigest(coordinate.toString()).sizeBytes}.jar")),
+            JvmCompilation.fromJson(action.parameters).plugins)
+        val other = coordinate.copy(name = "other-plugin")
+        val incompatible = coordinate.copy(version = "2.3.20")
+        for ((invalid, diagnostic) in listOf(
+            plugin.copy(coordinate = other) to "Unsupported published script compiler plugin $other; supported coordinate: $coordinate",
+            plugin.copy(coordinate = incompatible) to "Script compiler plugin $incompatible is incompatible with pinned Kotlin 2.4.20; use $coordinate",
+            plugin.copy(options = listOf("generateSchema=true")) to "Published script compiler plugin $coordinate does not support options; remove options or use a workspace compiler plugin",
+            plugin.copy(inputs = listOf(LogicalPath("plugin-input.txt"))) to "Published script compiler plugin $coordinate does not support file inputs; remove inputs or use a workspace compiler plugin",
+        )) {
+            assertEquals(diagnostic, assertFailsWith<IllegalArgumentException> { compile(invalid) }.message)
+        }
+    }
+
     @Test fun workspaceCompilerPluginIsBuiltAndKeptOffApplicationClasspath() {
         val plugin = CompilerPluginSpec(module = "plugin", coordinate = null, targets = setOf("jvm"), scopes = setOf("script"),
             options = emptyList(), inputs = listOf(LogicalPath("plugin-input.txt")), id = "fixture.plugin", compilerVersion = "2.4.20")

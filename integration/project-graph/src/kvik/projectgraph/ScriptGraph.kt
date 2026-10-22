@@ -120,7 +120,19 @@ private class ScriptGraphBuilder(
     private fun pluginInputs(results: Map<String, ActionResult>): PluginInputs {
         val plugin = plugins.singleOrNull() ?: return PluginInputs(emptyList(), emptyList(), emptyList())
         plugin.coordinate?.let { coordinate ->
-            require(coordinate == Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20") && plugin.options.isEmpty() && plugin.inputs.isEmpty()) { "Unsupported published script compiler plugin" }
+            val supported = Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")
+            require(coordinate.group == supported.group && coordinate.name == supported.name) {
+                "Unsupported published script compiler plugin $coordinate; supported coordinate: $supported"
+            }
+            require(coordinate.version == supported.version) {
+                "Script compiler plugin $coordinate is incompatible with pinned Kotlin ${supported.version}; use $supported"
+            }
+            require(plugin.options.isEmpty()) {
+                "Published script compiler plugin $coordinate does not support options; remove options or use a workspace compiler plugin"
+            }
+            require(plugin.inputs.isEmpty()) {
+                "Published script compiler plugin $coordinate does not support file inputs; remove inputs or use a workspace compiler plugin"
+            }
             val locked = artifacts(listOf(coordinate), "java-runtime", true)
             require(locked.size == 1 && locked.single().coordinate == coordinate) { "Unsupported serialization plugin closure/pin" }
             val files = entries(locked, "plugins")

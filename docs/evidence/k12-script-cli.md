@@ -118,7 +118,13 @@ and lifecycle phase (`lifecycle-14rhvoeo`, summary SHA-256
 The independent named-phase audit approved the retained evidence:
 `/private/tmp/kvik-script-named-audit-y6axyftg/report.json`, SHA-256
 `80ec9926bf481d64db8d62ae0dfc86266fb07fcb31b3510a514ed629a1e80fa9`.
-The lifecycle summary remains producer evidence pending its separate review.
+The independent lifecycle audit also approved its retained evidence:
+`/private/tmp/kvik-script-lifecycle-audit-iulzbccc/report.json`, SHA-256
+`17d899c2c371c8c463cd76e7da8b513256de1fdab2c65cbf851706f7443d837b`.
+For timeout/INT/TERM, absence was observed in the first checked postterminal process
+table; owner SIGKILL requires separately observed eventual cleanup and has no
+completion acknowledgement. These sampled observations do not claim zero-time
+absence before the process-table query.
 The named phase exercised catalog/profile dependencies, prerequisite reuse, ordered
 compiler/plugin/runtime classpaths, resource/plugin input/plugin implementation/profile/
 catalog invalidation and rejection of a private transitive import. Lifecycle covered
