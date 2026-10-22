@@ -182,6 +182,18 @@ def main():
         run_command('noncanonical-token',[str(runtime),'stage-application','--activation',str(empty),'--token',json.dumps(digest(b'token')),*build],2)
         cold=start('cold');saved=ready(cold);activate(cold);started(cold);finish(cold,0)
         assert len(effects())==len(cold['before'])+1
+        # Missing/corrupt helper must refuse readiness; never mutate the approved runtime.
+        for mode in ('missing','corrupt'):
+            copied=case/('runtime-'+mode);shutil.copytree(runtime.parent,copied)
+            helper=copied/'guardian'
+            if mode=='missing':helper.unlink()
+            else:
+                data=helper.read_bytes();helper.chmod(0o755);helper.write_bytes(bytes([data[0]^1])+data[1:])
+            gate=case/('helper-'+mode);gate.mkdir();before=list(effects())
+            run_command('helper-'+mode,[str(copied/'kvik.kexe'),'stage-prepared','--activation',str(gate),
+                '--token',canonical(digest(mode.encode())).decode(),'--run',saved['preparationDirectory'],
+                '--descriptor',canonical(saved['descriptor']).decode()],1)
+            assert not (gate/'ready.json').exists() and not (gate/'started.json').exists() and effects()==before
         for label,patch,raw in [('wrong-token',dict(token=digest(b'wrong')),None),('wrong-ready',dict(ready=digest(b'wrong')),None),
             ('unknown-field',dict(extra=True),None),('noncanonical',None,b'{}\n')]:
             item=start(label,prepared=saved);ready(item);activate(item,patch=patch,raw=raw);finish(item,1);no_start(item)

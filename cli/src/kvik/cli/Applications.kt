@@ -157,6 +157,8 @@ private data class ApplicationPlan(
 )
 
 private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
+    // Readiness must include the ownership helper required to start the application.
+    verifiedRuntimeGuardian()
     val directory = prepared.directory
     val descriptorBytes = NativeFiles.read("$directory/prepared.json", 8192)
     require(Sha256.digest(descriptorBytes) == prepared.descriptor) { "Prepared application descriptor changed" }

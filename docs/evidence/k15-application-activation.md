@@ -18,7 +18,8 @@ bounded to 256 UTF-8 bytes. Preflight errors precede the build event stream.
 Stage-application completes executeBuild(APPLICATION), including committed run
 completion, then validates the prepared bundle and full current source/tool and
 journal evidence. Stage-prepared performs that validation without building.
-Both retain the validated launch plan privately; readiness never supplies
+Readiness also verifies the runtime guardian bytes required for ownership; the
+process host verifies them again after activation. Both retain the validated launch plan privately; readiness never supplies
 trusted executable arguments.
 
 `kvik.foreground` provides immutable ApplicationReady(token,
@@ -77,5 +78,20 @@ logs and effects, and uses a real Kotlin JVM application. Planned checks include
 no effects before activation, wrong token/digest/shape, cancellation/owner loss,
 post-ready source or bundle corruption, old process and descendants reaped
 before replacement activation, 60-second deadline, and public one-shot/replay.
-Schema tests (2 groups), help, syntax and diff checks pass. Native protocol and
-composed-runtime/consumer evidence are pending their matching builds.
+Schema tests (2 groups), help, syntax and diff checks pass. Frozen `84cbe3b`
+production plus harness cleanup correction `f444975` built composition
+`b08d0edb18ec07738c70f9dcb571f55665581e35cffdbae8b3b8eea1c20e56e3`.
+Five Native protocol groups passed in retained
+`.kvik/tests/application-activation-protocol/case-m0yl4dni`. The actual JVM gate
+passed 20 scenarios in `.kvik/tests/application-activation/case-01l_iqwf`,
+including a 60.558-second activation deadline and retained full owned-tree/PGID
+cleanup. Its summary SHA-256 is
+`e00e3d996926734517018a328f27258a66a0f99e6fe7ad62f8872e42acc48ded`.
+
+That gate predates the pre-readiness guardian verification correction: previously
+stage-prepared first checked the guardian only after activation. The correction
+checks it before readiness and retains the later host check. Two additional
+actual cases copy the runtime bundle, remove/corrupt only the copied guardian,
+and require stage-prepared refusal with no ready/started file or application
+effects. A matching corrected runtime/full actual gate is pending. Protocol
+source and its compiled receipt are unchanged.
