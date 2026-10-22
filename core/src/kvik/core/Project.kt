@@ -33,7 +33,29 @@ data class SourceSet(
     val dependencies: List<Dependency>,
 )
 
-data class TargetSpec(val name: String, val main: String, val test: String?, val compilerOptions: List<String>)
+/** Exact JVM binary class names; an empty selection deliberately requests no discovery. */
+data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit")) {
+    init {
+        require(classes.distinct().size == classes.size && classes.all {
+            it.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*"))
+        }) { "JVM test classes must be unique qualified binary names" }
+        require(engines.isNotEmpty() && engines.distinct().size == engines.size && engines.all { it in setOf("junit", "kotest") }) {
+            "JVM test engines must be a nonempty unique selection of junit and/or kotest"
+        }
+    }
+}
+
+data class TargetSpec(
+    val name: String,
+    val main: String,
+    val test: String?,
+    val compilerOptions: List<String>,
+    val testSettings: JvmTestSettings? = null,
+) {
+    init {
+        require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
+    }
+}
 data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, val targets: Set<String>, val scopes: Set<String>, val options: List<String>, val inputs: List<LogicalPath>) {
     init {
         require((module == null) != (coordinate == null)) { "Compiler plugin needs exactly one module or coordinate" }

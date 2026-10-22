@@ -1,0 +1,45 @@
+"""Focused schema/parser-contract parity cases for optional declarative JVM selections."""
+import json
+from pathlib import Path
+import unittest
+
+from jsonschema import Draft202012Validator
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCHEMA = json.loads((ROOT / "schemas/v1/contracts.json").read_text())
+VALIDATOR = Draft202012Validator({**SCHEMA, "$ref": "#/$defs/target"})
+
+
+class ProjectSettingsSchemaTest(unittest.TestCase):
+    def target(self, **changes):
+        return dict(name="jvm", main="main", test="test", compilerOptions=[], **changes)
+
+    def test_old_documents_and_ordered_or_empty_selections(self):
+        for value in [
+            self.target(),
+            self.target(testSettings={"classes": []}),
+            self.target(testSettings={"classes": ["sample.ZTest", "sample.Outer$Nested", "DefaultPackageTest"], "engines": ["kotest", "junit"]}),
+            {**self.target(), "name": "macosArm64"},
+            {**self.target(), "test": None},
+        ]:
+            with self.subTest(value=value):
+                VALIDATOR.validate(value)
+
+    def test_invalid_settings_and_unsupported_target_scope(self):
+        invalid = [None, [], {}, {"classes": None}, {"classes": [], "typo": True},
+                   {"classes": ["a.Test", "a.Test"]}]
+        invalid += [{"classes": [], "engines": engines} for engines in
+                    [[], ["junit", "junit"], ["junit-jupiter"], ["unknown"], None]]
+        invalid += [{"classes": [name]} for name in
+                    ["", ".Test", "Test.", "a..Test", "a.1Test", "a/Test", "a.*", "a.Test#method", "a.Test\n", " a.Test", "a.Test "]]
+        for settings in invalid:
+            with self.subTest(settings=settings):
+                self.assertFalse(VALIDATOR.is_valid(self.target(testSettings=settings)))
+        selected = self.target(testSettings={"classes": []})
+        self.assertFalse(VALIDATOR.is_valid({**selected, "name": "macosArm64"}))
+        self.assertFalse(VALIDATOR.is_valid({**selected, "test": None}))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -70,14 +70,18 @@ private fun parseModule(value: JsonValue): ModuleSpec {
     validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
     val names = sourceSets.map { it.name }.toSet()
     val targets = fields.getValue("targets").arrayValue().map { target ->
-        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"))
+        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings"))
         val name = entry.getValue("name").stringValue()
         require(name in setOf("jvm", "macosArm64")) { "Unsupported target: $name" }
         val main = entry.getValue("main").identifier()
         val test = entry.getValue("test").let { if (it == JsonValue.Null) null else it.identifier() }
         require(main in names && (test == null || test in names)) { "Unknown compilation source set in $id:$name" }
         require(test != main) { "Main and test source sets must differ in $id:$name" }
-        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings())
+        val settings = entry["testSettings"]?.let { value ->
+            val selection = value.fields(setOf("classes"), setOf("engines"))
+            JvmTestSettings(selection.getValue("classes").strings(), selection["engines"]?.strings() ?: listOf("junit"))
+        }
+        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings)
     }
     require(targets.isNotEmpty()) { "Module $id requires targets" }
     targets.map { it.name }.unique("target in $id")

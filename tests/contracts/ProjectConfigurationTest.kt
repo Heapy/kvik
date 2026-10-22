@@ -15,6 +15,52 @@ class ProjectConfigurationTest {
 
     private fun parse(text: String = example) = parseProjectConfiguration(parseJson(text))
 
+    private fun withSettings(settings: String) = example.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"testSettings\":$settings")
+
+    @Test fun explicitTestSelectionsPreserveOrderDefaultsAndDocumentIdentity() {
+        val settings = """{"classes":["sample.ZTest","sample.Outer${'$'}Nested","DefaultPackageTest"],"engines":["kotest","junit"]}"""
+        val configuration = parse(withSettings(settings))
+        val target = configuration.project.modules.single().targets.single()
+        assertEquals(JvmTestSettings(listOf("sample.ZTest", "sample.Outer\$Nested", "DefaultPackageTest"), listOf("kotest", "junit")), target.testSettings)
+        assertEquals(parseJson(withSettings(settings)), configuration.document)
+        assertEquals(configuration.digest, parse(configuration.document.canonical()).digest)
+        assertNotEquals(configuration.digest, parse(withSettings(settings.replace("sample.ZTest", "sample.OtherTest"))).digest)
+        assertNotEquals(configuration.digest, parse(withSettings(settings.replace("\"sample.ZTest\",\"sample.Outer${'$'}Nested\"", "\"sample.Outer${'$'}Nested\",\"sample.ZTest\""))).digest)
+        assertNotEquals(configuration.digest, parse(withSettings(settings.replace("\"kotest\",\"junit\"", "\"junit\",\"kotest\""))).digest)
+        val implicitEngine = parse(withSettings("""{"classes":[]}"""))
+        val explicitEngine = parse(withSettings("""{"classes":[],"engines":["junit"]}"""))
+        assertEquals(JvmTestSettings(emptyList()), implicitEngine.project.modules.single().targets.single().testSettings)
+        assertEquals(implicitEngine.project, explicitEngine.project)
+        assertNotEquals(implicitEngine.digest, explicitEngine.digest)
+        assertNotEquals(parse().digest, implicitEngine.digest)
+        assertFalse(TestCounts(0, 0, 0, 0, true).satisfiesExecution)
+    }
+
+    @Test fun absentTestSettingsRemainBackwardsCompatible() {
+        assertEquals(TargetSpec("jvm", "jvmMain", "jvmTest", emptyList()), parse().project.modules.single().targets.single())
+        assertNull(parse(example.replace("\"test\":\"jvmTest\"", "\"test\":null")).project.modules.single().targets.single().testSettings)
+        assertNull(parse(example.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")).project.modules.single().targets.single().testSettings)
+        assertEquals(parseJson(example), parse().document)
+    }
+
+    @Test fun invalidTestSelectionsFailBeforeExecution() {
+        for (settings in listOf(
+            "null", "[]", "{}", """{"classes":null}""", """{"classes":[],"typo":true}""",
+            """{"classes":["a.Test","a.Test"]}""", """{"classes":[],"engines":[]}""",
+            """{"classes":[],"engines":["junit","junit"]}""", """{"classes":[],"engines":["junit-jupiter"]}""",
+            """{"classes":[],"engines":["unknown"]}""", """{"classes":[],"engines":null}""",
+        )) assertFails("accepted $settings") { parse(withSettings(settings)) }
+        for (name in listOf("", ".Test", "Test.", "a..Test", "a.1Test", "a/Test", "a.*", "a.Test#method", "a.Test\n", " a.Test", "a.Test ")) {
+            assertFails("accepted $name") { parse(withSettings(obj("classes" to listOf(name.json()).json()).canonical())) }
+            assertFails { JvmTestSettings(listOf(name)) }
+        }
+        val selected = withSettings("""{"classes":[]}""")
+        assertFails { parse(selected.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")) }
+        assertFails { parse(selected.replace("\"test\":\"jvmTest\"", "\"test\":null")) }
+        assertFails { TargetSpec("macosArm64", "main", "test", emptyList(), JvmTestSettings(emptyList())) }
+        assertFails { TargetSpec("jvm", "main", null, emptyList(), JvmTestSettings(emptyList())) }
+    }
+
     @Test fun sharedAncestorsAppearOnceAndFormattingDoesNotChangeIdentity() {
         val configuration = parse()
         val module = configuration.project.modules.single()

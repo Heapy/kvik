@@ -48,7 +48,12 @@ DEFS["file"] = object_({"path": PATH, "digest": ref("digest"), "executable": BOO
 DEFS["tree"] = versioned({"files": array(ref("file"), uniqueItems=True)})
 DEFS["dependency"] = {"oneOf": [object_({"coordinate": COORDINATE}), object_({"module": ID})]}
 DEFS["sourceSet"] = object_({"name": ID, "directories": array(PATH), "resources": array(PATH), "dependsOn": array(ID, uniqueItems=True), "dependencies": array(ref("dependency"))})
-DEFS["target"] = object_({"name": enum("jvm", "macosArm64"), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING)})
+DEFS["jvmTestSettings"] = object_({
+    "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*(?![\s\S])"}, uniqueItems=True),
+    "engines": array(enum("junit", "kotest"), minItems=1, uniqueItems=True),
+}, optional=("engines",))
+DEFS["target"] = object_({"name": enum("jvm", "macosArm64"), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings")}, optional=("testSettings",))
+DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"properties": {"name": {"const": "jvm"}, "test": ID}}}]
 DEFS["compilerPlugin"] = object_({"module": ID, "coordinate": COORDINATE, "targets": array(enum("jvm", "macosArm64"), minItems=1, uniqueItems=True), "scopes": array(enum("main", "test", "script"), minItems=1, uniqueItems=True), "options": array(STRING), "inputs": array(PATH)}, optional=("module", "coordinate"))
 DEFS["compilerPlugin"]["oneOf"] = [{"required": ["module"], "not": {"required": ["coordinate"]}}, {"required": ["coordinate"], "not": {"required": ["module"]}}]
 DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1), "compilerPlugins": array(ref("compilerPlugin"))})

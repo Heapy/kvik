@@ -140,6 +140,34 @@
       ],
       "additionalProperties": false
     },
+    "jvmTestSettings": {
+      "type": "object",
+      "properties": {
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*(?![\\s\\S])"
+          },
+          "uniqueItems": true
+        },
+        "engines": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "junit",
+              "kotest"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "classes"
+      ],
+      "additionalProperties": false
+    },
     "target": {
       "type": "object",
       "properties": {
@@ -169,6 +197,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "testSettings": {
+          "$ref": "#/$defs/jvmTestSettings"
         }
       },
       "required": [
@@ -177,7 +208,27 @@
         "test",
         "compilerOptions"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "testSettings"
+            ]
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "jvm"
+              },
+              "test": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
+            }
+          }
+        }
+      ]
     },
     "compilerPlugin": {
       "type": "object",
