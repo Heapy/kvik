@@ -104,7 +104,8 @@ def lifecycle(args, output, env):
                        composition=composition, store=str(store), cache=str(work/cache), runs=str(work/('runs-'+label)),
                        compiler=str(args.konan_home/'bin/konanc'), javaHome=str(args.java_home), sdk=str(args.sdk),
                        dependencies=str(args.konan_data), developerDirectory=str(args.developer_directory),
-                       guardian=str(output/'guardian'), report=str(work/(label+'.json')), timeoutMillis=180_000, **extra)
+                       guardian=str(output/'guardian'), report=str(work/(label+'.json')), timeoutMillis=180_000)
+        request.update(extra)
         request_path = work/(label+'-request.json'); request_path.write_bytes(canonical(request))
         subprocess.run([str(output/'probe.kexe'), str(request_path)], env=env, check=True, timeout=240)
         result = json.loads(Path(request['report']).read_text()); summary['cases'][label] = result
@@ -149,11 +150,12 @@ def lifecycle(args, output, env):
     binary.chmod(0o755)
     expected_ids = {'audit.LifecycleSpec.'+name for name in ('passing effect', 'ordinary assertion', 'skipped leaf', 'nested container ⇢ nested leaf', 'process failure')}
     scenarios = [('pass', 'passed'), ('pass-repeat', 'passed'), ('fail', 'failed'), ('error', 'failed'), ('all-skipped', 'incomplete'),
-                 ('ignored-container', 'incomplete'), ('zero', 'incomplete'), ('engine-error', 'failed'), ('crash', 'incomplete'), ('hang', 'cancelled')]
+                 ('ignored-container', 'incomplete'), ('ignored-spec', 'incomplete'), ('zero', 'incomplete'), ('engine-error', 'failed'),
+                 ('crash', 'incomplete'), ('hang', 'cancelled'), ('timeout', 'incomplete')]
     for label, expected in scenarios:
-        scenario = work/(label+'.txt'); scenario.write_text(('pass' if label == 'pass-repeat' else label)+'\n')
+        scenario = work/(label+'.txt'); scenario.write_text(('pass' if label == 'pass-repeat' else 'hang' if label == 'timeout' else label)+'\n')
         result = invoke('test-'+label, 'test', {'module': 'audit', 'executable': 'tests.kexe'}, {'tests.kexe': binary, 'scenario.txt': scenario},
-                        **({'cancelAfterMillis': 1000} if label == 'hang' else {}))
+                        **({'cancelAfterMillis': 1000} if label == 'hang' else {'timeoutMillis': 1000} if label == 'timeout' else {}))
         report = result['tests']; assert report['status'] == expected, (label, result)
         assert result['action']['cachePolicy'] == 'never'
         events = Path(result['directory'])/'kotest.events.jsonl'
@@ -165,8 +167,10 @@ def lifecycle(args, output, env):
             assert (Path(result['directory'])/'effects.txt').read_text() == 'leaf\n'
             assert report['counts']['discoveryComplete'] is True
             assert report['counts']['executed'] == 4 and report['counts']['skipped'] == 1
-        if label in ('ignored-container', 'engine-error', 'crash', 'hang'):
+        if label in ('ignored-container', 'ignored-spec', 'engine-error', 'crash', 'hang', 'timeout'):
             assert report['counts']['discoveryComplete'] is False and report['counts']['discovered'] is None
+        if label == 'ignored-spec':
+            assert report['counts']['executed'] == 0 and any(event['event'] == 'spec-ignored' for event in journal)
         if label == 'zero': assert report['counts']['executed'] == 0
         if label in ('fail', 'error'): assert result['result']['exitCode'] == 0 and report['counts']['failed'] == 1
         if expected != 'passed': assert result['result']['outputs']['files'] == []

@@ -2,7 +2,11 @@
 package audit
 
 import io.kotest.core.config.AbstractProjectConfig
+import io.kotest.core.descriptors.Descriptor
+import io.kotest.core.extensions.Extension
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.engine.extensions.filter.DescriptorFilter
+import io.kotest.engine.extensions.filter.DescriptorFilterResult
 import kotlinx.cinterop.*
 import platform.posix.*
 
@@ -21,6 +25,10 @@ private fun effect(): Unit {
 }
 
 public class AuditProjectConfig : AbstractProjectConfig() {
+    override val extensions: List<Extension> = listOf(object : DescriptorFilter {
+        override fun filter(descriptor: Descriptor): DescriptorFilterResult =
+            if (scenario() == "ignored-spec") DescriptorFilterResult.Exclude("fixture selects no specs") else DescriptorFilterResult.Include
+    })
     override suspend fun beforeProject(): Unit {
         if (scenario() == "engine-error") error("expected engine startup failure")
     }
