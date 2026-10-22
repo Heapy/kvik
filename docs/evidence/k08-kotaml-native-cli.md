@@ -1,4 +1,12 @@
-# K08 public Native kotaml CLI gate (partial execution, full gate pending)
+# K08 public Native kotaml CLI gate
+
+The complete public gate passed in `case-mqt5051e`: **1,880 exact Native test
+identities passed on both cold and warm runs** from the same 61 unchanged
+source files. The warm run reused eight compilation/generation/link actions
+and freshly executed both test actions. The separate read-only audit approved
+the results, retained bytes and current verification records. This is the
+pinned macosArm64 fixture with the explicit metadata corrections and link
+budget described below; it does not approve Native remote caching.
 
 `tools/test_kotaml_native_cli.py` prepares a private copy of exactly 61 unchanged
 common source/test files at fixture commit
@@ -20,7 +28,7 @@ The harness checks every action budget: main and test-library compilation
 and test execution 60,000 ms. This changes the fixture's declared link budget;
 the default compiler/link budget remains 180,000 ms for other projects.
 
-## Intended gate
+## Verified gate
 
 Resolution uses the production CLI, metadata resolver and CAS, then checks
 exact Native runtime/link artifact digests against retained KTC classpaths,
@@ -59,7 +67,7 @@ leaves, current verification evidence, schema-valid contiguous event journals,
 and unchanged lock/runtime bytes. The existing journal mutation audit challenges
 corrupt/deleted/reordered/truncated history without modifying the original run.
 
-## Preparation and current blocker
+## Preparation and resolved failures
 
 Schema/source/identity preparation and Python syntax checks passed in
 `.kvik/tests/kotaml-native-cli/case-klnlxrt2`. The explicit-policy preparation also passed in `case-msni3tmy`, preserving all 61 source hashes and 1,880 identities. No compiler was invoked.
@@ -143,12 +151,69 @@ identities independently from both retained K01 logs. The audit is retained as
 `/private/tmp/kvik-public-native-independent-audit.json` (`partial-terminal-failure`).
 
 The failed case is preserved unchanged. The explicit 600,000 ms fixture link
-budget requires a rebuilt CLI and a new full invocation; changing this budget
-does not establish that the larger run succeeds. Preparation with that setting
+budget was validated with a rebuilt CLI and a separate full invocation below.
+Preparation with that setting
 passed in `/private/tmp/kvik-k08-native-timeouts/.kvik/tests/kotaml-native-cli/case-hxjctca7`
 without invoking resolution, compilers or tests. Contract and graph validation
 is recorded in `k08-native-timeouts.md`.
 
+## Complete cold and warm public execution
+
+The new invocation completed with exit 0, retaining its full evidence under
+`.kvik/tests/kotaml-native-cli/case-mqt5051e`. Runtime composition is
+`2bd5e75a4c6bb1f76c595545edf2f974a7bee9d25895c38f5ecb7242361e4620`
+(10,421 canonical bytes), built after integrating the timeout changes at
+`e0c3c32`. Executable SHA-256 is
+`8ee0020cba81683e2c8ec45c2fc42048072d37e493ca95f7af9b5882671d63dc`
+(4,761,048 bytes). Its runtime lock, guardian and worker bundle were verified.
+Later source-graph Python/schema additions are separate from this pinned
+runtime and do not expand the scope of its verification.
+
+Production resolve completed in 37.764 seconds; offline check-lock and resolve
+passed with byte-identical lock content. Independent comparison against the
+failed case confirms the only project configuration difference is
+`nativeTimeouts.linkMillis: 600000` on both targets. All global/scoped pins,
+12 metadata corrections and 46 lock selections are identical. The effective
+configuration identity correctly changes with the declared budget.
+
+| Run | Public CLI time | Actions | Exact passed leaves | Events |
+| --- | ---: | --- | ---: | ---: |
+| Cold `kvik-run-kDsh2z` | 627.250 s | 10 executed | 1,880 | 1,903 |
+| Warm `kvik-run-Yxi1M0` | 78.902 s | 8 local hits, 2 fresh test actions | 1,880 | 1,902 |
+
+Each run discovered and executed exactly 1,558 kotaml and 322 kotaml-json
+leaves, with no failures or skips. Both final verification records and
+post-exit freshness queries report current results. The ten action keys match
+between runs, and all reused output manifests match exactly. Four typed
+journals have distinct request tokens: the root journal has 3,224 events and
+the JSON journal 656 per run. Each contains exactly one inventory, engine
+start/finish/return and process-main completion. Both sets of deliberate
+journal corruption/deletion/reordering/truncation checks returned indeterminate
+verification without modifying the retained original runs.
+
+The independent audit re-extracted golden identities from both hashed K01
+logs, rechecked all 61 copied/original sources and five upstream configuration
+files, and checked 20 canonical action instances, exact phase budgets, all
+eight Native artifact sets, KSP/processor inputs and producer bindings. It
+rehashed 157 distinct CAS blobs (161,536,147 bytes) and 307 materialized files,
+including exact membership and executable bits. The CAS count includes lock
+metadata as well as action bytes. Complete journal and completion-marker
+digests bind both verification records and their queries.
+
+Reports are `/private/tmp/kvik-public-native-final-audit-mqt5051e.json` and
+`/private/tmp/kvik-public-native-independent-audit-mqt5051e.json`. Reproduce the
+read-only audit with:
+
+```sh
+.kvik/schema-tools/bin/python /private/tmp/kvik-public-native-independent-audit-mqt5051e.py \
+  .kvik/tests/kotaml-native-cli/case-mqt5051e --final
+```
+
+The independent review checked tool identities and retained provider evidence;
+it did not rerun compilers or independently hash the entire installed toolchain
+again. Artifact byte sets are exact, while baseline classpath ordering is not
+claimed. The previously observed Native output/debug nondeterminism remains:
+compiler actions are LOCAL and no cross-machine portability approval follows.
 
 ## Reproduction
 
@@ -159,7 +224,7 @@ Preparation needs only the pinned fixture and schema Python:
   --fixture /Users/yoda/dev/pet/kvik/.kvik/fixtures/kotaml --prepare-only
 ```
 
-Once the reviewed resolver/graph/CLI composition is available, run:
+With an explicitly selected composed runtime, run:
 
 ```sh
 /Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python tools/test_kotaml_native_cli.py \
