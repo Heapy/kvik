@@ -65,5 +65,73 @@ python3 -B tools/test_source_graph_lifecycle.py --run \
   --case /private/tmp/kvik-k14-source-lifecycle/.kvik/tests/source-lifecycle/case-og3pe4ew
 ```
 
-Actual result pending; preserve failed attempts rather than resume/overwrite a
-case containing `summary.json`.
+A case containing `summary.json` cannot be resumed/overwritten; use a new case
+for a fresh attempt.
+
+## Actual full lifecycle result
+
+Frozen harness `f1df6a40a73a747e7063762ab153f59c6d1695f0` ran unchanged on
+2026-10-22 with:
+
+```sh
+cd /private/tmp/kvik-k14-source-lifecycle
+python3 -B tools/test_source_graph_lifecycle.py --run
+```
+
+Handle `76479` completed with exit 0. All 13 launcher commands and five process
+monitors are retained in
+`.kvik/tests/source-lifecycle/case-ml9uwoxw/summary.json` (SHA-256
+`9bf454e0cb4b48eaa9038c33414213bbea79352b48c2a1b1ab3f36da75a90158`).
+The harness identity is
+`463e68d7b74bd3e07066bd53bdad9120b8ac36f9cf9d2bd27adf40c1b969a687`
+(16,712 bytes), independently rechecked along with both imported helper identities
+and every retained stdout/stderr digest after completion.
+
+| Phase | Actual result | Wall seconds |
+| --- | --- | ---: |
+| Concurrent cold owners | Both exit 0; one build, one hit | 74.867 / 74.866 |
+| Interrupt actual Native compilation | Owner exits 130; no publication/staging | 39.320 |
+| Interrupted cache, no-build | Refuses with exit 2 | 0.118 |
+| Interrupted retry | Full build and runtime-info pass | 77.544 |
+| Corrupt executable, no-build | Refuses with exit 2 | 0.088 |
+| Executable repair | Full build passes; corrupt bytes quarantined | 73.255 |
+| Corrupt source receipt, no-build | Refuses with exit 2 | 0.094 |
+| Receipt repair | Full build passes; corrupt receipt quarantined | 71.319 |
+| Incompatible tool identity, no-build | Refuses with exit 2 | 0.073 |
+| Incompatible installed-tool verification | Refuses with exit 2; no compile/publication | 9.707 |
+
+The successful composition is the approved helper-v2 identity
+`7db70e5516292ccfe1fefc2c015885beac0db801e8f3730425b78c976bdb9cae`.
+All successful runtime-info calls report the Native backend and both added
+plugins expose `source-v2`. The mismatched trusted Native identity changes the
+composition to `4f0f02e60ec1d8cef215d1c7c5bc3c666f5589c497b1e415ee1851dd57521bf8`;
+the original executable directory inventory stays unchanged in that phase.
+
+Each successful build passes the complete existing publication audit: eight
+actual build commands and 92 exact composition inputs, including the full
+selected Kvik runtime, both plugins, their shared transitive helper and pinned
+Native serialization closure. There are exactly four complete successful builds
+and one interrupted Native compiler invocation. The cold concurrent pair records
+one staging directory and one Native command, with exactly one building/built
+pair and one cache-hit event. Its 38 observed processes all stop.
+
+SIGTERM is delivered 38.853 seconds into the interrupted attempt, after observing
+`org.jetbrains.kotlin.cli.utilities.MainKt konanc` and its exact recorded argv.
+All 37 observed owned processes stop; the owner exits about 0.468 seconds after
+the signal. The three subsequent successful build monitors also report every
+observed owned process stopped (41, 38 and 35 observed PIDs). Only the owner is
+signalled; the production guardian owns descendant cleanup. These counts include
+launcher, guardian and intermediate tool processes, not just compilers.
+
+The successful executable file hashes differ across the four builds, consistent
+with the earlier Native output-path/nondeterminism limitation. They are retained
+in each manifest and audit; this gate asserts correctness/identity checks and
+atomic publication, not deterministic executable bytes. The copied trusted
+launcher and source cache inventories remain byte-identical to preparation.
+No production fix was needed.
+
+An initial attempt in `case-og3pe4ew` stopped immediately because the restricted
+execution environment denied `/bin/ps`. Its two just-started owners were cleaned
+up; no compiler stage was reached. That failed attempt remains retained. The
+successful fresh attempt used the granted process-observation permission; no
+harness source changed between attempts and no failed case was overwritten.
