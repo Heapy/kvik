@@ -16,6 +16,30 @@
           "sizeBytes": 1
         }
       },
+      "contentPaths": [
+        "cache/src",
+        "cli/src",
+        "compiler/jvm/native/src",
+        "compiler/jvm/src",
+        "compiler/ksp/src",
+        "compiler/native/src",
+        "core/src",
+        "execution/platform",
+        "execution/src",
+        "integration/action-cache/src",
+        "integration/compiler-tools/src",
+        "integration/foreground/src",
+        "integration/package-queries/src",
+        "integration/project-graph/src",
+        "integration/project-snapshot/src",
+        "integration/resolution/src",
+        "integration/run-evidence/src",
+        "integration/toolchains/platform",
+        "integration/toolchains/src",
+        "plugins/kotlin/src",
+        "resolution/native",
+        "resolution/src"
+      ],
       "kotlinRoots": [
         "cache/src",
         "cli/src",
@@ -55,6 +79,9 @@
           "sizeBytes": 1
         }
       },
+      "contentPaths": [
+        "src"
+      ],
       "kotlinRoots": [
         "src"
       ],
@@ -80,6 +107,9 @@
           "sizeBytes": 1
         }
       },
+      "contentPaths": [
+        "src"
+      ],
       "kotlinRoots": [
         "src"
       ],
@@ -100,6 +130,9 @@
           "sizeBytes": 1
         }
       },
+      "contentPaths": [
+        "src"
+      ],
       "kotlinRoots": [
         "src"
       ],
