@@ -111,3 +111,22 @@ The fixture intentionally retains the added source from that final stale probe.
 This evidence covers same-host local CAS restoration of the full runtime bundle.
 It does not claim cross-machine Native reproducibility, remote executable reuse,
 or a live foreground handoff specifically between shared-store materializations.
+
+## Integration review
+
+Independent cache review approved storage commits `e8c1005` / `3fd8191` and
+adapter `146e6bd`. It reran 15 Python storage groups and eight actual Native
+interoperability calls without recompilation, checked their controlled compiler
+launch receipt, and reproduced the original invalid-tree/tool-overlap failures
+against the fixes. It then reran all 13 launcher policy/boundary tests and the
+retained ten Native descriptor/resume tests after checking their exact inputs.
+The launcher file changed after the Native contract build, but its descriptor
+producer function and all consumed Native/schema/generated sources stayed equal.
+Reports: `/private/tmp/kvik-runtime-store-receipt-audit-jwwyvrkl/report.json` and
+`/private/tmp/kvik-runtime-fix-review-tr41fbgk/report.json`. Sixteen source-launcher
+regression groups and seven legacy identity groups also passed before integration.
+
+After serial integration, an independent hash comparison confirmed all 18 files
+changed by the approved candidate match main `04e503d` byte for byte; the user
+PLAN.md edit was preserved. Report:
+`/private/tmp/kvik-runtime-integration-review-tzanv2h8/report.json`.
