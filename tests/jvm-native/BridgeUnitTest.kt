@@ -142,6 +142,59 @@ class BridgeUnitTest {
         assertFailsWith<IllegalArgumentException> { parseTestResult(record("failed", 1, emptyList(), zero, incomplete), "request", "m", 1) }
     }
 
+    @Test fun setupFailuresRetainStageAndErrnoWithoutParsingMissingWorkerFiles() {
+        val root = NativeRunDirectory("/private/tmp")
+        val store = NativeContentStore("${root.path}/store")
+        val manifest = obj("fixture" to true.json())
+        writeJvmFile("${root.path}/manifest.json", manifest.canonical().encodeToByteArray())
+        val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
+        val provider = JvmToolchainProvider { requested -> JvmToolchainLayout(requested, "/tool/java", "/tool/classes", "/tool/api.jar", "/tool/std.jar", "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json") }
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("A.kt"), store.put("class A".encodeToByteArray())),
+            FileEntry(LogicalPath("runtime.jar"), store.put(byteArrayOf()))))
+        val actions = listOf(jvmCompileAction(JvmCompilation("m", listOf(LogicalPath("A.kt")), emptyList(), LogicalPath("classes")), inputs, digest, identities),
+            jvmTestAction(JvmTestSelection("m", listOf(LogicalPath("runtime.jar")), listOf("fixture.Test")), inputs, digest, identities))
+        val setup = ProcessSetupFailure(ProcessSetupStage.PARENT_GROUP, 1)
+        val exits = listOf(ProcessResult(125, setupFailure = setup),
+            ProcessResult(127, setupFailure = ProcessSetupFailure(ProcessSetupStage.EXEC, 2)),
+            ProcessResult(125, setupFailure = ProcessSetupFailure(ProcessSetupStage.WORKING_DIRECTORY, 2)),
+            ProcessResult(130, cancelled = true, setupFailure = setup),
+            ProcessResult(124, timedOut = true, setupFailure = setup), ProcessResult(125), ProcessResult(127))
+        for (action in actions) for ((index, exit) in exits.withIndex()) {
+            var closes = 0
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess = object : OwnedProcess {
+                    override fun poll() = exit
+                    override fun cancel() = Unit
+                    override fun close() { closes++ }
+                }
+                override fun close() = Unit
+            }
+            val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
+            val id = "${action.kind}-$index"
+            executor.start(root.runId, id, action).use { awaitBridgeResult(it) }
+            val observed = executor.observations.getValue(id)
+            assertEquals(exit, observed.processResult); assertEquals(exit.exitCode, observed.result.exitCode)
+            assertEquals(1, closes)
+            val code = when {
+                exit.cancelled -> "KVIK_JVM_CANCELLED"
+                exit.timedOut -> "KVIK_JVM_TIMEOUT"
+                exit.setupFailure != null -> "KVIK_JVM_LAUNCH_FAILED"
+                else -> "KVIK_JVM_RESULT_INVALID"
+            }
+            assertEquals(listOf(code), observed.diagnostics.map { it.code })
+            assertEquals(exit.setupFailure?.toJson() ?: JsonValue.Null,
+                observed.toJson().values.getValue("processResult").objectValue().getValue("setupFailure"))
+            if (code == "KVIK_JVM_LAUNCH_FAILED") {
+                assertTrue(observed.diagnostics.single().message.contains("errno=${exit.setupFailure!!.errno}"))
+                assertTrue(observed.diagnostics.single().message.contains(exit.setupFailure.stage.name.lowercase()))
+            }
+            if (action.kind == ActionKind.TEST) {
+                assertEquals(if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, observed.tests!!.status)
+                assertEquals(0, observed.tests.counts.executed)
+            } else assertTrue(observed.result.outputs.files.isEmpty())
+        }
+    }
+
     @Test fun compilerResultRequiresMatchingRequestExitAndDeclaredOutputs() {
         val root = NativeRunDirectory("/private/tmp")
         val store = NativeContentStore("${root.path}/store")

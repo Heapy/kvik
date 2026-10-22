@@ -34,10 +34,14 @@ data class JvmToolchainLayout(
     }
 }
 
-data class JvmActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: JvmTestReport?, val directory: String) {
+data class JvmActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: JvmTestReport?, val directory: String,
+    val processResult: ProcessResult? = null,
+) {
     val stdoutFile: String get() = "$directory/worker.stdout"
     val stderrFile: String get() = "$directory/worker.stderr"
     fun toJson(): JsonValue.Object = obj("result" to result.toJson(), "diagnostics" to diagnostics.map { it.toJson() }.json(),
+        "processResult" to (processResult?.let { obj("exitCode" to it.exitCode.json(), "timedOut" to it.timedOut.json(),
+            "cancelled" to it.cancelled.json(), "setupFailure" to (it.setupFailure?.toJson() ?: JsonValue.Null)) } ?: JsonValue.Null),
         "tests" to (tests?.toJson() ?: JsonValue.Null), "directory" to directory.json(), "stdoutFile" to stdoutFile.json(), "stderrFile" to stderrFile.json())
 }
 
@@ -130,6 +134,11 @@ class JvmActionExecutor(
                                 diagnostics = listOf(Diagnostic("KVIK_JVM_TIMEOUT", DiagnosticCategory.INFRASTRUCTURE, "JVM worker timed out"))
                                 if (selection != null) tests = JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
                             }
+                            exit.setupFailure != null -> {
+                                diagnostics = listOf(Diagnostic("KVIK_JVM_LAUNCH_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                                    "JVM process setup failed at ${exit.setupFailure.stage.name.lowercase()}: errno=${exit.setupFailure.errno}"))
+                                if (selection != null) tests = JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
+                            }
                             else -> {
                                 val raw = parseJson(readJvmFile("$directory/result.json").decodeToString(throwOnInvalidSequence = true))
                                 if (compilation != null) {
@@ -174,7 +183,7 @@ class JvmActionExecutor(
                         }
                     }
                     val finished = ActionResult(actionId, key, status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message)
-                    recorded[actionId] = JvmActionObservation(finished, diagnostics, tests, directory)
+                    recorded[actionId] = JvmActionObservation(finished, diagnostics, tests, directory, exit)
                     result = finished
                     return finished
                 }
