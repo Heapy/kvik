@@ -80,31 +80,63 @@ Seven Native protocol/legacy continuation tests and ten actual PTY sessions pass
   cancel on q while controls remain usable.
 
 These Native integration fixtures use deliberate worker/bootstrap stand-ins to
-isolate controller behavior. They are not evidence of new consumer compilation
-or actual source-plugin recompilation. The previous recomposition slice retains
-that evidence separately. The public CLI composed-build check for this slice is
-pending the shared compiler queue; no passing result is claimed here yet.
+isolate controller behavior. The separate public composed CLI gate passed using
+real source-plugin compilation and real Native consumer compilation and tests.
+Its evidence is `.kvik/tests/foreground-keys/cli-b5wj3r9y/summary.json`.
 
-`tools/test_foreground_keys_cli.py` prepares that public gate. It is separate from
-the frozen production candidate and has only passed Python syntax/import/help
-checks so far. It accepts the exact combined `--source-root` and `--runtime`,
-copies the source and immutable passed two-module fixture, and refuses an initial
-composition mismatch. Its planned run performs one actual source-plugin rebuild,
-checks immediate keys and the same owner/restorer across raw handoff, executes the
-exact Native consumer test with valid tools, queries current verification, and
-compares exact terminal/descriptor restoration after q and physical Ctrl-C.
+`tools/test_foreground_keys_cli.py` accepts the exact combined `--source-root` and
+`--runtime`, copies the source and immutable passed two-module fixture, and
+refuses an initial composition mismatch. The passing invocation was:
 
 ```sh
 /Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python tools/test_foreground_keys_cli.py \
-  --runtime /absolute/path/to/reviewed/runtime/kvik.kexe \
-  --source-root /absolute/path/to/that/runtime/source \
+  --runtime /Users/yoda/dev/pet/kvik/.kvik/runtime/executables/0dcc6a76fd24a957a064a4bfb823205e17f7b188a592353141c1f9850195d678/kvik.kexe \
+  --source-root /private/tmp/kvik-k08-composed-cli \
   --fixture /Users/yoda/dev/pet/kvik/.kvik/tests/native-scope-review/case-6jrzkpwg \
   --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 \
   --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
 ```
 
+The source fixture was frozen at `127e53ce91a80e321d4905497b6dd77197e04896`.
+Editing the copied Kotlin build-plugin schema produced composition
+`f7eb86eaa4b2f701b4e72a62fa99217d68d9a56c88ef3282d8e2f0768188d887` and the
+replacement runtime exposed the edited schema. Owner PID 24017 and terminal
+guardian PID 24019 survived the same-PID handoff. The pending test intent survived
+and produced run `kvik-run-kCsVm8` with all four actions executed, exactly
+`fixture.AnswerTest.dependencyAndInternalDeclaration` passed, and counts
+discovered/executed 1, failed/skipped 0. Completion and the separate verification
+query both reported current. Per-session journals exactly matched emitted JSONL;
+retained run evidence and the v2 handoff validated against their schemas.
+
+Immediate status responses during build, recomposition, replacement test and
+interrupted tool verification took 27–41 ms. Quit restored the terminal in
+109 ms; physical Ctrl-C during an active child restored it in 308 ms with exit
+130. Both compared complete original/restored termios and inherited descriptor
+flags, and checked that tracked owned processes had exited. These are observations
+under the allocated compiler slot, not performance benchmarks. Source recomposition
+reported 54.919 seconds. The supplied fixture remained byte-identical.
+
+The first setup attempt, retained as `cli-an11tlky`, stopped before launching a
+session: offline resolve correctly refused a fresh missing store. The harness now
+asserts the fixture has no external coordinates or compiler plugins and explicitly
+resolves its empty dependency closure. Bootstrap, session and recomposition still
+use offline policy. The successful gate proves the frozen four-action graph;
+later test compile/link separation is a separate graph change.
+The harness now checks exact known action IDs, implementations, retained keys,
+test non-cacheability and compile/link roles instead of only an action count. It
+supports the proposed five-node split shape without claiming that shape was run
+in this gate. The new checks pass against the retained four-node run and reject
+an unexpected node, duplicate action and undeclared test implementation
+(`structural-assertion-checks.json`); no equivalent Native rebuild was repeated.
+An independent parent audit also passed: four action keys, eleven CAS blobs,
+exact fresh test/current query, completion/event/journal digests, every session
+sequence and retained journal, initial executable manifest identity, and both
+terminal restoration comparisons. Its retained script/report are
+`/private/tmp/kvik-raw-public-audit.py` and `/private/tmp/kvik-raw-public-audit.json`.
+
 This command starts real Native compilation and must use an allocated compiler
-slot. No successful public-gate result is implied by the prepared harness.
+slot. Application launch/restart and the remaining K15 gates are still outside
+this slice.
 
 The first integration-probe compile found a test-only POSIX `read` size literal
 type error; it was corrected to `1uL` before the passing run. No test was weakened.

@@ -42,6 +42,47 @@ if child.poll() is None:child.kill();child.wait(timeout=5)
 '''
 
 
+def validate_consumer_actions(record, run):
+    """Accept only the known combined-link or separate-link Native fixture graph."""
+    results = {action['actionId']: action for action in record['actions']}
+    assert len(results) == len(record['actions'])
+    expected = {'library:macosArm64:main', 'consumer:macosArm64:main',
+                'consumer:macosArm64:test-compile', 'consumer:macosArm64:test'}
+    split = 'consumer:macosArm64:test-link' in results
+    if split:
+        expected.add('consumer:macosArm64:test-link')
+    assert set(results) == expected, set(results)
+    documents = [json.loads(path.read_text()) for path in (run/'actions').glob('*.json')]
+    actions = {document['actionId']: document for document in documents}
+    assert len(documents) == len(actions) and set(actions) == expected
+    for identity, result in results.items():
+        document = actions[identity]
+        assert document['key'] == result['key']
+        assert result['status'] in ('executed', 'local_hit')
+        terminal = identity.endswith(':test')
+        assert document['action']['implementation'] == ('kvik-native-tests-v1' if terminal else 'kvik-native-compiler-v1')
+        if terminal:
+            assert result['status'] == 'executed' and document['action']['cachePolicy'] == 'never'
+    for module in ('library', 'consumer'):
+        action = actions[f'{module}:macosArm64:main']['action']
+        assert action['kind'] == 'compile' and action['parameters']['produce'] == 'LIBRARY'
+        assert action['outputs'] == ['module.klib']
+    compilation = actions['consumer:macosArm64:test-compile']['action']
+    assert compilation['kind'] == ('compile' if split else 'link')
+    assert compilation['parameters']['produce'] == ('LIBRARY' if split else 'TEST')
+    assert compilation['parameters']['output'] == ('tests.klib' if split else 'tests.kexe')
+    linked = 'consumer:macosArm64:test-link' if split else 'consumer:macosArm64:test-compile'
+    assert linked in actions['consumer:macosArm64:test']['dependencies']
+    if split:
+        link = actions[linked]
+        assert link['action']['kind'] == 'link'
+        assert link['action']['parameters']['sources'] == []
+        assert link['action']['parameters']['includedLibrary'] == 'modules/consumer/macosArm64/test.klib'
+        assert link['action']['parameters']['output'] == 'tests.kexe'
+        assert 'consumer:macosArm64:test-compile' in link['dependencies']
+        assert 'library:macosArm64:main' in link['dependencies']
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
@@ -84,7 +125,9 @@ def main():
            '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk','-std=c11','-D_DARWIN_C_SOURCE','-Wall','-Wextra','-Werror']
     built=command([*flags,'-I'+str(source/'execution/platform'),source/'execution/platform/process.c',ROOT/'tests/foreground-keys/TerminalProbe.c','-o',evidence/'terminal-inspector'])
     assert built.returncode==0,built.stderr
-    resolved=command([runtime,'resolve','--project',project/'kvik.json','--offline']);(evidence/'resolve.json').write_text(resolved.stdout)
+    assert all('coordinate' not in dependency for module in configuration['modules'] for item in module['sourceSets'] for dependency in item['dependencies'])
+    assert all(not module['compilerPlugins'] for module in configuration['modules']), 'Setup resolve must be dependency-free'
+    resolved=command([runtime,'resolve','--project',project/'kvik.json']);(evidence/'resolve.json').write_text(resolved.stdout)
     assert resolved.returncode==0,resolved.stdout+resolved.stderr
     schemas={name:json.loads((original/'schemas/v1'/name).read_text()) for name in ('session.json','contracts.json','bootstrap-launch.json')}
     registry=Registry().with_resource('https://kvik.dev/schemas/v1/bootstrap-launch.json',Resource.from_contents(schemas['bootstrap-launch.json']))
@@ -190,9 +233,8 @@ def main():
     assert record['composition']==resumed['payload']['composition']
     assert record['testCounts']==dict(discovered=1,executed=1,failed=0,skipped=0,discoveryComplete=True)
     assert [test['id'] for test in record['tests']]==[expected_id]
-    assert len(record['actions'])==4 and all(a['status'] in ('executed','local_hit') for a in record['actions'])
-    assert next(a for a in record['actions'] if a['actionId'].endswith(':test'))['status']=='executed'
     run=child/'runs'/record['runId'];assert json.loads((run/'verification.json').read_text())==record
+    validate_consumer_actions(record, run)
     assert (run/'events.jsonl').read_bytes()==(child/'stdout.jsonl').read_bytes()
     observations=[json.loads(path.read_text()) for path in (run/'observations').glob('*.json')]
     tests=next(value['observation'] for value in observations if value['actionId']=='consumer:macosArm64:test')
