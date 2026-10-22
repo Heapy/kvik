@@ -84,12 +84,14 @@ data class TargetSpec(
     val testCompilerOptions: List<String>? = null,
     val nativeTestSettings: NativeTestSettings? = null,
     val nativeTimeouts: NativeTimeouts? = null,
+    val application: ApplicationSpec? = null,
 ) {
     init {
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
         require(nativeTestSettings == null || name == "macosArm64" && test != null) { "nativeTestSettings requires a macosArm64 target with a test source set" }
         require(nativeTimeouts == null || name == "macosArm64") { "nativeTimeouts requires a macosArm64 target" }
+        application?.requireTarget(name)
     }
     fun optionsFor(compilation: String): List<String> = when (compilation) {
         "main" -> compilerOptions
