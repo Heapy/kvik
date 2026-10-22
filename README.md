@@ -61,6 +61,10 @@ and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools.
 
+Compiler plugins can be built from another module in the same project. Declare
+its module, plugin ID, compiler version and selected targets/scopes on the consumer;
+see [workspace compiler plugins](docs/workspace-compiler-plugins.md).
+
 For a runnable target, declare `application` with an `entryPoint`, optional ordered
 `arguments` and an `environment` map. JVM entry points name the main class, such
 as `example.MainKt`; macosArm64 entry points name the Kotlin function, such as
