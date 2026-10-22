@@ -303,10 +303,15 @@ DEFS["applicationActivation"] = versioned({"token": ref("applicationActivationDi
 DEFS["applicationStarted"] = versioned({"token": ref("applicationActivationDigest"), "ready": ref("applicationActivationDigest"), "executionDirectory": ACTIVATION_PATH})
 for name in ("applicationReady", "applicationActivation", "applicationStarted"):
     DEFS[name]["description"] = "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished"), "payload": ANY_OBJECT})
+DEFS["actionCacheDecision"] = object_({"actionId": NONEMPTY, "key": ref("digest"),
+    "decision": enum("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error"), "detail": nullable(STRING)})
+DEFS["actionCacheDecision"]["allOf"] = [{"if": {"properties": {"decision": {"const": "local-error"}}},
+    "then": {"properties": {"detail": STRING}}, "else": {"properties": {"detail": {"type": "null"}}}}]
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest")}),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
+    "action-cache-decision": ref("actionCacheDecision"),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),
     "run-finished": ref("verification"), "session-state": object_({"state": enum("idle", "building", "testing", "failed", "restarting", "stopping"), "runningSnapshot": nullable(ref("digest"))}),
     "application-prepared": object_({"directory": NONEMPTY, "descriptor": ref("digest"), "actionId": APPLICATION_CHECK}),
@@ -342,10 +347,10 @@ DEFS["scriptInspection"] = versioned({
 
 DEFS["actionExplanation"] = versioned({
     "runId": NONEMPTY, "actionId": NONEMPTY, "currentFreshness": {"type": "null"},
-    "result": ref("actionResult"), "action": nullable(ref("action")),
+    "result": ref("actionResult"), "action": nullable(ref("action")), "cacheDecision": nullable(ref("actionCacheDecision")),
     "dependencyEvidence": enum("unavailable", "unbound-retained"),
     "dependencies": nullable(array(ref("actionResult"))),
-    "reason": object_({"code": enum("shared-within-run", "local-cache-hit", "remote-cache-hit", "blocked", "cancelled", "failed", "execution-required", "executed-cache-reason-unrecorded"),
+    "reason": object_({"code": enum("shared-within-run", "local-cache-hit", "remote-cache-hit", "blocked", "cancelled", "failed", "execution-required", "executed-cache-reason-unrecorded", "local-cache-miss", "local-cache-error", "cache-unsupported"),
         "message": NONEMPTY, "sharedWith": nullable(NONEMPTY), "startedSequence": nullable({"type": "integer", "minimum": 1}),
         "finishedSequence": {"type": "integer", "minimum": 1}}),
     "actionDiagnostics": array(ref("diagnostic")), "runCacheNotices": array(ref("diagnostic")),

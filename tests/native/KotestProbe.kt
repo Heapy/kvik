@@ -39,7 +39,7 @@ fun main(args: Array<String>) {
         val tests = KotestNativeExecutor(run.runId, run.path, host, content, provider)
         val delegate: ActionExecutor = when (string("mode")) { "ksp" -> ksp; "compile", "native-test" -> compiler; else -> tests }
         val cacheDiagnostics = mutableListOf<String>()
-        val executor = LocalCachingActionExecutor(delegate, NativeActionCache(string("cache"), content), content) { cacheDiagnostics += it.code + ": " + it.message }
+        val executor = LocalCachingActionExecutor(delegate, NativeActionCache(string("cache"), content), content, diagnostic = { cacheDiagnostics += it.code + ": " + it.message })
         val started = kotlin.time.TimeSource.Monotonic.markNow()
         var cancelled = false
         val result = executor.start(run.runId, "fixture", action).use { running ->

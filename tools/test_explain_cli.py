@@ -32,6 +32,7 @@ def main():
         shutil.copytree(original / 'actions', run / 'actions')
         # Intentionally omit run.json, source tree, tools and content store: this is historical.
         record = json.loads((run / 'verification.json').read_text())
+        journal_events = [json.loads(line) for line in (run / 'events.jsonl').read_text().splitlines()]
         before = inventory(run)
         count = 0
         def invoke(action, code=0, diagnostic=None):
@@ -49,6 +50,8 @@ def main():
             explained = invoke(result['actionId'])
             assert explained['result'] == result
             assert explained['currentFreshness'] is None
+            decisions = [event['payload'] for event in journal_events if event['type'] == 'action-cache-decision' and event['payload']['actionId'] == result['actionId']]
+            assert explained['cacheDecision'] == (decisions[0] if decisions else None)
             if result['key'] is not None:
                 name = hashlib.sha256(result['actionId'].encode()).hexdigest() + '.json'
                 retained = json.loads((run / 'actions' / name).read_text())

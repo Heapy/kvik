@@ -2,6 +2,7 @@
 package kvik.actioncache.tests
 
 import kvik.actioncache.LocalCachingActionExecutor
+import kvik.actioncache.ActionCacheDecision
 import kvik.cache.*
 import kvik.core.*
 import kvik.execution.*
@@ -202,7 +203,38 @@ fun main(args: Array<String>) {
     val changed = runGraph("source-two"); check(graphExecutor.starts == 7)
     check(changed.getValue("consumer").key != original.getValue("consumer").key && changed.values.all { it.status == ActionStatus.EXECUTED })
     println("PASS real scheduler resolves dependency output keys after hits; source changes invalidate consumers and tests always execute")
-    println("8 action cache scenario groups passed")
+    cacheDecisionTests(content, entries)
+    println("9 action cache scenario groups passed")
 }
 
 private fun errorIfCalled() = IllegalStateException("NEVER cache lookup called")
+
+private fun cacheDecisionTests(content: ContentStore, entries: List<FileEntry>) {
+    val spec = action()
+    for (scenario in listOf("local-miss", "local-hit", "local-error", "disabled-by-policy")) {
+        val selected = if (scenario == "disabled-by-policy") action(policy = CachePolicy.NEVER, kind = ActionKind.TEST) else spec
+        val cache = RecordingCache().also {
+            if (scenario == "local-hit") it.record = CachedAction(spec.key(Sha256), TreeManifest(entries))
+            if (scenario == "local-error") it.record = CachedAction(spec.key(Sha256), TreeManifest(listOf(FileEntry(LogicalPath("out/missing"), seed))))
+        }
+        val executor = FakeExecutor { id, a -> good(id, a, entries) }
+        val decisions = mutableListOf<ActionCacheDecision>()
+        val wrapper = LocalCachingActionExecutor(executor, cache, content, cacheDecision = {
+            check(executor.starts == 0) // Durable decision precedes every effect/launch.
+            decisions += it
+        })
+        val result = complete(wrapper, scenario, selected)
+        check(decisions.size == 1 && decisions.single().decision == scenario)
+        check(decisions.single().actionId == scenario && decisions.single().key == selected.key(Sha256))
+        check((decisions.single().detail != null) == (scenario == "local-error"))
+        check(result.status == if (scenario == "local-hit") ActionStatus.LOCAL_HIT else ActionStatus.EXECUTED)
+        if (scenario == "disabled-by-policy") check(cache.lookups == 0)
+
+        val failureExecutor = FakeExecutor { id, a -> good(id, a, entries) }
+        val callbackFailure = LocalCachingActionExecutor(failureExecutor, cache, content,
+            cacheDecision = { error("decision journal unavailable") })
+        fails { callbackFailure.start("run", "callback-failure", selected) }
+        check(failureExecutor.starts == 0)
+    }
+    println("PASS one bound cache decision for hits/misses/invalid blobs/NEVER; callback failure prevents launch")
+}

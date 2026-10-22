@@ -17,7 +17,7 @@ class ExplanationSchemaTest(unittest.TestCase):
     def fixture(self):
         return dict(schemaVersion=1, runId='run-example', actionId='app:jvm:main', currentFreshness=None,
             result=dict(actionId='app:jvm:main', key=None, status='blocked', outputs=dict(schemaVersion=1, files=[]), exitCode=None, diagnostic='Prerequisite failed'),
-            action=None, dependencies=None, dependencyEvidence='unavailable',
+            action=None, cacheDecision=None, dependencies=None, dependencyEvidence='unavailable',
             reason=dict(code='blocked', message='Prerequisite failed', sharedWith=None, startedSequence=None, finishedSequence=2),
             actionDiagnostics=[], runCacheNotices=[])
 
@@ -32,6 +32,18 @@ class ExplanationSchemaTest(unittest.TestCase):
         self.assertTrue(list(self.validator.iter_errors(changed)))
         changed = self.fixture(); changed['reason']['code'] = 'sources-changed'
         self.assertTrue(list(self.validator.iter_errors(changed)))
+
+    def test_cache_decision_event_has_strict_shape(self):
+        validator = Draft202012Validator({**self.contracts, '$ref': '#/$defs/event'})
+        event = dict(schemaVersion=1, runId='run-example', sequence=2, type='action-cache-decision',
+            payload=dict(actionId='app:jvm:main', key=dict(hash='0' * 64, sizeBytes=0), decision='local-miss', detail=None))
+        validator.validate(event)
+        event['payload']['detail'] = 'missing blob'
+        self.assertTrue(list(validator.iter_errors(event)))
+        event['payload']['decision'] = 'local-error'
+        validator.validate(event)
+        event['payload']['extra'] = True
+        self.assertTrue(list(validator.iter_errors(event)))
 
     def test_generator_and_standalone_schema_match(self):
         spec = importlib.util.spec_from_file_location('schema_generator', ROOT / 'tools/generate_schemas.py')

@@ -3719,6 +3719,69 @@
       "additionalProperties": false,
       "description": "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
     },
+    "actionCacheDecision": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "key": {
+          "$ref": "#/$defs/digest"
+        },
+        "decision": {
+          "enum": [
+            "disabled-by-policy",
+            "unsupported-action-kind",
+            "local-hit",
+            "local-miss",
+            "local-error"
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actionId",
+        "key",
+        "decision",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "local-error"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "detail": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "detail": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -3737,6 +3800,7 @@
             "run-started",
             "action-started",
             "action-finished",
+            "action-cache-decision",
             "diagnostic",
             "test-result",
             "run-finished",
@@ -3816,6 +3880,22 @@
                   "key"
                 ],
                 "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "action-cache-decision"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/actionCacheDecision"
               }
             }
           }
@@ -4721,6 +4801,16 @@
             }
           ]
         },
+        "cacheDecision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/actionCacheDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "dependencyEvidence": {
           "enum": [
             "unavailable",
@@ -4752,7 +4842,10 @@
                 "cancelled",
                 "failed",
                 "execution-required",
-                "executed-cache-reason-unrecorded"
+                "executed-cache-reason-unrecorded",
+                "local-cache-miss",
+                "local-cache-error",
+                "cache-unsupported"
               ]
             },
             "message": {
@@ -4815,6 +4908,7 @@
         "currentFreshness",
         "result",
         "action",
+        "cacheDecision",
         "dependencyEvidence",
         "dependencies",
         "reason",

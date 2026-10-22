@@ -37,6 +37,7 @@ class ActionExplanationTest {
         val record = record(listOf(result()))
         val explanation = explainRetainedAction(record, validate(record, events(record)), "main", recipe())
         assertEquals("executed-cache-reason-unrecorded", reason(explanation))
+        assertEquals(JsonValue.Null, explanation.values.getValue("cacheDecision"))
         assertEquals(action.toJson(), explanation.values.getValue("action"))
         assertEquals(JsonValue.Null, explanation.values.getValue("currentFreshness"))
         assertEquals("unbound-retained", explanation.values.getValue("dependencyEvidence").stringValue())
@@ -78,6 +79,45 @@ class ActionExplanationTest {
         assertFails { explainRetainedAction(record, validate(record, events(record, emptySet())), "main", recipe()) }
         val missingStart = record(listOf(result()))
         assertFails { explainRetainedAction(missingStart, validate(missingStart, events(missingStart, emptySet())), "main", recipe()) }
+    }
+    @Test fun recordedCacheDecisionExplainsExecutionButDoesNotOverrideFailureOrCancellation() {
+        for ((choice, status, expected) in listOf(
+            Triple("local-miss", ActionStatus.EXECUTED, "local-cache-miss"),
+            Triple("local-error", ActionStatus.EXECUTED, "local-cache-error"),
+            Triple("local-hit", ActionStatus.LOCAL_HIT, "local-cache-hit"),
+            Triple("disabled-by-policy", ActionStatus.EXECUTED, "execution-required"),
+            Triple("local-miss", ActionStatus.FAILED, "failed"),
+            Triple("local-hit", ActionStatus.CANCELLED, "cancelled"))) {
+            val spec = if (choice == "disabled-by-policy") action.copy(cachePolicy = CachePolicy.NEVER) else action
+            val record = record(listOf(result(status = status, recipe = spec)))
+            val decision = obj("actionId" to "main".json(), "key" to spec.key(Sha256).toJson(), "decision" to choice.json(),
+                "detail" to if (choice == "local-error") "missing blob".json() else JsonValue.Null)
+            val journal = events(record).toMutableList().also { it.add(1, RunEvent(record.runId, 2, "action-cache-decision", decision)) }
+                .mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+            val explained = explainRetainedAction(record, validate(record, journal), "main", recipe(spec = spec))
+            assertEquals(expected, reason(explained)); assertEquals(decision, explained.values.getValue("cacheDecision"))
+        }
+    }
+    @Test fun cacheDecisionsRejectWrongKeyDuplicateUnknownFieldsAndLateEvents() {
+        val record = record(listOf(result()))
+        val decision = obj("actionId" to "main".json(), "key" to action.key(Sha256).toJson(), "decision" to "local-miss".json(), "detail" to JsonValue.Null)
+        fun withDecision(value: JsonValue.Object, at: Int = 1, duplicate: Boolean = false): List<RunEvent> =
+            events(record).toMutableList().also {
+                it.add(at, RunEvent(record.runId, 1, "action-cache-decision", value))
+                if (duplicate) it.add(at, RunEvent(record.runId, 1, "action-cache-decision", value))
+            }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+        for (value in listOf(JsonValue.Object(decision.values + ("key" to d.toJson())),
+            JsonValue.Object(decision.values + ("decision" to "invented".json())),
+            JsonValue.Object(decision.values + ("extra" to true.json())),
+            JsonValue.Object(decision.values + ("detail" to "not an error".json())))) {
+            assertFails { validate(record, withDecision(value)) }
+        }
+        assertFails { validate(record, withDecision(decision, duplicate = true)) }
+        assertFails { validate(record, withDecision(decision, at = 2)) }
+        val contradictory = JsonValue.Object(decision.values + ("decision" to "disabled-by-policy".json()))
+        assertFails { explainRetainedAction(record, validate(record, withDecision(contradictory)), "main", recipe()) }
+        val hit = JsonValue.Object(decision.values + ("decision" to "local-hit".json()))
+        assertFails { explainRetainedAction(record, validate(record, withDecision(hit)), "main", recipe()) }
     }
     @Test fun missingMismatchedAndMalformedRecipesAreRejected() {
         val record = record(listOf(result())); val journal = validate(record, events(record))

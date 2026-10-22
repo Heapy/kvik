@@ -4,6 +4,17 @@ import kvik.cache.CacheConflictFailure
 import kvik.cache.CacheDiagnostic
 import kvik.core.*
 
+/** The lookup choice for one invocation, before a cached handle or delegate is returned. */
+data class ActionCacheDecision(val actionId: String, val key: Digest, val decision: String, val detail: String? = null) {
+    init {
+        require(actionId.isNotBlank())
+        require(decision in setOf("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error"))
+        require((decision == "local-error") == (detail != null))
+    }
+    fun toJson(): JsonValue.Object = obj("actionId" to actionId.json(), "key" to key.toJson(),
+        "decision" to decision.json(), "detail" to (detail?.json() ?: JsonValue.Null))
+}
+
 /**
  * Single-thread-confined local cache decorator. The caller supplies a local ActionCache whose
  * publication makes all referenced blobs durable before metadata. Cache policy REMOTE permits
@@ -14,11 +25,14 @@ class LocalCachingActionExecutor(
     private val cache: ActionCache,
     private val content: ContentStore,
     private val diagnostic: (CacheDiagnostic) -> Unit = {},
+    private val cacheDecision: (ActionCacheDecision) -> Unit = {},
 ) : ActionExecutor {
     override fun resources(action: ActionSpec): ResourceRequest = delegate.resources(action)
 
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         if (action.cachePolicy == CachePolicy.NEVER || action.kind !in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE)) {
+            cacheDecision(ActionCacheDecision(actionId, action.key(Sha256),
+                if (action.cachePolicy == CachePolicy.NEVER) "disabled-by-policy" else "unsupported-action-kind"))
             return delegate.start(runId, actionId, action)
         }
         val snapshot = action.copy(platform = action.platform.toMap(), toolchains = action.toolchains.toMap(),
@@ -39,15 +53,24 @@ class LocalCachingActionExecutor(
             }
             return checked
         }
+        var lookupError: String? = null
         val cached = try {
             cache.lookup(key)?.let {
                 require(it.key == key) { "Cache returned a different action key" }
                 checkedOutputs(it.outputs)
             }
         } catch (failure: Exception) {
-            report("local-cache-miss", failure.message ?: "Cache lookup failed")
+            lookupError = failure.message ?: "Cache lookup failed"
+            report("local-cache-miss", checkNotNull(lookupError))
             null
         }
+        // Keep the callback outside the lookup catch: journal failure must stop the action,
+        // never masquerade as a miss and fall through to an owned process launch.
+        cacheDecision(ActionCacheDecision(actionId, key, when {
+            lookupError != null -> "local-error"
+            cached != null -> "local-hit"
+            else -> "local-miss"
+        }, lookupError))
         if (cached != null) return object : RunningAction {
             private var result: ActionResult? = null
             private var cancelled = false

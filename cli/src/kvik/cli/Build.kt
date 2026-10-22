@@ -171,7 +171,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         override fun start(runId: String, actionId: String, action: ActionSpec) = executor(action).start(runId, actionId, action)
                     }
                     fun cacheDiagnostic(value: CacheDiagnostic) = journal.diagnostic(Diagnostic("KVIK_CACHE_NOTICE", DiagnosticCategory.CACHE, "${value.code}: ${value.message}"))
-                    val cached = LocalCachingActionExecutor(delegate, NativeActionCache("$storePath/actions", content), content, ::cacheDiagnostic)
+                    val cached = LocalCachingActionExecutor(delegate, NativeActionCache("$storePath/actions", content), content, ::cacheDiagnostic,
+                        cacheDecision = { journal.emit("action-cache-decision", it.toJson()) })
                     val seen = mutableSetOf<String>()
                     fun retain(id: String, value: JsonValue) {
                         NativeFiles.writeNew("${run.path}/observations/${Sha256.digest(id.encodeToByteArray()).hash}.json",

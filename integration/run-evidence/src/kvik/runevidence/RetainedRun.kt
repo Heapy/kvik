@@ -27,7 +27,14 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
     val results = record.actions.associateBy { it.actionId }
     val finished = mutableSetOf<String>()
     val started = mutableSetOf<String>()
+    val decisions = mutableSetOf<String>()
     for (event in events) when (event.type) {
+        "action-cache-decision" -> {
+            val fields = cacheDecisionFields(event.payload)
+            val id = fields.getValue("actionId").stringValue()
+            require(id !in started && id !in finished && decisions.add(id) &&
+                results[id]?.key == Digest.fromJson(fields.getValue("key"))) { "Cache decision differs from action result or order" }
+        }
         "action-started" -> {
             val fields = event.payload.fields(setOf("actionId", "key"))
             val id = fields.getValue("actionId").stringValue()

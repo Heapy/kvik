@@ -2,7 +2,7 @@ package kvik.runevidence
 
 import kvik.core.*
 
-/** A resolved recipe is authenticated by its action key; legacy dependency lists were not key-bound. */
+/** A resolved recipe is authenticated by its action key; the retained dependency list is not key-bound. */
 fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, actionId: String, retained: JsonValue?): JsonValue.Object {
     val result = record.actions.singleOrNull { it.actionId == actionId } ?: error("Action is not present in retained verification: $actionId")
     val results = record.actions.associateBy { it.actionId }
@@ -24,6 +24,24 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
     require(result.key != null || retained == null) { "Unresolved action unexpectedly has a resolved recipe" }
     val started = events.singleOrNull { it.type == "action-started" && it.payload.values["actionId"] == actionId.json() }
     val finished = events.single { it.type == "action-finished" && it.payload.values["actionId"] == actionId.json() }
+    val decisions = events.filter { it.type == "action-cache-decision" && it.payload.values["actionId"] == actionId.json() }
+    require(decisions.size <= 1) { "Duplicate cache decision for action" }
+    val decision = decisions.singleOrNull()?.let { event ->
+        val fields = cacheDecisionFields(event.payload)
+        require(Digest.fromJson(fields.getValue("key")) == result.key && event.sequence < finished.sequence &&
+            (started == null || event.sequence < started.sequence)) { "Cache decision differs from action identity/order" }
+        val choice = fields.getValue("decision").stringValue()
+        require(action != null) { "Cache decision requires a resolved recipe" }
+        val eligible = action.kind in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE)
+        require(when (choice) {
+            "disabled-by-policy" -> action.cachePolicy == CachePolicy.NEVER
+            "unsupported-action-kind" -> action.cachePolicy != CachePolicy.NEVER && !eligible
+            else -> action.cachePolicy != CachePolicy.NEVER && eligible
+        }) { "Cache decision contradicts action policy" }
+        if (result.status == ActionStatus.LOCAL_HIT) require(choice == "local-hit") { "Local hit contradicts cache decision" }
+        if (result.status == ActionStatus.EXECUTED) require(choice != "local-hit") { "Execution contradicts local hit decision" }
+        event.payload
+    }
     // Older scheduler versions recorded sharing in a diagnostic rather than a typed event.
     // Match the complete known format and corresponding owner, not an arbitrary message prefix.
     val owner = if (started == null && result.key != null && action?.cachePolicy != CachePolicy.NEVER) record.actions.singleOrNull { candidate ->
@@ -33,6 +51,7 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
                 "Shared within run with ${candidate.actionId}${candidate.diagnostic?.let { ": $it" } ?: ""}") &&
             events.any { it.type == "action-finished" && it.sequence < finished.sequence && it.payload.values["actionId"] == candidate.actionId.json() }
     } else null
+    require(owner == null || decision == null) { "Shared action unexpectedly has its own cache decision" }
     require(result.diagnostic?.startsWith("Shared within run with ") != true || owner != null) { "Sharing diagnostic has no matching earlier owner" }
     if (result.successful) require(started != null || owner != null) { "Successful action lacks a start or matching shared result" }
     val (code, message) = when {
@@ -42,6 +61,9 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
         result.status == ActionStatus.BLOCKED -> "blocked" to "The scheduler recorded a blocked action; its resolved recipe and prerequisite identities were not retained."
         result.status == ActionStatus.CANCELLED -> "cancelled" to "The action was cancelled."
         result.status == ActionStatus.FAILED -> "failed" to "The action failed."
+        decision?.values?.get("decision") == "local-miss".json() -> "local-cache-miss" to "No local cache entry was returned for this action key."
+        decision?.values?.get("decision") == "local-error".json() -> "local-cache-error" to "Local cache lookup or entry validation failed; the action executed."
+        decision?.values?.get("decision") == "unsupported-action-kind".json() -> "cache-unsupported" to "This action kind bypassed the local compilation cache."
         action?.cachePolicy == CachePolicy.NEVER -> "execution-required" to "The action executed with a policy that forbids cached results."
         else -> "executed-cache-reason-unrecorded" to "The action executed; this run did not record its cache decision."
     }
@@ -49,7 +71,7 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
     val diagnostics = events.filter { it.type == "diagnostic" }.map { Diagnostic.fromJson(it.payload) }
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to record.runId.json(), "actionId" to actionId.json(),
         "currentFreshness" to JsonValue.Null,
-        "result" to result.toJson(), "action" to (action?.toJson() ?: JsonValue.Null),
+        "result" to result.toJson(), "action" to (action?.toJson() ?: JsonValue.Null), "cacheDecision" to (decision ?: JsonValue.Null),
         "dependencyEvidence" to (if (dependencies == null) "unavailable" else "unbound-retained").json(),
         "dependencies" to (dependencies?.map { results.getValue(it).toJson() }?.json() ?: JsonValue.Null),
         "reason" to obj("code" to code.json(), "message" to message.json(), "sharedWith" to (owner?.actionId?.json() ?: JsonValue.Null),
@@ -71,3 +93,14 @@ private fun explanationActionFromJson(value: JsonValue): ActionSpec {
 }
 private inline fun <reified T : Enum<T>> JsonValue.explanationEnum(): T =
     enumValues<T>().singleOrNull { it.name.lowercase() == stringValue() } ?: error("Unsupported enum value")
+
+internal fun cacheDecisionFields(value: JsonValue): Map<String, JsonValue> {
+    val fields = value.fields(setOf("actionId", "key", "decision", "detail"))
+    require(fields.getValue("actionId").stringValue().isNotBlank())
+    Digest.fromJson(fields.getValue("key"))
+    val decision = fields.getValue("decision").stringValue()
+    require(decision in setOf("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error")) { "Unknown cache decision" }
+    val detail = fields.getValue("detail")
+    if (decision == "local-error") detail.stringValue() else require(detail == JsonValue.Null) { "Unexpected cache decision detail" }
+    return fields
+}

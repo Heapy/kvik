@@ -17,11 +17,14 @@ tools or artifact availability. `currentFreshness` is null. Use
 and tools.
 
 Reasons distinguish cache reuse, required fresh execution, within-run sharing,
-failure, cancellation and blocking. Existing runs do not record every cache
+failure, cancellation and blocking. New runs record the cache decision before
+execution or reuse: policy bypass, local hit, miss, or lookup/entry-validation
+error. `cacheDecision` includes that choice and any error detail; failure and
+cancellation remain the primary outcome. Older runs may have no recorded cache
 choice: execution alone does not explain a cache miss or prove sources changed.
 Cache notices without an action ID remain labelled as run-level context.
 
 `dependencyEvidence: "unbound-retained"` means the dependency IDs come from the
-saved action record; older runs did not bind that list into the action key.
+saved action record; the retained dependency list is not part of the action key.
 An unresolved action has null recipe and dependencies because these details were
 not retained.
