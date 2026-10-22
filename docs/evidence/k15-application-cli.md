@@ -162,3 +162,11 @@ It makes no remote-cache, relocatable-binary determinism, generic JVM/Native
 application compatibility, or arbitrary escaped-process ownership claim. The
 fixture descendants stay in the owned process group. Continuous dev-mode
 application lifecycle remains unclaimed.
+
+Independent review approved frozen harness `e25957e` without new consumer/compiler
+runs. The reviewer checked the six principal preparations (27 action keys), all
+28 referenced blobs, full classpath, 16 application runs, 10 refusals and eight
+cleanup cases, plus the old/new invocation bindings and 23 new command receipts.
+The seven read-only re-audits are explicitly not new exit receipts. Retained report:
+`/private/tmp/kvik-application-acceptance-review-e8oe2cm8/report.json`, SHA-256
+`32466c43e201e541a464ab3e39a72b402e24567afb4f62f3c19d8ff3f823713b`.
