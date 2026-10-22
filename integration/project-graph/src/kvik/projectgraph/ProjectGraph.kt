@@ -8,7 +8,11 @@ import kvik.compiler.ksp.*
 import kvik.application.applicationBundleAction
 
 enum class ProjectMode { BUILD, TEST, APPLICATION }
-data class JvmTests(val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"))
+data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
+    fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
+        "excludes" to excludes.map { it.json() }.json())
+}
+data class JvmTests(val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageTools? = null)
 data class ProjectGraphRequest(
     val modules: Set<String>,
     val targets: Set<String>,
@@ -64,7 +68,7 @@ private class Builder(
     private val files = TreeManifest(snapshot.files.toList()).files.sortedBy { it.path.value }
     private val tools = toolchains.mapValues { it.value.toMap() }
     private val request = request.copy(modules = request.modules.toSet(), targets = request.targets.toSet(),
-        jvmTests = request.jvmTests.mapValues { it.value.copy(classes = it.value.classes.toList(), engines = it.value.engines.toList()) })
+        jvmTests = request.jvmTests.mapValues { it.value.copy(classes = it.value.classes.toList(), engines = it.value.engines.toList(), coverage = it.value.coverage?.let { coverage -> coverage.copy(excludes = coverage.excludes.toList()) }) })
     private val selections = lock.selections.associateBy { it.request() }
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
@@ -448,11 +452,24 @@ private class Builder(
             val testFiles = if (hasTestCompile) remap(results, module, target, "test") else emptyList()
             if (target == "jvm") {
                 val dependencyFiles = runtimeIds.flatMap { remap(results, it, target, "main") }
-                val inputs = merge(testFiles, dependencyFiles, allResources, runtime)
+                val coverage = testSelection!!.coverage?.let { settings ->
+                    val sources = runtimeIds.flatMap { producer ->
+                        sourceSets(producer, target, "main").flatMap { set -> set.directories.flatMap { directory ->
+                            files.filter { it.path.value.startsWith(directory.value + "/") }.map { file ->
+                                CoverageSource(producer, set.name, file.path, file.digest)
+                            }
+                        } }
+                    }.sortedWith(compareBy({ it.module }, { it.path.value }, { it.sourceSet }))
+                    require(sources.map { it.module to it.path }.distinct().size == sources.size) { "Ambiguous production coverage source ownership" }
+                    JvmCoverageSpec(settings.version, settings.agent, settings.reporter,
+                        runtimeIds.map { CoverageClassRoot(it, modulePath(it, target, "main")) }, sources, settings.excludes)
+                }
+                val coverageSources = coverage?.sources?.map { FileEntry(it.inputPath, it.digest) } ?: emptyList()
+                val inputs = merge(testFiles, dependencyFiles, allResources, runtime, coverageSources)
                 fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.any { it.path.value.startsWith(prefix.value + "/") } }
                 val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                     runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
-                jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines), inputs, composition, tools.getValue(target))
+                jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage), inputs, composition, tools.getValue(target))
             } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
             else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
         }

@@ -10,6 +10,103 @@ import platform.posix.usleep
 
 class BridgeUnitTest {
     private val digest = Sha256.digest(byteArrayOf())
+    @Test fun optionalCoverageToolsBindIdentityAndRequireCompleteLayout() {
+        val old = Sha256.digest(obj("schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
+            "workerTree" to digest.toJson(), "api" to digest.toJson(), "stdlib" to digest.toJson(), "junit" to digest.toJson()))
+        assertEquals(old, jvmWorkerIdentity(digest, digest, digest, digest))
+        val covered = jvmWorkerIdentity(digest, digest, digest, digest, digest, digest, JACOCO_VERSION)
+        assertNotEquals(old, covered)
+        assertNotEquals(covered, jvmWorkerIdentity(digest, digest, digest, digest, Sha256.digest(byteArrayOf(1)), digest, JACOCO_VERSION))
+        assertFails { jvmWorkerIdentity(digest, digest, digest, digest, jacocoAgent = digest) }
+        assertFails { jvmWorkerIdentity(digest, digest, digest, digest, digest, digest, "0.8.13") }
+        val layout = JvmToolchainLayout(jvmIdentities.associateWith { digest }, "/tools/java", "/tools/worker", "/tools/api.jar", "/tools/stdlib.jar", "/tools/junit.jar", "/tools/compiler", "/tools/manifest")
+        assertFails { layout.copy(jacocoAgent = "/tools/agent.jar") }
+        assertFails { layout.copy(jacocoAgent = "/tools/bad=agent.jar", jacocoCli = "/tools/cli.jar", jacocoAgentIdentity = digest, jacocoCliIdentity = digest) }
+        assertEquals(digest, layout.copy(jacocoAgent = "/tools/agent.jar", jacocoCli = "/tools/cli.jar", jacocoAgentIdentity = digest, jacocoCliIdentity = digest).jacocoAgentIdentity)
+    }
+
+    @Test fun coverageBindsSourcesAndToolsWithoutChangingOrdinaryTestShape() {
+        val source = CoverageSource("m", "main", LogicalPath("src/A.kt"), digest)
+        val spec = JvmCoverageSpec(JACOCO_VERSION, digest, digest, listOf(CoverageClassRoot("m", LogicalPath("main"))), listOf(source))
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("main/example/A.class"), digest), FileEntry(source.inputPath, digest),
+            FileEntry(LogicalPath("tests/example/Tests.class"), digest)))
+        val selection = JvmTestSelection("m", listOf(LogicalPath("tests"), LogicalPath("main")), listOf("example.Tests"))
+        val identities = jvmIdentities.associateWith { digest }
+        val plain = jvmTestAction(selection, inputs, digest, identities)
+        assertFalse("coverage" in selection.toJson().values)
+        assertEquals(selection, JvmTestSelection.fromJson(selection.toJson()))
+        val covered = jvmTestAction(selection.copy(coverage = spec), inputs, digest, identities)
+        assertEquals(CachePolicy.NEVER, covered.cachePolicy)
+        assertEquals(selection.copy(coverage = spec), JvmTestSelection.fromJson(covered.parameters))
+        assertNotEquals(plain.key(Sha256), covered.key(Sha256))
+        assertNotEquals(covered.key(Sha256), jvmTestAction(selection.copy(coverage = spec.copy(excludes = listOf("example.Generated*"))), inputs, digest, identities).key(Sha256))
+        assertNotEquals(covered.key(Sha256), jvmTestAction(selection.copy(coverage = spec.copy(reporter = Sha256.digest(byteArrayOf(1)))), inputs, digest, identities).key(Sha256))
+        assertFails { jvmTestAction(selection.copy(coverage = spec.copy(sources = listOf(source.copy(digest = Sha256.digest(byteArrayOf(2)))))), inputs, digest, identities) }
+        assertFails { jvmTestAction(selection.copy(coverage = spec), TreeManifest(inputs.files + FileEntry(LogicalPath("tests/example/A.class"), digest)), digest, identities) }
+        assertEquals(listOf("example.A"), coverageClassNames(spec, inputs))
+        assertFails { coverageClassNames(spec, TreeManifest(listOf(FileEntry(LogicalPath("main/example/Bad,Name.class"), digest)))) }
+        assertFails { coverageClassNames(spec, TreeManifest(listOf(FileEntry(LogicalPath("main/" + "a".repeat(65_537) + ".class"), digest)))) }
+    }
+
+    @Test fun rawCoverageIsRetainedForPassFailureAndCancellationAndMissingDataDoesNotEraseTests() {
+        val root = NativeRunDirectory("/private/tmp")
+        val store = NativeContentStore("${root.path}/store")
+        val manifest = obj("fixture" to true.json())
+        writeJvmFile("${root.path}/manifest.json", manifest.canonical().encodeToByteArray())
+        val agentBytes = "agent".encodeToByteArray(); val reporterBytes = "reporter".encodeToByteArray()
+        writeJvmFile("${root.path}/agent.jar", agentBytes); writeJvmFile("${root.path}/reporter.jar", reporterBytes)
+        val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
+        val provider = JvmToolchainProvider { requested -> JvmToolchainLayout(requested, "/tool/java", "/tool/classes", "/tool/api.jar", "/tool/std.jar", "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json",
+            "${root.path}/agent.jar", "${root.path}/reporter.jar", Sha256.digest(agentBytes), Sha256.digest(reporterBytes)) }
+        val bytes = store.put("class A".encodeToByteArray())
+        val source = CoverageSource("m", "main", LogicalPath("src/A.kt"), bytes)
+        val spec = JvmCoverageSpec(JACOCO_VERSION, Sha256.digest(agentBytes), Sha256.digest(reporterBytes), listOf(CoverageClassRoot("m", LogicalPath("main"))), listOf(source))
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("main/example/A.class"), bytes), FileEntry(source.inputPath, bytes), FileEntry(LogicalPath("tests/example/Tests.class"), bytes)))
+        val action = jvmTestAction(JvmTestSelection("m", listOf(LogicalPath("tests"), LogicalPath("main")), listOf("example.Tests"), coverage = spec), inputs, digest, identities)
+        for (variant in listOf("pass", "missing", "empty", "failure", "failure-missing", "cancel")) {
+            var launches = 0
+            val failed = variant.startsWith("failure")
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess {
+                    launches++
+                    assertEquals(listOf("-javaagent:${root.path}/agent.jar=destfile=output/coverage.exec,append=false,dumponexit=true,output=file,jmx=false,includes=example.A"), request.arguments.filter { it.startsWith("-javaagent:") })
+                    val directory = request.workingDirectory
+                    val requestId = parseJson(readJvmFile("$directory/request.json").decodeToString()).objectValue().getValue("requestId").stringValue()
+                    val result = TestResult("concrete-id", "m", "jvm", if (failed) TestStatus.FAILED else TestStatus.PASSED)
+                    val report = obj("schemaVersion" to 1.json(), "requestId" to requestId.json(), "exitCode" to (if (failed) 1 else 0).json(),
+                        "status" to (if (failed) "failed" else "passed").json(), "tests" to listOf(result.toJson()).json(),
+                        "testCounts" to TestCounts(1, 1, if (failed) 1 else 0, 0, true).toJson(), "diagnostics" to emptyList<JsonValue>().json())
+                    writeJvmFile("$directory/result.json", report.canonical().encodeToByteArray())
+                    if (!variant.endsWith("missing")) writeJvmFile("$directory/output/coverage.exec", if (variant == "empty") byteArrayOf() else byteArrayOf(1, 2, 3))
+                    return object : OwnedProcess {
+                        override fun poll() = ProcessResult(if (failed) 1 else 0)
+                        override fun cancel() = Unit
+                        override fun close() = Unit
+                    }
+                }
+                override fun close() = Unit
+            }
+            val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
+            val result = executor.start(root.runId, variant, action).use { running ->
+                if (variant == "cancel") {
+                    repeat(10_000) { if (launches == 0) { assertNull(running.poll()); usleep(1000u) } }
+                    assertEquals(1, launches); running.cancel()
+                }
+                awaitBridgeResult(running)
+            }
+            val observation = executor.observations.getValue(variant)
+            val expected = when { variant == "cancel" -> VerificationStatus.CANCELLED; failed -> VerificationStatus.FAILED; variant in setOf("missing", "empty") -> VerificationStatus.INCOMPLETE; else -> VerificationStatus.PASSED }
+            assertEquals(expected, observation.tests!!.status, variant)
+            if (variant != "cancel") assertEquals(listOf("concrete-id"), observation.tests.tests.map { it.id })
+            assertEquals(if (failed) 1 else 0, observation.tests.counts.failed)
+            assertEquals(if (variant == "cancel") ActionStatus.CANCELLED else if (variant == "pass") ActionStatus.EXECUTED else ActionStatus.FAILED, result.status)
+            val capture = parseJson(store.get(result.outputs.files.single { it.path.value == "coverage-result.json" }.digest)!!.decodeToString()).objectValue()
+            assertEquals(if (variant.endsWith("missing") || variant == "empty") "incomplete" else "captured", capture.getValue("status").stringValue())
+            assertEquals(!variant.endsWith("missing"), result.outputs.files.any { it.path.value == "coverage.exec" })
+            assertEquals(variant.endsWith("missing") || variant == "empty", observation.diagnostics.any { it.code == "KVIK_COVERAGE_CAPTURE_INCOMPLETE" })
+        }
+    }
+
     @Test fun remoteCompilationRequiresTheApprovedTypedPluginFreeContract() {
         val source = LogicalPath("A.kt")
         val compilation = JvmCompilation("m", listOf(source), emptyList(), LogicalPath("classes"))

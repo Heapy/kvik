@@ -110,7 +110,12 @@ class JvmActionExecutor(
             writeJvmFile("$directory/request.json", request.canonical().encodeToByteArray())
             val classpath = if (compilation != null) listOf(layout.workerClasses, layout.btaApiJar, layout.stdlibJar)
                 else listOf(layout.workerClasses, layout.junitJar, layout.stdlibJar) + selection!!.classpath.map { "$directory/input/${it.value}" }
-            val arguments = listOf(layout.javaExecutable, "-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
+            val coverageArguments = selection?.coverage?.let { coverage ->
+                listOf("-javaagent:${layout.jacocoAgent}=destfile=output/coverage.exec,append=false,dumponexit=true,output=file,jmx=false," +
+                    "includes=" + coverageClassNames(coverage, expected.inputs).joinToString(":") +
+                    if (coverage.excludes.isEmpty()) "" else ",excludes=" + coverage.excludes.joinToString(":"))
+            } ?: emptyList()
+            val arguments = listOf(layout.javaExecutable) + coverageArguments + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
                 if (compilation != null) listOf("kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
                 else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json")
             val process = host.start(ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
@@ -172,18 +177,50 @@ class JvmActionExecutor(
                         diagnostics = diagnostics + Diagnostic("KVIK_JVM_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Invalid JVM worker result")
                         if (selection != null) tests = JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
                     }
+                    selection?.coverage?.let { coverage ->
+                        var data: Digest? = null
+                        var problem: String? = null
+                        try {
+                            val bytes = readJvmFile("$directory/output/coverage.exec", 64 * 1024 * 1024)
+                            data = Sha256.digest(bytes)
+                            if (bytes.isEmpty()) problem = "JaCoCo execution data is empty"
+                        } catch (failure: Exception) {
+                            problem = "JaCoCo execution data is missing or unreadable: ${failure.message}"
+                        }
+                        val coverageDiagnostics = if (problem == null) emptyList() else listOf(Diagnostic("KVIK_COVERAGE_CAPTURE_INCOMPLETE", DiagnosticCategory.INFRASTRUCTURE,
+                            problem!!, actionId, module, "jvm"))
+                        diagnostics = diagnostics + coverageDiagnostics
+                        if (problem != null && tests?.status == VerificationStatus.PASSED) {
+                            tests = tests!!.copy(status = VerificationStatus.INCOMPLETE)
+                            status = ActionStatus.FAILED
+                        }
+                        try {
+                            val capture = obj("schemaVersion" to CONTRACT_VERSION.json(), "specification" to coverage.toJson(),
+                                "status" to (if (problem == null) "captured" else "incomplete").json(),
+                                "executionData" to (data?.toJson() ?: JsonValue.Null), "diagnostics" to coverageDiagnostics.map { it.toJson() }.json())
+                            writeJvmFile("$directory/output/coverage-result.json", capture.canonical().encodeToByteArray())
+                        } catch (failure: Exception) {
+                            diagnostics = diagnostics + Diagnostic("KVIK_COVERAGE_CAPTURE_INCOMPLETE", DiagnosticCategory.INFRASTRUCTURE,
+                                "Cannot retain coverage metadata: ${failure.message}", actionId, module, "jvm")
+                            if (tests?.status == VerificationStatus.PASSED) tests = tests!!.copy(status = VerificationStatus.INCOMPLETE)
+                            if (status != ActionStatus.CANCELLED) status = ActionStatus.FAILED
+                        }
+                    }
                     diagnostics = diagnostics.map { it.copy(actionId = actionId, module = module, target = "jvm", path = it.path?.removePrefix("input/")) }
                     if (tests != null) {
                         // Even negative/cancelled reports are retained; TEST actions can never enter caches.
                         try {
                             writeJvmFile("$directory/output/test-results.json", tests.toJson().canonical().encodeToByteArray())
                             outputs = trees.capture("$directory/output")
-                            require(outputs.files.map { it.path.value } == listOf("test-results.json")) { "Unexpected test output" }
+                            require(outputs.files.any { it.path.value == "test-results.json" } && outputs.files.all { it.path in expected.outputs }) { "Unexpected test output" }
+                            require(selection?.coverage == null || outputs.files.any { it.path.value == "coverage-result.json" }) { "Missing coverage metadata" }
                         } catch (failure: Exception) {
                             outputs = TreeManifest(emptyList())
                             if (status != ActionStatus.CANCELLED) {
                                 status = ActionStatus.FAILED
-                                tests = JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
+                                tests = if (selection?.coverage != null) tests!!.let { report ->
+                                    if (report.status == VerificationStatus.PASSED) report.copy(status = VerificationStatus.INCOMPLETE) else report
+                                } else JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
                             }
                             diagnostics = diagnostics + Diagnostic("KVIK_JVM_OUTPUT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
                                 failure.message ?: "Cannot retain test report", actionId, module, "jvm")
@@ -200,6 +237,13 @@ class JvmActionExecutor(
             toolchains.verified(expected.toolchains, checkpoint).also { layout ->
                 require(layout.identities == expected.toolchains) { "JVM toolchain provider returned different identities" }
                 require(Sha256.digest(parseJson(readJvmFile(layout.compilerManifest).decodeToString(throwOnInvalidSequence = true))) == expected.toolchains.getValue("jvm-compiler")) { "JVM compiler manifest identity mismatch" }
+                selection?.coverage?.let { coverage ->
+                    require(layout.jacocoAgentIdentity == coverage.agent && layout.jacocoCliIdentity == coverage.reporter &&
+                        layout.jacocoAgent != null && layout.jacocoCli != null) { "Requested coverage tools differ from verified JVM layout" }
+                    checkpoint()
+                    require(Sha256.digest(readJvmFile(layout.jacocoAgent, 64 * 1024 * 1024)) == coverage.agent &&
+                        Sha256.digest(readJvmFile(layout.jacocoCli, 64 * 1024 * 1024)) == coverage.reporter) { "Coverage tool content differs from its declared identity" }
+                }
                 checkpoint()
             }
         }, start = ::startVerified)

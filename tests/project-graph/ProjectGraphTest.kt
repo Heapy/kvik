@@ -605,6 +605,50 @@ class ProjectGraphTest {
         assertEquals(actions.mapValues { it.value.key(Sha256) }, resolved(unrelated).mapValues { it.value.key(Sha256) })
     }
 
+    @Test fun coverageSelectsProductionRuntimeClosureAndLeavesCompilationActionsUnchanged() {
+        val (configuration, files) = applicationFixture()
+        val coverageTools = JvmCoverageTools(JACOCO_VERSION, digest("agent"), digest("reporter"))
+        val plainRequest = request(ProjectMode.TEST)
+        val coveredRequest = plainRequest.copy(jvmTests = mapOf("app" to JvmTests(listOf("fixture.Tests"), coverage = coverageTools)))
+        fun actions(request: ProjectGraphRequest, snapshot: TreeManifest = files): Map<String, ActionSpec> {
+            val plan = graph(configuration, snapshot, request)
+            val results = linkedMapOf<String, ActionResult>()
+            return plan.nodes.associate { node ->
+                val action = node.resolve(results.filterKeys { it in node.dependencies })
+                // Distinct module class names, as in actual production output (rather than the
+                // shared Example.class shorthand used by older graph-only fixtures).
+                val output = if (action.kind == ActionKind.COMPILE) TreeManifest(listOf(FileEntry(
+                    LogicalPath("classes/${node.id.replace(':', '/')}/Example.class"), digest(node.id)))) else outputs(action, node.id)
+                results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED, output, 0)
+                node.id to action
+            }
+        }
+        val plain = actions(plainRequest)
+        val covered = actions(coveredRequest)
+        assertEquals(plain.keys, covered.keys)
+        for (id in plain.keys - "app:jvm:test") assertEquals(plain.getValue(id), covered.getValue(id), id)
+        val action = covered.getValue("app:jvm:test")
+        val specification = JvmTestSelection.fromJson(action.parameters).coverage!!
+        assertEquals(setOf("app", "base", "hidden", "runtime"), specification.classDirectories.map { it.module }.toSet())
+        assertTrue(specification.classDirectories.all { it.path == LogicalPath("modules/${it.module}/jvm/main") })
+        assertEquals(8, specification.sources.size)
+        assertEquals(setOf("commonMain", "jvmMain"), specification.sources.map { it.sourceSet }.toSet())
+        for (source in specification.sources) {
+            assertFalse("Test" in source.path.value || "resources" in source.path.value)
+            assertEquals(files.files.single { it.path == source.path }.digest, source.digest)
+            assertEquals(source.digest, action.inputs.files.single { it.path == source.inputPath }.digest)
+        }
+        assertTrue(plain.getValue("app:jvm:test").inputs.files.none { it.path.value.startsWith("coverage-sources/") })
+        assertNotEquals(plain.getValue("app:jvm:test").key(Sha256), action.key(Sha256))
+        assertEquals(CachePolicy.NEVER, action.cachePolicy)
+        val changed = TreeManifest(files.files.map { if (it.path == LogicalPath("hidden/common/Common.kt")) it.copy(digest = digest("comment change")) else it })
+        assertNotEquals(action.key(Sha256), actions(coveredRequest, changed).getValue("app:jvm:test").key(Sha256))
+        val excluded = coveredRequest.copy(jvmTests = mapOf("app" to JvmTests(listOf("fixture.Tests"), coverage = coverageTools.copy(excludes = listOf("generated.*")))))
+        val changedPolicy = actions(excluded)
+        assertNotEquals(action.key(Sha256), changedPolicy.getValue("app:jvm:test").key(Sha256))
+        for (id in plain.keys - "app:jvm:test") assertEquals(covered.getValue(id), changedPolicy.getValue(id))
+    }
+
     @Test fun jvmTestsUseApiForCompileAndRuntimeForExecutionWithResources() {
         val plan = graph(request = request(ProjectMode.TEST))
         val actions = resolved(plan)

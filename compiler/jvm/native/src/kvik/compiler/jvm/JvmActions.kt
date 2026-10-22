@@ -80,7 +80,7 @@ data class JvmCompilation(
     }
 }
 
-data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter")) {
+data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(classpath.isNotEmpty()) { "Test runtime classpath must be nonempty" }
@@ -89,11 +89,13 @@ data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>
         require(engines.isNotEmpty() && engines.distinct().size == engines.size && engines.all { it in setOf("junit-jupiter", "kotest") })
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "classpath" to classpath.jsonPaths(),
-        "classes" to classes.map { it.json() }.json(), "engines" to engines.map { it.json() }.json())
+        "classes" to classes.map { it.json() }.json(), "engines" to engines.map { it.json() }.json()).let {
+            if (coverage == null) it else JsonValue.Object(it.values + ("coverage" to coverage.toJson()))
+        }
     companion object {
         fun fromJson(value: JsonValue): JvmTestSelection {
-            val d = value.fields(setOf("module", "classpath", "classes", "engines"))
-            return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue))
+            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage"))
+            return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson))
         }
     }
 }
@@ -133,6 +135,32 @@ fun portableJvmCompilation(action: ActionSpec): Boolean {
 fun jvmTestAction(selection: JvmTestSelection, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000): ActionSpec {
     require(toolchains.keys == jvmIdentities)
     declaredClasspath(selection.classpath, inputs)
+    selection.coverage?.let { coverage ->
+        require(coverage.classDirectories.all { it.path in selection.classpath && !it.path.value.endsWith(".jar") }) { "Coverage class roots must be declared runtime directories" }
+        require(coverage.sources.all { source -> inputs.files.any { it.path == source.inputPath && it.digest == source.digest } }) { "Coverage source inputs differ from their declared digests" }
+        val names = coverageClassNames(coverage, inputs).toSet()
+        val otherDirectories = selection.classpath.filter { path -> !path.value.endsWith(".jar") && coverage.classDirectories.none { it.path == path } }
+        require(otherDirectories.none { root -> inputs.files.any { file ->
+            file.path.value.startsWith(root.value + "/") && file.path.value.endsWith(".class") &&
+                file.path.value.removePrefix(root.value + "/").removeSuffix(".class").replace('/', '.') in names
+        } }) { "Test/runtime directory shadows a production coverage class" }
+    }
     return ActionSpec("kvik-jvm-tests-v1", composition, ActionKind.TEST, hostPlatform, "jvm", toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(LogicalPath("test-results.json")), listOf("kvik.jvm.TestWorker") + selection.classes, workerEnvironment, selection.toJson(), timeoutMillis, CachePolicy.NEVER)
+        listOf(LogicalPath("test-results.json")) + if (selection.coverage == null) emptyList() else listOf(LogicalPath("coverage.exec"), LogicalPath("coverage-result.json")), listOf("kvik.jvm.TestWorker") + selection.classes, workerEnvironment, selection.toJson(), timeoutMillis, CachePolicy.NEVER)
+}
+
+/** Exact classes avoid instrumenting test/framework/dependency JAR classes. Bound the agent option
+ * before launching (64 KiB), rather than silently broadening to a package wildcard.
+ */
+internal fun coverageClassNames(coverage: JvmCoverageSpec, inputs: TreeManifest): List<String> {
+    val names = coverage.classDirectories.flatMap { root ->
+        inputs.files.filter { it.path.value.startsWith(root.path.value + "/") && it.path.value.endsWith(".class") }.map {
+            it.path.value.removePrefix(root.path.value + "/").removeSuffix(".class").replace('/', '.')
+        }.also { require(it.isNotEmpty()) { "Coverage class directory contains no classes: ${root.path.value}" } }
+    }
+    require(names.distinct().size == names.size) { "Coverage class names overlap across production modules" }
+    require(names.all { name -> name.isNotEmpty() && name.none { it.isISOControl() || it in "*,?:=" } }) { "Coverage class names contain unsupported JaCoCo option/pattern delimiters" }
+    val sorted = names.sorted()
+    require(sorted.joinToString(":").encodeToByteArray().size <= 64 * 1024) { "Coverage class inclusion list exceeds 64 KiB; select fewer production modules" }
+    return sorted
 }
