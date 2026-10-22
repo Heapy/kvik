@@ -96,6 +96,8 @@ class ParsingTest(unittest.TestCase):
             with self.subTest(edit=edit), self.assertRaises(ValueError): self.parse(doc)
 
     def test_pins_are_strict_and_remote_are_declarative(self):
+        doc = example(); doc['sources'][0]['pin']['origin'] += '#'
+        with self.assertRaisesRegex(ValueError, 'HTTPS URL'): self.parse(doc)
         for key, value in [('revision', 'main'), ('revision', 'a' * 40 + '\n'), ('origin', 'http://example.com/repo'), ('origin', 'https://user:password@example.com/repo'), ('origin', 'https://@example.com/repo'), ('tree', {'hash': 'a' * 64 + '\n', 'sizeBytes': 1}), ('tree', {'hash': 'a' * 64, 'sizeBytes': True})]:
             doc = example(); doc['sources'][0]['pin'][key] = value
             with self.subTest(key=key,value=value), self.assertRaises(ValueError): self.parse(doc)

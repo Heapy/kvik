@@ -64,7 +64,7 @@ def _path(value, label='path'):
 def _url(value):
     _string(value, 'HTTPS URL', 4096)
     url = urlsplit(value)
-    if any(c.isspace() for c in value) or url.scheme != 'https' or not url.hostname or url.username is not None or url.password is not None or url.fragment or '\\' in value:
+    if any(c.isspace() for c in value) or url.scheme != 'https' or not url.hostname or url.username is not None or url.password is not None or '#' in value or '\\' in value:
         _fail('Expected absolute credential-free HTTPS URL')
     try:
         url.port

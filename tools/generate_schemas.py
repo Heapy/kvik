@@ -114,6 +114,62 @@ DEFS["sourcePin"]["allOf"] = [
     {"if": {"properties": {"kind": {"const": "local"}}}, "then": {"properties": {"origin": {"anyOf": [PATH, {"const": "."}]}}}},
 ]
 DEFS["runtimeLock"] = versioned({"sources": array(ref("sourcePin"), minItems=1), "pluginApiVersion": {"const": 1}, "registry": array(STRING), "toolchains": mapping(ref("digest")), "libraries": array(ref("artifact")), "recipe": ref("digest"), "arguments": array(STRING), "environment": mapping(STRING), "platform": mapping(STRING)})
+# Structural authoring contract; the parser also checks UTF-8 byte limits,
+# canonical paths, graph closure, ordering, and referenced content.
+SOURCE_ID = {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\s\S])"}
+SOURCE_PATH = {"type": "string", "minLength": 1, "maxLength": 1024,
+    "pattern": r"^(?!.*(?:^|/)(?:\.{1,2}|\.[gG][iI][tT])(?:/|$))(?!.*[\\*?\[\]\u0000-\u001f\u007f])(?:[^/]+/){0,63}[^/]+(?![\s\S])"}
+SOURCE_TEXT = {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": r"^[^\u0000-\u001f\u007f]+(?![\s\S])"}
+SOURCE_URL = {"type": "string", "maxLength": 4096,
+    "pattern": r"^[hH][tT][tT][pP][sS]://[^\s/@#\\]+(?:[/?][^\s#\\]*)?(?![\s\S])"}
+
+
+def source_digest(limit):
+    return object_({"hash": {"type": "string", "pattern": r"^[0-9a-f]{64}(?![\s\S])"},
+                    "sizeBytes": {"type": "integer", "minimum": 0, "maximum": limit}})
+
+
+DEFS["sourceGraphTreeDigest"] = source_digest(16 * 1024 * 1024)
+DEFS["sourceGraphGitPin"] = object_({"kind": {"const": "git"}, "origin": SOURCE_URL,
+    "revision": {"type": "string", "pattern": r"^(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])"}, "tree": ref("sourceGraphTreeDigest")})
+DEFS["sourceGraphArchivePin"] = object_({"kind": {"const": "archive"}, "origin": SOURCE_URL,
+    "archiveDigest": source_digest(256 * 1024 * 1024), "format": enum("tar.gz", "zip"),
+    "rootPrefix": {"anyOf": [SOURCE_PATH, {"const": ""}]}, "tree": ref("sourceGraphTreeDigest")})
+for suffix, tree in (("Input", {"type": "null"}), ("Observed", ref("sourceGraphTreeDigest"))):
+    local = object_({"kind": {"const": "local"}, "origin": {"anyOf": [SOURCE_PATH, {"const": "."}]}, "tree": tree})
+    DEFS["sourceGraphNode" + suffix] = object_({"id": SOURCE_ID,
+        "pin": {"oneOf": [ref("sourceGraphGitPin"), ref("sourceGraphArchivePin"), local]},
+        "contentPaths": array(SOURCE_PATH, minItems=1, maxItems=1024, uniqueItems=True),
+        "kotlinRoots": array(SOURCE_PATH, minItems=1, maxItems=1024, uniqueItems=True),
+        "dependencies": array(SOURCE_ID, maxItems=64, uniqueItems=True),
+        "nativeLibraries": array(SOURCE_ID, maxItems=128, uniqueItems=True)})
+DEFS["sourceGraphNativeArtifact"] = object_({"id": SOURCE_ID,
+    "coordinate": {"type": "string", "maxLength": 1024, "pattern": r"^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+(?![\s\S])"},
+    "variant": SOURCE_TEXT, "url": {"allOf": [SOURCE_URL, {"pattern": r"^[hH][tT][tT][pP][sS]://[^/?]+/[^?]*\.klib(?:\?[^#]*)?(?![\s\S])"}]},
+    "digest": source_digest(64 * 1024 * 1024),
+    "metadata": array(object_({"url": SOURCE_URL, "digest": source_digest(1024 * 1024)}), minItems=1, maxItems=32, uniqueItems=True),
+    "uniqueName": SOURCE_TEXT, "dependencies": array(SOURCE_ID, maxItems=128, uniqueItems=True),
+    "providedDependencies": array({"const": "stdlib"}, maxItems=1, uniqueItems=True)})
+for suffix in ("Input", "Observed"):
+    DEFS["sourceGraph" + suffix] = object_({"schemaVersion": {"const": 1}, "implementation": {"const": "kvik-source-graph-v1"},
+        "pluginApiVersion": {"const": 1}, "target": {"const": "macos_arm64"}, "kotlinVersion": {"const": "2.4.20"},
+        "sources": array(ref("sourceGraphNode" + suffix), minItems=1, maxItems=64),
+        "runtime": object_({"source": SOURCE_ID, "nativePlatform": SOURCE_PATH,
+            "nativeLibraries": array(enum("resolution", "toolchains"), maxItems=2, uniqueItems=True),
+            "jvmWorkerSources": {"const": "compiler/jvm/src"}}),
+        "plugins": array(object_({"id": {"type": "string", "maxLength": 128, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"},
+            "source": SOURCE_ID, "implementation": {"type": "string", "maxLength": 1024,
+                "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+(?![\s\S])"}}), maxItems=64),
+        "nativeArtifacts": array(ref("sourceGraphNativeArtifact"), maxItems=128),
+        "providedLibraries": array({"const": {"id": "stdlib", "toolchain": "kotlinNative", "path": "klib/common/stdlib", "uniqueName": "stdlib"}}, maxItems=1),
+        "nativeLibraryOrder": array(SOURCE_ID, maxItems=128, uniqueItems=True),
+        "compilerOptions": array(enum("-target", "macos_arm64", "-entry", "kvik.cli.main", "-opt", "-g"), minItems=4, maxItems=6, uniqueItems=True)})
+    DEFS["sourceGraph" + suffix]["description"] = (
+        "Structural source graph contract. Semantic validation must additionally check sorted unique IDs/lists, "
+        "acyclic reachable dependency closures, exact library order, directory coverage, normalized nonoverlapping paths, "
+        "UTF-8 byte and aggregate limits, compiler option pairs, and immutable URL consistency. "
+        "The input parser also rejects duplicate JSON keys and noninteger numeric tokens. "
+        "A valid document is not evidence that source/artifact bytes have been acquired or verified.")
 TOOL_COMPONENTS = ("jdk", "kotlinNative", "llvm", "libffi", "sdk", "xcodeToolchain")
 DEFS["installedToolLock"] = versioned({"kotlinVersion": {"const": "2.4.20"},
     "host": object_({"os": {"const": "Darwin"}, "architecture": {"const": "arm64"}, "release": NONEMPTY, "sdk": NONEMPTY}),

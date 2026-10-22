@@ -1467,6 +1467,747 @@
       ],
       "additionalProperties": false
     },
+    "sourceGraphTreeDigest": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        }
+      },
+      "required": [
+        "hash",
+        "sizeBytes"
+      ],
+      "additionalProperties": false
+    },
+    "sourceGraphGitPin": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "git"
+        },
+        "origin": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[hH][tT][tT][pP][sS]://[^\\s/@#\\\\]+(?:[/?][^\\s#\\\\]*)?(?![\\s\\S])"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\\s\\S])"
+        },
+        "tree": {
+          "$ref": "#/$defs/sourceGraphTreeDigest"
+        }
+      },
+      "required": [
+        "kind",
+        "origin",
+        "revision",
+        "tree"
+      ],
+      "additionalProperties": false
+    },
+    "sourceGraphArchivePin": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "archive"
+        },
+        "origin": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[hH][tT][tT][pP][sS]://[^\\s/@#\\\\]+(?:[/?][^\\s#\\\\]*)?(?![\\s\\S])"
+        },
+        "archiveDigest": {
+          "type": "object",
+          "properties": {
+            "hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+            },
+            "sizeBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 268435456
+            }
+          },
+          "required": [
+            "hash",
+            "sizeBytes"
+          ],
+          "additionalProperties": false
+        },
+        "format": {
+          "enum": [
+            "tar.gz",
+            "zip"
+          ]
+        },
+        "rootPrefix": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+            },
+            {
+              "const": ""
+            }
+          ]
+        },
+        "tree": {
+          "$ref": "#/$defs/sourceGraphTreeDigest"
+        }
+      },
+      "required": [
+        "kind",
+        "origin",
+        "archiveDigest",
+        "format",
+        "rootPrefix",
+        "tree"
+      ],
+      "additionalProperties": false
+    },
+    "sourceGraphNodeInput": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+        },
+        "pin": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sourceGraphGitPin"
+            },
+            {
+              "$ref": "#/$defs/sourceGraphArchivePin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "local"
+                },
+                "origin": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+                    },
+                    {
+                      "const": "."
+                    }
+                  ]
+                },
+                "tree": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "kind",
+                "origin",
+                "tree"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "contentPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "kotlinRoots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "nativeLibraries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "pin",
+        "contentPaths",
+        "kotlinRoots",
+        "dependencies",
+        "nativeLibraries"
+      ],
+      "additionalProperties": false
+    },
+    "sourceGraphNodeObserved": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+        },
+        "pin": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sourceGraphGitPin"
+            },
+            {
+              "$ref": "#/$defs/sourceGraphArchivePin"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "local"
+                },
+                "origin": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+                    },
+                    {
+                      "const": "."
+                    }
+                  ]
+                },
+                "tree": {
+                  "$ref": "#/$defs/sourceGraphTreeDigest"
+                }
+              },
+              "required": [
+                "kind",
+                "origin",
+                "tree"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "contentPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "kotlinRoots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "nativeLibraries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "pin",
+        "contentPaths",
+        "kotlinRoots",
+        "dependencies",
+        "nativeLibraries"
+      ],
+      "additionalProperties": false
+    },
+    "sourceGraphNativeArtifact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+        },
+        "coordinate": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+(?![\\s\\S])"
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "url": {
+          "allOf": [
+            {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^[hH][tT][tT][pP][sS]://[^\\s/@#\\\\]+(?:[/?][^\\s#\\\\]*)?(?![\\s\\S])"
+            },
+            {
+              "pattern": "^[hH][tT][tT][pP][sS]://[^/?]+/[^?]*\\.klib(?:\\?[^#]*)?(?![\\s\\S])"
+            }
+          ]
+        },
+        "digest": {
+          "type": "object",
+          "properties": {
+            "hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+            },
+            "sizeBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 67108864
+            }
+          },
+          "required": [
+            "hash",
+            "sizeBytes"
+          ],
+          "additionalProperties": false
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^[hH][tT][tT][pP][sS]://[^\\s/@#\\\\]+(?:[/?][^\\s#\\\\]*)?(?![\\s\\S])"
+              },
+              "digest": {
+                "type": "object",
+                "properties": {
+                  "hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+                  },
+                  "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1048576
+                  }
+                },
+                "required": [
+                  "hash",
+                  "sizeBytes"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "url",
+              "digest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "uniqueName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "providedDependencies": {
+          "type": "array",
+          "items": {
+            "const": "stdlib"
+          },
+          "maxItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "coordinate",
+        "variant",
+        "url",
+        "digest",
+        "metadata",
+        "uniqueName",
+        "dependencies",
+        "providedDependencies"
+      ],
+      "additionalProperties": false
+    },
+    "sourceGraphInput": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "implementation": {
+          "const": "kvik-source-graph-v1"
+        },
+        "pluginApiVersion": {
+          "const": 1
+        },
+        "target": {
+          "const": "macos_arm64"
+        },
+        "kotlinVersion": {
+          "const": "2.4.20"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceGraphNodeInput"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+            },
+            "nativePlatform": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+            },
+            "nativeLibraries": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "resolution",
+                  "toolchains"
+                ]
+              },
+              "maxItems": 2,
+              "uniqueItems": true
+            },
+            "jvmWorkerSources": {
+              "const": "compiler/jvm/src"
+            }
+          },
+          "required": [
+            "source",
+            "nativePlatform",
+            "nativeLibraries",
+            "jvmWorkerSources"
+          ],
+          "additionalProperties": false
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+              },
+              "implementation": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "id",
+              "source",
+              "implementation"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 64
+        },
+        "nativeArtifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceGraphNativeArtifact"
+          },
+          "maxItems": 128
+        },
+        "providedLibraries": {
+          "type": "array",
+          "items": {
+            "const": {
+              "id": "stdlib",
+              "toolchain": "kotlinNative",
+              "path": "klib/common/stdlib",
+              "uniqueName": "stdlib"
+            }
+          },
+          "maxItems": 1
+        },
+        "nativeLibraryOrder": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "-target",
+              "macos_arm64",
+              "-entry",
+              "kvik.cli.main",
+              "-opt",
+              "-g"
+            ]
+          },
+          "minItems": 4,
+          "maxItems": 6,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "implementation",
+        "pluginApiVersion",
+        "target",
+        "kotlinVersion",
+        "sources",
+        "runtime",
+        "plugins",
+        "nativeArtifacts",
+        "providedLibraries",
+        "nativeLibraryOrder",
+        "compilerOptions"
+      ],
+      "additionalProperties": false,
+      "description": "Structural source graph contract. Semantic validation must additionally check sorted unique IDs/lists, acyclic reachable dependency closures, exact library order, directory coverage, normalized nonoverlapping paths, UTF-8 byte and aggregate limits, compiler option pairs, and immutable URL consistency. The input parser also rejects duplicate JSON keys and noninteger numeric tokens. A valid document is not evidence that source/artifact bytes have been acquired or verified."
+    },
+    "sourceGraphObserved": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "implementation": {
+          "const": "kvik-source-graph-v1"
+        },
+        "pluginApiVersion": {
+          "const": 1
+        },
+        "target": {
+          "const": "macos_arm64"
+        },
+        "kotlinVersion": {
+          "const": "2.4.20"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceGraphNodeObserved"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+            },
+            "nativePlatform": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*[\\\\*?\\[\\]\\u0000-\\u001f\\u007f])(?:[^/]+/){0,63}[^/]+(?![\\s\\S])"
+            },
+            "nativeLibraries": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "resolution",
+                  "toolchains"
+                ]
+              },
+              "maxItems": 2,
+              "uniqueItems": true
+            },
+            "jvmWorkerSources": {
+              "const": "compiler/jvm/src"
+            }
+          },
+          "required": [
+            "source",
+            "nativePlatform",
+            "nativeLibraries",
+            "jvmWorkerSources"
+          ],
+          "additionalProperties": false
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+              },
+              "implementation": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "id",
+              "source",
+              "implementation"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 64
+        },
+        "nativeArtifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceGraphNativeArtifact"
+          },
+          "maxItems": 128
+        },
+        "providedLibraries": {
+          "type": "array",
+          "items": {
+            "const": {
+              "id": "stdlib",
+              "toolchain": "kotlinNative",
+              "path": "klib/common/stdlib",
+              "uniqueName": "stdlib"
+            }
+          },
+          "maxItems": 1
+        },
+        "nativeLibraryOrder": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "-target",
+              "macos_arm64",
+              "-entry",
+              "kvik.cli.main",
+              "-opt",
+              "-g"
+            ]
+          },
+          "minItems": 4,
+          "maxItems": 6,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "implementation",
+        "pluginApiVersion",
+        "target",
+        "kotlinVersion",
+        "sources",
+        "runtime",
+        "plugins",
+        "nativeArtifacts",
+        "providedLibraries",
+        "nativeLibraryOrder",
+        "compilerOptions"
+      ],
+      "additionalProperties": false,
+      "description": "Structural source graph contract. Semantic validation must additionally check sorted unique IDs/lists, acyclic reachable dependency closures, exact library order, directory coverage, normalized nonoverlapping paths, UTF-8 byte and aggregate limits, compiler option pairs, and immutable URL consistency. The input parser also rejects duplicate JSON keys and noninteger numeric tokens. A valid document is not evidence that source/artifact bytes have been acquired or verified."
+    },
     "installedToolLock": {
       "type": "object",
       "properties": {
