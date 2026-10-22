@@ -68,6 +68,18 @@ def policies(reference):
     return sorted(values), sorted(scoped)
 
 
+def metadata_exclusions():
+    # Deliberate, narrowly pinned correction of unsupported upstream metadata.
+    # This differs from KTC's blanket jar filtering; it never claims JVM reflection
+    # is supplied by the Native distribution and never applies to other edges.
+    return [dict(domain=dict(module=module, target=TARGET, compilation='test', usage=usage, purpose='dependencies'),
+                 parent='io.kotest:kotest-common-macosarm64:6.2.5',
+                 metadata=dict(hash='fec23c54a9a7fae891d8697b34e3a17ed79cc3e71fe59e5ee40ae290e78bbe2e', sizeBytes=4708),
+                 variant='macosArm64ApiElements-published', dependency='org.jetbrains.kotlin:kotlin-reflect:2.2.21',
+                 reason='Kotest 6.2.5 non-JVM BasicReflection uses Native stdlib interfaces; published JVM kotlin-reflect edge is unsupported. Reproduce the retained KTC Native artifact set without its blanket JAR filter.')
+            for module in MODULES for usage in ('kotlin-api', 'kotlin-runtime')]
+
+
 def value_digest(value):
     data = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
     return dict(hash=hashlib.sha256(data).hexdigest(), sizeBytes=len(data))
@@ -240,9 +252,12 @@ def main():
             target = project/name; target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source, target)
         document = configuration(); validate(document, 'project'); write('kvik.json', document)
         policy, scopes = policies(reference); write('pins.json', policy); write('scoped-pins.json', scopes)
+        exclusions = sorted(metadata_exclusions(), key=lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
+        write('metadata-exclusions.json', exclusions)
+        exclusion_args = [json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')) for value in exclusions]
         preparation = dict(status='prepared-unverified', fixtureCommit=COMMIT, project=str(project), sourceFiles=61,
             sourceManifest=digest(source_manifest), testIdentities=digest(test_manifest), expectedTests=EXPECTED,
-            nativeArtifacts=digest(reference_path), originalConfiguration=configs,
+            nativeArtifacts=digest(reference_path), originalConfiguration=configs, metadataExclusions=exclusions,
             requirements=['Production Native API/link visibility must preserve private and runtime-only dependencies.',
                           'Production CLI dispatches KSP and typed Kotest and retains their observations.',
                           'Scoped host stdlib2.3.20 policy must not change Native stdlib2.4.20 identity.'])
@@ -251,7 +266,8 @@ def main():
             print('61 unchanged files, 1880 pinned identities; no resolver/compiler/test invoked', flush=True); return
         runtime = args.runtime.resolve(strict=True); runtime_digest = digest(runtime)
         env = dict(os.environ); env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
-        pin_args = [arg for pin in policy for arg in ('--pin', pin)] + [arg for pin in scopes for arg in ('--scope-pin', pin)]
+        pin_args = ([arg for pin in policy for arg in ('--pin', pin)] + [arg for pin in scopes for arg in ('--scope-pin', pin)] +
+                    [arg for rule in exclusion_args for arg in ('--exclude-metadata-edge', rule)])
         store = project/'.kvik/store'
 
         def invoke(label, command, arguments=(), timeout=1800):
@@ -265,6 +281,7 @@ def main():
 
         resolved,=invoke('resolve','resolve');validate(resolved,'dependencyResolution')
         lock_path=project/'kvik.lock.json'; lock=json.loads(lock_path.read_text());validate(lock,'dependencyLock')
+        assert lock['metadataExclusions'] == exclusions
         write('domain-comparison.json',audit_lock(lock,reference,host))
         lock_digest=digest(lock_path)
         checked,=invoke('check-lock-offline','check-lock',['--offline']);validate(checked,'dependencyResolution')
@@ -299,7 +316,7 @@ def main():
             actual=[(t['module'],t['target'],t['id']) for t in record['tests']]
             assert len(set(actual))==1880 and sorted(actual)==expected_ids and all(t['status']=='passed' for t in record['tests'])
             for module in MODULES:assert sum(t['module']==module for t in record['tests'])==EXPECTED[module]
-            for flag,expected in (('--pin',policy),('--scope-pin',scopes)):
+            for flag,expected in (('--pin',policy),('--scope-pin',scopes),('--exclude-metadata-edge',exclusion_args)):
                 assert [record['reproduction'][i+1] for i,v in enumerate(record['reproduction']) if v==flag]==expected
             run=project/'.kvik/runs'/record['runId']
             assert json.loads((run/'verification.json').read_text())==record

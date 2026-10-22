@@ -43,7 +43,7 @@ corrupt/deleted/reordered/truncated history without modifying the original run.
 ## Preparation and current blocker
 
 Schema/source/identity preparation and Python syntax checks passed in
-`.kvik/tests/kotaml-native-cli/case-klnlxrt2`. No compiler was invoked.
+`.kvik/tests/kotaml-native-cli/case-klnlxrt2`. The explicit-policy preparation also passed in `case-msni3tmy`, preserving all 61 source hashes and 1,880 identities. No compiler was invoked.
 
 A real public `--resolve-only` attempt against runtime
 `0dcc6a76fd24a957a064a4bfb823205e17f7b188a592353141c1f9850195d678`
@@ -53,8 +53,7 @@ failed in `.kvik/tests/kotaml-native-cli/case-kmzh6glc` with
 `org.jetbrains.kotlin:kotlin-reflect:2.2.21`, which publishes a JVM POM/jar.
 The exact parent metadata digest is
 `fec23c54a9a7fae891d8697b34e3a17ed79cc3e71fe59e5ee40ae290e78bbe2e`,
-4,708 bytes. No jar filtering, fixture exclusion, or scope promotion has been
-added to bypass this failure.
+4,708 bytes. No implicit jar filtering or scope promotion was added.
 
 Pinned Kotlin Toolchain source explains why its Native compiler input list
 omits the jar: `tasks/native/nativeTaskUtil.kt` filters jar/aar with an upstream
@@ -62,8 +61,7 @@ FIXME, while dependency resolution reports unsupported non-JVM POM libraries.
 This is not evidence that the Native distribution implements full JVM reflection.
 The published Kotest non-JVM sources use basic reflection interfaces and explicitly
 return unsupported/default results for full reflection operations. A narrowly
-scoped, digest-bound explicit metadata correction policy is under review as a
-separate production change. The faithful Native API/link graph split is also
+scoped, digest-bound explicit metadata correction policy is now declared by the harness for the four module test API/runtime domains. Each rule pins those exact metadata bytes, the `macosArm64ApiElements-published` variant, and the raw `kotlin-reflect:2.2.21` edge before version pins. It is persisted with an explicit reason in `metadata-exclusions.json`, passed as `--exclude-metadata-edge`, and required in the lock and reproduction arguments. This policy deliberately differs from KTC's blanket JAR filtering; unchanged fixture sources do not imply unchanged dependency metadata policy. Its separate production service candidate passed the combined Native resolver/locking/query checks; integration into the public runtime is pending. The faithful Native API/link graph split is also
 pending. Consequently this document makes no public Native execution success
 claim yet.
 
