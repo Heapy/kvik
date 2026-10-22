@@ -234,7 +234,64 @@ The complete final extension source passed 18 light checks (12 central, three
 published and three compiler-identity guards), receipt
 `light-offline-policy-k0put5is/receipt.json`, SHA-256
 `c51d5922783406cc1c45eb5a1ef0e30c55052ad22cf2be467c5a1afb6d423f55`.
-The compiler-identity phase remains unexecuted: the A/B legacy bootstrap receipts
-bind source, launcher invocation/events and artifacts but do not capture complete
-compiler subprocess argv/environment. That required provenance remains pending;
-the bounded source/order audit does not replace it or establish full K12 completion.
+At this three-phase freeze the compiler-identity phase remained unexecuted:
+the A/B legacy bootstrap receipts bind source, launcher invocation/events and
+artifacts but do not capture complete compiler subprocess argv/environment.
+Those older receipts alone do not satisfy the required provenance. The separately
+traced pair and final identity execution are recorded below.
+
+Independent named-invalidation audit:
+`/private/tmp/kvik-script-named-invalidation-audit-rywh6p83/report.json`, SHA-256
+`4498a58a8f9c2ae40c0d65b08d0cc8e1c3830c3ce5e33e6cbcb0acbdd2fdc7e0`.
+Independent concurrency audit:
+`/private/tmp/kvik-script-concurrency-audit-kls3w19a/report.json`, SHA-256
+`feb75c78300bde8f20244206ed40bd62a31de063ce9779099351f02b86f154ae`.
+Both inspected retained evidence without re-executing consumers.
+
+## Completed ordered compiler-distribution identity gate
+
+The final gate uses newly built binaries with complete bootstrap command traces,
+not the legacy-built A/B executables recorded in `case-pics68_s`. The trace wrapper
+runs outside the exact frozen source checkout, delegates unchanged command and
+environment objects to the original owned process function once, and records each
+requested command/environment/timeout before delegation plus its outcome. It binds
+tracked sources, Python and wrapper bytes before/after and copies staged source
+inputs and generated Registry. It does not replace process ownership. Its independent
+source review, including the narrow Darwin environment allowance, is
+`/private/tmp/kvik-trace-wrapper-source-review-moagdlgu/report.json`, SHA-256
+`08dafae3e5f298ea189a3b4913ecd000d7122259ebf7ea00d05778f6a8af0357`.
+
+The independently audited traced pair is recorded in
+`/private/tmp/kvik-traced-pair-audit-z2hpvo80/report.json`, SHA-256
+`7156fc2c00395ebb73dcebbb8b9606a8e5afb4c0431537f89aae3e4e907688be`.
+After staging-path normalization, only worker-build JVM classpath ordering changes;
+all other captured commands/environments and compiler input bytes match. The actual
+Native binaries used were:
+
+- A: `/private/tmp/kvik-k12-traced-runtime-a/.kvik/traced/runtime/executables/2f5b5ccdd270b064b4829fb631b18187b1aff5cc300e771036e89c6894f70e53/kvik.kexe`,
+  SHA-256 `a16932e2ed5bbacf8f5bb8e116fc60616dcdb56ee25309bc842267b77c5b6503`,
+  5,585,432 bytes.
+- B: `/private/tmp/kvik-k12-compiler-order-runtime/.kvik/traced/runtime/executables/a42334fed9e958864b3f949c650d398bbe4ce388fce183c32edd13be0b3608a6/kvik.kexe`,
+  SHA-256 `385cddc8530e77a7e03cff45b924da5b27d5278dfc4e9e5f55ac9770454237a6`,
+  5,585,448 bytes.
+
+Frozen harness `3adf54a` completed handle `13320` with exit 0 in fresh case
+`/private/tmp/kvik-k12-script-acceptance/.kvik/tests/scripts-cli/case-i1zvjwzn`.
+Phase `compiler-identity-otusujru/summary.json` is SHA-256
+`898fe5fefa3038cfd44c1759d48f1bdaa3db8e364e8f7bff9f60ab7443de91f5`
+(45,132 bytes), binding 172 files, 11 commands and five complete run records.
+The actual sequence was A cold, A warm, B cold, B warm, A reuse on one unchanged
+project, configuration, dependency lock and CAS. Only the two cold compilations
+executed; three later compilations were local hits. All five script executions
+produced fresh effects and passed current verification queries. Compilation output
+bytes were equal. Full worker/API/stdlib/JUnit identities and compiler artifact
+bytes were unchanged; the distribution changed only the ordered transposition of
+coroutines and annotations JAR entries.
+
+The only canonical action differences are composition and `jvm-compiler` identity.
+The receipt separately retains a fixed-composition compiler-only key calculation,
+explicitly labeled as unexecuted; the public cache miss alone is confounded by the
+necessary composition change. This is evidence for ordered distribution identity
+invalidation, not alternate compiler implementation bytes/versions, arbitrary
+plugin compatibility, remote portability, or Native reproducibility. Whole-project
+K12 completion remains the root PLAN decision after independent final audit.

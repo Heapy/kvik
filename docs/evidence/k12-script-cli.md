@@ -1,10 +1,9 @@
 # K12 public script CLI integration
 
-This isolated candidate connects named project scripts and standalone `.kt` files to
-dependency locks, snapshots, the compilation graph, local compilation reuse and fresh
-owned JVM execution. Standalone, workspace-plugin and lifecycle phases have passed on
-the composed native executable. Main integration and the remaining K12 acceptance
-gates remain pending; these phases do not establish full K12 completion.
+Named project scripts and standalone `.kt` files connect to dependency locks,
+snapshots, the compilation graph, local compilation reuse and fresh owned JVM
+execution. The six K12 acceptance gates passed on the composed native executable
+within the supported JVM script contract. The broader PLAN remains incomplete.
 
 The commands are:
 
@@ -133,8 +132,7 @@ acceptance evidence for exact commands and observations.
 
 The standalone phase above has no external dependency; the workspace plugin is not
 the published serialization compiler plugin. Subsequent extension results below cover
-those additional cases. Compiler-identity execution with complete build provenance
-remains pending. Full installed tool inventories and historical filesystem no-write
+those additional cases. Compiler-identity execution subsequently passed as described below. Full installed tool inventories and historical filesystem no-write
 assertions have the limits described in the audits.
 
 ## Published-plugin diagnostic follow-up
@@ -197,10 +195,25 @@ The first published attempt remains a failed harness case: it incorrectly expect
 offline refusal without writes, explicitly resolves the changed configuration and
 then checks/runs offline. It does not reinterpret that failure as a pass.
 
-The ordered compiler-distribution variant has separately verified original artifact
-bytes and source/build identities. Its actual public execution gate is still held
-until the requested bootstrap compiler-command/environment traces are retained.
-The trace helper delegates synchronously to the unchanged owned-process boundary;
-its environment is labeled as the requested compiler environment, before the guardian
-adds reserved transport metadata. Trace records must bind new builds, never earlier
-executables. Full K12 completion remains unclaimed.
+The final compiler-identity phase passed on newly traced A/B runtime builds:
+A cold/warm, B cold/warm, then A reuse produced two compilations, three cache hits
+and five fresh script executions. The independent audit found no issues:
+`/private/tmp/kvik-script-compiler-identity-actual-audit-u1c7kc53/report.json`.
+The change swaps compiler-distribution classpath ordering; it does not test another
+compiler version. The actual runtime composition also changes, while the graph test
+separately isolates compiler identity with composition held fixed. Exact build and
+execution details are in [the acceptance evidence](k12-script-acceptance.md).
+
+The K12 acceptance gates map to the completed phases as follows:
+
+| PLAN requirement | Passing checks |
+| --- | --- |
+| Locked external dependencies and offline standalone execution | Published serialization phase |
+| Catalog/profile and workspace prerequisites, reuse and unrelated actions | Named and named-invalidation phases |
+| Serialization compiler plugin, runtime separation and incompatibility diagnostics | Published serialization phase |
+| Compilation reuse, fresh effects and argument forwarding | Standalone phase and repeated executions in all phases |
+| Independent input invalidation | Source/helper and library body changes; plugin implementation, options and input changes; compiler-identity phase and isolated graph test |
+| Failures, timeout, cancellation and concurrent worktrees | Standalone, lifecycle and concurrency phases |
+
+Concurrency covers warm shared-cache isolation. Concurrent cold publication,
+cross-machine reuse and other PLAN milestones retain their separate gates.
