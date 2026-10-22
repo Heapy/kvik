@@ -80,11 +80,11 @@ def main():
         run('tests', [executable], timeout=60)
         log = (case / 'tests.log').read_text()
         passed = [line for line in log.splitlines() if line.startswith('[       OK ]')]
-        assert len(passed) == 9 and len(set(passed)) == 9, log
+        assert len(passed) == 10 and len(set(passed)) == 10, log
         assert not sentinel.exists(), 'Application initializer executed during discovery'
         assert receipt['inputs'] == {str(p): file_digest(p) for p in inputs}, 'Inputs changed'
         assert receipt['tools'] == {str(p): file_digest(p) for p in tools}, 'Tools changed'
-        receipt.update(passed=True, tests=9, initializerExecuted=False)
+        receipt.update(passed=True, tests=10, initializerExecuted=False)
         print(log, end='')
     except Exception as error:
         receipt['failure'] = str(error)

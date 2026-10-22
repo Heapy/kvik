@@ -39,6 +39,7 @@ private class ClassMetadata(private val bytes: ByteArray) {
     private lateinit var starts: IntArray
     private lateinit var lengths: IntArray
     private lateinit var names: IntArray
+    private lateinit var validatedNames: Array<String?>
 
     private fun invalid(message: String): Nothing = throw IllegalArgumentException("Invalid script class file: $message")
     private fun need(count: Int) {
@@ -86,11 +87,17 @@ private class ClassMetadata(private val bytes: ByteArray) {
     }
     private fun className(index: Int): String {
         pool(index, 7)
-        return text(names[index]).also { name ->
+        val utf8 = names[index]
+        pool(utf8, 1)
+        validatedNames[utf8]?.let { return it }
+        return text(utf8).also { name ->
             if (name.isEmpty() || name.split('/').any { it.isEmpty() || it in setOf(".", "..") } ||
                 name.any { it == '.' || it == ';' || it == '[' || it == '\\' || it.code < 32 || it.code == 127 }) {
                 invalid("invalid internal class name")
             }
+            // Multiple Class entries can reference one UTF8 entry. Decode/validate
+            // that name once, bounding total work by the constant-pool bytes.
+            validatedNames[utf8] = name
         }
     }
     private fun attributes() {
@@ -106,6 +113,7 @@ private class ClassMetadata(private val bytes: ByteArray) {
         val count = u2()
         if (count < 1) invalid("empty constant-pool table")
         tags = ByteArray(count); starts = IntArray(count); lengths = IntArray(count); names = IntArray(count)
+        validatedNames = arrayOfNulls(count)
         var index = 1
         while (index < count) {
             val tag = u1(); tags[index] = tag.toByte()

@@ -43,6 +43,12 @@ class ScriptEntrypointsTest {
         }
         assertFailsWith<IllegalArgumentException> { selectScriptMainClass(mapOf("A.class" to (bytes + 0))) }
     }
+    @Test fun aliasedInterfaceNamesAreDecodedOncePerUtf8Entry() {
+        // Distinct Class constants all reference the same large UTF8 constant.
+        // Re-decoding per interface would process three billion characters.
+        val bytes = fixture("A", interfaceAliases = 50_000)
+        assertEquals("A", selectScriptMainClass(mapOf("A.class" to bytes)))
+    }
     @Test fun rejectsCorruptPoolMagicVersionAndAttributeLengths() {
         val bytes = fixture("A")
         for ((offset, replacement) in listOf(0 to 0, 7 to 70, 5 to 1, 10 to 99, 13 to 0)) {
@@ -58,7 +64,7 @@ class ScriptEntrypointsTest {
 }
 
 /** Minimal framed metadata, deliberately not executable bytecode; real compiler fixtures are separate. */
-private fun fixture(name: String, access: Int = 9, descriptor: String = "([Ljava/lang/String;)V", wideConstants: Boolean = false): ByteArray {
+private fun fixture(name: String, access: Int = 9, descriptor: String = "([Ljava/lang/String;)V", wideConstants: Boolean = false, interfaceAliases: Int = 0): ByteArray {
     val result = mutableListOf<Byte>()
     fun u1(value: Int) { result += value.toByte() }
     fun u2(value: Int) { u1(value ushr 8); u1(value) }
@@ -72,7 +78,8 @@ private fun fixture(name: String, access: Int = 9, descriptor: String = "([Ljava
         }
         u1(1); u2(data.size); data.forEach(::u1)
     }
-    u4(0xcafebabeL); u2(0); u2(69); u2(if (wideConstants) 12 else 8)
+    val baseCount = if (wideConstants) 12 else 8
+    u4(0xcafebabeL); u2(0); u2(69); u2(baseCount + if (interfaceAliases == 0) 0 else 1 + interfaceAliases)
     utf(name) // 1
     u1(7); u2(1) // 2
     utf("java/lang/Object") // 3
@@ -81,7 +88,13 @@ private fun fixture(name: String, access: Int = 9, descriptor: String = "([Ljava
     utf(descriptor) // 6
     utf("UnknownAttribute") // 7
     if (wideConstants) { u1(5); u4(1); u4(2); u1(6); u4(3); u4(4) }
-    u2(0x21); u2(2); u2(4); u2(0); u2(0)
+    if (interfaceAliases > 0) {
+        utf("x".repeat(60_000))
+        repeat(interfaceAliases) { u1(7); u2(baseCount) }
+    }
+    u2(0x21); u2(2); u2(4); u2(interfaceAliases)
+    repeat(interfaceAliases) { u2(baseCount + 1 + it) }
+    u2(0)
     u2(1); u2(access); u2(5); u2(6); u2(0)
     u2(1); u2(7); u4(0)
     return result.toByteArray()
