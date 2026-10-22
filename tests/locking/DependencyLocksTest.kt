@@ -50,6 +50,57 @@ private fun component(coordinate: String, dependencies: List<String> = emptyList
 private val smallEntries get() = component("example:root:1.0", listOf("example:leaf:1.0")) + component("example:leaf:1.0")
 
 class DependencyLocksTest {
+    @Test fun compilationDomainsPreserveDifferentVersionsAndReplayTheirOwnPins() {
+        val project = config(listOf("example:main:1.0"), listOf("example:tests:1.0"))
+        val testDomains = listOf("java-api", "java-runtime").map { ResolutionDomain("sample", "jvm", "test", it) }
+        val mutablePins = testDomains.map { ScopedPin(it, Coordinate.parse("example:annotations:23.0")) }.toMutableList()
+        val configuration = effectiveConfiguration(project, ResolverPolicy(scopedPins = mutablePins))
+        val before = configuration.document.canonical()
+        mutablePins.clear()
+        assertEquals(2, configuration.policy.scopedPins.size)
+        assertEquals(before, configuration.document.canonical())
+        val entries = component("example:main:1.0", listOf("example:annotations:13.0")) +
+            component("example:tests:1.0", listOf("example:annotations:23.0")) + component("example:annotations:13.0") + component("example:annotations:23.0")
+        val service = DependencyLocks(store(), NativePomParser())
+        val transport = MemoryTransport(entries)
+        val lock = service.resolve(configuration, transport)
+        assertEquals(6, lock.selections.size)
+        for (selection in lock.selections) {
+            val expected = if (selection.domain.compilation == "main") "13.0" else "23.0"
+            assertEquals(setOf(expected), selection.artifacts.filter { it.coordinate.name == "annotations" }.map { it.coordinate.version }.toSet())
+            assertFalse(selection.variant.attributes.keys.any { it.contains("scope") || it.contains("domain") })
+        }
+        val fetched = transport.calls.toList()
+        assertEquals(lock, service.loadLocked(lock.bytes(), configuration))
+        assertEquals(fetched, transport.calls)
+        val changed = lock.copy(selections = lock.selections.map { entry ->
+            if (entry.domain.compilation == "test" && entry.requested.name == "main") entry.copy(selection = lock.selections.first { it.domain.compilation == "main" && it.variant == entry.variant }.selection)
+            else entry
+        })
+        assertFails { service.loadLocked(changed.bytes(), configuration) }
+        assertFails { service.loadLocked(lock.bytes(), effectiveConfiguration(project)) }
+        assertFails { service.resolve(effectiveConfiguration(project), MemoryTransport(entries)) }
+        assertFails { parseDependencyLock(lock.toJson().canonical().replace("\"schemaVersion\":2", "\"schemaVersion\":1").encodeToByteArray()) }
+        assertFails { parseDependencyLock(lock.toJson().canonical().replace("\"purpose\":\"dependencies\"", "\"purpose\":\"unknown\"").encodeToByteArray()) }
+        publish("$work/scoped-lock.json", lock.bytes())
+    }
+
+    @Test fun scopedPinsRejectUnknownDomainsDuplicatesAndRecordExplicitOverrides() {
+        val project = config(listOf("example:main:1.0"))
+        val domain = ResolutionDomain("sample", "jvm", "test", "java-runtime")
+        val pin = ScopedPin(domain, Coordinate.parse("example:annotations:23.0"))
+        val policy = ResolverPolicy(listOf(Coordinate.parse("example:annotations:13.0")), scopedPins = listOf(pin))
+        assertEquals(listOf(pin.coordinate), policy.pinsFor(domain))
+        assertEquals(listOf(Coordinate.parse("example:annotations:13.0")), policy.pinsFor(domain.copy(compilation = "main")))
+        assertFails { ResolverPolicy(scopedPins = listOf(pin, pin)) }
+        assertFails { effectiveConfiguration(project, policy, listOf(scope())) }
+        assertFails { effectiveConfiguration(project, ResolverPolicy(scopedPins = listOf(pin.copy(domain = domain.copy(module = "typo"))))) }
+        assertFails { ResolutionDomain("sample", "jvm", "main", "kotlin-api") }
+        assertEquals(domain, ResolutionDomain.fromJson(domain.toJson()))
+        assertFails { ResolutionDomain.fromJson(JsonValue.Object(domain.toJson().objectValue() + ("unknown" to true.json()))) }
+        val effective = effectiveConfiguration(project, policy)
+        assertTrue(effective.document.canonical().contains("scopedPins"))
+    }
     @Test fun actualJunitTargetPolicyLockReplaysApiRuntimeAndBomFromCas() {
         val configuration = effectiveConfiguration(config(listOf("org.junit.jupiter:junit-jupiter-api:5.13.4")))
         val manifest = parseJson(read("$root/tests/resolution/fixtures/manifest.json").decodeToString()).objectValue()
@@ -67,7 +118,7 @@ class DependencyLocksTest {
         }
         val service = DependencyLocks(store(), NativePomParser())
         val locked = service.resolve(configuration, transport)
-        assertEquals(2, locked.selections.size)
+        assertEquals(4, locked.selections.size)
         for (selection in locked.selections) {
             assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11"), selection.variant.attributes)
             assertTrue(selection.metadata.any { it.url.endsWith("junit-bom-5.13.4.module") })
@@ -87,12 +138,12 @@ class DependencyLocksTest {
         assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "17"), newer.requests.single().variant.attributes)
         assertNotEquals(original.digest, newer.digest)
         val policy = original.document.objectValue().getValue("resolver").objectValue()
-        assertEquals("kvik-maven-v2", policy.getValue("implementation").stringValue())
+        assertEquals("kvik-maven-v3", policy.getValue("implementation").stringValue())
         assertEquals(25, policy.getValue("jvmCompatibility").objectValue().getValue("compilerPluginHost").longValue().toInt())
         val service = DependencyLocks(store(), NativePomParser())
         val lock = service.resolve(original, MemoryTransport(smallEntries))
         assertFails { service.loadLocked(lock.bytes(), newer) }
-        val changed = lock.selections.single().let { it.copy(variant = it.variant.copy(attributes = emptyMap())) }
+        val changed = lock.selections.single().let { it.copy(selection = it.selection.copy(variant = it.variant.copy(attributes = emptyMap()))) }
         assertFails { service.loadLocked(lock.copy(selections = listOf(changed)).bytes(), original) }
         assertEquals(lock, service.loadLocked(lock.bytes(), original))
         for (bad in listOf(listOf("-jvm-target"), listOf("-jvm-target=8"), listOf("-jvm-target=26"), listOf("-jvm-target=+11"), listOf("-jvm-target=11", "-jvm-target", "17")))
@@ -112,7 +163,7 @@ class DependencyLocksTest {
         assertNotEquals(main.digest, effective(config(listOf("example:root:2.0"))).digest)
         val defaults = effectiveConfiguration(project)
         assertEquals(4, defaultDependencyScopes(project).size)
-        assertEquals(4, defaults.requests.size)
+        assertEquals(6, defaults.requests.size)
         val scopes = listOf(scope(), scope(usage = "java-api"))
         assertEquals(effective(project, scopes = scopes).digest, effective(project, scopes = scopes.reversed()).digest)
         assertFails { effective(project, scopes = listOf(scope(), scope())) }
@@ -132,15 +183,15 @@ class DependencyLocksTest {
         assertEquals(calls, transport.calls)
         assertEquals(lock.digest, Sha256.digest(lock.bytes()))
         val json = lock.toJson().canonical()
-        for (bad in listOf(json.replace("\"schemaVersion\":1", "\"schemaVersion\":2"), json.dropLast(1) + ",\"extra\":true}",
-            json.replace("\"schemaVersion\":1", "\"schemaVersion\":1,\"schemaVersion\":1"), json + " trailing")) {
+        for (bad in listOf(json.replace("\"schemaVersion\":2", "\"schemaVersion\":1"), json.dropLast(1) + ",\"extra\":true}",
+            json.replace("\"schemaVersion\":2", "\"schemaVersion\":2,\"schemaVersion\":2"), json + " trailing")) {
             assertFails { parseDependencyLock(bad.encodeToByteArray()) }
         }
         assertFails { parseDependencyLock(byteArrayOf(0xc3.toByte(), 0x28)) }
         assertFails { parseDependencyLock(lock.copy(selections = lock.selections + lock.selections).bytes()) }
         val selection = lock.selections.single()
-        assertFails { parseDependencyLock(lock.copy(selections = listOf(selection.copy(metadata = selection.metadata + selection.metadata.first()))).bytes()) }
-        assertFails { parseDependencyLock(lock.copy(selections = listOf(selection.copy(artifacts = selection.artifacts + selection.artifacts.first()))).bytes()) }
+        assertFails { parseDependencyLock(lock.copy(selections = listOf(selection.copy(selection = selection.selection.copy(metadata = selection.metadata + selection.metadata.first())))).bytes()) }
+        assertFails { parseDependencyLock(lock.copy(selections = listOf(selection.copy(selection = selection.selection.copy(artifacts = selection.artifacts + selection.artifacts.first())))).bytes()) }
         val noDependencies = effective(config(emptyList()))
         val unusedTransport = MemoryTransport(emptyMap())
         val empty = service.resolve(noDependencies, unusedTransport)
@@ -181,16 +232,16 @@ class DependencyLocksTest {
         val configuration = effective(config(listOf("example:root:1.0")))
         val lock = service.resolve(configuration, MemoryTransport(smallEntries)); val s = lock.selections.single()
         val extra = "{}".encodeToByteArray(); val extraMetadata = MetadataIdentity("$repo/unrelated.module", content.put(extra))
-        val invalid = listOf(s.copy(artifacts = s.artifacts.take(1)), s.copy(metadata = s.metadata.take(1)),
-            s.copy(metadata = s.metadata + extraMetadata), s.copy(artifacts = s.artifacts.reversed()),
-            s.copy(artifacts = s.artifacts.map { it.copy(variant = "fabricated") }),
-            s.copy(artifacts = s.artifacts.map { it.copy(repository = "other") }),
-            s.copy(requested = Coordinate.parse("example:leaf:1.0")), s.copy(variant = s.variant.copy(usage = "java-api")))
-        invalid.forEach { assertFails { service.loadLocked(lock.copy(selections = listOf(it)).bytes(), configuration) } }
+        val invalid = listOf(s.selection.copy(artifacts = s.artifacts.take(1)), s.selection.copy(metadata = s.metadata.take(1)),
+            s.selection.copy(metadata = s.metadata + extraMetadata), s.selection.copy(artifacts = s.artifacts.reversed()),
+            s.selection.copy(artifacts = s.artifacts.map { it.copy(variant = "fabricated") }),
+            s.selection.copy(artifacts = s.artifacts.map { it.copy(repository = "other") }),
+            s.selection.copy(requested = Coordinate.parse("example:leaf:1.0")), s.selection.copy(variant = s.variant.copy(usage = "java-api")))
+        invalid.forEach { assertFails { service.loadLocked(lock.copy(selections = listOf(s.copy(selection = it))).bytes(), configuration) } }
         assertFails { service.loadLocked(lock.copy(selections = emptyList()).bytes(), configuration) }
         val both = effective(config(listOf("example:root:1.0")), scopes = listOf(scope(), scope(usage = "java-api")))
         val bothLock = service.resolve(both, MemoryTransport(smallEntries))
-        val changed = bothLock.selections.last().let { it.copy(metadata = it.metadata.map { m -> m.copy(digest = Sha256.digest(byteArrayOf())) }) }
+        val changed = bothLock.selections.last().let { it.copy(selection = it.selection.copy(metadata = it.metadata.map { m -> m.copy(digest = Sha256.digest(byteArrayOf())) })) }
         assertFails { parseDependencyLock(bothLock.copy(selections = listOf(bothLock.selections.first(), changed)).bytes()) }
     }
 
@@ -219,7 +270,8 @@ class DependencyLocksTest {
         assertEquals(setOf("root", "plugin"), effective(project, scopes = listOf(scope(name = "test"))).requests.map { it.coordinate.name }.toSet())
         val selections = effective(project, scopes = listOf(scope(name = "test"))).requests
         assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "25"), selections.single { it.coordinate.name == "plugin" }.variant.attributes)
-        assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11"), selections.single { it.coordinate.name == "root" }.variant.attributes)
+        assertEquals(setOf(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11")), selections.filter { it.coordinate.name == "root" }.map { it.variant.attributes }.toSet())
+        assertEquals(setOf("sample", "library"), selections.filter { it.coordinate.name == "root" }.map { it.domain.module }.toSet())
         val mainPlugin = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"scopes\":[\"test\"]", "\"scopes\":[\"main\"]")))
         assertEquals(setOf("root", "plugin"), effective(mainPlugin, scopes = listOf(scope(name = "test"))).requests.map { it.coordinate.name }.toSet())
     }

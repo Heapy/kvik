@@ -46,14 +46,16 @@ DEFS = {}
 DEFS["digest"] = object_({"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "sizeBytes": INT})
 DEFS["file"] = object_({"path": PATH, "digest": ref("digest"), "executable": BOOL})
 DEFS["tree"] = versioned({"files": array(ref("file"), uniqueItems=True)})
-DEFS["dependency"] = {"oneOf": [object_({"coordinate": COORDINATE}), object_({"module": ID})]}
+DEFS["dependency"] = {"oneOf": [object_({key: value, "scope": enum("compile", "runtime"), "exported": BOOL}, optional=("scope", "exported")) for key, value in [("coordinate", COORDINATE), ("module", ID)]]}
+DEFS["dependency"]["allOf"] = [{"if": {"required": ["scope"], "properties": {"scope": {"const": "runtime"}}}, "then": {"properties": {"exported": {"const": False}}}}]
 DEFS["sourceSet"] = object_({"name": ID, "directories": array(PATH), "resources": array(PATH), "dependsOn": array(ID, uniqueItems=True), "dependencies": array(ref("dependency"))})
 DEFS["jvmTestSettings"] = object_({
     "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*(?![\s\S])"}, uniqueItems=True),
     "engines": array(enum("junit", "kotest"), minItems=1, uniqueItems=True),
 }, optional=("engines",))
-DEFS["target"] = object_({"name": enum("jvm", "macosArm64"), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings")}, optional=("testSettings",))
+DEFS["target"] = object_({"name": enum("jvm", "macosArm64"), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING)}, optional=("testSettings", "testCompilerOptions"))
 DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"properties": {"name": {"const": "jvm"}, "test": ID}}}]
+DEFS["target"]["allOf"].append({"if": {"required": ["testCompilerOptions"]}, "then": {"properties": {"test": ID}}})
 DEFS["compilerPlugin"] = object_({"module": ID, "coordinate": COORDINATE, "targets": array(enum("jvm", "macosArm64"), minItems=1, uniqueItems=True), "scopes": array(enum("main", "test", "script"), minItems=1, uniqueItems=True), "options": array(STRING), "inputs": array(PATH)}, optional=("module", "coordinate"))
 DEFS["compilerPlugin"]["oneOf"] = [{"required": ["module"], "not": {"required": ["coordinate"]}}, {"required": ["coordinate"], "not": {"required": ["module"]}}]
 DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1), "compilerPlugins": array(ref("compilerPlugin"))})
@@ -71,7 +73,12 @@ DEFS["artifact"] = object_({"coordinate": COORDINATE, "variant": NONEMPTY, "repo
 DEFS["metadata"] = object_({"url": STRING, "digest": ref("digest")})
 DEFS["variant"] = object_({"platform": enum("common", "jvm", "macosArm64"), "usage": STRING, "attributes": mapping(STRING)})
 DEFS["selection"] = object_({"requested": COORDINATE, "variant": ref("variant"), "artifacts": array(ref("artifact")), "metadata": array(ref("metadata"))})
-DEFS["dependencyLock"] = versioned({"configuration": ref("digest"), "selections": array(ref("selection"))})
+DEFS["resolutionDomain"] = object_({"module": ID, "target": enum("jvm", "macosArm64"), "compilation": enum("main", "test"), "usage": enum("java-api", "java-runtime", "kotlin-api", "kotlin-runtime"), "purpose": enum("dependencies", "compiler-plugin")})
+DEFS["resolutionDomain"]["allOf"] = [
+    {"if": {"properties": {"purpose": {"const": "compiler-plugin"}}}, "then": {"properties": {"usage": {"const": "java-runtime"}}},
+     "else": {"if": {"properties": {"target": {"const": "jvm"}}}, "then": {"properties": {"usage": enum("java-api", "java-runtime")}}, "else": {"properties": {"usage": enum("kotlin-api", "kotlin-runtime")}}}}]
+DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
+DEFS["dependencyLock"] = object_({"schemaVersion": {"const": 2}, "configuration": ref("digest"), "selections": array(ref("scopedSelection"))})
 DEFS["sourcePin"] = object_({"id": ID, "kind": enum("git", "archive", "local"), "origin": STRING, "revision": nullable(STRING), "tree": ref("digest"), "archiveDigest": ref("digest")}, optional=("archiveDigest",))
 DEFS["sourcePin"]["allOf"] = [
     {"if": {"properties": {"kind": {"const": "git"}}}, "then": {"properties": {"revision": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}}}},

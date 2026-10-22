@@ -39,17 +39,14 @@ private class Builder(
     private val tools = toolchains.mapValues { it.value.toMap() }
     private val request = request.copy(modules = request.modules.toSet(), targets = request.targets.toSet(),
         jvmTests = request.jvmTests.mapValues { it.value.copy(classes = it.value.classes.toList(), engines = it.value.engines.toList()) })
-    private val selections = lock.selections.associateBy { ResolutionRequest(it.requested, it.variant) }
-    private val authorized = effective.document.objectValue().getValue("scopes").arrayValue().map { value ->
-        val s = value.objectValue()
-        DependencyScope(s.getValue("module").stringValue(), s.getValue("target").stringValue(), s.getValue("scope").stringValue(), s.getValue("usage").stringValue())
-    }.toSet()
+    private val selections = lock.selections.associateBy { it.request() }
+    private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
 
     init {
         require(lock.configuration == effective.digest) { "Stale dependency lock" }
-        require(selections.size == lock.selections.size && lock.selections.map { ResolutionRequest(it.requested, it.variant) } == effective.requests) { "Dependency lock request identities differ" }
+        require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
         require(this.request.modules.all { it in modules } && this.request.targets.all { it in setOf("jvm", "macosArm64") }) { "Unknown project module/target selection" }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
@@ -60,9 +57,8 @@ private class Builder(
                 else setOf("native", "jdk", "sdk", "native-dependencies")) { "Missing/incompatible tool identities: $target" }
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
-            val usages = if (target == "jvm") if (scope == "test") listOf("java-api", "java-runtime") else listOf("java-api") else listOf("kotlin-api")
-            for (usage in usages) require(DependencyScope(module, target, scope, usage) in authorized ||
-                scope == "main" && DependencyScope(module, target, "test", usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
+            val usages = if (target == "jvm") if (scope == "test") listOf("java-api", "java-runtime") else listOf("java-api") else if (scope == "test") listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
+            for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
         }
     }
 
@@ -119,26 +115,33 @@ private class Builder(
         }
         return selected.values.sortedBy { it.path.value }
     }
-    private fun moduleClosure(module: String, target: String, scope: String): List<String> {
-        val seen = linkedSetOf<String>()
-        fun visit(id: String, selectedScope: String) {
-            for (dependency in sourceSets(id, target, selectedScope).flatMap { it.dependencies }.filterIsInstance<Dependency.Module>()) {
-                if (seen.add(dependency.module)) visit(dependency.module, "main")
-            }
+    private fun closure(module: String, target: String, scope: String, runtime: Boolean = false): DependencyClosure =
+        dependencyClosure(project, module, target, scope, if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
+
+    private fun nativeVisibility(module: String, scope: String) {
+        val visible = closure(module, "macosArm64", scope)
+        val linking = closure(module, "macosArm64", scope, true)
+        require(visible.modules.toSet() == linking.modules.toSet() && visible.external.toSet() == linking.external.toSet()) {
+            "Native hidden link dependencies are unsupported: $module:$scope requires distinct visible/link libraries; hidden-library adapter support is required"
         }
-        visit(module, scope)
-        return seen.toList()
+        if (ResolutionDomain(module, "macosArm64", scope, "kotlin-runtime") in authorized) {
+            val api = external(module, "macosArm64", scope, "kotlin-api").map { it.coordinate to it.digest }.toSet()
+            val runtime = external(module, "macosArm64", scope, "kotlin-runtime").map { it.coordinate to it.digest }.toSet()
+            require(api == runtime) { "Native distinct compile/link artifact selections are unsupported: $module:$scope" }
+        }
     }
     private fun external(module: String, target: String, scope: String, usage: String): List<LockedArtifact> {
-        val all = listOf(module to scope) + moduleClosure(module, target, scope).map { it to "main" }
-        val consumer = if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null
-        if (consumer != null) require(all.all { (id, _) -> jvmTargetFromOptions(target(id, target).compilerOptions) <= consumer }) { "Dependency module bytecode target exceeds JVM consumer $module:$consumer" }
-        val roots = all.flatMap { (id, selectedScope) -> sourceSets(id, target, selectedScope).flatMap { it.dependencies }.filterIsInstance<Dependency.External>().map { it.coordinate } }.distinct()
-        return roots.flatMap { locked(it, target, usage, consumer).artifacts }.distinctBy { artifactPath(it, false) }
+        val domain = ResolutionDomain(module, target, scope, usage)
+        val roots = closure(module, target, scope, usage.endsWith("runtime")).external
+        val consumer = if (target == "jvm") jvmTargetFromOptions(target(module, target).optionsFor(scope)) else null
+        return roots.flatMap { locked(it, domain, consumer).artifacts }.distinctBy { artifactPath(it, false) }
     }
-    private fun locked(coordinate: Coordinate, target: String, usage: String, consumerJvm: Int? = null): LockedSelection =
-        selections[ResolutionRequest(coordinate, if (target == "jvm") jvmVariantRequest(usage, consumerJvm ?: error("Missing JVM consumer version")) else VariantRequest(target, usage, emptyMap()))]
-            ?: error("Missing locked dependency: $coordinate:$target:$usage:$consumerJvm")
+    private fun locked(coordinate: Coordinate, domain: ResolutionDomain, consumerJvm: Int? = null): ScopedSelection {
+        val variant = if (domain.purpose == "compiler-plugin") jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
+            else if (domain.target == "jvm") jvmVariantRequest(domain.usage, consumerJvm ?: error("Missing JVM consumer version"))
+            else VariantRequest(domain.target, "kotlin-api", emptyMap())
+        return selections[ResolutionRequest(coordinate, variant, domain)] ?: error("Missing locked dependency: $coordinate:$domain")
+    }
     private fun artifactPath(artifact: LockedArtifact, plugin: Boolean): LogicalPath {
         val extension = artifact.url.substringAfterLast('.', "")
         require(extension in setOf("jar", "klib")) { "Unsupported locked artifact: ${artifact.url}" }
@@ -157,7 +160,7 @@ private class Builder(
         require(roots.size <= 1) { "Multiple compiler plugins are unsupported" }
         return roots.flatMap { coordinate ->
             require(coordinate == Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")) { "Only pinned serialization compiler plugin 2.4.20 is supported" }
-            val artifacts = locked(coordinate, "jvm", "java-runtime", COMPILER_PLUGIN_JVM_HOST).artifacts
+            val artifacts = locked(coordinate, ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")).artifacts
             require(artifacts.size == 1 && artifacts.single().coordinate == coordinate) { "Unsupported serialization plugin closure/pin" }
             artifactEntries(artifacts, "jvm", true)
         }
@@ -189,19 +192,20 @@ private class Builder(
     private fun validateResults(results: Map<String, ActionResult>, dependencies: Set<String>) {
         require(results.keys == dependencies && results.all { (id, result) -> result.actionId == id && result.successful }) { "Prerequisite result set/status differs" }
     }
-    private fun options(module: String, target: String, sources: Sources): CompilerOptions = compilerOptions(module, target, target(module, target).compilerOptions).also {
+    private fun options(module: String, target: String, scope: String, sources: Sources): CompilerOptions = compilerOptions(module, target, target(module, target).optionsFor(scope)).also {
         require(!it.multiplatform || sources.common.isNotEmpty()) { "Explicit multiplatform option requires common fragments" }
     }
 
     private fun ensureMain(module: String, target: String) {
         val id = mainId(module, target)
         if (id in nodes) return
-        val dependencies = moduleClosure(module, target, "main")
+        val dependencies = closure(module, target, "main").modules
+        if (target == "macosArm64") nativeVisibility(module, "main")
         dependencies.forEach { ensureMain(it, target) }
         val source = sources(module, target, "main")
         require(source.paths.isNotEmpty()) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
-        val options = options(module, target, source)
+        val options = options(module, target, "main", source)
         val resource = resources(module, target, "main")
         val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-api" else "kotlin-api"), target)
         val plugin = plugins(module, target, "main")
@@ -220,8 +224,10 @@ private class Builder(
     }
 
     private fun ensureTest(module: String, target: String): String {
-        val dependencies = moduleClosure(module, target, "test")
-        dependencies.forEach { ensureMain(it, target) }
+        val dependencies = closure(module, target, "test").modules
+        val runtimeDependencies = closure(module, target, "test", true).modules
+        (dependencies + runtimeDependencies).distinct().forEach { ensureMain(it, target) }
+        if (target == "macosArm64") nativeVisibility(module, "test")
         val main = mainSources.getValue(module to target)
         val allSources = sources(module, target, "test")
         val source = if (target == "macosArm64") allSources else allSources.let { all ->
@@ -232,7 +238,11 @@ private class Builder(
         val compileEdges = moduleIds.map { mainId(it, target) }.toSet()
         val hasTestCompile = target == "macosArm64" || source.paths.isNotEmpty()
         if (hasTestCompile) {
-            val options = options(module, target, source)
+            val options = options(module, target, "test", source)
+            if (target == "macosArm64") {
+                val production = compilerOptions(module, target, target(module, target).compilerOptions)
+                require(options.optIns.containsAll(production.optIns)) { "Native tests recompile main sources: test opt-ins must include main opt-ins" }
+            }
             val artifacts = artifactEntries(external(module, target, "test", if (target == "jvm") "java-api" else "kotlin-api"), target)
             val plugin = plugins(module, target, "test")
             require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
@@ -250,8 +260,9 @@ private class Builder(
             }
         } else require(plugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
         val id = "$module:$target:test"
-        val edges = compileEdges + if (hasTestCompile) setOf(compileId(module, target)) else emptySet()
-        val allResources = resource + dependencies.flatMap { resources(it, target, "main") }
+        val runtimeIds = listOf(module) + runtimeDependencies
+        val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(compileId(module, target)) else emptySet()
+        val allResources = resource + runtimeDependencies.flatMap { resources(it, target, "main") }
         val runtime = if (target == "jvm") artifactEntries(external(module, target, "test", "java-runtime"), target) else emptyList()
         val testSelection = request.jvmTests[module]
         if (target == "jvm") JvmTestSelection(module, listOf(LogicalPath("validated-placeholder")), testSelection!!.classes, testSelection.engines)
@@ -259,11 +270,11 @@ private class Builder(
             validateResults(results, edges)
             val testFiles = if (hasTestCompile) remap(results, module, target, "test") else emptyList()
             if (target == "jvm") {
-                val dependencyFiles = moduleIds.flatMap { remap(results, it, target, "main") }
+                val dependencyFiles = runtimeIds.flatMap { remap(results, it, target, "main") }
                 val inputs = merge(testFiles, dependencyFiles, allResources, runtime)
                 fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.any { it.path.value.startsWith(prefix.value + "/") } }
                 val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
-                    moduleIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
+                    runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
                 jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines), inputs, composition, tools.getValue(target))
             } else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
         }

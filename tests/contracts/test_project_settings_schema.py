@@ -12,6 +12,30 @@ VALIDATOR = Draft202012Validator({**SCHEMA, "$ref": "#/$defs/target"})
 
 
 class ProjectSettingsSchemaTest(unittest.TestCase):
+    def test_dependency_scopes_visibility_and_test_options(self):
+        dependency = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/dependency'})
+        for value in [{'coordinate': 'g:a:1'}, {'module': 'library', 'exported': True},
+                      {'coordinate': 'g:a:1', 'scope': 'runtime'}, {'module': 'library', 'scope': 'compile', 'exported': False}]:
+            dependency.validate(value)
+        for value in [{'coordinate': 'g:a:1', 'scope': 'provided'}, {'coordinate': 'g:a:1', 'scope': 'runtime', 'exported': True},
+                      {'module': 'library', 'scope': None}, {'coordinate': 'g:a:1', 'module': 'library'}, {'module': 'library', 'exported': 'true'}]:
+            self.assertFalse(dependency.is_valid(value), value)
+        VALIDATOR.validate(self.target(testCompilerOptions=[]))
+        self.assertFalse(VALIDATOR.is_valid(self.target(testCompilerOptions=None)))
+        self.assertFalse(VALIDATOR.is_valid({**self.target(testCompilerOptions=[]), 'test': None}))
+
+    def test_resolution_domains_and_legacy_lock_migration(self):
+        domain = dict(module='sample', target='jvm', compilation='test', usage='java-api', purpose='dependencies')
+        validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/resolutionDomain'})
+        validator.validate(domain)
+        validator.validate({**domain, 'target': 'macosArm64', 'usage': 'kotlin-runtime'})
+        validator.validate({**domain, 'target': 'macosArm64', 'purpose': 'compiler-plugin', 'usage': 'java-runtime'})
+        for changes in [dict(usage='kotlin-api'), dict(compilation='unknown'), dict(purpose='compiler-plugin'), dict(extra=True)]:
+            self.assertFalse(validator.is_valid({**domain, **changes}))
+        lock = json.loads((ROOT/'schemas/examples/dependencyLock.json').read_text())
+        validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/dependencyLock'})
+        validator.validate(lock)
+        self.assertFalse(validator.is_valid({**lock, 'schemaVersion': 1}))
     def target(self, **changes):
         return dict(name="jvm", main="main", test="test", compilerOptions=[], **changes)
 

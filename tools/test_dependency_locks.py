@@ -34,7 +34,8 @@ def main():
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
     schema['$ref'] = '#/$defs/dependencyLock'
     jsonschema.Draft202012Validator(schema).validate(json.loads((work / 'production-lock.json').read_text()))
-    print(f'PASS persisted production lock matches v1 dependencyLock schema: {work}')
+    jsonschema.Draft202012Validator(schema).validate(json.loads((work / 'scoped-lock.json').read_text()))
+    print(f'PASS persisted production and scoped locks match dependencyLock v2 schema: {work}')
 
 
 if __name__ == '__main__':

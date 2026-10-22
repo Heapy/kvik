@@ -70,7 +70,7 @@ private fun parseModule(value: JsonValue): ModuleSpec {
     validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
     val names = sourceSets.map { it.name }.toSet()
     val targets = fields.getValue("targets").arrayValue().map { target ->
-        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings"))
+        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions"))
         val name = entry.getValue("name").stringValue()
         require(name in setOf("jvm", "macosArm64")) { "Unsupported target: $name" }
         val main = entry.getValue("main").identifier()
@@ -81,7 +81,7 @@ private fun parseModule(value: JsonValue): ModuleSpec {
             val selection = value.fields(setOf("classes"), setOf("engines"))
             JvmTestSettings(selection.getValue("classes").strings(), selection["engines"]?.strings() ?: listOf("junit"))
         }
-        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings)
+        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings, entry["testCompilerOptions"]?.strings())
     }
     require(targets.isNotEmpty()) { "Module $id requires targets" }
     targets.map { it.name }.unique("target in $id")
@@ -89,10 +89,16 @@ private fun parseModule(value: JsonValue): ModuleSpec {
 }
 
 private fun parseDependency(value: JsonValue): Dependency {
-    val fields = value.fields(emptySet(), setOf("module", "coordinate"))
-    require(fields.size == 1) { "Dependency requires exactly one module or coordinate" }
-    return fields["module"]?.let { Dependency.Module(it.identifier()) }
-        ?: Dependency.External(Coordinate.parse(fields.getValue("coordinate").stringValue()))
+    val fields = value.fields(emptySet(), setOf("module", "coordinate", "scope", "exported"))
+    require(("module" in fields) != ("coordinate" in fields)) { "Dependency requires exactly one module or coordinate" }
+    val scope = when (fields["scope"]?.stringValue() ?: "compile") {
+        "compile" -> DependencyScopeKind.COMPILE
+        "runtime" -> DependencyScopeKind.RUNTIME
+        else -> error("Unsupported dependency scope")
+    }
+    val exported = fields["exported"]?.booleanValue() ?: false
+    return fields["module"]?.let { Dependency.Module(it.identifier(), scope, exported) }
+        ?: Dependency.External(Coordinate.parse(fields.getValue("coordinate").stringValue()), scope, exported)
 }
 
 private fun parseCompilerPlugin(value: JsonValue): CompilerPluginSpec {

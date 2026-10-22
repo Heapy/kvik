@@ -13,7 +13,7 @@ private fun digest(value: String) = Sha256.digest(value.encodeToByteArray())
 private val composition = digest("runtime")
 private val tools = mapOf("jvm" to listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith(::digest),
     "macosArm64" to listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest))
-private fun external(value: String) = Dependency.External(Coordinate.parse(value))
+private fun external(value: String) = Dependency.External(Coordinate.parse(value), exported = true)
 private fun source(name: String, directory: String, parents: List<String> = emptyList(), dependencies: List<Dependency> = emptyList(), resource: String? = null) =
     SourceSet(name, listOf(LogicalPath(directory)), listOfNotNull(resource?.let(::LogicalPath)), parents, dependencies)
 private fun module(id: String, dependencies: List<Dependency> = emptyList(), plugins: List<CompilerPluginSpec> = emptyList()): ModuleSpec = ModuleSpec(id,
@@ -29,8 +29,8 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
         "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(),
         "modules" to modules.map { m -> obj("id" to m.id.json(), "sourceSets" to m.sourceSets.map { s -> obj("name" to s.name.json(),
             "directories" to paths(s.directories), "resources" to paths(s.resources), "dependsOn" to strings(s.dependsOn), "dependencies" to s.dependencies.map { d -> when(d) {
-                is Dependency.Module -> obj("module" to d.module.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json()) } }.json()) }.json(),
-            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)) }.json(),
+                is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
+            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
                 if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json())) }.json()) }.json()))
 }
@@ -51,7 +51,7 @@ private fun artifact(name: String, target: String, usage: String): LockedArtifac
 private fun lock(effective: EffectiveConfiguration) = DependencyLock(effective.digest, effective.requests.map { request ->
     val root = artifact(request.coordinate.toString(), request.variant.platform, request.variant.usage)
     val runtime = if (request.coordinate.name == "library" && request.variant.usage == "java-runtime") listOf(artifact("g:runtime-only:1", "jvm", "runtime")) else emptyList()
-    LockedSelection(request.coordinate, request.variant, listOf(root) + runtime, listOf(MetadataIdentity("https://repo.maven.apache.org/maven2/${request.coordinate.name}.module", digest("metadata"))))
+    ScopedSelection(request.domain, LockedSelection(request.coordinate, request.variant, listOf(root) + runtime, listOf(MetadataIdentity("https://repo.maven.apache.org/maven2/${request.coordinate.name}.module", digest("metadata")))))
 })
 private fun request(mode: ProjectMode = ProjectMode.BUILD, target: String = "jvm", classes: List<String> = listOf("fixture.Tests")) =
     ProjectGraphRequest(setOf("app"), setOf(target), mode, if (mode == ProjectMode.TEST && target == "jvm") mapOf("app" to JvmTests(classes)) else emptyMap())
@@ -76,6 +76,68 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun privateRuntimeAndExportedEdgesDriveDifferentActionInputsAndPrerequisites() {
+        fun dep(name: String, exported: Boolean = false, runtime: Boolean = false) = Dependency.External(Coordinate("g", name, "1"), if(runtime) DependencyScopeKind.RUNTIME else DependencyScopeKind.COMPILE, exported)
+        val leaf = module("leaf", listOf(dep("leaf-public", exported = true), dep("leaf-private")))
+        val hidden = module("hidden", listOf(dep("hidden-private")))
+        val service = module("base", listOf(dep("public", exported = true), dep("private"), dep("runtime", runtime = true),
+            Dependency.Module("leaf", exported = true), Dependency.Module("hidden", DependencyScopeKind.RUNTIME)))
+        val consumer = module("app", listOf(Dependency.Module("base")))
+        val config = configuration(service, consumer, leaf, hidden)
+        val files = TreeManifest(snapshot().files + listOf("leaf", "hidden").flatMap { id -> snapshot().files.filter { it.path.value.startsWith("base/") }
+            .map { it.copy(path = LogicalPath(it.path.value.replaceFirst("base/", "$id/"))) } })
+        val plan = graph(config, files, request(ProjectMode.TEST))
+        val actions = resolved(plan)
+        fun has(action: String, name: String) = actions.getValue(action).inputs.files.any { it.digest == digest("g:$name:1:jvm") }
+        assertTrue(has("base:jvm:main", "private"))
+        assertFalse(has("base:jvm:main", "runtime"))
+        assertFalse(has("base:jvm:main", "leaf-private"))
+        assertTrue(has("app:jvm:main", "public"))
+        assertTrue(has("app:jvm:main", "leaf-public"))
+        for (name in listOf("private", "runtime", "leaf-private", "hidden-private")) {
+            assertFalse(has("app:jvm:test-compile", name), name)
+            assertTrue(has("app:jvm:test", name), name)
+        }
+        assertEquals(setOf("base:jvm:main", "leaf:jvm:main"), plan.nodes.single { it.id == "app:jvm:main" }.dependencies)
+        assertTrue("hidden:jvm:main" in plan.nodes.single { it.id == "app:jvm:test" }.dependencies)
+        assertFalse("hidden:jvm:main" in plan.nodes.single { it.id == "app:jvm:test-compile" }.dependencies)
+        val changed = resolved(plan, "hidden:jvm:main")
+        assertEquals(actions.getValue("app:jvm:test-compile").key(Sha256), changed.getValue("app:jvm:test-compile").key(Sha256))
+        assertNotEquals(actions.getValue("app:jvm:test").key(Sha256), changed.getValue("app:jvm:test").key(Sha256))
+        val failure = assertFails { graph(config, files, request(ProjectMode.TEST, "macosArm64")) }
+        assertTrue(failure.message!!.contains("Native hidden link dependencies"))
+    }
+
+    @Test fun testCompilerOptionsAndDomainMutationsCannotLeakIntoProduction() {
+        val target = app.targets.first().copy(compilerOptions = listOf("-jvm-target=17", "-Xexplicit-api=strict"), testCompilerOptions = listOf("-jvm-target=21"))
+        val config = configuration(base, app.copy(targets = listOf(target)))
+        val effective = effectiveConfiguration(config)
+        val lock = lock(effective)
+        val plan = projectActionGraph(effective, lock, snapshot(), composition, tools, request(ProjectMode.TEST))
+        val original = resolved(plan)
+        assertTrue(JvmCompilation.fromJson(original.getValue("app:jvm:main").parameters).explicitApi)
+        val test = JvmCompilation.fromJson(original.getValue("app:jvm:test-compile").parameters)
+        assertFalse(test.explicitApi)
+        assertEquals(21, test.jvmTarget)
+        val changed = lock.copy(selections = lock.selections.map { scoped ->
+            if (scoped.domain == ResolutionDomain("app", "jvm", "test", "java-api")) scoped.copy(selection = scoped.selection.copy(
+                artifacts = scoped.artifacts.map { it.copy(digest = digest("changed ${it.coordinate}")) })) else scoped
+        })
+        val after = resolved(projectActionGraph(effective, changed, snapshot(), composition, tools, request(ProjectMode.TEST)))
+        assertEquals(original.getValue("app:jvm:main").key(Sha256), after.getValue("app:jvm:main").key(Sha256))
+        assertEquals(original.getValue("base:jvm:main").key(Sha256), after.getValue("base:jvm:main").key(Sha256))
+        assertNotEquals(original.getValue("app:jvm:test-compile").key(Sha256), after.getValue("app:jvm:test-compile").key(Sha256))
+        assertFails { effectiveConfiguration(configuration(base, app.copy(targets = listOf(target.copy(testCompilerOptions = listOf("-jvm-target=11")))))) }
+        val native = app.copy(targets = listOf(app.targets.last().copy(compilerOptions = listOf("-opt-in=example.MainOptIn"), testCompilerOptions = emptyList())))
+        assertTrue(assertFails { graph(configuration(base, native), request = request(ProjectMode.TEST, "macosArm64")) }.message!!.contains("test opt-ins"))
+        val nativeEffective = effectiveConfiguration(project)
+        val differentLink = lock(nativeEffective).let { locked -> locked.copy(selections = locked.selections.map { entry ->
+            if (entry.domain == ResolutionDomain("app", "macosArm64", "test", "kotlin-runtime")) entry.copy(selection = entry.selection.copy(
+                artifacts = entry.artifacts.map { it.copy(digest = digest("runtime ${it.coordinate}")) })) else entry
+        }) }
+        assertTrue(assertFails { projectActionGraph(nativeEffective, differentLink, snapshot(), composition, tools, request(ProjectMode.TEST, "macosArm64")) }
+            .message!!.contains("distinct compile/link"))
+    }
     @Test fun jvmTargetVariantsFollowConsumerAndModuleCompilationSeparately() {
         fun at(module: ModuleSpec, version: Int) = module.copy(targets = module.targets.map { if (it.name == "jvm") it.copy(compilerOptions = listOf("-jvm-target=$version")) else it })
         val plugin = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"), setOf("jvm"), setOf("main"), emptyList(), emptyList())
@@ -84,10 +146,10 @@ class ProjectGraphTest {
         val stdlib = effective.requests.filter { it.coordinate.name == "stdlib" }
         assertEquals(setOf("17", "21"), stdlib.map { it.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE) }.toSet())
         assertEquals("25", effective.requests.single { it.coordinate == plugin.coordinate }.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE))
-        val locked = lock(effective).let { value -> value.copy(selections = value.selections.map { s -> s.copy(artifacts = s.artifacts.map {
+        val locked = lock(effective).let { value -> value.copy(selections = value.selections.map { s -> s.copy(selection = s.selection.copy(artifacts = s.artifacts.map {
             it.copy(url = it.url.removeSuffix(".jar") + "-${s.variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]}.jar",
                 digest = digest(it.coordinate.toString() + s.variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]))
-        }) }) }
+        })) }) }
         val actions = resolved(projectActionGraph(effective, locked, snapshot(), composition, tools, request()))
         assertEquals(17, JvmCompilation.fromJson(actions.getValue("base:jvm:main").parameters).jvmTarget)
         assertEquals(21, JvmCompilation.fromJson(actions.getValue("app:jvm:main").parameters).jvmTarget)
@@ -98,7 +160,7 @@ class ProjectGraphTest {
     }
     @Test fun transitiveModulesAndResourcesEnterConsumerInputsWithoutTargetLeakage() {
         val leaf = module("leaf", listOf(external("g:leaf-api:1")))
-        val intermediate = base.copy(sourceSets = base.sourceSets.map { if(it.name == "commonMain") it.copy(dependencies = it.dependencies + Dependency.Module("leaf")) else it })
+        val intermediate = base.copy(sourceSets = base.sourceSets.map { if(it.name == "commonMain") it.copy(dependencies = it.dependencies + Dependency.Module("leaf", exported = true)) else it })
         val files = TreeManifest(snapshot().files + snapshot().files.filter { it.path.value.startsWith("base/") }
             .map { it.copy(path = LogicalPath(it.path.value.replaceFirst("base/", "leaf/"))) })
         val plan = graph(configuration(leaf, intermediate, app), files, request(ProjectMode.TEST))

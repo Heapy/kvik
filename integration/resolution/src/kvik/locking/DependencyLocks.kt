@@ -6,10 +6,23 @@ import kvik.resolution.*
 private const val MAX_LOCK_BYTES = 16 * 1024 * 1024
 private const val MAX_ENTRIES = 8192
 
-/** v1 contracts.json dependencyLock, without adapter-specific on-disk fields. */
-data class DependencyLock(val configuration: Digest, val selections: List<LockedSelection>) {
-    fun toJson(): JsonValue = obj("schemaVersion" to CONTRACT_VERSION.json(), "configuration" to configuration.toJson(),
-        "selections" to selections.map { selection -> obj("requested" to selection.requested.toString().json(),
+/** Immutable producer result bound to a consumer domain; raw K05 results remain unscoped. */
+data class ScopedSelection(val domain: ResolutionDomain, val selection: LockedSelection) {
+    val requested get() = selection.requested
+    val variant get() = selection.variant
+    val artifacts get() = selection.artifacts
+    val metadata get() = selection.metadata
+    init {
+        require(variant.platform == if (domain.purpose == "compiler-plugin") "jvm" else domain.target) { "Domain/producer platform differs" }
+        require(variant.usage == if (domain.purpose == "compiler-plugin") "java-runtime" else if (domain.target == "jvm") domain.usage else "kotlin-api") { "Domain/producer usage differs" }
+    }
+    fun request() = ResolutionRequest(requested, variant, domain)
+}
+
+/** Lock v2 has mandatory consumer domains. V1 must be explicitly resolved again. */
+data class DependencyLock(val configuration: Digest, val selections: List<ScopedSelection>) {
+    fun toJson(): JsonValue = obj("schemaVersion" to 2.json(), "configuration" to configuration.toJson(),
+        "selections" to selections.map { selection -> obj("domain" to selection.domain.toJson(), "requested" to selection.requested.toString().json(),
             "variant" to selection.variant.toLockJson(), "artifacts" to selection.artifacts.map { artifact -> obj(
                 "coordinate" to artifact.coordinate.toString().json(), "variant" to artifact.variant.json(),
                 "repository" to artifact.repository.json(), "url" to artifact.url.json(), "digest" to artifact.digest.toJson()) }.json(),
@@ -30,9 +43,9 @@ private fun url(value: String): String = value.also {
 fun parseDependencyLock(bytes: ByteArray): DependencyLock {
     require(bytes.size <= MAX_LOCK_BYTES) { "Dependency lock too large" }
     val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("schemaVersion", "configuration", "selections"))
-    fields.requireVersion()
+    require(fields.getValue("schemaVersion").longValue() == 2L) { "Dependency lock v2 with resolution domains required; explicitly resolve/update legacy lock" }
     val selections = fields.getValue("selections").boundedArray().map { value ->
-        val selection = value.fields(setOf("requested", "variant", "artifacts", "metadata"))
+        val selection = value.fields(setOf("domain", "requested", "variant", "artifacts", "metadata"))
         val v = selection.getValue("variant").fields(setOf("platform", "usage", "attributes"))
         val variant = VariantRequest(v.string("platform"), v.string("usage"), v.getValue("attributes").objectValue().mapValues { it.value.stringValue() })
         val artifacts = selection.getValue("artifacts").boundedArray().map { entry ->
@@ -46,9 +59,9 @@ fun parseDependencyLock(bytes: ByteArray): DependencyLock {
         }
         require(artifacts.map { it.url }.distinct().size == artifacts.size) { "Duplicate artifact in selection" }
         require(metadata.isNotEmpty() && metadata.map { it.url }.distinct().size == metadata.size) { "Missing or duplicate selection metadata" }
-        LockedSelection(Coordinate.parse(selection.string("requested")), variant, artifacts, metadata)
+        ScopedSelection(ResolutionDomain.fromJson(selection.getValue("domain")), LockedSelection(Coordinate.parse(selection.string("requested")), variant, artifacts, metadata))
     }
-    require(selections.map { ResolutionRequest(it.requested, it.variant) }.distinct().size == selections.size) { "Duplicate/conflicting lock selection" }
+    require(selections.map { it.request() }.distinct().size == selections.size) { "Duplicate/conflicting lock selection" }
     val lock = DependencyLock(Digest.fromJson(fields.getValue("configuration")), selections)
     identities(lock) // Reject URL identity conflicts before touching CAS.
     return lock
@@ -101,7 +114,7 @@ class DependencyLocks(private val content: ContentStore, private val pomParser: 
     fun loadLocked(bytes: ByteArray, configuration: EffectiveConfiguration): DependencyLock {
         val lock = parseDependencyLock(bytes)
         require(lock.configuration == configuration.digest) { "Stale dependency lock: effective configuration differs; explicitly resolve/update" }
-        require(lock.selections.map { ResolutionRequest(it.requested, it.variant) } == configuration.requests) { "Lock roots/variants do not match requested scopes" }
+        require(lock.selections.map { it.request() } == configuration.requests) { "Lock roots/variants do not match requested scopes" }
         val urls = identities(lock)
         urls.values.distinct().forEach { verified(it) }
         val offline = object : ArtifactTransport {
@@ -122,11 +135,12 @@ class DependencyLocks(private val content: ContentStore, private val pomParser: 
         return bytes
     }
 
-    private fun selections(configuration: EffectiveConfiguration, transport: ArtifactTransport): List<LockedSelection> {
+    private fun selections(configuration: EffectiveConfiguration, transport: ArtifactTransport): List<ScopedSelection> {
         val policy = configuration.policy
-        val resolver = MavenResolver(transport, pomParser, policy.pins, policy.maxComponents, policy.maxRequests)
-        return configuration.requests.groupBy { it.variant }.flatMap { (variant, requests) ->
-            resolver.resolveAll(requests.map { it.coordinate }, variant, configuration.repositories)
+        return configuration.requests.groupBy { it.domain }.flatMap { (domain, requests) ->
+            require(requests.map { it.variant }.distinct().size == 1) { "Conflicting producer variants within resolution domain" }
+            val resolver = MavenResolver(transport, pomParser, policy.pinsFor(domain), policy.maxComponents, policy.maxRequests)
+            resolver.resolveAll(requests.map { it.coordinate }, requests.first().variant, configuration.repositories).map { ScopedSelection(domain, it) }
         }
     }
 }

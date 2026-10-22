@@ -47,7 +47,7 @@ def main():
     runtime = {"schemaVersion": 1, "sources": [{"id": "kvik", "kind": "local", "origin": ".", "revision": None, "tree": empty}], "pluginApiVersion": 1,
                "registry": ["example.ProbePlugin"], "toolchains": {"kotlinNative": empty}, "libraries": [], "recipe": empty, "arguments": ["-target", "macos_arm64"], "environment": {}, "platform": {"os": "macos", "arch": "arm64", "sdk": "27.0"}}
     configuration = digest(canonical(project))
-    lock = {"schemaVersion": 1, "configuration": configuration, "selections": []}
+    lock = {"schemaVersion": 2, "configuration": configuration, "selections": []}
     result = {"actionId": "hello:jvm:compile", "key": digest(canonical(action)), "status": "local_hit", "outputs": {"schemaVersion": 1, "files": []}, "exitCode": 0, "diagnostic": None}
     diagnostic = {"code": "KVIK_COMPILATION_ERROR", "category": "compilation", "message": "Unresolved reference 'missing'", "actionId": "hello:jvm:compile", "module": "hello", "target": "jvm", "path": "src/Hello.kt", "line": 1, "column": 5}
     verification = {"schemaVersion": 1, "runId": "example-run", "requestedChecks": ["hello:jvm:build", "hello:jvm:test"], "completedChecks": ["hello:jvm:build"],

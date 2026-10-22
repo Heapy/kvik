@@ -20,9 +20,19 @@ data class Coordinate(val group: String, val name: String, val version: String) 
     }
 }
 
+enum class DependencyScopeKind { COMPILE, RUNTIME }
+
 sealed interface Dependency {
-    data class External(val coordinate: Coordinate) : Dependency
-    data class Module(val module: String) : Dependency
+    val scope: DependencyScopeKind
+    val exported: Boolean
+    data class External(val coordinate: Coordinate, override val scope: DependencyScopeKind = DependencyScopeKind.COMPILE,
+                        override val exported: Boolean = false) : Dependency {
+        init { require(scope != DependencyScopeKind.RUNTIME || !exported) { "Runtime-only dependency cannot be exported to compilation" } }
+    }
+    data class Module(val module: String, override val scope: DependencyScopeKind = DependencyScopeKind.COMPILE,
+                      override val exported: Boolean = false) : Dependency {
+        init { require(scope != DependencyScopeKind.RUNTIME || !exported) { "Runtime-only dependency cannot be exported to compilation" } }
+    }
 }
 
 data class SourceSet(
@@ -51,9 +61,16 @@ data class TargetSpec(
     val test: String?,
     val compilerOptions: List<String>,
     val testSettings: JvmTestSettings? = null,
+    val testCompilerOptions: List<String>? = null,
 ) {
     init {
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
+        require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
+    }
+    fun optionsFor(compilation: String): List<String> = when (compilation) {
+        "main" -> compilerOptions
+        "test" -> testCompilerOptions ?: compilerOptions
+        else -> error("Unknown compilation: $compilation")
     }
 }
 data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, val targets: Set<String>, val scopes: Set<String>, val options: List<String>, val inputs: List<LogicalPath>) {

@@ -71,6 +71,15 @@
             "coordinate": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+            },
+            "scope": {
+              "enum": [
+                "compile",
+                "runtime"
+              ]
+            },
+            "exported": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -84,12 +93,42 @@
             "module": {
               "type": "string",
               "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "scope": {
+              "enum": [
+                "compile",
+                "runtime"
+              ]
+            },
+            "exported": {
+              "type": "boolean"
             }
           },
           "required": [
             "module"
           ],
           "additionalProperties": false
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scope"
+            ],
+            "properties": {
+              "scope": {
+                "const": "runtime"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exported": {
+                "const": false
+              }
+            }
+          }
         }
       ]
     },
@@ -200,6 +239,12 @@
         },
         "testSettings": {
           "$ref": "#/$defs/jvmTestSettings"
+        },
+        "testCompilerOptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -221,6 +266,21 @@
               "name": {
                 "const": "jvm"
               },
+              "test": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "testCompilerOptions"
+            ]
+          },
+          "then": {
+            "properties": {
               "test": {
                 "type": "string",
                 "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
@@ -688,11 +748,136 @@
       ],
       "additionalProperties": false
     },
+    "resolutionDomain": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "compilation": {
+          "enum": [
+            "main",
+            "test"
+          ]
+        },
+        "usage": {
+          "enum": [
+            "java-api",
+            "java-runtime",
+            "kotlin-api",
+            "kotlin-runtime"
+          ]
+        },
+        "purpose": {
+          "enum": [
+            "dependencies",
+            "compiler-plugin"
+          ]
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "compilation",
+        "usage",
+        "purpose"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "compiler-plugin"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "const": "java-runtime"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "target": {
+                  "const": "jvm"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "usage": {
+                  "enum": [
+                    "java-api",
+                    "java-runtime"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "usage": {
+                  "enum": [
+                    "kotlin-api",
+                    "kotlin-runtime"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "scopedSelection": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/resolutionDomain"
+        },
+        "requested": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+        },
+        "variant": {
+          "$ref": "#/$defs/variant"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadata"
+          }
+        }
+      },
+      "required": [
+        "domain",
+        "requested",
+        "variant",
+        "artifacts",
+        "metadata"
+      ],
+      "additionalProperties": false
+    },
     "dependencyLock": {
       "type": "object",
       "properties": {
         "schemaVersion": {
-          "const": 1
+          "const": 2
         },
         "configuration": {
           "$ref": "#/$defs/digest"
@@ -700,7 +885,7 @@
         "selections": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/selection"
+            "$ref": "#/$defs/scopedSelection"
           }
         }
       },

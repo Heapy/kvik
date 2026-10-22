@@ -3,6 +3,27 @@ package kvik.core
 import kotlin.test.*
 
 class ProjectConfigurationTest {
+    @Test fun dependencyScopeVisibilityAndTestOptionsAreExplicitAndStrict() {
+        fun document(dependency: String) = example.replace("\"dependencies\":[]", "\"dependencies\":[$dependency]")
+        val private = parse(document("""{"coordinate":"g:api:1"}""")).project.modules.single().sourceSets.first().dependencies.single()
+        assertEquals(Dependency.External(Coordinate.parse("g:api:1")), private)
+        val exported = parse(document("""{"coordinate":"g:api:1","scope":"compile","exported":true}"""))
+        assertTrue(exported.project.modules.single().sourceSets.first().dependencies.single().exported)
+        val runtime = parse(document("""{"coordinate":"g:runtime:1","scope":"runtime"}"""))
+        assertEquals(DependencyScopeKind.RUNTIME, runtime.project.modules.single().sourceSets.first().dependencies.single().scope)
+        assertNotEquals(exported.digest, runtime.digest)
+        for (dependency in listOf("""{"coordinate":"g:a:1","scope":"provided"}""", """{"coordinate":"g:a:1","scope":"runtime","exported":true}""",
+            """{"coordinate":"g:a:1","scope":null}""", """{"coordinate":"g:a:1","exported":"true"}""", """{"coordinate":"g:a:1","module":"library"}"""))
+            assertFails { parse(document(dependency)) }
+        val main = example.replace("\"compilerOptions\":[]", "\"compilerOptions\":[\"-Xexplicit-api=strict\"]")
+        val inherited = parse(main).project.modules.single().targets.single()
+        assertEquals(inherited.compilerOptions, inherited.optionsFor("test"))
+        val overridden = parse(main.replace("\"compilerOptions\":", "\"testCompilerOptions\":[],\"compilerOptions\":"))
+        assertTrue(overridden.project.modules.single().targets.single().optionsFor("test").isEmpty())
+        assertNotEquals(parse(main).digest, overridden.digest)
+        assertFails { parse(main.replace("\"compilerOptions\":", "\"testCompilerOptions\":null,\"compilerOptions\":")) }
+        assertFails { parse(overridden.document.canonical().replace("\"test\":\"jvmTest\"", "\"test\":null")) }
+    }
     private val example = """
         {"schemaVersion":1,"name":"sample","repositories":[{"id":"central","url":"https://repo.maven.apache.org/maven2"}],"modules":[
           {"id":"library","sourceSets":[
