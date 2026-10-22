@@ -45,7 +45,7 @@ the explicitly declared JVM compiler API dependency against the pinned artifacts
 This supports compatible K2 plugins; a plugin that assumes JVM-only backend APIs
 still needs a Native implementation.
 
-Literal options retain their order and values, including commas and equals signs.
+Literal options retain their order and values, including commas, equals signs and line breaks.
 Use `pathOptions` for files and output directories so Kvik can materialize paths
 inside each compilation's own workspace. Declared inputs and plugin implementation
 bytes participate in compilation caching. Changing either rebuilds affected
