@@ -27,14 +27,16 @@ Reproduction (from this worktree):
   --ktc-cache /Users/yoda/Library/Caches/JetBrains/Kotlin/.m2.cache
 ```
 
-Status: verified. The combined Kotlin/Native executable passed all 58 groups (27 resolver, 13 locking, 13 query, five policy) in 12.970 seconds. All 12 prior selected artifact identities still match the KTC cache. Generated graph, lock and project-query outputs validate; six invalid graph combinations and four invalid reason cases fail schema validation. Light checks also pass: 11 schema examples/canonical vectors, seven existing contract-schema tests, five package-schema tests, and the new scoped-rule schema regression (trailing newlines in parent, dependency, metadata hash, domain module, variant and reason).
+Status: verified. The combined Kotlin/Native executable passed all 58 groups (27 resolver, 13 locking, 13 query, five policy) in 9.778 seconds. All 12 prior selected artifact identities still match the KTC cache. Generated graph, lock and project-query outputs validate; six invalid graph combinations and four invalid reason cases fail schema validation. Light checks also pass: 11 schema examples/canonical vectors, seven existing contract-schema tests, five package-schema tests, and the new scoped-rule schema regression (trailing newlines in parent, dependency, metadata hash, domain module, variant and reason).
 
 Retained evidence:
 
-- Final results: `.kvik/tests/metadata-exclusions/case-zsz5m8u8/summary.json`, `excluded-graph.json`, `excluded-lock.json`, `excluded-project.json`, plus existing suite outputs under `locking/` and `queries/`.
-- Build commands and exact source hashes: `.kvik/tests/metadata-exclusions/case-rda7lo8v/{commands,source-identities}.json`.
-- Matching executable: `.kvik/tests/metadata-exclusions/unit.kexe`, SHA-256 `2c63e9f35519abceec51add1a2c042a4d04fcfb485ebcb825db5ab2919168f9e`.
-- Full logs: `.kvik/tests/metadata-exclusions/combined.log` and `verified.log`. The first run passed all Native groups but the Python schema wrapper incorrectly applied the package-result root union to a bare graph. The wrapper was corrected; the final run reused the same executable with `--skip-build` and passed all post-checks. No production change followed compilation.
+- Final results: `.kvik/tests/metadata-exclusions/case-66lgsqqg/summary.json`, `excluded-graph.json`, `excluded-lock.json`, `excluded-project.json`, plus existing suite outputs under `locking/` and `queries/`.
+- Build commands and exact source hashes: `.kvik/tests/metadata-exclusions/case-66lgsqqg/{commands,source-identities,build-stamp}.json`.
+- Matching executable: `.kvik/tests/metadata-exclusions/unit.kexe`, SHA-256 `78570f8334c84c44966a5ad622cd9f2e22133a50d21981678ad94bf90053884e`.
+- Final full-build log: `.kvik/tests/metadata-exclusions/stamped.log`. Earlier `combined.log` passed all Native groups but its Python wrapper incorrectly applied the package-result root union to a bare graph; corrected `verified.log` passed the post-checks. The final stamped run rebuilt from source and passed all checks, without relying on those earlier binaries.
+
+The harness writes a build stamp only after successful compilation and unchanged input checks. It binds source and native-interop bytes, exact tool commands, relevant compiler environment, SDK path, compiler launchers/jars, Java executable, trusted lock and harness bytes, and the executable SHA-256/size. `--skip-build` rejects absent or mismatched stamps; a focused Python test challenges missing stamps, changed inputs and changed binary bytes. This stamp is test-reuse provenance, not a replacement for production installed-tool verification; caller-controlled tool roots/SDK must remain stable during compilation.
 
 The positive direct-root regression proves an excluded parent→child edge does not suppress the same valid Native child when separately requested as a root. A redirect/owner-alias regression proves the rule binds terminal lookup coordinate and exact terminal metadata bytes, including when the published component owner names the common module. Full-domain resolution also rejects an additional unvisited rule even when another rule applied successfully.
 

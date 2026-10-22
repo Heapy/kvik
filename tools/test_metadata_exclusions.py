@@ -13,6 +13,19 @@ import jsonschema
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def file_identity(path):
+    with Path(path).open('rb') as source:
+        return dict(hash=hashlib.file_digest(source, 'sha256').hexdigest(), sizeBytes=Path(path).stat().st_size)
+
+
+def verify_build_stamp(stamp_path, inputs, binary):
+    if not stamp_path.is_file():
+        raise RuntimeError('Missing build stamp; rerun without --skip-build')
+    stamp = json.loads(stamp_path.read_text())
+    if stamp != dict(schemaVersion=1, inputs=inputs, binary=file_identity(binary)):
+        raise RuntimeError('Build inputs or executable differ from stamp; rerun without --skip-build')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--konan-home', type=Path, required=True)
@@ -44,18 +57,37 @@ def main():
         commands.append(list(map(str, command)))
         (work / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
         subprocess.run(command, env=env, check=True)
-    if not args.skip_build:
-        sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
-        run([str(args.konan_home / 'bin/cinterop'), '-def', str(ROOT / 'resolution/native/resolution.def'),
-             '-compiler-option', '-I' + str(ROOT / 'resolution/native'), '-compiler-option', '-I' + sdk + '/usr/include/libxml2',
-             '-target', 'macos_arm64', '-o', str(output / 'resolution')])
-        sources = [str(p) for directory in ['core/src', 'cache/src', 'resolution/src', 'integration/resolution/src',
-                                           'integration/package-queries/src', 'tests/metadata-exclusions', 'tests/resolution',
-                                           'tests/locking', 'tests/package-queries/native']
-                   for p in sorted((ROOT / directory).glob('*.kt') if directory.startswith('tests/') else (ROOT / directory).rglob('*.kt'))]
-        (work / 'source-identities.json').write_text(json.dumps({str(Path(path).relative_to(ROOT)): hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in sources}, indent=2) + '\n')
-        run([str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner',
-             '-library', str(output / 'resolution.klib'), '-o', str(output / 'unit.kexe'), *sources])
+    sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
+    sources = [str(p) for directory in ['core/src', 'cache/src', 'resolution/src', 'integration/resolution/src',
+                                       'integration/package-queries/src', 'tests/metadata-exclusions', 'tests/resolution',
+                                       'tests/locking', 'tests/package-queries/native']
+               for p in sorted((ROOT / directory).glob('*.kt') if directory.startswith('tests/') else (ROOT / directory).rglob('*.kt'))]
+    interop = [str(args.konan_home / 'bin/cinterop'), '-def', str(ROOT / 'resolution/native/resolution.def'),
+               '-compiler-option', '-I' + str(ROOT / 'resolution/native'), '-compiler-option', '-I' + sdk + '/usr/include/libxml2',
+               '-target', 'macos_arm64', '-o', str(output / 'resolution')]
+    compile_command = [str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner',
+                       '-library', str(output / 'resolution.klib'), '-o', str(output / 'unit.kexe'), *sources]
+    tracked = [*map(Path, sources), *sorted((ROOT / 'resolution/native').glob('*')), Path(__file__),
+               ROOT / 'bootstrap/toolchains.lock.json', args.konan_home / 'bin/cinterop', args.konan_home / 'bin/konanc',
+               args.java_home / 'bin/java', *sorted((args.konan_home / 'konan/lib').glob('*.jar'))]
+    def current_inputs():
+        return dict(commands=[interop, compile_command], sdk=sdk,
+                    environment={key: env.get(key) for key in ['JAVA_HOME', 'KONAN_DATA_DIR', 'JAVA_OPTS', 'KONAN_JVM_ARGS']},
+                    files={str(path.resolve()): file_identity(path) for path in tracked if path.is_file()})
+    inputs = current_inputs()
+    binary = output / 'unit.kexe'
+    stamp_path = output / 'build-stamp.json'
+    (work / 'source-identities.json').write_text(json.dumps({str(Path(path).relative_to(ROOT)): file_identity(path)['hash'] for path in sources}, indent=2) + '\n')
+    if args.skip_build:
+        verify_build_stamp(stamp_path, inputs, binary)
+    else:
+        run(interop)
+        run(compile_command)
+        assert current_inputs() == inputs, 'Build inputs changed during compilation'
+        temporary = output / 'build-stamp.tmp'
+        temporary.write_text(json.dumps(dict(schemaVersion=1, inputs=inputs, binary=file_identity(binary)), indent=2) + '\n')
+        temporary.replace(stamp_path)
+    (work / 'build-stamp.json').write_bytes(stamp_path.read_bytes())
     run([str(output / 'unit.kexe')])
     graph_schema = json.loads((ROOT / 'schemas/v1/packages.json').read_text())
     graph_schema = {'$defs': graph_schema['$defs'], '$ref': '#/$defs/graph'}
