@@ -199,7 +199,12 @@ static int process_main(int argc, char **argv) {
     pid_t child = fork();
     if (child < 0) { setup_error(&setup, KVIK_SETUP_FORK); goto early_setup_failure; }
     if (!child) {
-        if (setpgid(0, 0)) child_setup_error(status_write, KVIK_SETUP_CHILD_GROUP, errno);
+        if (setpgid(0, 0)) {
+            int error = errno;
+            /* The parent can establish this exact group first. Never accept an
+             * error merely by errno: confirm the required ownership boundary. */
+            if (getpgrp() != getpid()) child_setup_error(status_write, KVIK_SETUP_CHILD_GROUP, error);
+        }
         close(3); close(4); close(barrier_read); close(status_read);
         if (upstream_barrier.fd >= 0) close(upstream_barrier.fd);
         if (dup2(barrier_write, KVIK_BARRIER_FD) < 0) child_setup_error(status_write, KVIK_SETUP_BARRIER_BIND, errno);
@@ -224,8 +229,17 @@ static int process_main(int argc, char **argv) {
     /* The guardian never retains its own downstream writer. */
     close(barrier_write); close(status_write); free(environment);
     int code = 125, timed_out = 0, cancelled = 0;
-    int setup_failed = setpgid(child, child) && errno != EACCES && errno != ESRCH;
-    if (setup_failed) { setup_error(&setup, KVIK_SETUP_PARENT_GROUP); kill(child, SIGKILL); }
+    int setup_failed = 0;
+    if (setpgid(child, child)) {
+        int error = errno;
+        /* EACCES/ESRCH retain the existing exec/exit race handling. Other errors
+         * are harmless only when the child's required group is already present. */
+        if (error != EACCES && error != ESRCH && getpgid(child) != child) {
+            setup = (SetupFailure){KVIK_SETUP_PARENT_GROUP, error};
+            setup_failed = 1;
+            kill(child, SIGKILL);
+        }
+    }
     while (!setup_failed) {
         siginfo_t info = {0};
         if (waitid(P_PID, child, &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == child &&
