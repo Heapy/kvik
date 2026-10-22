@@ -15,7 +15,7 @@ PLAN.md remains the acceptance specification. A working spike does not mark the 
 | K09 | In progress | [Read-only native inspection](evidence/k09.md), reviewed [dependency commands](evidence/k09-dependency-cli.md), [full Native tool verification](evidence/k09-toolchains.md), [validated JVM/Native CLI and retained evidence](evidence/k09-build-cli.md), [full kotaml JVM run](evidence/k09-kotaml-cli.md); action explanations and broader interface gates remain |
 | K10–K11 | Pending | Adversarial validation and decision |
 | K12–K13 | Pending | Scripts and workspace compiler plugins |
-| K14 | In progress | [Local source composition and launcher](evidence/k14.md), verified native helper and source-built JVM worker bundle, 17 launcher checks; remote source provisioning/shared executable cache integration remain |
+| K14 | In progress | [Local source composition and launcher](evidence/k14.md), verified native helper and source-built JVM worker bundle, 17 launcher checks; reviewed [launch context and read-only composition query](evidence/k14-launch-context.md) prepare foreground recomposition; Native handoff, remote source provisioning/shared executable cache integration remain |
 | K15 | In progress | Initial library build/test foreground session in a separate worktree; lifecycle validation, source-plugin recomposition and application restart remain pending |
 
 Automatic fixtures, test avoidance, an optional multiplatform test framework and `@Task` effect checking remain research directions. None is implemented or promised by the K01 spike.
