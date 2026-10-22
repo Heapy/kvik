@@ -21,4 +21,4 @@ JUnit XML uses a separate case for each known attempt so an earlier failure rema
 
 The initial XML consumer contract is [GitLab unit test reports](https://docs.gitlab.com/ci/testing/unit_test_reports/). Publication is separate: this command creates local files and requires no service credentials.
 
-This increment covers test results from one retained run. Coverage instrumentation, coverage thresholds, combining separate CI runs and service publication remain separate work in PLAN.md.
+This increment covers test results from one retained run. [JVM line coverage](coverage.md) is captured separately with `test --coverage`. Coverage thresholds, combining separate CI runs and service publication remain separate work in PLAN.md.

@@ -319,6 +319,65 @@ DEFS["testReportExport"] = versioned({"runId": NONEMPTY, "outputDirectory": NONE
 DEFS["testReportGraph"] = versioned({"sourceRun": NONEMPTY, "sourceDirectory": NONEMPTY,
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+# Coverage schemas describe the bounded wire format; Kotlin parsers additionally validate
+# cross-field source/class ownership, consecutive lines, manifest paths and derived totals/status.
+COVERAGE_ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"}
+COVERAGE_PATH = {"allOf": [PATH, {"type": "string", "pattern": r"^[^\u0000-\u001f]*(?![\s\S])"}]}
+DEFS["coverageSource"] = object_({"module": COVERAGE_ID, "sourceSet": COVERAGE_ID, "path": COVERAGE_PATH, "digest": ref("digest")})
+DEFS["coverageClassRoot"] = object_({"module": COVERAGE_ID, "path": COVERAGE_PATH})
+DEFS["jvmCoverageSpec"] = object_({
+    "engine": {"const": "jacoco"}, "version": {"const": "0.8.14"}, "agent": ref("digest"), "reporter": ref("digest"),
+    "classDirectories": array(ref("coverageClassRoot"), minItems=1, maxItems=1000, uniqueItems=True),
+    "sources": array(ref("coverageSource"), maxItems=100_000, uniqueItems=True),
+    "excludes": array({"type": "string", "minLength": 1, "maxLength": 1024,
+        "pattern": r"^[A-Za-z0-9_.$*?/]+(?![\s\S])"}, maxItems=100, uniqueItems=True),
+})
+DEFS["coverageLine"] = object_({"number": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+    "state": enum("covered", "uncovered", "non_executable", "unknown")})
+DEFS["sourceCoverage"] = object_({
+    "source": ref("coverageSource"), "lineCount": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
+    "lines": array(ref("coverageLine"), maxItems=1_000_000, uniqueItems=True), "complete": BOOL,
+    "diagnostics": array({"type": "string", "maxLength": 8192}, maxItems=100),
+})
+DEFS["sourceCoverage"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": True}}}, "then": {"properties": {
+        "lines": {"items": {"properties": {"state": {"not": {"const": "unknown"}}}}}}}},
+    {"if": {"properties": {"lineCount": {"const": 0}}}, "then": {"properties": {"lines": {"maxItems": 0}}},
+     "else": {"properties": {"lines": {"minItems": 1}}}},
+]
+COVERAGE_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:test(?![\s\S])"}
+DEFS["coverageReport"] = versioned({
+    "kind": {"const": "line-coverage"}, "runId": NONEMPTY,
+    "check": COVERAGE_CHECK,
+    **{name: ref("digest") for name in ("sourceVerification", "inputSnapshot", "configuration", "dependencyLock", "analysisInputs")},
+    "specification": ref("jvmCoverageSpec"), "executionStatus": REPORT_STATUS,
+    "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "capabilities": {"const": ["line"]},
+    "sources": array(ref("sourceCoverage"), maxItems=100_000, uniqueItems=True), "originals": ref("tree"),
+    "complete": BOOL, "status": REPORT_STATUS, "diagnostics": array({"type": "string", "maxLength": 8192}, maxItems=1000),
+    "conversionLosses": {"const": ["Normalized data exposes line states only; original JaCoCo XML retains instruction, branch, method and class counters."]},
+})
+DEFS["coverageReport"]["$comment"] = ("Kotlin CoverageReport.fromJson additionally verifies exact expected-source membership, "
+    "source/class-root ownership, consecutive line numbers/counts, distinct manifest paths and XML for every class root. "
+    "Kotlin text bounds count UTF-16 code units; JSON Schema maxLength counts Unicode code points.")
+DEFS["coverageReport"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": True}}}, "then": {"properties": {
+        "sources": {"items": {"properties": {"complete": {"const": True}}}},
+        "originals": {"properties": {"files": {"allOf": [
+            {"contains": {"properties": {"path": {"const": "coverage.exec"}}, "required": ["path"]}},
+            {"contains": {"properties": {"path": {"type": "string", "pattern": r"^coverage/[A-Za-z][A-Za-z0-9_.-]*/jacoco\.xml(?![\s\S])"}}, "required": ["path"]}},
+        ]}}},
+    }}},
+    *[{"if": {"properties": {"executionStatus": {"const": status}}},
+       "then": {"properties": {"status": {"const": status}}}} for status in ("failed", "incomplete", "cancelled")],
+    {"if": {"properties": {"executionStatus": {"const": "passed"}}}, "then": {
+        "if": {"properties": {"complete": {"const": True}, "freshnessAtCompletion": {"const": "current"}}},
+        "then": {"properties": {"status": {"const": "passed"}}}, "else": {"properties": {"status": {"const": "incomplete"}}}}},
+]
+DEFS["coverageReportExport"] = versioned({"runId": NONEMPTY, "check": COVERAGE_CHECK,
+    "outputDirectory": NONEMPTY, "sourceRunStatus": REPORT_STATUS, "reportStatus": REPORT_STATUS, "artifacts": ref("tree")})
+DEFS["coverageReportGraph"] = versioned({"sourceRun": NONEMPTY,
+    "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
+    "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
 APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({
@@ -410,6 +469,9 @@ def main():
     explanation = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/explain.json",
         "$ref": "contracts.json#/$defs/actionExplanation"}
     (directory / "explain.json").write_text(json.dumps(explanation, indent=2) + "\n")
+    coverage = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/coverage.json",
+        "$ref": "contracts.json#/$defs/coverageReport"}
+    (directory / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -4170,6 +4170,605 @@
       ],
       "additionalProperties": false
     },
+    "coverageSource": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "sourceSet": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "path": {
+          "allOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            {
+              "type": "string",
+              "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+            }
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "module",
+        "sourceSet",
+        "path",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "coverageClassRoot": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "path": {
+          "allOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            {
+              "type": "string",
+              "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+            }
+          ]
+        }
+      },
+      "required": [
+        "module",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "jvmCoverageSpec": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "const": "jacoco"
+        },
+        "version": {
+          "const": "0.8.14"
+        },
+        "agent": {
+          "$ref": "#/$defs/digest"
+        },
+        "reporter": {
+          "$ref": "#/$defs/digest"
+        },
+        "classDirectories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageClassRoot"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageSource"
+          },
+          "maxItems": 100000,
+          "uniqueItems": true
+        },
+        "excludes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z0-9_.$*?/]+(?![\\s\\S])"
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "engine",
+        "version",
+        "agent",
+        "reporter",
+        "classDirectories",
+        "sources",
+        "excludes"
+      ],
+      "additionalProperties": false
+    },
+    "coverageLine": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "state": {
+          "enum": [
+            "covered",
+            "uncovered",
+            "non_executable",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "number",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "sourceCoverage": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/coverageSource"
+        },
+        "lineCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageLine"
+          },
+          "maxItems": 1000000,
+          "uniqueItems": true
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "source",
+        "lineCount",
+        "lines",
+        "complete",
+        "diagnostics"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lines": {
+                "items": {
+                  "properties": {
+                    "state": {
+                      "not": {
+                        "const": "unknown"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lineCount": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lines": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "lines": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageReport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "line-coverage"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "check": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:test(?![\\s\\S])"
+        },
+        "sourceVerification": {
+          "$ref": "#/$defs/digest"
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLock": {
+          "$ref": "#/$defs/digest"
+        },
+        "analysisInputs": {
+          "$ref": "#/$defs/digest"
+        },
+        "specification": {
+          "$ref": "#/$defs/jvmCoverageSpec"
+        },
+        "executionStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "freshnessAtCompletion": {
+          "enum": [
+            "current",
+            "stale",
+            "indeterminate"
+          ]
+        },
+        "capabilities": {
+          "const": [
+            "line"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceCoverage"
+          },
+          "maxItems": 100000,
+          "uniqueItems": true
+        },
+        "originals": {
+          "$ref": "#/$defs/tree"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "maxItems": 1000
+        },
+        "conversionLosses": {
+          "const": [
+            "Normalized data exposes line states only; original JaCoCo XML retains instruction, branch, method and class counters."
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "runId",
+        "check",
+        "sourceVerification",
+        "inputSnapshot",
+        "configuration",
+        "dependencyLock",
+        "analysisInputs",
+        "specification",
+        "executionStatus",
+        "freshnessAtCompletion",
+        "capabilities",
+        "sources",
+        "originals",
+        "complete",
+        "status",
+        "diagnostics",
+        "conversionLosses"
+      ],
+      "additionalProperties": false,
+      "$comment": "Kotlin CoverageReport.fromJson additionally verifies exact expected-source membership, source/class-root ownership, consecutive line numbers/counts, distinct manifest paths and XML for every class root. Kotlin text bounds count UTF-16 code units; JSON Schema maxLength counts Unicode code points.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sources": {
+                "items": {
+                  "properties": {
+                    "complete": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              "originals": {
+                "properties": {
+                  "files": {
+                    "allOf": [
+                      {
+                        "contains": {
+                          "properties": {
+                            "path": {
+                              "const": "coverage.exec"
+                            }
+                          },
+                          "required": [
+                            "path"
+                          ]
+                        }
+                      },
+                      {
+                        "contains": {
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "pattern": "^coverage/[A-Za-z][A-Za-z0-9_.-]*/jacoco\\.xml(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "path"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "executionStatus": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "executionStatus": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "executionStatus": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "executionStatus": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "if": {
+              "properties": {
+                "complete": {
+                  "const": true
+                },
+                "freshnessAtCompletion": {
+                  "const": "current"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "passed"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "status": {
+                  "const": "incomplete"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageReportExport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "check": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:test(?![\\s\\S])"
+        },
+        "outputDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sourceRunStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "reportStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "artifacts": {
+          "$ref": "#/$defs/tree"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "check",
+        "outputDirectory",
+        "sourceRunStatus",
+        "reportStatus",
+        "artifacts"
+      ],
+      "additionalProperties": false
+    },
+    "coverageReportGraph": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sourceRun": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "action": {
+                "$ref": "#/$defs/action"
+              }
+            },
+            "required": [
+              "actionId",
+              "dependencies",
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sourceRun",
+        "actions",
+        "results",
+        "events"
+      ],
+      "additionalProperties": false
+    },
     "verificationQuery": {
       "type": "object",
       "properties": {
