@@ -2,6 +2,24 @@ package kvik.compiler.native
 
 import kvik.core.*
 
+/** Decode only complete records; an interrupted UTF-8 tail cannot erase prior evidence. */
+fun kotestNativeReport(module: String, request: String, bytes: ByteArray, process: ProcessResult): NativeTestReport {
+    val decoded = StringBuilder()
+    var start = 0
+    if (bytes.size <= 16 * 1024 * 1024) {
+        for (index in bytes.indices) {
+            if (bytes[index].toInt() != 10) continue
+            try { decoded.append(bytes.decodeToString(start, index + 1, throwOnInvalidSequence = true)) }
+            catch (_: CharacterCodingException) { break }
+            start = index + 1
+        }
+    }
+    // A deliberately incomplete tail marks undecodable/truncated/oversized bytes;
+    // it is never decoded with replacement or interpreted as a protocol record.
+    if (start != bytes.size) decoded.append('{')
+    return kotestNativeReport(module, request, decoded.toString(), process)
+}
+
 /** Discovery is finalized from typed leaf callbacks only after the single engine invocation closes. */
 fun kotestNativeReport(module: String, request: String, text: String, process: ProcessResult): NativeTestReport {
     val results = linkedMapOf<String, TestResult>()
@@ -21,8 +39,11 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
     var sequence = 0L
     try {
         require(request.matches(Regex("[0-9a-f]{64}")))
-        require(text.length <= 16 * 1024 * 1024 && text.endsWith('\n')) { "Missing or truncated Kotest journal" }
-        for (line in text.dropLast(1).split('\n')) {
+        require(text.length <= 16 * 1024 * 1024) { "Oversized Kotest journal" }
+        // Only newline-terminated records are evidence; preserve their validated prefix
+        // when an interrupted writer leaves an unfinished final record.
+        val completePrefix = text.substring(0, text.lastIndexOf('\n') + 1)
+        for (line in if (completePrefix.isEmpty()) emptyList() else completePrefix.dropLast(1).split('\n')) {
             require(line.length <= 64 * 1024 && sequence < 100_000 && !main) { "Oversized or trailing Kotest journal" }
             val raw = parseJson(line).objectValue()
             fun string(name: String) = raw.getValue(name).stringValue()
@@ -100,6 +121,7 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
                 else -> error("Unsupported Kotest event: $event")
             }
         }
+        require(text.endsWith('\n')) { "Missing or truncated Kotest journal" }
         require(main && activeSpecs.isEmpty() && activeTests.isEmpty()) { "Kotest invocation did not complete" }
     } catch (failure: IllegalArgumentException) { protocolError = failure.message ?: "Malformed Kotest journal" }
       catch (failure: IllegalStateException) { protocolError = failure.message ?: "Incomplete Kotest journal" }
@@ -110,8 +132,8 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
         tests.count { it.status == TestStatus.FAILED }, tests.count { it.status == TestStatus.SKIPPED }, complete)
     val status = when {
         process.cancelled -> VerificationStatus.CANCELLED
-        process.timedOut || protocolError != null || !main -> VerificationStatus.INCOMPLETE
         engineFailure != null || counts.failed > 0 -> VerificationStatus.FAILED
+        process.timedOut || protocolError != null || !main -> VerificationStatus.INCOMPLETE
         !counts.satisfiesExecution -> VerificationStatus.INCOMPLETE
         else -> VerificationStatus.PASSED
     }

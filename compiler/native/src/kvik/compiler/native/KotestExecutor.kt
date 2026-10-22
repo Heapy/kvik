@@ -43,10 +43,14 @@ class KotestNativeExecutor(
                     catch (failure: Exception) { readFailure = "Kotest result/log unavailable: ${failure.message}"; "" }
                 val stdout = text("$directory/test.stdout")
                 val stderr = text("$directory/test.stderr")
-                val journal = text(reportPath)
+                val journal = try { readNativeFile(reportPath, 16 * 1024 * 1024) }
+                    catch (failure: Exception) { readFailure = "Kotest result/log unavailable: ${failure.message}"; byteArrayOf() }
                 val parsed = kotestNativeReport(module, token, journal, exit)
                 val report = if (readFailure == null) parsed else parsed.copy(counts = parsed.counts.copy(discovered = null, discoveryComplete = false),
-                    status = if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, diagnostic = readFailure)
+                    status = when (parsed.status) {
+                        VerificationStatus.CANCELLED, VerificationStatus.FAILED -> parsed.status
+                        else -> VerificationStatus.INCOMPLETE
+                    }, diagnostic = readFailure)
                 writeNativeFile("$directory/output/test-results.json", report.toJson().canonical().encodeToByteArray())
                 val status = when (report.status) {
                     VerificationStatus.PASSED -> ActionStatus.EXECUTED

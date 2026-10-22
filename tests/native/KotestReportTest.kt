@@ -51,6 +51,33 @@ class KotestReportTest {
         assertEquals(TestCounts(null, 0, 0, 0, false), engine.counts)
     }
 
+    @Test fun observedFailuresSurviveInterruptedCompletionWithoutInventingDiscovery() {
+        val failedLeaf = begin() + listOf(test("test-start"), test("test-finish", status = "Failure"))
+        for (process in listOf(ProcessResult(17), ProcessResult(124, timedOut = true), ProcessResult(0))) {
+            for (events in listOf(failedLeaf, failedLeaf + end().dropLast(1), failedLeaf + event("unsupported"))) {
+                val result = report(events, process)
+                assertEquals(VerificationStatus.FAILED, result.status)
+                assertEquals(TestCounts(null, 1, 1, 0, false), result.counts)
+            }
+        }
+        for (tail in listOf("{", "", "{\"event\":\"engine-finish\"}")) {
+            val partial = kotestNativeReport("module", token, journal(failedLeaf) + tail, ProcessResult(17))
+            assertEquals(VerificationStatus.FAILED, partial.status)
+            assertEquals(TestCounts(null, 1, 1, 0, false), partial.counts)
+        }
+        for (tail in listOf(byteArrayOf(0xe2.toByte(), 0x87.toByte()), byteArrayOf(0xff.toByte(), 10))) {
+            val partial = kotestNativeReport("module", token, journal(failedLeaf).encodeToByteArray() + tail, ProcessResult(17))
+            assertEquals(VerificationStatus.FAILED, partial.status)
+            assertEquals(TestCounts(null, 1, 1, 0, false), partial.counts)
+        }
+        val cancelled = report(failedLeaf, ProcessResult(130, cancelled = true))
+        assertEquals(VerificationStatus.CANCELLED, cancelled.status)
+        assertEquals(TestCounts(null, 1, 1, 0, false), cancelled.counts)
+        val engine = report(begin() + end(1).dropLast(1), ProcessResult(17))
+        assertEquals(VerificationStatus.FAILED, engine.status)
+        assertEquals(TestCounts(null, 0, 0, 0, false), engine.counts)
+    }
+
     @Test fun crashMissingCompletionCancellationAndMalformedStreamsRetainOnlyObservedLeaves() {
         val finishedLeaf = begin() + listOf(test("test-start"), test("test-finish", status = "Success"))
         for (events in listOf(finishedLeaf, finishedLeaf + end().dropLast(1), finishedLeaf + end().dropLast(2))) {

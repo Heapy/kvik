@@ -109,3 +109,21 @@ compiler/generator remote eligibility is not claimed.
 ByteArray CAS/materialization retains copies of large files; transport and
 journal bounds do not imply a process memory ceiling. Trusted processor and
 test code execute with the caller's ordinary local process privileges.
+
+Independent review found that a completed failed leaf followed by process exit
+17, missing completion, or a truncated final record was classified incomplete
+(and in the truncated case discarded the validated prefix). The follow-up keeps
+newline-terminated, strictly UTF-8-decoded, validated observations and gives observed leaf/engine failure
+priority over missing completion or timeout. Cancellation still takes priority.
+Missing stdout/stderr evidence clears discovery completeness but cannot downgrade
+an observed failure. Interrupted reports never invent a discovered count and
+never publish successful outputs.
+
+The focused Native suite now has 16 passing groups, adding failed-leaf plus
+crash/timeout/malformed-tail/missing-completion cases (including interrupted UTF-8
+and invalid UTF-8 records), engine failure without main,
+and an executor matrix for missing logs, known failure, and cancellation. Rebuild
+both units and the owned-process probe with the command above using
+`--stage bootstrap`; this does not rerun compiler consumers. Existing full kotaml
+and lifecycle evidence remains the earlier retained execution, not a claimed
+rerun of those consumers after this report-only fix.
