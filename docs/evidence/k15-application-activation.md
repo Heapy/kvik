@@ -135,3 +135,37 @@ state machine, source-runtime resume, or a real Native application's activation.
 Readiness establishes checked artifacts, tools and current executable access;
 future OS spawn success and application health still require the actual start
 and terminal process evidence.
+
+## Independent review and integration
+
+The independent final audit approved the standalone scope above. It rechecked
+all 24 scenario records, three preparations, six real application effects,
+permission-refusal diagnostics and the private JDK inventory/access proof. It
+also bound the runtime to 91 committed files in 23 source roots, 111 JVM worker
+classes, 20 bootstrap recipe files and the unchanged five-test Native protocol
+receipt. This was a read-only audit, not a new execution of the gate.
+
+- Final verdict: `/private/tmp/kvik-activation-final-review-sognu3r1/verdict.json`,
+  SHA-256 `461a93a80773e483e07ea455b9bf4f1dcaf731f3abea39e44fdb33d819c3c67a`.
+- Scenario audit: `/private/tmp/kvik-activation-final-review-sognu3r1/report.json`,
+  SHA-256 `aae17635955983de6cc49d20c856edb66c6dbb42934c98a7959ad15f584dffcb`.
+- Runtime/protocol audit: `/private/tmp/kvik-activation-final-runtime-review-a0_3ascs/report.json`,
+  SHA-256 `44f712b7272a30c15c6f979f2cb23633ace4812e181983455ab1378fb9245255`.
+
+Main integration through `c091ce3` preserves all 23 compiled source roots and
+all 11 changed files exactly. The merge audit is
+`/private/tmp/kvik-activation-merged-audit-m12rk4a_/report.json`, SHA-256
+`da3fc09d0d06a49f0ccede37c6cd691ab103508d3420fd48471904beb76f614a`.
+The 11 schema examples, 21 contract schema tests and two activation schema tests
+passed on the merged tree. No compiler rerun was necessary for identical sources.
+
+The nested foreground ownership boundary remains a separate acceptance gate.
+A retained-binary reproduction demonstrated that the outer guardian can kill an
+inner guardian before it finishes stopping its separately grouped application.
+The outer owner then reports cancellation while that application remains alive.
+The reproduction report is
+`/private/tmp/kvik-nested-guardian-review-cdiws6j9/report.json`, SHA-256
+`8a5b3f65641e8c18f2562cc6436b66839683f50d52386f2a178549d52e76296a`.
+The reproduction cleaned its captured process group and verified cleanup.
+Until recursive cleanup acknowledgement is implemented and tested, this
+standalone gate must not be used as proof of safe foreground replacement.
