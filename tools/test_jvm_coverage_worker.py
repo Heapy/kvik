@@ -102,6 +102,8 @@ def main():
 
     incomplete = invoke('interrupted', lambda w, r: r.update(executionComplete=False))
     assert incomplete['status'] == 'incomplete' and all(line['state'] == 'unknown' for s in incomplete['sources'] for line in s['lines'])
+    missing_data = invoke('missing-data', lambda w, r: r.update(executionComplete=False, executionData=[]))
+    assert missing_data['status'] == 'incomplete' and all(line['state'] == 'unknown' for s in missing_data['sources'] for line in s['lines'])
     def ambiguous(w, r):
         other = w/'coverage-sources/other/Production.java'; other.parent.mkdir(); shutil.copyfile(w/'coverage-sources/src/Production.java', other)
         r['specification']['sources'].append(dict(module='app', sourceSet='main', path='other/Production.java', digest=digest(other)))

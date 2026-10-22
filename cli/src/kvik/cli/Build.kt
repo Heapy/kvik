@@ -54,6 +54,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                                 scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList(),
                                 sessionCache: BuildSessionCache? = null): BuildOutcome {
     val test = mode == ProjectMode.TEST
+    require(!options.coverage || test && scriptFile == null && options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
         "Application preparation requires exactly one --module and --target"
     }
@@ -97,11 +98,14 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     }
     val lock = try { DependencyLocks(content, kvik.resolution.NativePomParser()).loadLocked(snapshot.lockBytes, effective) }
         catch (failure: Exception) { throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Invalid dependency lock", ExitStatus.INVALID_CONFIGURATION) }
+    val coverageTools = if (options.coverage) verifiedRuntimeJvmWorker().let { worker ->
+        JvmCoverageTools(JACOCO_VERSION, checkNotNull(worker.jacocoAgentIdentity), checkNotNull(worker.jacocoCliIdentity))
+    } else null
     val selectedTests = if (test && "jvm" in options.targets) options.modules.associateWith { id ->
         val module = snapshot.configuration.project.modules.singleOrNull { it.id == id } ?: error("Unknown module: $id")
         val target = module.targets.singleOrNull { it.name == "jvm" } ?: error("Missing target $id:jvm")
         val settings = target.testSettings ?: error("Declare testSettings.classes and testSettings.engines for $id:jvm; implicit test scanning is unsupported")
-        JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it })
+        JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it }, coverageTools)
     } else emptyMap()
     val graphRequest = ProjectGraphRequest(options.modules, options.targets, mode, selectedTests)
     val toolTargets = if (scriptFile == null) projectToolTargets(snapshot.configuration.project, graphRequest) else options.targets
@@ -120,6 +124,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         (remotePath?.let { listOf("--remote-cache", it) } ?: emptyList()) +
+        (if (options.coverage) listOf("--coverage") else emptyList()) +
         (if (options.project.offline) listOf("--offline") else emptyList()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +

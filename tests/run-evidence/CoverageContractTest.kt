@@ -37,4 +37,21 @@ class CoverageContractTest {
         assertFails { file.copy(lines = listOf(lines[0], lines[0], lines[2], lines[3])) }
         assertEquals(0, SourceCoverage(source, 0, emptyList(), true).executable)
     }
+
+    @Test fun reportCompletenessCannotDiscardMissingSourcesOrChangeExecutionOutcome() {
+        val measured = SourceCoverage(source, 1, listOf(CoverageLine(1, LineCoverageState.COVERED)), true)
+        val report = CoverageReport("run", "library:jvm:test", digest, digest, digest, digest, digest, spec,
+            VerificationStatus.PASSED, Freshness.CURRENT, listOf(measured), TreeManifest(listOf(
+                FileEntry(LogicalPath("coverage.exec"), digest), FileEntry(LogicalPath("coverage/library/jacoco.xml"), digest))), true)
+        assertEquals(report, CoverageReport.fromJson(report.toJson()))
+        assertEquals(VerificationStatus.PASSED, report.status)
+        assertEquals(VerificationStatus.INCOMPLETE, report.copy(complete = false).status)
+        assertEquals(VerificationStatus.FAILED, report.copy(executionStatus = VerificationStatus.FAILED).status)
+        assertEquals(VerificationStatus.INCOMPLETE, report.copy(freshnessAtCompletion = Freshness.STALE).status)
+        assertFails { report.copy(sources = emptyList()) }
+        assertFails { report.copy(originals = TreeManifest(emptyList())) }
+        assertFails { report.copy(sources = listOf(measured, measured)) }
+        assertFails { report.copy(sources = listOf(measured.copy(complete = false))) }
+        assertFails { CoverageReport.fromJson(JsonValue.Object(report.toJson().values + ("status" to "failed".json()))) }
+    }
 }

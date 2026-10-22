@@ -59,7 +59,7 @@ class ForegroundSession(
         require(mode != SessionMode.APPLICATION || kvik_process_ownership_version() == 1) { "Application sessions require recursive process ownership version 1" }
     }
     private val pending = PendingOperation(initial, mode, initialIntents)
-    private val applications = if (mode == SessionMode.APPLICATION) ApplicationLifecycle(host, directory, workingDirectory, arguments,
+    private val applications = if (mode == SessionMode.APPLICATION) ApplicationLifecycle(host, directory, workingDirectory, arguments.filter { it != "--coverage" },
         checkNotNull(applicationModule), checkNotNull(applicationTarget),
         startProcess = operations?.let { it::start } ?: host::start, event = ::event) else null
     private var resumePrepared = preparedApplication
@@ -120,7 +120,7 @@ class ForegroundSession(
     private fun launch(kind: Operation?, runtime: String = executable): Child {
         val path = NativeRunDirectory(directory).path
         val command = if (kind == null) listOf(runtime, "snapshot-query") + snapshotArguments
-            else listOf(executable, kind.command) + arguments + listOf("--runs", "$path/runs") +
+            else listOf(executable, kind.command) + (if (kind == Operation.TEST) arguments else arguments.filter { it != "--coverage" }) + listOf("--runs", "$path/runs") +
                 (if ("--remote-cache" in arguments || "--offline" in arguments) emptyList() else listOf("--offline"))
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         val request = ProcessRequest(command, workingDirectory,

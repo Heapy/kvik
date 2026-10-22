@@ -50,7 +50,8 @@ object CoverageWorker {
     internal fun analyze(workspace: Workspace, requestId: String, specification: JvmCoverageSpec, executionData: List<FileEntry>,
         executionComplete: Boolean, files: List<FileEntry>): JsonValue {
         require(specification.excludes.isEmpty()) { "Coverage exclusion normalization is not supported" }
-        require(executionData.size in 1..1000 && executionData.map { it.path }.distinct().size == executionData.size)
+        require(executionData.size <= 1000 && executionData.map { it.path }.distinct().size == executionData.size)
+        require(!executionComplete || executionData.isNotEmpty()) { "Complete execution requires execution data" }
         require(files.size <= 100_000)
         TreeManifest(files)
         val roots = specification.classDirectories

@@ -29,7 +29,7 @@ internal fun devCommand(args: List<String>): Int {
         } else {
             require(flag != "--runs") { "dev reserves .kvik/sessions for invocation-owned evidence" }
             build += flag
-            if (flag != "--offline") { require(index < args.size) { "Missing $flag value" }; build += args[index++] }
+            if (flag !in setOf("--offline", "--coverage")) { require(index < args.size) { "Missing $flag value" }; build += args[index++] }
         }
     }
     val control = session["--control"] ?: if (isatty(0) == 1) "keys" else error("Non-TTY dev requires --control jsonl or --control lines")
@@ -44,6 +44,7 @@ internal fun devCommand(args: List<String>): Int {
     if (mode == SessionMode.APPLICATION) bootstrap?.requireApplicationOwnership()
     val initial = when (session["--initial"] ?: "build") { "build" -> if (mode == SessionMode.APPLICATION) Operation.APPLICATION else Operation.BUILD; "test" -> Operation.TEST; else -> error("Invalid initial operation") }
     val options = buildOptions(build)
+    require(!options.coverage || options.targets == setOf("jvm")) { "--coverage currently supports JVM tests only" }
     val project = readProject(options.project.project)
     if (mode == SessionMode.APPLICATION) {
         require(options.modules.size == 1 && options.targets.size == 1) { "Application sessions require exactly one --module and --target" }
@@ -60,6 +61,7 @@ internal fun devCommand(args: List<String>): Int {
     val arguments = listOf("--project", project.path, "--lock", lock, "--store", store, "--tools", tools,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         (options.remoteCache?.let { listOf("--remote-cache", projectPath(project.root, it)) } ?: emptyList()) +
+        (if (options.coverage) listOf("--coverage") else emptyList()) +
         (if (options.project.offline) listOf("--offline") else emptyList()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
