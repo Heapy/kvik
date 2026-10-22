@@ -105,7 +105,9 @@ class CoverageAggregateTest {
         for (inventory in listOf(listOf(foo), emptyList(), listOf(foo, bar.copy(source = bar.source.copy(sourceSet = "commonMain"))))) {
             val b = report("b", inventory).let { report ->
                 if (report.specification.classDirectories.any { it.module == "library" }) report
-                else report.copy(specification = report.specification.copy(classDirectories = report.specification.classDirectories + CoverageClassRoot("library", LogicalPath("modules/library/main"))))
+                else report.copy(
+                    specification = report.specification.copy(classDirectories = report.specification.classDirectories + CoverageClassRoot("library", LogicalPath("modules/library/main"))),
+                    originals = TreeManifest(report.originals.files + FileEntry(LogicalPath("coverage/library/jacoco.xml"), baseline)))
             }
             val failure = assertFails { aggregate(a, b) }
             assertTrue(failure.message.orEmpty().contains("source inventory for shared production module: library"))
