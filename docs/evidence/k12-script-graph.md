@@ -1,6 +1,6 @@
 # K12 script graph and execution evidence
 
-Status: isolated implementation; Native validation and public script execution remain pending.
+Status: isolated implementation; focused Native validation passed. Public script acceptance remains pending.
 This does not enable `run-script` on main.
 
 `scriptActionGraph` constructs `script:NAME:jvm:compile` and `script:NAME:jvm:run`
@@ -47,3 +47,15 @@ the resulting binary. Its model outputs are deliberate fixtures, not compiled co
 classes. Real standalone, workspace-dependency and compiler-plugin invocations, repeated
 compile hits with fresh execution, invalidation, child statuses/streams, timeout/cancellation
 and retained CLI verification require the later integrated runtime acceptance gate.
+
+Retained Native gate at `/private/tmp/kvik-k12-script-graph/.kvik/tests/project-graph/case-vt9msboe`
+passed all 106 tests in 15 classes (583 ms), including the nine script graph and four script
+evidence cases. Build receipt SHA-256 is
+`681601c12d17ae379b9879f6f842091c52ecd6688c5a2bc3ef7907b51882f110`;
+runner SHA-256 is `5a099c9ed872b2e5e9b43ed0bb9b328ca488e2e9e8b4e0d7f2836686e9ae157a`.
+An independent audit matched 42 committed Kotlin files, two harness files, five compiler/support
+files, two fixture outputs, runner, log and summary. Its report is
+`/private/tmp/kvik-k12-graph-receipt-review-b1it_o_q/report.json`, SHA-256
+`b005dc88d934456835d53135eef630b89d0003747a6c8198481fe5c58666890c`.
+The executor implementation is outside this gate: supplying the pinned standard library to
+actual script compilation needs the separate public CLI acceptance.
