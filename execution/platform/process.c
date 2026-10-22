@@ -218,3 +218,21 @@ void kvik_foreground_close(void *handle) {
     if (f->own_output) close(f->output);
     close(f->queue); free(f);
 }
+
+/* Same-PID handoff: a pending cancellation cannot disappear between old/new handlers.
+ * On success the resumed loop installs its handlers before unblocking INT/TERM.
+ * On failure every old stream/handler remains usable. No inherited IO flags change. */
+int kvik_foreground_exec(const char *path, char *const *argv, char *const *envp) {
+    sigset_t blocked, previous;
+    sigemptyset(&blocked); sigaddset(&blocked, SIGINT); sigaddset(&blocked, SIGTERM);
+    if (sigprocmask(SIG_BLOCK, &blocked, &previous)) return -1;
+    if (interrupted) { sigprocmask(SIG_SETMASK, &previous, NULL); errno = EINTR; return -1; }
+    execve(path, argv, envp);
+    int error = errno;
+    sigprocmask(SIG_SETMASK, &previous, NULL); errno = error; return -1;
+}
+void kvik_foreground_resume_signals(void) {
+    sigset_t blocked;
+    sigemptyset(&blocked); sigaddset(&blocked, SIGINT); sigaddset(&blocked, SIGTERM);
+    (void)sigprocmask(SIG_UNBLOCK, &blocked, NULL);
+}

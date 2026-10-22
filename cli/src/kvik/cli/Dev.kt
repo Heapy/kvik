@@ -8,6 +8,8 @@ import kvik.foreground.*
 import platform.posix.*
 
 internal fun devCommand(args: List<String>): Int {
+    if (args.firstOrNull() == "--resume") return resumeDev(args)
+    val bootstrap = bootstrapContext()
     val session = mutableMapOf<String, String>()
     val build = mutableListOf<String>()
     var index = 0
@@ -44,7 +46,7 @@ internal fun devCommand(args: List<String>): Int {
     val directory = NativeRunDirectory(parent).path
     return runtimeProcessHost().use { host ->
         ForegroundSession(host, "${runtimeDirectory()}/kvik.kexe", directory, project.root, arguments,
-            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial).let { foreground ->
+            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession).let { foreground ->
                 try { foreground.run() }
                 catch (failure: Exception) { throw RunStreamFailure("Foreground session failed: ${failure.message}") }
             }

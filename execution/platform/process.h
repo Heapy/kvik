@@ -17,4 +17,6 @@ void *kvik_foreground_open(void);
 int kvik_foreground_read(void *handle, char *buffer, int capacity);
 int kvik_foreground_write(void *handle, const char *buffer, int size);
 void kvik_foreground_close(void *handle);
+int kvik_foreground_exec(const char *path, char *const *argv, char *const *envp);
+void kvik_foreground_resume_signals(void);
 #endif

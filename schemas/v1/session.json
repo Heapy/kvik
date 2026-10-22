@@ -54,7 +54,11 @@
             "operation-started",
             "operation-finished",
             "closing",
-            "session-finished"
+            "session-finished",
+            "composition-observed",
+            "rebuild-started",
+            "rebuild-finished",
+            "session-restarting"
           ]
         },
         "payload": {
@@ -103,13 +107,31 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "previousSessionDirectory": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "composition": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/digest"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
                   "control",
                   "directory",
                   "capabilities",
-                  "limitations"
+                  "limitations",
+                  "previousSessionDirectory",
+                  "composition"
                 ],
                 "additionalProperties": false
               }
@@ -163,6 +185,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "compositionReady": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -170,7 +195,8 @@
                   "command",
                   "active",
                   "pending",
-                  "help"
+                  "help",
+                  "compositionReady"
                 ],
                 "additionalProperties": false
               }
@@ -191,7 +217,10 @@
                 "type": "object",
                 "properties": {
                   "code": {
-                    "const": "KVIK_SESSION_CONTROL"
+                    "enum": [
+                      "KVIK_SESSION_CONTROL",
+                      "KVIK_SESSION_RESTART"
+                    ]
                   },
                   "message": {
                     "type": "string"
@@ -402,8 +431,269 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "composition-observed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "composition": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/digest"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "enum": [
+                      "current",
+                      "stale",
+                      "unavailable"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "composition",
+                  "state",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "rebuild-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "composition",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "rebuild-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "cancelled": {
+                    "type": "boolean"
+                  },
+                  "timedOut": {
+                    "type": "boolean"
+                  },
+                  "accepted": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "composition",
+                  "exitCode",
+                  "cancelled",
+                  "timedOut",
+                  "accepted",
+                  "error",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "session-restarting"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "runtime": {
+                    "type": "string"
+                  },
+                  "nextSessionDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "composition",
+                  "runtime",
+                  "nextSessionDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
         }
       ]
+    },
+    "digest": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "hash",
+        "sizeBytes"
+      ],
+      "additionalProperties": false
+    },
+    "resume": {
+      "description": "UTF-8 representation bounded to 128 KiB; digest is carried in literal exec argv. Trusted invocation-local state.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "previousDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "workingDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "arguments": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]*(?![\\s\\S])"
+          }
+        },
+        "jsonControls": {
+          "type": "boolean"
+        },
+        "watchMillis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "pending": {
+          "enum": [
+            "build",
+            "test"
+          ]
+        },
+        "watched": {
+          "enum": [
+            "build",
+            "test"
+          ]
+        },
+        "partialInput": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255,
+            "not": {
+              "const": 10
+            }
+          }
+        },
+        "launch": {
+          "$ref": "bootstrap-launch.json#/$defs/launch"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "directory",
+        "previousDirectory",
+        "workingDirectory",
+        "arguments",
+        "jsonControls",
+        "watchMillis",
+        "pending",
+        "watched",
+        "partialInput",
+        "launch"
+      ],
+      "additionalProperties": false
     }
   }
 }

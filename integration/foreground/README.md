@@ -20,7 +20,9 @@ defaults to 1000. Output is always JSONL under `schemas/v1/session.json`.
 
 The session is a Kotlin/Native loop. It does no compiler work, hashing, resolving,
 or tool inventory verification. It owns one snapshot observer and at most one
-build/test CLI child through the existing ProcessHost guardian. Every operation
+build/test CLI child through the existing ProcessHost guardian. Bootstrap-backed
+sessions also own a composition observer and, while consumer work is drained,
+one replacement-build child. Every operation
 uses a new mutable run directory and the existing authoritative CLI build/test
 pipeline, including full tool verification and uncached test execution. No
 resolve command is invoked. Global/scoped pins, selections and resource budgets
@@ -74,7 +76,46 @@ limits still apply: deliberately detached process groups, a killed/stopped
 guardian and uninterruptible kernel/filesystem stalls are not covered by a hard
 shutdown guarantee.
 
-This first K15 slice does not implement application launch/restart, runnable
-artifact selection, runtime/build-plugin source recomposition, launch descriptor
-handoff, graph reuse, or raw single-key terminal controls. Runtime/source-plugin
-changes require exiting and relaunching through bootstrap.
+## Source composition and native handoff
+
+Sessions launched through bootstrap validate its bounded `KVIK_BOOTSTRAP_LAUNCH`
+descriptor against the executing native composition and runtime path. Direct
+native launches remain useful library sessions, but explicitly advertise
+`source-recomposition-unsupported-without-bootstrap-context`.
+
+A bootstrap-backed session initially disables consumer work until two owned
+`--print-composition` observations match the running composition. A changed or
+unavailable observation immediately closes that gate and cancels old consumer
+work. Two equal changed observations start an owned `--print-launch` invocation
+using the captured Python, launcher and literal bootstrap arguments. Offline and
+no-build policy therefore survive every restart. Hashing, tool verification and
+compilation remain outside the control loop. No shell, daemon, old-runtime
+fallback or in-process plugin reload is used.
+
+A failed rebuild retains its command/logs and keeps stale work disabled. Controls
+remain available; a new source digest or manual r/t retries. A successful result
+must preserve the bootstrap bindings and requested composition, then pass a new
+post-build composition observation. After all owned children drain, the session
+writes a linked `session-restarting` event and completely drains its output queue.
+It will close for bounded output backpressure rather than exec across a partial
+JSONL frame. It writes a bounded, digest-bound `handoff.json` in a fresh sibling
+session directory, then executes the replacement native runtime in the same PID.
+
+The continuation carries exact build options and pins, pending/watched operation
+(test intent wins coalescing), and the bytes of a partially read control line.
+Unread kernel input stays on the inherited stream. New session events start at
+sequence one and link the prior session directory; authoritative child run
+evidence remains in its original directory. Mutable project configuration is
+not reparsed during the handoff itself, so invalid configuration remains a
+recoverable child failure. INT/TERM are blocked at the exec boundary and unblocked
+after the new session installs handlers. Failed exec restores the signal mask
+and leaves the old journal, streams, controls and stale-work gate usable.
+
+The descriptor, source roots, installed tools and evidence ancestors are trusted
+local bindings. Digests detect inconsistent content; they do not provide a
+filesystem snapshot or defend against a hostile replacement of trusted roots.
+Composition polling describes source composition only, not continuous full tool
+freshness. Local journal/handoff filesystem operations remain synchronous.
+
+Application launch/restart, runnable artifact selection, graph reuse and raw
+single-key terminal controls remain future K15 slices.
