@@ -340,6 +340,22 @@ DEFS["scriptInspection"] = versioned({
     "execution": {"const": "not-requested"},
 })
 
+DEFS["actionExplanation"] = versioned({
+    "runId": NONEMPTY, "actionId": NONEMPTY, "currentFreshness": {"type": "null"},
+    "result": ref("actionResult"), "action": nullable(ref("action")),
+    "dependencyEvidence": enum("unavailable", "unbound-retained"),
+    "dependencies": nullable(array(ref("actionResult"))),
+    "reason": object_({"code": enum("shared-within-run", "local-cache-hit", "remote-cache-hit", "blocked", "cancelled", "failed", "execution-required", "executed-cache-reason-unrecorded"),
+        "message": NONEMPTY, "sharedWith": nullable(NONEMPTY), "startedSequence": nullable({"type": "integer", "minimum": 1}),
+        "finishedSequence": {"type": "integer", "minimum": 1}}),
+    "actionDiagnostics": array(ref("diagnostic")), "runCacheNotices": array(ref("diagnostic")),
+})
+DEFS["actionExplanation"]["allOf"] = [
+    {"if": {"properties": {"dependencyEvidence": {"const": "unavailable"}}},
+     "then": {"properties": {"action": {"type": "null"}, "dependencies": {"type": "null"}}},
+     "else": {"properties": {"action": ref("action"), "dependencies": array(ref("actionResult"))}}},
+]
+
 
 def main():
     directory = ROOT / "schemas/v1"
@@ -352,6 +368,9 @@ def main():
     inspection = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/script-inspection.json",
         "$ref": "contracts.json#/$defs/scriptInspection"}
     (directory / "script-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+    explanation = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/explain.json",
+        "$ref": "contracts.json#/$defs/actionExplanation"}
+    (directory / "explain.json").write_text(json.dumps(explanation, indent=2) + "\n")
 
 
 if __name__ == "__main__":

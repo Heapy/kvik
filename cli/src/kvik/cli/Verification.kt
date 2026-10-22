@@ -5,6 +5,7 @@ import kvik.core.*
 import kvik.projectsnapshot.NativeProjectSnapshotter
 import kvik.projectsnapshot.SnapshotSelection
 import kvik.runevidence.verificationRecordFromJson
+import kvik.runevidence.committedRunEvents
 import kvik.toolchains.ToolComponent
 
 internal data class CheckedRun(
@@ -35,19 +36,7 @@ internal fun checkRun(directory: String): CheckedRun {
     var reason: String? = null
     var javaExecutable: String? = null
     try {
-        val completion = document("completion.json").fields(setOf("schemaVersion", "verification", "event", "journal"))
-        completion.requireVersion()
-        require(Digest.fromJson(completion.getValue("verification")) == Sha256.digest(record.toJson())) { "Verification was not committed completely" }
-        val journalBytes = NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024)
-        require(Digest.fromJson(completion.getValue("journal")) == Sha256.digest(journalBytes)) { "Retained event journal differs from committed evidence" }
-        val journal = journalBytes.decodeToString(throwOnInvalidSequence = true)
-        require(journal.endsWith('\n')) { "Run journal has an incomplete final event" }
-        val lastEvent = parseJson(journal.trimEnd('\n').substringAfterLast('\n'))
-        val event = lastEvent.fields(setOf("schemaVersion", "runId", "sequence", "type", "payload"))
-        event.requireVersion()
-        require(event.getValue("runId").stringValue() == record.runId && event.getValue("sequence").longValue() > 0 &&
-            event.getValue("type").stringValue() == "run-finished" && event.getValue("payload") == record.toJson() &&
-            Digest.fromJson(completion.getValue("event")) == Sha256.digest(lastEvent)) { "Run completion event does not match retained verification" }
+        committedRunEvents(record, document("completion.json"), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
         val store = object : ContentStore {
             override fun get(digest: Digest): ByteArray? = null
             override fun put(bytes: ByteArray): Digest = error("A verification query cannot publish content")

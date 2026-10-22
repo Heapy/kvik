@@ -29,7 +29,7 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, resolve, check-lock, build, test, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, dev, packages, dependencies, help
+            Commands: runtime-info, inspect, resolve, check-lock, build, test, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
@@ -48,7 +48,7 @@ private fun command(args: Array<String>) {
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target jvm|macosArm64 --usage USAGE --project PATH
             Query cache: --query-cache PATH [--refresh|--offline] --json
             Project graph: dependencies --project PATH [--lock PATH] [--store PATH] [--module ID] [--script NAME] [--target TARGET] [--compilation main|test|script] [--usage USAGE] --json
-            Evidence: verification --run PATH
+            Evidence: verification --run PATH; explain --run PATH --action ACTION_ID (historical, read-only)
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
         "runtime-info" -> {
@@ -80,6 +80,7 @@ private fun command(args: Array<String>) {
         "dev" -> exitProcess(devCommand(args.drop(1)))
         "snapshot-query" -> println(snapshotQueryCommand(args.drop(1)).canonical())
         "verification" -> exitProcess(verificationCommand(args.drop(1)).code)
+        "explain" -> println(explainCommand(args.drop(1)).canonical())
         else -> {
             println(obj("schemaVersion" to CONTRACT_VERSION.json(), "diagnostic" to Diagnostic("KVIK_UNSUPPORTED_COMMAND", DiagnosticCategory.CONFIGURATION,
                 "Command '${args[0]}' is not implemented; use help for current capabilities").toJson()).canonical())

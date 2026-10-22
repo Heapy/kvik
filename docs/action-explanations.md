@@ -1,0 +1,27 @@
+# Explain a retained action
+
+```sh
+./kvik --offline --no-build -- explain \
+  --run /absolute/project/.kvik/runs/RUN_ID --action app:jvm:main
+```
+
+The versioned JSON response contains the action's outcome and reason, action key,
+declared inputs, prerequisite results, tools and settings. Its schema is
+[`schemas/v1/explain.json`](../schemas/v1/explain.json). A valid explanation exits
+zero even for a failed or blocked action. A missing action exits two; missing or
+inconsistent retained records exit three.
+
+`explain` reads the historical run without checking current sources, installed
+tools or artifact availability. `currentFreshness` is null. Use
+`verification --run PATH` to check whether a result still describes current inputs
+and tools.
+
+Reasons distinguish cache reuse, required fresh execution, within-run sharing,
+failure, cancellation and blocking. Existing runs do not record every cache
+choice: execution alone does not explain a cache miss or prove sources changed.
+Cache notices without an action ID remain labelled as run-level context.
+
+`dependencyEvidence: "unbound-retained"` means the dependency IDs come from the
+saved action record; older runs did not bind that list into the action key.
+An unresolved action has null recipe and dependencies because these details were
+not retained.

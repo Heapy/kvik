@@ -4690,6 +4690,172 @@
         "execution"
       ],
       "additionalProperties": false
+    },
+    "actionExplanation": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "actionId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "currentFreshness": {
+          "type": "null"
+        },
+        "result": {
+          "$ref": "#/$defs/actionResult"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/action"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencyEvidence": {
+          "enum": [
+            "unavailable",
+            "unbound-retained"
+          ]
+        },
+        "dependencies": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/actionResult"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "shared-within-run",
+                "local-cache-hit",
+                "remote-cache-hit",
+                "blocked",
+                "cancelled",
+                "failed",
+                "execution-required",
+                "executed-cache-reason-unrecorded"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "sharedWith": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "startedSequence": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "finishedSequence": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "sharedWith",
+            "startedSequence",
+            "finishedSequence"
+          ],
+          "additionalProperties": false
+        },
+        "actionDiagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "runCacheNotices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "actionId",
+        "currentFreshness",
+        "result",
+        "action",
+        "dependencyEvidence",
+        "dependencies",
+        "reason",
+        "actionDiagnostics",
+        "runCacheNotices"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "dependencyEvidence": {
+                "const": "unavailable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "type": "null"
+              },
+              "dependencies": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "action": {
+                "$ref": "#/$defs/action"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/actionResult"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }
