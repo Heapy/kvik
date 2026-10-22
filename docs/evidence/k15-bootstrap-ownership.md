@@ -87,3 +87,17 @@ This establishes the focused bridge behavior on the pinned Darwin host, not a
 portable process-inventory implementation. The ambient harness environment is
 not a fully pinned compiler environment. Full public JVM/Native foreground
 replacement and actual compiled-source handoff remain separate acceptance gates.
+
+## Main integration
+
+Foreground contracts/controller and this bridge were integrated together through
+`e835420`. A read-only merge audit compared all 38 changed files byte-for-byte
+against `cd7f522` and `b33ad73`; all matched. Three strict foreground/bootstrap
+schema tests passed against the combined main tree. The user's unstaged PLAN.md
+change was excluded from integration and its working diff recorded separately.
+
+Receipt: `/private/tmp/kvik-foreground-bootstrap-merged-audit-81_p2d3q/report.json`,
+8,785 bytes, SHA-256
+`76ca8bee2882d71d693e1e092563f46f457dbff3fd2ba10c16bda0a158bc0a4b`.
+This is source/schema integration evidence; it does not replace the pending full
+composed runtime build and public foreground acceptance.
