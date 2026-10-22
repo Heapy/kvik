@@ -240,7 +240,7 @@ class RemoteCachingActionExecutor(
         if (closed) return
         var failure: Throwable? = null
         fun cleanup(block: () -> Unit) { try { block() } catch (error: Throwable) {
-            if (failure == null) failure = error else failure!!.addSuppressed(error)
+            if (failure == null) failure = error else failure.addSuppressed(error)
         } }
         cleanup { abortPublications() }
         for (handle in handles.toList()) cleanup { handle.close() }

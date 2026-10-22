@@ -32,6 +32,7 @@ fun main(args: Array<String>) {
         "executor-unit" -> executorChecks(root)
         "executor-cancel" -> executorCancellationCheck(root, endpoint)
         "executor-fallback" -> executorFallbackCheck(root, endpoint, action)
+        "executor-missing" -> executorFallbackCheck(root, endpoint, action, "remote-miss")
         "identity" -> println("IDENTITY ${mapping.localKey.hash} ${mapping.actionDigest.hash} ${mapping.actionDigest.sizeBytes}")
         "publish", "unapproved", "test", "failed", "oversize", "undeclared" -> {
             content.put("fixture-input".encodeToByteArray())

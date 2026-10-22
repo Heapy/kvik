@@ -151,18 +151,18 @@ def main():
                 assert b'output-corruption' in original
                 damaged.write_bytes(original.replace(b'output-corruption', b'xutput-corruption'))
                 result = run('lookup', 'corrupt-reader', 'corruption')
-                assert 'MISS' in result and 'remote-miss' in result, result
+                assert 'MISS' in result and 'remote-cache-lookup-failed' in result, result
                 assert not list((root / 'corrupt-reader/actions').glob('*.json'))
                 assert not (root / 'corrupt-reader/restored').exists()
                 print('PASS real backend blob corruption cannot publish local metadata or outputs', flush=True)
-                print(run('executor-fallback', 'corrupt-executor', 'corrupt').strip(), flush=True)
+                print(run('executor-fallback', 'corrupt-executor', 'corruption').strip(), flush=True)
 
                 assert 'PUBLISHED true' in run('publish', 'missing-writer', 'missing')
                 stored_blob('missing').unlink()
                 result = run('lookup', 'missing-reader', 'missing')
                 assert 'MISS' in result and not list((root / 'missing-reader/actions').glob('*.json')), result
                 print('PASS deleted backend blob yields diagnosed miss', flush=True)
-                print(run('executor-fallback', 'missing-executor', 'missing').strip(), flush=True)
+                print(run('executor-missing', 'missing-executor', 'missing').strip(), flush=True)
 
                 with DropAfterProxy(('127.0.0.1', grpc), allowed=3) as proxy:
                     result = run('publish', 'partial-writer', 'partial', url=f'http://127.0.0.1:{proxy.port}')

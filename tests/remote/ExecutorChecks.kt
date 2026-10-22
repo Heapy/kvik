@@ -109,7 +109,7 @@ fun executorChecks(root: String) {
             check(result.status == status && fake.uploads.load() == 0)
         } finally { cache.close() }
     }
-    for (a in listOf(spec("never").copy(cachePolicy = CachePolicy.NEVER), spec("test").copy(kind = ActionKind.TEST), spec("local").copy(cachePolicy = CachePolicy.LOCAL))) {
+    for (a in listOf(spec("never").copy(cachePolicy = CachePolicy.NEVER), spec("test").copy(kind = ActionKind.TEST, cachePolicy = CachePolicy.NEVER), spec("local").copy(cachePolicy = CachePolicy.LOCAL))) {
         val fake = Remote(); val producer = Delegate(content)
         val cache = RemoteCachingActionExecutor(producer, local, content, fake, { true })
         try { val result = finish(cache, "bypass", a); cache.observeCompleted(mapOf("bypass" to result)); cache.drain() }
@@ -279,7 +279,7 @@ fun executorCancellationCheck(root: String, endpoint: RemoteEndpoint) {
     println("PASS actual stalled curl RPC cancellation joins before return and starts no delegate")
 }
 
-fun executorFallbackCheck(root: String, endpoint: RemoteEndpoint, action: ActionSpec) {
+fun executorFallbackCheck(root: String, endpoint: RemoteEndpoint, action: ActionSpec, expectedDecision: String = "remote-error") {
     val content = NativeContentStore("$root/fallback-cas")
     val local = NativeActionCache("$root/fallback-actions", content)
     val remote = RemoteActionCache(content, local, endpoint,
@@ -294,7 +294,7 @@ fun executorFallbackCheck(root: String, endpoint: RemoteEndpoint, action: Action
     val cache = RemoteCachingActionExecutor(producer, local, content, remote, { true }, cacheDecision = decisions::add)
     try {
         val result = finish(cache, "fallback", action)
-        check(result.status == ActionStatus.EXECUTED && producer.starts == 1 && decisions.single().decision == "remote-error")
+        check(result.status == ActionStatus.EXECUTED && producer.starts == 1 && decisions.single().decision == expectedDecision)
         cache.abortPublications()
         check(local.lookup(action.key(Sha256))?.outputs == result.outputs)
     } finally { cache.close() }
