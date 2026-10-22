@@ -28,7 +28,8 @@ data class JvmScriptObservation(
     fun toJson(): JsonValue.Object = obj(
         "result" to result.toJson(), "phase" to phase.name.lowercase().json(),
         "processResult" to (processResult?.let { obj("exitCode" to it.exitCode.json(),
-            "timedOut" to it.timedOut.json(), "cancelled" to it.cancelled.json()) } ?: JsonValue.Null),
+            "timedOut" to it.timedOut.json(), "cancelled" to it.cancelled.json(),
+            "setupFailure" to (it.setupFailure?.toJson() ?: JsonValue.Null)) } ?: JsonValue.Null),
         "cancelRequested" to cancelRequested.json(), "mainClass" to (mainClass?.json() ?: JsonValue.Null),
         "directory" to (directory?.json() ?: JsonValue.Null), "arguments" to arguments.map { it.json() }.json(),
         "stdlibJar" to (stdlibJar?.json() ?: JsonValue.Null),
@@ -162,6 +163,8 @@ class JvmScriptExecutor(
                 val diagnostics = when {
                     status == ActionStatus.CANCELLED -> listOf(diagnostic("KVIK_SCRIPT_CANCELLED", DiagnosticCategory.CANCELLATION, "Script cancelled"))
                     exit.timedOut -> listOf(diagnostic("KVIK_SCRIPT_TIMEOUT", DiagnosticCategory.INFRASTRUCTURE, "Script exceeded its declared timeout"))
+                    exit.setupFailure != null -> listOf(diagnostic("KVIK_SCRIPT_LAUNCH_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                        "Script process setup failed at ${exit.setupFailure.stage.name.lowercase()}: errno=${exit.setupFailure.errno}"))
                     exit.exitCode != 0 -> listOf(diagnostic("KVIK_SCRIPT_EXIT", DiagnosticCategory.INFRASTRUCTURE, "Script process exited with ${exit.exitCode}"))
                     else -> emptyList()
                 }

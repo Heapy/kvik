@@ -301,6 +301,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             scriptObservation?.phase == JvmScriptPhase.MAIN_DISCOVERY -> ExitStatus.INVALID_CONFIGURATION.code
             scriptObservation?.processResult?.cancelled == true || scriptObservation?.cancelRequested == true -> ExitStatus.CANCELLED.code
             scriptObservation?.processResult?.timedOut == true -> 124
+            scriptObservation?.processResult?.setupFailure != null -> ExitStatus.FAILED.code
             scriptObservation?.processResult?.exitCode?.let { it != 0 } == true -> scriptObservation!!.processResult!!.exitCode
             else -> status.code
         }

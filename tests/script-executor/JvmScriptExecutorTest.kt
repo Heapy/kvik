@@ -92,7 +92,7 @@ class JvmScriptExecutorTest {
         assertTrue(f.requests.isEmpty())
     }
     @Test fun ordinaryExitsIncluding125RemainExactHostObservations() {
-        for (code in listOf(0, 1, 17, 125, 130, 255)) {
+        for (code in listOf(0, 1, 17, 125, 127, 130, 255)) {
             val f = Fixture(FakeProcess(ProcessResult(code))); val executor = f.executor()
             executor.start(f.root.runId, "run", f.action).use {
                 val result = it.poll()!!; assertEquals(code, result.exitCode)
@@ -113,6 +113,20 @@ class JvmScriptExecutorTest {
         assertEquals(JvmScriptPhase.EXECUTION, observed.phase); assertNull(observed.processResult)
         assertEquals("KVIK_SCRIPT_LAUNCH_FAILED", observed.diagnostics.single().code)
         assertTrue(observed.arguments.isNotEmpty())
+    }
+    @Test fun setupFailureRetainsStageWithoutClaimingAnOrdinaryScriptExit() {
+        for (stage in listOf(ProcessSetupStage.WORKING_DIRECTORY, ProcessSetupStage.EXEC)) {
+            val exit = ProcessResult(if (stage == ProcessSetupStage.EXEC) 127 else 125,
+                setupFailure = ProcessSetupFailure(stage, 2))
+            val f = Fixture(FakeProcess(exit)); val executor = f.executor()
+            executor.start(f.root.runId, "run", f.action).use { assertEquals(ActionStatus.FAILED, it.poll()!!.status) }
+            val observed = executor.observations.getValue("run")
+            assertEquals(exit, observed.processResult)
+            assertEquals("KVIK_SCRIPT_LAUNCH_FAILED", observed.diagnostics.single().code)
+            val retained = observed.toJson().values.getValue("processResult").objectValue()
+            assertEquals(exit.setupFailure!!.toJson(), retained.getValue("setupFailure"))
+            assertEquals(1, f.process.closes)
+        }
     }
     @Test fun requestedCancellationCannotTurnAlreadyExitedZeroIntoSuccess() {
         val f = Fixture(); val executor = f.executor()
