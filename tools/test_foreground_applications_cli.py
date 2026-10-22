@@ -149,7 +149,12 @@ def main():
             (project/f'previous-ownership-{self.target}.txt').write_text(text)
             return pids,groups
         def started(self):
-            value=self.wait('application-started');ready=next(e['payload']['ready'] for e in self.events if e['type']=='application-ready' and e['payload']['generation']==value['generation'])
+            value=self.wait('application-started')
+            matches=[e['payload'] for e in self.events if e['type']=='application-ready' and e['payload']['ready']['token']==value['started']['token']]
+            assert len(matches)==1,matches
+            ready_event=matches[0];ready=ready_event['ready']
+            for field in ('generation','revision','composition','module','target','evidenceDirectory'):assert ready_event[field]==value[field]
+            assert base.digest(base.canonical(ready))==value['started']['ready']
             run=Path(ready['preparationDirectory']);record=json.loads((run/'verification.json').read_bytes());validate(record,'verification')
             assert record['status']=='passed' and record['requestedChecks']==[f'app:{self.target}:application']
             assert base.digest((run/'verification.json').read_bytes())==ready['verification']
