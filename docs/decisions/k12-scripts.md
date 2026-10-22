@@ -166,8 +166,35 @@ This slice supplies focused Native model tests and Python structural schema test
 Python tests cover old empty fields, new shapes, strict string endings, bounds, context-specific
 plugins and standalone entry schema. Native tests cover ordered expansion/provenance, duplicate
 references/plugin conflicts, prerequisite targets, serialization, no implicit module flattening,
-standalone selected-file binding and invalid declarations. Native execution is pending the allocated
-compiler slot; successful schema validation alone does not establish model compilation.
+standalone selected-file binding and invalid declarations.
+
+Verified source freeze: `1e33107` plus portable test correction `b5b8e01`. The existing contract
+harness compiled all core sources and ran all **50 Native tests**, including **15 script model
+tests**, successfully on 2026-10-22. Session `53218` reached terminal status 0; total harness time
+27.082 seconds, test-runner time 46 ms. No source changes occurred during compilation/execution.
+The compiler log is empty. Retained evidence is
+`/private/tmp/kvik-k12-script-model/.kvik/tests/contracts/case-qp_r8rzb/`:
+
+- `receipt.json` SHA-256 `5054e33a68281679dc9d3364881a4137ef8b1572cea5337554d1a5c06b4ae45c`.
+- `contracts.kexe` SHA-256 `50b932ab73178785093afd6e79559a3e54d8c3f867d8af110ba9d26fddaf4eff`, 3,094,912 bytes.
+- `tests.log` SHA-256 `5f10ff056c068d702dca7813336291fa409cc5906407ee2a80b8d5390c6061cb`, 10,976 bytes.
+
+The receipt binds 20 Kotlin source files, 19 harness/bootstrap files, five compiler launch inputs,
+the exact command/environment and resulting binary/log hashes. This is the existing focused Native
+contract harness, not a full installation-inventory or composed-runtime acceptance gate. Reproduce:
+
+```sh
+cd /private/tmp/kvik-k12-script-model
+/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python -B tools/test_contracts.py \
+  --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 \
+  --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
+/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python -B -m unittest discover \
+  -s tests/contracts -p 'test*schema.py'
+```
+
+All **27 Python schema tests** passed (six new script groups). Running
+`python3 -B tools/generate_schemas.py` reproduced both contracts.json and script.json byte-for-byte;
+`git diff --check` passed. These model/schema results do not imply successful script runtime effects.
 
 Remaining K12 acceptance: production lock/replay/snapshot/graph/inspection/CLI integration;
 standalone offline repeat; project catalog/profile/module and both plugin forms; serialization
