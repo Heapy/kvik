@@ -73,19 +73,29 @@ def main():
     parser.add_argument('--artifact-cache', type=Path, default=ROOT/'.kvik/tool-artifacts')
     parser.add_argument('--output-dir', type=Path, default=ROOT/'.kvik/tests/application-cli')
     parser.add_argument('--prepare-only', action='store_true', help='Write/validate fixture only; no runtime invocation, resolution or compiler')
+    parser.add_argument('--resume-case', type=Path, help='Re-audit a retained initial gate and continue the settings/lifecycle phases; never recompiles the initial preparation')
     parser.add_argument('--schema-file', type=Path, default=ROOT/'schemas/v1/contracts.json')
     args = parser.parse_args()
     runtime = args.runtime.resolve(strict=True)
     assert runtime.is_file() and os.access(runtime, os.X_OK)
+    assert not (args.prepare_only and args.resume_case)
+    # Permission failures must precede any application/guardian or consumer compiler.
+    if not args.prepare_only:
+        subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,command='], check=True, stdout=subprocess.DEVNULL)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    case = Path(tempfile.mkdtemp(prefix='case-', dir=args.output_dir.resolve()))
-    project = case/'project'
+    retained = args.resume_case.resolve(strict=True) if args.resume_case else None
+    case = Path(tempfile.mkdtemp(prefix='continuation-' if retained else 'case-', dir=retained or args.output_dir.resolve()))
+    data_case = retained or case
+    project = data_case/'project'
     fixture = ROOT/'tests/application-cli/fixture'
     original = inventory(fixture)
-    shutil.copytree(fixture, project)
+    if not retained: shutil.copytree(fixture, project)
     document = project_document(project)
-    write_json(project/'kvik.json', document)
-    (project/'literal.args').write_text('MUST_NOT_EXPAND\n')
+    if not retained:
+        write_json(project/'kvik.json', document)
+        (project/'literal.args').write_text('MUST_NOT_EXPAND\n')
+    else:
+        assert all(inventory(project)[p] == entry for p, entry in original.items()), 'Retained fixture changed'
     developer, data = args.developer_directory.resolve(), args.konan_data.resolve()
     tools = dict(schemaVersion=1, toolLock=json.loads((ROOT/'bootstrap/toolchains.lock.json').read_bytes()),
         roots=dict(jdk=str(args.java_home.resolve()), kotlinNative=str(args.konan_home.resolve()),
@@ -93,7 +103,8 @@ def main():
             sdk=str((developer/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk').resolve()),
             xcodeToolchain=str(developer/'Toolchains/XcodeDefault.xctoolchain')),
         konanData=str(data), compilerArtifacts=str(args.artifact_cache.resolve()))
-    write_json(project/'tools.json', tools)
+    if not retained: write_json(project/'tools.json', tools)
+    else: assert (project/'tools.json').read_bytes() == canonical(tools), 'Retained tool installation changed'
     schema_bytes = args.schema_file.read_bytes()
     schema = json.loads(schema_bytes)
     (case/'contracts.json').write_bytes(schema_bytes)
@@ -102,14 +113,32 @@ def main():
     validate(document, 'project')
     validate(tools, 'toolInstallation')
     runtime_identity = digest(runtime.read_bytes())
+    previous = None
+    if retained:
+        previous_bytes = (retained/'invocation.json').read_bytes()
+        previous = json.loads(previous_bytes)
+        assert previous['runtime'] == str(runtime) and previous['runtimeDigest'] == runtime_identity
+        assert previous['fixture'] == original and previous['schema'] == digest(schema_bytes)
+        assert previous['harness']['hash'] == 'e89c905318457efe8291e5c3b4275e8a264135cfbcb187dad7d4638342b85e24', 'Resume requires reviewed 240a9c7 initial harness'
+        expected_changed = json.loads(canonical(document))
+        for module in expected_changed['modules']:
+            if module['id'] == 'app':
+                for target in module['targets']:
+                    target['application']['arguments'] = LITERALS + ['changed']
+                    target['application']['environment']['APP_DECLARED'] = 'second'
+        assert (project/'kvik.json').read_bytes() == canonical(expected_changed), 'Resume point is not the known settings-resolve refusal'
+        failed = json.loads((retained/'settings-resolve.stdout.jsonl').read_bytes())
+        assert failed['diagnostic']['code'] == 'KVIK_LOCK_INVALID' and 'Stale dependency lock' in failed['diagnostic']['message']
+        assert all(not (retained/(t+'-settings-prepare.stdout.jsonl')).exists() for t in TARGETS)
     write_json(case/'invocation.json', dict(runtime=str(runtime), runtimeDigest=runtime_identity, fixture=original,
-        harness=digest(Path(__file__).read_bytes()), schema=digest(schema_bytes), schemaFile=str(args.schema_file.resolve()), sourceRoot=str(ROOT), prepareOnly=args.prepare_only))
+        harness=digest(Path(__file__).read_bytes()), schema=digest(schema_bytes), schemaFile=str(args.schema_file.resolve()), sourceRoot=str(ROOT), prepareOnly=args.prepare_only,
+        resumedFrom=str(retained) if retained else None, previousInvocation=digest(previous_bytes) if retained else None, previousHarness=previous['harness'] if retained else None))
     print('Evidence:', case, flush=True)
     if args.prepare_only:
         write_json(case/'preparation.json', dict(prepared=True, executed=False, project=str(project), fixture=original))
         print('PASS fixture schema/source preparation only; no acceptance claimed', flush=True)
         return
-    store, runs = case/'store', case/'runs'
+    store, runs = data_case/'store', data_case/'runs'
     shared = ['--project', str(project/'kvik.json'), '--store', str(store)] + [x for p in PINS for x in ('--pin', p)]
     environment = dict(os.environ, AMBIENT_APPLICATION_POISON='must-not-propagate', JAVA_TOOL_OPTIONS='-Dapplication.ambient=forbidden')
     environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
@@ -121,6 +150,7 @@ def main():
         result = subprocess.run(argv, cwd=case, env=environment, input=b'CONTROL_BYTES_NOT_APPLICATION_STDIN\n', capture_output=True, timeout=timeout)
         (case/(label+'.stdout.jsonl')).write_bytes(result.stdout)
         (case/(label+'.stderr.log')).write_bytes(result.stderr)
+        write_json(case/(label+'.result.json'), dict(exitCode=result.returncode, expected=expected, stdout=digest(result.stdout), stderr=digest(result.stderr), seconds=time.monotonic()-started))
         assert result.returncode == expected, (label, result.returncode, expected, case)
         values = [json.loads(line) for line in result.stdout.splitlines()]
         summaries.append(dict(label=label, exitCode=result.returncode, seconds=time.monotonic()-started))
@@ -274,20 +304,36 @@ def main():
     runtime_info, = command('runtime-info', ['runtime-info'])
     assert runtime_info['backend'] == 'kotlin-native'
     write_json(case/'runtime-info.json', runtime_info)
-    resolve('resolve')
+    def retained_values(label, arguments):
+        assert json.loads((retained/(label+'.command.json')).read_bytes()) == [str(runtime), *arguments]
+        raw = (retained/(label+'.stdout.jsonl')).read_bytes()
+        values = [json.loads(line) for line in raw.splitlines()]
+        summaries.append(dict(label=label, readOnlyReaudit=str(retained/(label+'.stdout.jsonl')), digest=digest(raw)))
+        return values
+    if retained:
+        resolved, = retained_values('resolve', ['resolve', *shared])
+        validate(resolved, 'dependencyResolution')
+    else: resolve('resolve')
     prepared_runs = {}
     for target in TARGETS:
-        assert effect_lines(target) == []
-        cold = audit_preparation(command(target+'-prepare', prepare_args(target)), target, 'executed')
-        assert effect_lines(target) == [], 'Preparation executed application'
-        values = command(target+'-warm-run', prepare_args(target, 'run-application'))
+        if not retained: assert effect_lines(target) == []
+        cold_values = retained_values(target+'-prepare', prepare_args(target)) if retained else command(target+'-prepare', prepare_args(target))
+        cold = audit_preparation(cold_values, target, 'executed')
+        assert not (cold['run']/'application-runs').exists()
+        if not retained: assert effect_lines(target) == [], 'Preparation executed application'
+        values = retained_values(target+'-warm-run', prepare_args(target, 'run-application')) if retained else command(target+'-warm-run', prepare_args(target, 'run-application'))
         warm = audit_preparation(values, target, 'local_hit')
         assert cold['keys'] == warm['keys']
         first = audit_execution(values, warm)
-        second = audit_execution(command(target+'-replay', replay_args(warm)), warm)
+        replayed = retained_values(target+'-replay', replay_args(warm)) if retained else command(target+'-replay', replay_args(warm))
+        second = audit_execution(replayed, warm)
         assert first != second and len(effect_lines(target)) == 2
         assert len({line.split(':', 1)[0] for line in effect_lines(target)}) == 2
         prepared_runs[target] = warm
+    if retained:
+        # The initial settings edit occurred after the initial boundary probes. Restore the exact
+        # original config while repeating those probes; never fabricate their process exit status.
+        write_json(project/'kvik.json', document)
     # Observe the public preparation boundary, then cancel or change a declared input.
     # No hook or test-only production behavior is used; raw events and effects are retained.
     for change in ('interrupt', 'stale-source'):
@@ -327,7 +373,9 @@ def main():
                     process.terminate()
                     try: process.wait(timeout=15)
                     except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=10)
-        summaries.append(dict(label=label, exitCode=process.returncode, preparationObserved=True, applicationStarted=False))
+        boundary_result = dict(label=label, exitCode=process.returncode, preparationObserved=True, applicationStarted=False)
+        write_json(case/(label+'.result.json'), boundary_result)
+        summaries.append(boundary_result)
     # One explicit config update changes package settings but preserves compile/link action identities.
     for module in document['modules']:
         if module['id'] == 'app':
@@ -335,7 +383,11 @@ def main():
                 target['application']['arguments'] = LITERALS + ['changed']
                 target['application']['environment']['APP_DECLARED'] = 'second'
     write_json(project/'kvik.json', document)
-    resolve('settings-resolve', offline=True)
+    lock_before = (project/'kvik.lock.json').read_bytes()
+    refused, = command('settings-offline-refusal', ['resolve', *shared, '--offline'], expected=2)
+    assert refused['diagnostic']['code'] == 'KVIK_LOCK_INVALID' and 'Stale dependency lock' in refused['diagnostic']['message']
+    assert (project/'kvik.lock.json').read_bytes() == lock_before
+    resolve('settings-resolve')
     for target in TARGETS:
         before = list(effect_lines(target))
         changed = audit_preparation(command(target+'-settings-prepare', prepare_args(target)), target,
@@ -455,6 +507,7 @@ def lifecycle_checks(runtime, project, case, environment, prepared_runs, replay_
         evidence.append(dict(tag=item['tag'], target=item['target'], ownerPid=process.pid, childPids=item['pids'],
                              guardians=item['guardians'], ownedPgid=item['pgid'], capturedPids=sorted(item['owned']), signal=int(sig),
                              exitCode=code, cleanupSeconds=time.monotonic()-started))
+        write_json(case/'lifecycle-progress.json', evidence)
     try:
         for target in TARGETS:
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
