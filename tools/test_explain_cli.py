@@ -26,7 +26,7 @@ def main():
     runtime, original = args.runtime.resolve(), args.run.resolve()
     validator = Draft202012Validator({**json.loads(args.schema_file.read_text()), '$ref': '#/$defs/actionExplanation'})
     with tempfile.TemporaryDirectory(prefix='kvik-explain-') as temp:
-        run = Path(temp) / original.name; run.mkdir()
+        run = Path(temp).resolve() / original.name; run.mkdir()
         for name in ('verification.json', 'completion.json', 'events.jsonl'):
             shutil.copy2(original / name, run / name)
         shutil.copytree(original / 'actions', run / 'actions')
