@@ -108,7 +108,7 @@ private fun unchangedQueryProject(result: JsonValue.Object, project: ProjectFile
 
 internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
     val options = queryArguments(args, setOf("--project", "--store", "--lock", "--compilation", "--usage"),
-        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--target"), flags = setOf("--offline"))
+        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--script", "--target"), flags = setOf("--offline"))
     val projectFlags = buildList {
         options.values.filterKeys { it in setOf("--project", "--store", "--lock") }.forEach { (key, value) -> add(key); add(value) }
         options.repeats.filterKeys { it in setOf("--pin", "--scope-pin", "--exclude-metadata-edge") }.forEach { (key, values) -> values.forEach { add(key); add(it) } }
@@ -126,7 +126,7 @@ internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
     var observedLock: ByteArray? = null
     var result = queryProjectDependencies(project.path, lock, store, project.configuration, effective,
         { NativeFiles.ensureDirectory(lock.substringBeforeLast('/'), create = false); NativeFiles.read(lock, 16 * 1024 * 1024).also { observedLock = it } }, readOnly, NativePomParser(), Clock.System.now().epochSeconds,
-        ProjectQueryFilter(options.repeats["--module"].orEmpty(), options.repeats["--target"].orEmpty(), options.values["--compilation"], options.values["--usage"]))
+        ProjectQueryFilter(options.repeats["--module"].orEmpty(), options.repeats["--target"].orEmpty(), options.values["--compilation"], options.values["--usage"], options.repeats["--script"].orEmpty()))
     if (observedLock != null) {
         val unchanged = try { NativeFiles.read(lock, 16 * 1024 * 1024).contentEquals(observedLock) } catch (_: Exception) { false }
         if (!unchanged) result = JsonValue.Object(result.values + mapOf("status" to "incomplete".json(), "freshness" to "indeterminate".json(),

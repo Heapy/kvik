@@ -12,15 +12,19 @@ internal fun requireDisjointStore(project: ProjectFile, store: String, lock: Str
     requireDisjointStore(project.root, project.path, projectInputPlan(project.configuration, selection), store, lock, tools)
 
 internal fun requireDisjointStore(root: String, configurationPath: String, plan: ProjectInputPlan, store: String, lock: String, tools: String) {
-    val watched = plan.paths.map { projectPath(root, it.value) } + listOf(configurationPath, lock, tools)
-    val storeAncestry = physicalAncestry(store)
+    requireDisjointInputPath(root, configurationPath, plan, store, listOf(lock, tools))
+}
+
+internal fun requireDisjointInputPath(root: String, configurationPath: String, plan: ProjectInputPlan, output: String, additional: List<String> = emptyList()) {
+    val watched = plan.paths.map { projectPath(root, it.value) } + configurationPath + additional
+    val storeAncestry = physicalAncestry(output)
     for (input in watched) {
         val ancestry = physicalAncestry(input)
         require(storeAncestry.none { (identity, tail) -> ancestry[identity]?.let { other ->
             tail.take(minOf(tail.size, other.size)).zip(other).all { (a, b) ->
                 NSString.create(string = a).compare(b, NSCaseInsensitiveSearch).toLong() == 0L
             }
-        } == true }) { "Content store overlaps watched input: $input" }
+        } == true }) { "Output path overlaps watched input: $input" }
     }
 }
 

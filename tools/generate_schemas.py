@@ -320,6 +320,24 @@ DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success",
 DEFS["workerResult"]["allOf"] = [{"if": {"properties": {"status": {"const": "success"}}}, "then": {"properties": {"exitCode": {"const": 0}}}, "else": {"properties": {"exitCode": {"not": {"const": 0}}}}}]
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING)})
 DEFS["dependencyResolution"] = versioned({"operation": enum("resolve", "check-lock"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "lockPath": STRING, "selections": INT, "artifacts": INT, "metadata": INT})
+DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
+DEFS["scriptInspection"] = versioned({
+    "kind": {"const": "script-inspection"}, "script": SCRIPT_ID, "configurationPath": STRING,
+    "inputSelection": ref("snapshotSelection"), "inputSnapshot": ref("digest"), "configuration": ref("digest"),
+    "dependencyLock": ref("digest"), "inputs": ref("tree"), "declaration": ref("script"),
+    "dependencies": array(object_({"reference": {"oneOf": [object_({"coordinate": COORDINATE}), object_({"module": ID})]},
+        "scope": enum("compile", "runtime"), "origin": ref("scriptOrigin")}), maxItems=256),
+    "compilerOptions": array(object_({"value": STRING, "origin": ref("scriptOrigin")}), maxItems=256),
+    "compilerPlugins": array(object_({"reference": STRING, "kind": enum("published", "workspace"), "origin": ref("scriptOrigin"),
+        "id": nullable(STRING), "compilerVersion": nullable(STRING), "options": array(STRING), "inputs": array(PATH),
+        "pathOptions": array(ref("pluginPathOption")), "outputs": array(PATH)}), maxItems=16),
+    "lockedSelections": array(ref("scopedSelection"), maxItems=8192),
+    "actions": array(object_({"id": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True)})),
+    "requestedChecks": array(ref("requestedCheck"), minItems=1, maxItems=1),
+    "languageRuntime": object_({"path": STRING, "digest": ref("digest"), "classpathPosition": {"const": "after-declared-dependencies"}}),
+    "entrypoint": object_({"requested": nullable(STRING), "status": {"const": "requires-compiled-script-metadata"}}),
+    "execution": {"const": "not-requested"},
+})
 
 
 def main():
@@ -330,6 +348,9 @@ def main():
     standalone = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/script.json",
         "$ref": "contracts.json#/$defs/standaloneScript"}
     (directory / "script.json").write_text(json.dumps(standalone, indent=2) + "\n")
+    inspection = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/script-inspection.json",
+        "$ref": "contracts.json#/$defs/scriptInspection"}
+    (directory / "script-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
 
 
 if __name__ == "__main__":

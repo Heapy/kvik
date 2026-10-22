@@ -5,6 +5,9 @@ import kvik.actioncache.LocalCachingActionExecutor
 import kvik.application.*
 import kvik.cache.*
 import kvik.compiler.jvm.JvmActionExecutor
+import kvik.compiler.jvm.JvmScriptExecutor
+import kvik.compiler.jvm.JvmScriptObservation
+import kvik.compiler.jvm.JvmScriptPhase
 import kvik.compiler.native.NativeCompilerExecutor
 import kvik.compiler.native.KotestNativeExecutor
 import kvik.compiler.ksp.KspNativeExecutor
@@ -32,39 +35,56 @@ private class RunJournal(private val runId: String, directory: String) : AutoClo
 }
 
 internal data class PreparedRun(val directory: String, val descriptor: Digest)
-internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null)
+internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null, val exitCode: Int = status.code)
 
 internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
     executeBuild(args, if (test) ProjectMode.TEST else ProjectMode.BUILD).status
 
-internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true): BuildOutcome {
+internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true): BuildOutcome =
+    executeBuildOptions(buildOptions(args), mode, ownInterrupts)
+
+internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile): BuildOutcome = executeBuildOptions(
+    BuildOptions(options.forFile(file), emptySet(), setOf("jvm"), checkNotNull(options.tools), options.runs, options.budget),
+    ProjectMode.BUILD, true, file, options.arguments)
+
+private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInterrupts: Boolean,
+                                scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList()): BuildOutcome {
     val test = mode == ProjectMode.TEST
-    val options = buildOptions(args)
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
         "Application preparation requires exactly one --module and --target"
     }
-    val command = when (mode) {
+    val command = if (scriptFile != null) "run-script" else when (mode) {
         ProjectMode.BUILD -> "build"
         ProjectMode.TEST -> "test"
         ProjectMode.APPLICATION -> "prepare-application"
     }
-    val project = readProject(options.project.project)
-    val storePath = projectPath(project.root, options.project.store)
-    val lockPath = projectPath(project.root, options.project.lock)
-    val toolsPath = projectPath(project.root, options.tools)
-    val runsPath = projectPath(project.root, options.runs)
+    val project = if (scriptFile == null) readProject(options.project.project) else null
+    val root = scriptFile?.root ?: checkNotNull(project).root
+    val name = scriptFile?.name ?: checkNotNull(project).name
+    val sourceBytes = scriptFile?.bytes ?: checkNotNull(project).bytes
+    val selection = scriptFile?.selection ?: SnapshotSelection.Project
+    val storePath = projectPath(root, options.project.store)
+    val lockPath = projectPath(root, options.project.lock)
+    val toolsPath = projectPath(root, options.tools)
+    val runsPath = projectPath(root, options.runs)
     val policy = options.project.resolverPolicy()
     // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
     // against the captured configuration below, since the project may change meanwhile.
-    val initialEffective = effectiveConfiguration(project.configuration, policy)
-    requireDisjointStore(project, storePath, lockPath, toolsPath)
+    val initialEffective = scriptFile?.effective(policy) ?: effectiveConfiguration(checkNotNull(project).configuration, policy)
+    if (scriptFile == null) requireDisjointStore(checkNotNull(project), storePath, lockPath, toolsPath)
+    else requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
     val content = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes)
-    val snapshots = NativeProjectSnapshotter(project.root, content)
-    val snapshot = when (val captured = snapshots.capture(project.name, lockPath, Sha256.digest(project.bytes))) {
+    val snapshots = NativeProjectSnapshotter(root, content)
+    val snapshot = when (val captured = snapshots.capture(name, lockPath, Sha256.digest(sourceBytes), selection)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
-    val effective = effectiveConfiguration(snapshot.configuration, policy)
+    val effective = if (selection == SnapshotSelection.StandaloneScript) effectiveConfiguration(snapshot.standaloneConfiguration, policy)
+        else effectiveConfiguration(snapshot.configuration, policy)
+    scriptFile?.primary?.let { source ->
+        snapshot.standaloneConfiguration.requirePrimarySource(source)
+        require(snapshot.inputs.files.any { it.path == source }) { "Selected standalone script is not a captured regular source" }
+    }
     val lock = try { DependencyLocks(content, kvik.resolution.NativePomParser()).loadLocked(snapshot.lockBytes, effective) }
         catch (failure: Exception) { throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Invalid dependency lock", ExitStatus.INVALID_CONFIGURATION) }
     val selectedTests = if (test && "jvm" in options.targets) options.modules.associateWith { id ->
@@ -73,7 +93,8 @@ internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: 
         val settings = target.testSettings ?: error("Declare testSettings.classes and testSettings.engines for $id:jvm; implicit test scanning is unsupported")
         JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it })
     } else emptyMap()
-    val requested = options.modules.flatMap { module -> options.targets.map { target -> "$module:$target:${mode.name.lowercase()}" } }.toSet()
+    val requested = scriptFile?.let { setOf("script:${it.scriptName}:jvm:run") }
+        ?: options.modules.flatMap { module -> options.targets.map { target -> "$module:$target:${mode.name.lowercase()}" } }.toSet()
     val tools = try { BuildTools(toolsPath) } catch (failure: Exception) {
         throw CliFailure("KVIK_TOOLCHAIN_CONFIGURATION", DiagnosticCategory.TOOLCHAIN, failure.message ?: "Invalid tool installations", ExitStatus.INVALID_CONFIGURATION)
     }
@@ -81,16 +102,21 @@ internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: 
     val run = NativeRunDirectory(runsPath)
     NativeFiles.syncDirectory(runsPath)
     val composition = Digest(runtimeComposition, runtimeCompositionSize)
-    val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command, "--project", project.path,
+    val selector = if (scriptFile == null) listOf("--project", checkNotNull(project).path)
+        else scriptFile.primary?.let { listOf("--file", "$root/${it.value}") } ?: listOf(scriptFile.scriptName, "--project", scriptFile.path)
+    val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) + selector + listOf(
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
         options.project.metadataExclusions.flatMap { listOf("--exclude-metadata-edge", it.toJson().canonical()) } +
-        options.modules.sorted().flatMap { listOf("--module", it) } + options.targets.sorted().flatMap { listOf("--target", it) }
-    NativeFiles.writeNew("${run.path}/run.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "projectRoot" to project.root.json(),
-        "configurationPath" to project.name.value.json(), "lockPath" to lockPath.json(), "toolsPath" to toolsPath.json(),
-        "targets" to options.targets.sorted().map { it.json() }.json()).canonical().encodeToByteArray())
+        (if (scriptFile == null) options.modules.sorted().flatMap { listOf("--module", it) } + options.targets.sorted().flatMap { listOf("--target", it) }
+            else listOf("--") + scriptArguments)
+    val runMetadata = obj("schemaVersion" to CONTRACT_VERSION.json(), "projectRoot" to root.json(),
+        "configurationPath" to name.value.json(), "lockPath" to lockPath.json(), "toolsPath" to toolsPath.json(),
+        "targets" to options.targets.sorted().map { it.json() }.json())
+    val selectedMetadata = if (selection == SnapshotSelection.Project) runMetadata else JsonValue.Object(runMetadata.values + ("inputSelection" to selection.toJson()))
+    NativeFiles.writeNew("${run.path}/run.json", selectedMetadata.canonical().encodeToByteArray())
     NativeFiles.writeNew("${run.path}/inputs.json", snapshot.inputs.toJson().canonical().encodeToByteArray())
     NativeFiles.writeNew("${run.path}/configuration.json", snapshot.configurationBytes)
     NativeFiles.writeNew("${run.path}/dependency-lock.json", snapshot.lockBytes)
@@ -103,6 +129,7 @@ internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: 
     var toolIdentities = emptyMap<String, Map<String, Digest>>()
     var results = emptyList<ActionResult>()
     val reports = mutableMapOf<String, TestObservation>()
+    var scriptObservation: JvmScriptObservation? = null
     var failedSetup = false
     var failureExit = ExitStatus.FAILED
     var cancelled = false
@@ -115,16 +142,19 @@ internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: 
             toolIdentities = tools.verify(options.targets)
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
-                graph = projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities,
-                    ProjectGraphRequest(options.modules, options.targets, mode, selectedTests))
+                graph = if (scriptFile == null) projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities,
+                    ProjectGraphRequest(options.modules, options.targets, mode, selectedTests)) else
+                    scriptActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities.getValue("jvm"), ScriptGraphRequest(scriptFile.scriptName, scriptArguments))
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
+                    val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
                     val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val application = ApplicationBundleExecutor(content)
                     val delegate = object : ActionExecutor {
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
+                            "kvik-jvm-script-v1" -> scripts
                             "kvik-application-bundle-v1" -> application
                             "kvik-ksp-native-v1" -> ksp
                             "kvik-kotest-native-tests-v1" -> kotest
@@ -146,6 +176,12 @@ internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: 
                         NativeFiles.syncDirectory("${run.path}/observations")
                     }
                     fun observations() {
+                        for ((id, observation) in scripts.observations) if (seen.add(id)) {
+                            retain(id, observation.toJson())
+                            require(scriptFile != null && id == "script:${scriptFile.scriptName}:jvm:run") { "Unexpected script observation" }
+                            scriptObservation = observation
+                            observation.diagnostics.forEach(journal::diagnostic)
+                        }
                         for ((id, observation) in jvm.observations) if (seen.add(id)) {
                             retain(id, observation.toJson())
                             observation.diagnostics.forEach { journal.diagnostic(it.copy(actionId = id, module = it.module ?: id.substringBefore(':'), target = "jvm")) }
@@ -259,7 +295,16 @@ internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: 
             record.status == VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
             else -> evidence.exitStatus
         }
-        return BuildOutcome(status, if (status == ExitStatus.SUCCESS) prepared else null)
+        val scriptExit = if (scriptFile == null) status.code else when {
+            cancelled -> ExitStatus.CANCELLED.code
+            failedSetup -> failureExit.code
+            scriptObservation?.phase == JvmScriptPhase.MAIN_DISCOVERY -> ExitStatus.INVALID_CONFIGURATION.code
+            scriptObservation?.processResult?.cancelled == true || scriptObservation?.cancelRequested == true -> ExitStatus.CANCELLED.code
+            scriptObservation?.processResult?.timedOut == true -> 124
+            scriptObservation?.processResult?.exitCode?.let { it != 0 } == true -> scriptObservation!!.processResult!!.exitCode
+            else -> status.code
+        }
+        return BuildOutcome(status, if (status == ExitStatus.SUCCESS) prepared else null, scriptExit)
     } catch (failure: Exception) {
         if (began) throw RunStreamFailure("Run ${run.runId} at ${run.path} has incomplete retained evidence: ${failure.message}")
         throw failure

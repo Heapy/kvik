@@ -55,13 +55,13 @@ private fun existingLock(path: String): Digest? {
 }
 
 /** Only explicit resolve publishes. Concurrent edits are checked under a persistent publication lock. */
-private fun publishLock(project: ProjectFile, destination: String, previous: Digest?, bytes: ByteArray) {
+private fun publishLock(configurationPath: String, configurationBytes: ByteArray, destination: String, previous: Digest?, bytes: ByteArray) {
     val parent = destination.substringBeforeLast('/')
     // One persistent inode per destination directory also coordinates different projects
     // and case/Unicode aliases of the same destination filename.
     NativeFiles.withLock("$parent/$PUBLICATION_LOCK") {
-        require(!sameEntry(destination, project.path)) { "Dependency lock cannot overwrite project configuration through a path alias" }
-        if (existingLock(destination) != previous || !NativeFiles.read(project.path, 4 * 1024 * 1024).contentEquals(project.bytes)) {
+        require(!sameEntry(destination, configurationPath)) { "Dependency lock cannot overwrite project configuration through a path alias" }
+        if (existingLock(destination) != previous || !NativeFiles.read(configurationPath, 4 * 1024 * 1024).contentEquals(configurationBytes)) {
             throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, "Project or dependency lock changed during resolution; retry", ExitStatus.INCOMPLETE)
         }
         val stage = NativeFiles.tempDirectory(parent)
@@ -82,10 +82,15 @@ internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): Js
     val options = projectOptions(args, lockOptions = true)
     val project = readProject(options.project)
     val effective = effectiveConfiguration(project.configuration, options.resolverPolicy())
-    val destination = projectPath(project.root, options.lock)
-    val store = projectPath(project.root, options.store)
+    return dependencyOperation(options, project.root, project.path, project.bytes, effective, updateRequested)
+}
+
+internal fun dependencyOperation(options: ProjectOptions, root: String, configurationPath: String, configurationBytes: ByteArray,
+                                 effective: EffectiveConfiguration, updateRequested: Boolean): JsonValue {
+    val destination = projectPath(root, options.lock)
+    val store = projectPath(root, options.store)
     require(destination.substringAfterLast('/').lowercase() != PUBLICATION_LOCK) { "Dependency lock cannot replace its publication coordination file" }
-    require(destination != project.path && !sameEntry(destination, project.path)) { "Dependency lock cannot overwrite project configuration through a path alias" }
+    require(destination != configurationPath && !sameEntry(destination, configurationPath)) { "Dependency lock cannot overwrite project configuration through a path alias" }
     require(lockOutsideStore(destination, store)) { "Dependency lock must be outside the content store" }
     val update = updateRequested && !options.offline
     var observedLock: Digest? = null
@@ -99,7 +104,7 @@ internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): Js
         } catch (failure: Exception) {
             throw CliFailure("KVIK_RESOLUTION_FAILED", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Dependency resolution failed")
         }
-        publishLock(project, destination, previous, resolved.bytes())
+        publishLock(configurationPath, configurationBytes, destination, previous, resolved.bytes())
         observedLock = resolved.digest
         resolved
     } else try {
@@ -111,7 +116,7 @@ internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): Js
         throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Dependency lock is unavailable", ExitStatus.INVALID_CONFIGURATION)
     }
     // Checking also refuses success if its configuration changed while verifying the lock.
-    if (!NativeFiles.read(project.path, 4 * 1024 * 1024).contentEquals(project.bytes) || existingLock(destination) != observedLock) {
+    if (!NativeFiles.read(configurationPath, 4 * 1024 * 1024).contentEquals(configurationBytes) || existingLock(destination) != observedLock) {
         throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, "Project or dependency lock changed during verification; retry", ExitStatus.INCOMPLETE)
     }
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "operation" to (if (update) "resolve" else "check-lock").json(),
