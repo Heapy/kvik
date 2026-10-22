@@ -48,7 +48,7 @@ Only `line` is currently supported. `branch` and `function` produce a structured
 
 Selected modules contribute one combined line ratio, not an average of module percentages. A shared logical source path counts once only when its content digest, line count and every line state agree across the selected modules. Conflicting copies yield an incomplete result. This combines modules within one report; it does not merge separate test scopes or runs.
 
-A passing threshold requires complete, current-at-completion coverage from a passing source run and at least one executable line. Unknown lines, partial reports and zero executable lines cannot pass, even with a zero-percent minimum. Checking a historical report does not establish freshness against today's sources.
+A passing threshold requires retained sources for every selected module, complete, current-at-completion coverage from a passing source run, and at least one executable line. Unknown lines, partial reports and zero executable lines cannot pass, even with a zero-percent minimum. Checking a historical report does not establish freshness against today's sources.
 
 The output contains `threshold.json`, `evaluation.json`, `policy.json` and `graph.json`, including when coverage is below the threshold. Stdout returns the structured result and output artifact manifest. Exit codes follow the result status: 0 for passed, 1 for failed, 3 for incomplete, and 130 for cancelled. Unsupported metrics normally yield incomplete. A failed, incomplete or cancelled source report preserves its status even when the measured ratio passes or the metric is unsupported. Invalid command arguments use exit code 2.
 
