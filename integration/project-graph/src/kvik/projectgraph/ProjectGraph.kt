@@ -4,6 +4,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.compiler.jvm.*
 import kvik.compiler.native.*
+import kvik.compiler.ksp.*
 
 enum class ProjectMode { BUILD, TEST }
 data class JvmTests(val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"))
@@ -57,7 +58,6 @@ private class Builder(
                 else setOf("native", "jdk", "sdk", "native-dependencies")) { "Missing/incompatible tool identities: $target" }
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
-            if (scope == "test") require(target(module, target).nativeTestSettings == null) { "Native Kotest execution adapter is not integrated yet" }
             val usages = if (target == "jvm") if (scope == "test") listOf("java-api", "java-runtime") else listOf("java-api") else if (scope == "test") listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
         }
@@ -138,7 +138,7 @@ private class Builder(
         return roots.flatMap { locked(it, domain, consumer).artifacts }.distinctBy { artifactPath(it, false) }
     }
     private fun locked(coordinate: Coordinate, domain: ResolutionDomain, consumerJvm: Int? = null): ScopedSelection {
-        val variant = if (domain.purpose == "compiler-plugin") jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
+        val variant = if (domain.isHostTool) jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
             else if (domain.target == "jvm") jvmVariantRequest(domain.usage, consumerJvm ?: error("Missing JVM consumer version"))
             else VariantRequest(domain.target, "kotlin-api", emptyMap())
         return selections[ResolutionRequest(coordinate, variant, domain)] ?: error("Missing locked dependency: $coordinate:$domain")
@@ -218,6 +218,7 @@ private class Builder(
     }
     private fun mainId(module: String, target: String) = "$module:$target:main"
     private fun compileId(module: String, target: String) = "$module:$target:test-compile"
+    private fun generationId(module: String) = "$module:macosArm64:ksp-test"
     private fun modulePath(module: String, target: String, scope: String) = LogicalPath("modules/$module/$target/$scope" + if (target == "jvm") "" else if (scope == "main") ".klib" else "/tests.kexe")
     private fun remap(results: Map<String, ActionResult>, module: String, target: String, scope: String): List<FileEntry> {
         val id = if (scope == "main") mainId(module, target) else compileId(module, target)
@@ -284,9 +285,11 @@ private class Builder(
         }
         val resource = resources(module, target, "test") + resources(module, target, "main")
         val moduleIds = listOf(module) + dependencies
+        val kotest = target(module, target).nativeTestSettings
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val compileEdges = moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
+        val producerEdges = moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
+        val compileEdges = producerEdges + if (kotest == null) emptySet() else setOf(generationId(module))
         val hasTestCompile = target == "macosArm64" || source.paths.isNotEmpty()
         if (hasTestCompile) {
             val options = options(module, target, "test", source)
@@ -295,6 +298,28 @@ private class Builder(
                 require(options.optIns.containsAll(production.optIns)) { "Native tests recompile main sources: test opt-ins must include main opt-ins" }
             }
             val artifacts = artifactEntries(external(module, target, "test", if (target == "jvm") "java-api" else "kotlin-api"), target)
+            if (kotest != null) {
+                val lockedRuntime = external(module, target, "test", "kotlin-api")
+                require(lockedRuntime.any { it.coordinate == Coordinate("io.kotest", "kotest-framework-engine-macosarm64", "6.2.5") } &&
+                    lockedRuntime.none { it.coordinate.group == "io.kotest" && it.coordinate.version != "6.2.5" }) { "Native Kotest tests require the pinned 6.2.5 runtime closure" }
+                fun host(purpose: String, roots: List<Coordinate>): List<FileEntry> {
+                    val domain = ResolutionDomain(module, target, "test", "java-runtime", purpose)
+                    require(domain in authorized)
+                    return artifactEntries(roots.flatMap { locked(it, domain).artifacts }, "jvm").distinctBy { it.path }
+                        .map { it.copy(path = LogicalPath("ksp/$purpose/${it.path.value.substringAfterLast('/')}")) }
+                }
+                val ksp = host("ksp-runtime", listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps").map { Coordinate("com.google.devtools.ksp", it, kotest.kspVersion) })
+                val processors = host("symbol-processor", listOf(kotest.processor))
+                val testSources = source.entries.filter { it.path !in main.paths }
+                require(testSources.isNotEmpty()) { "Native Kotest requires test Kotlin sources" }
+                nodes[generationId(module)] = ActionNode(generationId(module), producerEdges) { results ->
+                    validateResults(results, producerEdges)
+                    val modules = moduleIds.flatMap { remap(results, it, target, "main") }
+                    kspNativeAction(KspNativeCompilation(module, options.nativeModuleName, testSources.map { it.path }, source.common.filter { path -> testSources.any { it.path == path } },
+                        moduleIds.map { modulePath(it, target, "main") } + artifacts.map { it.path }, ksp.map { it.path }, processors.map { it.path }),
+                        merge(testSources, modules, artifacts, ksp, processors), composition, tools.getValue(target))
+                }
+            }
             val plugin = plugins(module, target, "test")
             require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
             nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
@@ -302,13 +327,17 @@ private class Builder(
                 val linkedModules = if (target == "jvm") moduleIds else dependencies
                 val dependencyFiles = linkedModules.flatMap { remap(results, it, target, "main") }
                 val workspace = workspacePlugin(module, target, "test", results)
-                val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries)
+                val generated = if (kotest == null) emptyList() else results.getValue(generationId(module)).outputs.files.also {
+                    require(it.map { file -> file.path } == listOf(kotestGeneratedLauncher)) { "KSP prerequisite must contain exactly the raw pinned launcher" }
+                }
+                val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries, generated)
                 val classpath = linkedModules.map { modulePath(it, target, "main") } + artifacts.map { it.path }
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,
                     explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
-                else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.kexe"), NativeOutput.TEST,
-                    options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors), inputs, composition, tools.getValue(target))
+                else nativeCompileAction(NativeCompilation(module, source.paths + generated.map { it.path }, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.kexe"),
+                    if (kotest == null) NativeOutput.TEST else NativeOutput.KOTEST_TEST, options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors,
+                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }), inputs, composition, tools.getValue(target))
             }
         } else require(selectedPlugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
         val id = "$module:$target:test"
@@ -328,7 +357,8 @@ private class Builder(
                 val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                     runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
                 jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines), inputs, composition, tools.getValue(target))
-            } else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
+            } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
+            else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
         }
         return id
     }

@@ -5,6 +5,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.compiler.jvm.*
 import kvik.compiler.native.*
+import kvik.compiler.ksp.*
 import kotlin.test.*
 import kotlinx.cinterop.*
 import platform.posix.*
@@ -60,6 +61,7 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
     return projectActionGraph(effective, lock(effective), files, composition, tools, request)
 }
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
+    "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
     "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) listOf(FileEntry(LogicalPath("tests.kexe"), digest(salt), true), FileEntry(LogicalPath("tests.kexe.dSYM/Contents/Info.plist"), digest("symbols")))
         else listOf(FileEntry(LogicalPath("module.klib"), digest(salt)))
@@ -76,11 +78,34 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
-    @Test fun nativeKotestContractCannotFallBackToTheBuiltinRunner() {
+    @Test fun nativeKotestGenerationPrecedesLinkAndSingleExecutionWithContentSensitiveEdges() {
         val configured = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"name\":\"macosArm64\"",
-            """"name":"macosArm64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")))
-        assertFailsWith<IllegalArgumentException> { graph(configured, request = request(ProjectMode.TEST, "macosArm64")) }
-        assertTrue(graph(configured, request = request(ProjectMode.BUILD, "macosArm64")).nodes.isNotEmpty())
+            """"name":"macosArm64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")
+            .replace("g:tests:1", "io.kotest:kotest-framework-engine-macosarm64:6.2.5")))
+        val planned = graph(configured, request = request(ProjectMode.TEST, "macosArm64"))
+        val actions = resolved(planned)
+        val generate = actions.getValue("app:macosArm64:ksp-test")
+        assertEquals(CachePolicy.LOCAL, generate.cachePolicy)
+        val ksp = KspNativeCompilation.fromJson(generate.parameters)
+        assertTrue(ksp.sources.all { "Test/" in it.value })
+        assertTrue(ksp.runtimeClasspath.all { it.value.startsWith("ksp/ksp-runtime/") })
+        assertTrue(ksp.processorClasspath.all { it.value.startsWith("ksp/symbol-processor/") })
+        assertTrue(ksp.libraries.contains(LogicalPath("modules/app/macosArm64/main.klib")))
+        val link = actions.getValue("app:macosArm64:test-compile")
+        val compilation = NativeCompilation.fromJson(link.parameters)
+        assertEquals(NativeOutput.KOTEST_TEST, compilation.produce)
+        assertEquals(kotestGeneratedLauncher, compilation.kotestLauncher)
+        assertFalse("-generate-test-runner" in link.arguments)
+        assertTrue(link.arguments.containsAll(listOf("-entry", "kvik.kotest.runtime.main", "prepared/kotest.kt", "prepared/KvikKotestRuntime.kt")))
+        val test = actions.getValue("app:macosArm64:test")
+        assertEquals("kvik-kotest-native-tests-v1", test.implementation)
+        assertEquals(CachePolicy.NEVER, test.cachePolicy)
+        assertTrue(test.arguments.isEmpty())
+        val changed = resolved(planned, "app:macosArm64:ksp-test")
+        assertEquals(generate.key(Sha256), changed.getValue("app:macosArm64:ksp-test").key(Sha256))
+        assertNotEquals(link.key(Sha256), changed.getValue("app:macosArm64:test-compile").key(Sha256))
+        assertNotEquals(generate.key(Sha256), resolved(planned, "app:macosArm64:main").getValue("app:macosArm64:ksp-test").key(Sha256))
+        assertFalse(resolved(graph(configured, request = request(ProjectMode.BUILD, "macosArm64"))).values.any { it.kind == ActionKind.GENERATE })
     }
     @Test fun workspacePluginHasHostRuntimeClosureAndContentSensitivePrerequisites() {
         val plugin = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main", "test"), listOf("value=first", "value=second"), listOf(LogicalPath("config.txt")),
