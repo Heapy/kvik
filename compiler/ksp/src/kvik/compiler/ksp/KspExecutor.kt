@@ -7,6 +7,7 @@ import kvik.core.*
 import kvik.cache.NativeOutputTrees
 import kvik.compiler.native.*
 import kvik.execution.NativeRunDirectory
+import kvik.execution.preparingAction
 
 data class KspActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val stdout: String, val stderr: String, val directory: String)
 
@@ -19,12 +20,19 @@ class KspNativeExecutor(
     private val toolchains: NativeToolchainProvider,
 ) : ActionExecutor {
     val observations: MutableMap<String, KspActionObservation> = linkedMapOf()
+    private val startedActions = mutableSetOf<String>()
     override fun resources(action: ActionSpec) = ResourceRequest(2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-        require(runId == this.runId && actionId !in observations && action.implementation == "kvik-ksp-native-v1")
+        require(runId == this.runId && actionId !in startedActions && action.implementation == "kvik-ksp-native-v1")
         val compilation = KspNativeCompilation.fromJson(action.parameters)
         require(action == kspNativeAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis)) { "KSP action differs from typed parameters" }
-        val layout = toolchains.verified(action.toolchains)
+        startedActions += actionId
+        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint) },
+            start = { layout -> startVerified(actionId, action, compilation, layout) })
+    }
+
+    private fun startVerified(actionId: String, action: ActionSpec, compilation: KspNativeCompilation,
+                              layout: NativeToolchainLayout): RunningAction {
         val platformLibraries = nativeLibraries(layout)
         val directory = NativeRunDirectory(runDirectory).path
         val trees = NativeOutputTrees(content)

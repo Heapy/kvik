@@ -6,14 +6,23 @@ import platform.posix.*
 import kvik.core.*
 import kvik.cache.NativeOutputTrees
 import kvik.execution.NativeRunDirectory
+import kvik.execution.preparingAction
 import kvik.compiler.jvm.JvmToolchainProvider
+import kvik.compiler.jvm.JvmToolchainLayout
 
 /** Provider verifies distribution/JDK/SDK plus LLVM/libffi/Xcode identities before returning paths.
  * native-dependencies is nativeDependenciesIdentity of the three verified component inventories.
  * developerDirectory must select that verified Xcode installation; dependencies must contain the
  * verified LLVM/libffi versions selected by the verified compiler's properties in offline mode.
  */
-fun interface NativeToolchainProvider { fun verified(identities: Map<String, Digest>): NativeToolchainLayout }
+fun interface NativeToolchainProvider {
+    fun verified(identities: Map<String, Digest>): NativeToolchainLayout
+    /** Called on an owned preparation thread. Long verification loops must call checkpoint. */
+    fun verified(identities: Map<String, Digest>, checkpoint: () -> Unit): NativeToolchainLayout {
+        checkpoint()
+        return verified(identities).also { checkpoint() }
+    }
+}
 data class NativeToolchainLayout(val compiler: String, val javaHome: String, val sdk: String, val dependencies: String, val developerDirectory: String,
     val nativeHome: String = compiler.substringBeforeLast('/').substringBeforeLast('/').ifEmpty { "/" }) {
     init { require(listOf(compiler, javaHome, sdk, dependencies, developerDirectory, nativeHome).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
@@ -31,9 +40,10 @@ class NativeCompilerExecutor(
     private val jvmToolchains: JvmToolchainProvider? = null,
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
+    private val startedActions = mutableSetOf<String>()
     override fun resources(action: ActionSpec) = ResourceRequest(if (action.kind == ActionKind.TEST) 512 else 2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-        require(this.runId == runId && actionId !in observations)
+        require(this.runId == runId && actionId !in startedActions)
         require(action.target == "macosArm64" && action.platform == mapOf("os" to "macos", "arch" to "arm64"))
         val compile = if (action.implementation == "kvik-native-compiler-v1") NativeCompilation.fromJson(action.parameters) else null
         val module: String
@@ -50,16 +60,28 @@ class NativeCompilerExecutor(
             require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis) == action)
         }
         val nativeIdentities = action.toolchains.filterKeys { it in setOf("native", "jdk", "sdk", "native-dependencies") }
-        val layout = toolchains.verified(nativeIdentities)
         val workspacePlugins = compile?.pluginApplications?.isNotEmpty() == true
-        val jvm = if (workspacePlugins) {
-            val identities = action.toolchains.filterKeys { it in setOf("jdk", "jvm-compiler", "jvm-worker", "junit") }
-            requireNotNull(jvmToolchains) { "Native workspace plugins require a verified JVM worker provider" }.verified(identities).also {
-                require(it.identities == identities && it.identities.getValue("jdk") == nativeIdentities.getValue("jdk")) { "Native/JVM toolchain identity mismatch" }
-                require(it.javaExecutable == "${layout.javaHome}/bin/java") { "Native and JVM providers selected different JDKs" }
-                require(Sha256.digest(parseJson(readNativeFile(it.compilerManifest, 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))) == identities.getValue("jvm-compiler")) { "Native plugin JVM manifest identity mismatch" }
-            }
-        } else null
+        startedActions += actionId
+        return preparingAction(actionId, action, prepare = { checkpoint ->
+            val layout = toolchains.verified(nativeIdentities, checkpoint)
+            val jvm = if (workspacePlugins) {
+                val identities = action.toolchains.filterKeys { it in setOf("jdk", "jvm-compiler", "jvm-worker", "junit") }
+                requireNotNull(jvmToolchains) { "Native workspace plugins require a verified JVM worker provider" }.verified(identities, checkpoint).also {
+                    require(it.identities == identities && it.identities.getValue("jdk") == nativeIdentities.getValue("jdk")) { "Native/JVM toolchain identity mismatch" }
+                    require(it.javaExecutable == "${layout.javaHome}/bin/java") { "Native and JVM providers selected different JDKs" }
+                    require(Sha256.digest(parseJson(readNativeFile(it.compilerManifest, 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))) == identities.getValue("jvm-compiler")) { "Native plugin JVM manifest identity mismatch" }
+                }
+            } else null
+            layout to jvm
+        }, start = { (layout, jvm) ->
+            startVerified(actionId, action, compile, module, executable, filter, layout, jvm)
+        })
+    }
+
+    private fun startVerified(actionId: String, action: ActionSpec, compile: NativeCompilation?, module: String,
+                              executable: LogicalPath?, filter: String?, layout: NativeToolchainLayout,
+                              jvm: JvmToolchainLayout?): RunningAction {
+        val workspacePlugins = compile?.pluginApplications?.isNotEmpty() == true
         val reservation = NativeRunDirectory(runDirectory)
         val directory = reservation.path
         val trees = NativeOutputTrees(content)

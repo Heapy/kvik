@@ -1,9 +1,12 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 package kvik.compiler.native
 
 import kvik.core.*
 import kvik.cache.NativeContentStore
 import kvik.execution.NativeRunDirectory
 import kotlin.test.*
+import platform.posix.usleep
+import kotlin.time.TimeSource
 
 class KotestExecutorTest {
     @Test fun eagerRunnerLaunchesOnceAndLateCancellationCannotTurnIntoSuccess() {
@@ -53,8 +56,11 @@ class KotestExecutorTest {
         assertFails { executor.start("run", "invalid", action.copy(environment = action.environment + ("KOTEST_INCLUDE_PATTERN" to "none"))) }
         assertEquals(0, verifications)
         executor.start("run", "test", action).use { running ->
-            if (cancel) running.cancel()
-            val result = assertNotNull(running.poll())
+            if (cancel) {
+                awaitLaunch(running) { starts == 1 }
+                running.cancel()
+            }
+            val result = awaitResult(running)
             assertEquals(if (cancel) ActionStatus.CANCELLED else if (failed || missingLog) ActionStatus.FAILED else ActionStatus.EXECUTED, result.status)
             assertEquals(result, running.poll())
             assertEquals(if (cancel || failed || missingLog) 0 else 1, result.outputs.files.size)
@@ -64,5 +70,23 @@ class KotestExecutorTest {
         assertEquals(if (cancel) VerificationStatus.CANCELLED else if (failed) VerificationStatus.FAILED else if (missingLog) VerificationStatus.INCOMPLETE else VerificationStatus.PASSED, report.status)
         assertEquals(if (failed) 1 else 0, report.counts.failed)
         assertEquals(!cancel && !missingLog, report.counts.discoveryComplete)
+    }
+}
+
+private fun awaitResult(running: RunningAction): ActionResult {
+    val deadline = TimeSource.Monotonic.markNow()
+    while (deadline.elapsedNow().inWholeMilliseconds < 5_000) {
+        running.poll()?.let { return it }
+        usleep(1_000u)
+    }
+    error("Action did not finish")
+}
+
+private fun awaitLaunch(running: RunningAction, launched: () -> Boolean) {
+    val deadline = TimeSource.Monotonic.markNow()
+    while (!launched()) {
+        check(deadline.elapsedNow().inWholeMilliseconds < 5_000) { "Action did not launch" }
+        check(running.poll() == null) { "Action completed before launch handoff" }
+        usleep(1_000u)
     }
 }

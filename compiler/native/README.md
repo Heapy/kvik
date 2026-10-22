@@ -8,16 +8,8 @@ The owned `NativePluginWorker` loads the verified Native compiler in an isolated
 
 The worker emits a structured `WorkerResult`; Native execution checks request identity, exit consistency and status before output capture. Missing/malformed results, compilation failures, timeout and cancellation publish no successful output tree. Existing no-plugin invocations and test execution retain their prior paths.
 
-Focused checks:
+Tool verification runs in an invocation-owned preparation thread, within the action's scheduler resource slot. The installed providers still hash the current tool files on every request. Cancellation checkpoints interrupt traversal and hashing; cancellation or close joins the thread before returning. Process launch, result handling and input/output materialization stay on the scheduler thread. Custom providers should implement the checkpoint overload for prompt cancellation during long verification work.
 
-```
-python3 -B tools/test_native_workspace_adapter.py \
-  --fixture /private/tmp/kvik-k13-native-plugin-probe/.kvik/tests/native-workspace-plugins/case-wxr_yudr \
-  --artifacts /Users/yoda/dev/pet/kvik/.kvik/tool-artifacts \
-  --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca \
-  --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20
-```
+The test deadline starts when discovery launches and continues through test execution. Verification of another action cannot block discovery-to-test progress.
 
-Add `--units-only` for the existing nine Native tests plus three new action/executor groups. The retained successful worker case is `case-uwu40c75`: exact comma/equals options, ordered classpath and Native parent origins, missing-runtime/API rejection, structured compiler diagnostics, and the shared JVM validation regression all pass. Native case `case-8nf3yh47` passed all 12 tests. An initial worker compilation in `case-k9o1t6gm` failed for a missing experimental API opt-in; corrected before the passing run. These checks reuse the compatibility fixture privately and do not claim the combined public CLI gate, which follows separately.
-
-The multiline correction uses installed compiler APIs rather than the newer reference-only `PluginsLoader` interface. That attempted route failed before plugin effects in `case-ls_iic4x` and remains retained. The registrar adapter passed six checks in `case-9ex14wct`, including exact LF/CR/U+2028/U+2029/NEL bytes. Three additional checks in `case-0mg7qf2n` rejected missing required, unknown and duplicate options before any plugin report was written. All use the same corrected worker build. The amended Native suite in `case-4rnq5jn2` passed all 12 tests, including the LIBRARY-only action invariant. The public CLI gate remains separate.
+Run adapter unit tests with `tools/test_kotest_native.py --stage units` and the installed tool paths. The public integration scenario is `tools/test_workspace_plugins_cli.py --target macosArm64`; it covers cold/warm runs, producer/input/option changes and compilation scopes. `tools/test_native_workspace_adapter.py` provides focused worker compatibility checks, including literal multiline options and invalid plugin configurations.

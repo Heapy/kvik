@@ -1,12 +1,87 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 package kvik.compiler.native
 
 import kvik.core.*
 import kotlin.test.*
+import platform.posix.usleep
+import kotlin.time.TimeSource
 import kvik.cache.NativeContentStore
 import kvik.execution.NativeRunDirectory
+import kvik.execution.SchedulerRun
+import kvik.execution.EventJournal
+import kotlin.concurrent.atomics.AtomicInt
 
 class NativeUnitTest {
+    @Test fun slowNeighborVerificationDoesNotConsumeTestDiscoveryDeadline() {
+        val root = NativeRunDirectory("/private/tmp").path
+        val store = NativeContentStore("$root/store")
+        val digest = store.put(byteArrayOf(1))
+        val tools = listOf("native", "jdk", "sdk", "native-dependencies").associateWith { digest }
+        val slowNative = Sha256.digest(byteArrayOf(2))
+        val test = nativeTestAction("sample", LogicalPath("tests.kexe"),
+            TreeManifest(listOf(FileEntry(LogicalPath("tests.kexe"), digest, true))), digest, tools, timeoutMillis = 1_000)
+        val compile = nativeCompileAction(NativeCompilation("slow", listOf(LogicalPath("Main.kt")), output = LogicalPath("main.klib")),
+            TreeManifest(listOf(FileEntry(LogicalPath("Main.kt"), digest))), digest, tools + ("native" to slowNative))
+        val slowEntered = AtomicInt(0)
+        val releaseSlow = AtomicInt(0)
+        val slowExited = AtomicInt(0)
+        val provider = object : NativeToolchainProvider {
+            override fun verified(identities: Map<String, Digest>) = verified(identities) {}
+            override fun verified(identities: Map<String, Digest>, checkpoint: () -> Unit): NativeToolchainLayout {
+                if (identities.getValue("native") == slowNative) {
+                    slowEntered.store(1)
+                    val started = TimeSource.Monotonic.markNow()
+                    try {
+                        while (releaseSlow.load() == 0 && started.elapsedNow().inWholeMilliseconds < 3_000) {
+                            checkpoint()
+                            usleep(1_000u)
+                        }
+                    } finally { slowExited.store(1) }
+                }
+                return NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer")
+            }
+        }
+        var launches = 0
+        val host = object : ProcessHost {
+            override fun start(request: ProcessRequest): OwnedProcess {
+                launches++
+                assertTrue(request.arguments.first().endsWith("/input/tests.kexe"))
+                val output = if ("--ktest_list_tests" in request.arguments) "sample.Suite.\n  test\n" else
+                    "##teamcity[testSuiteStarted name='sample.Suite']\n##teamcity[testStarted name='test']\n" +
+                    "##teamcity[testFinished name='test']\n##teamcity[testSuiteFinished name='sample.Suite']\n"
+                writeNativeFile(request.stdoutFile, output.encodeToByteArray())
+                writeNativeFile(request.stderrFile, byteArrayOf())
+                return object : OwnedProcess {
+                    override fun poll() = ProcessResult(0)
+                    override fun cancel() = Unit
+                    override fun close() = Unit
+                }
+            }
+            override fun close() = Unit
+        }
+        val executor = NativeCompilerExecutor("parallel", root, host, store, provider)
+        try {
+            SchedulerRun("parallel", listOf(ActionNode("a-test", emptySet()) { test }, ActionNode("b-compile", emptySet()) { compile }),
+                executor, ResourceBudget(2, 4096), EventJournal {}).use { run ->
+                val started = TimeSource.Monotonic.markNow()
+                while ("a-test" !in run.results || slowEntered.load() == 0) {
+                    check(started.elapsedNow().inWholeMilliseconds < 2_000) { "Tool verification blocked test progress" }
+                    run.tick()
+                    usleep(1_000u)
+                }
+                assertEquals(ActionStatus.EXECUTED, run.results.getValue("a-test").status)
+                assertEquals(VerificationStatus.PASSED, executor.observations.getValue("a-test").tests?.status)
+                assertEquals(0, slowExited.load(), "Test must finish while neighbor verification is still pending")
+                assertEquals(2, launches)
+                run.cancel()
+                assertTrue(run.tick())
+                assertEquals(ActionStatus.CANCELLED, run.results.getValue("b-compile").status)
+            }
+        } finally { releaseSlow.store(1) }
+        assertEquals(1, slowExited.load(), "Cancellation must join the preparation thread")
+        assertEquals(2, launches, "Cancelled preparation must not launch a compiler")
+    }
+
     @Test fun sourceFreeLinkIncludesDeclaredKlibWithoutExposingRuntimeLibrariesToCompilation() {
         val included = LogicalPath("modules/test.klib")
         val runtime = LogicalPath("runtime/private.klib")
@@ -72,7 +147,7 @@ class NativeUnitTest {
         }
         assertEquals(0, verifications)
         assertTrue(requests.isEmpty())
-        executor.start("tools", "valid", action).use { assertEquals(ActionStatus.FAILED, it.poll()!!.status) }
+        executor.start("tools", "valid", action).use { assertEquals(ActionStatus.FAILED, awaitResult(it).status) }
         val process = requests.single()
         assertEquals(1, process.arguments.count { it == offline })
         assertEquals(mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0", "JAVA_HOME" to "/verified/jdk", "SDKROOT" to "/verified/sdk",
@@ -80,7 +155,7 @@ class NativeUnitTest {
         val included = LogicalPath("compiled.klib")
         val link = nativeCompileAction(NativeCompilation("example", emptyList(), output = LogicalPath("tests.kexe"), produce = NativeOutput.TEST, includedLibrary = included),
             TreeManifest(listOf(FileEntry(included, digest))), digest, identities)
-        executor.start("tools", "link", link).use { assertEquals(ActionStatus.FAILED, it.poll()!!.status) }
+        executor.start("tools", "link", link).use { assertEquals(ActionStatus.FAILED, awaitResult(it).status) }
         val bound = requests.last()
         assertTrue("-Xinclude=${bound.workingDirectory}/input/compiled.klib" in bound.arguments)
         assertTrue("-Xinclude=input/compiled.klib" in link.arguments)
@@ -108,9 +183,11 @@ class NativeUnitTest {
                 val id = "$phase-$scenario"
                 val partial = "partial output from $id".encodeToByteArray()
                 var cancelled = false
+                var launched = false
                 var closed = false
                 val host = object : ProcessHost {
                     override fun start(request: ProcessRequest): OwnedProcess {
+                        launched = true
                         assertTrue(request.timeoutMillis in 1..action.timeoutMillis)
                         writeNativeFile(request.stdoutFile, byteArrayOf())
                         writeNativeFile(request.stderrFile,
@@ -127,8 +204,11 @@ class NativeUnitTest {
                 val executor = NativeCompilerExecutor("timeouts", root, host, store,
                     NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer") })
                 executor.start("timeouts", id, action).use { running ->
-                    if (scenario == "late-cancelled") running.cancel()
-                    val result = assertNotNull(running.poll())
+                    if (scenario == "late-cancelled") {
+                        awaitLaunch(running) { launched }
+                        running.cancel()
+                    }
+                    val result = awaitResult(running)
                     assertEquals(result, running.poll())
                     assertTrue(result.outputs.files.isEmpty())
                     assertNull(store.get(Sha256.digest(partial)), "Failed/cancelled partial output must not enter CAS")
@@ -205,8 +285,9 @@ class NativeUnitTest {
         val executor = NativeCompilerExecutor("review", root, host, store,
             NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer") })
         executor.start("review", "tests", action).use { running ->
+            awaitLaunch(running) { starts == 1 }
             running.cancel()
-            val result = running.poll()!!
+            val result = awaitResult(running)
             assertEquals(ActionStatus.CANCELLED, result.status)
             assertEquals(130, result.exitCode)
             assertEquals(result, running.poll())
@@ -248,5 +329,23 @@ class NativeUnitTest {
         val action = nativeTestAction("m", LogicalPath("test.kexe"), TreeManifest(listOf(FileEntry(LogicalPath("test.kexe"), d, true))), d, mapOf("native" to d, "jdk" to d, "sdk" to d, "native-dependencies" to d))
         assertEquals(CachePolicy.NEVER, action.cachePolicy)
         assertNotEquals(action.key(Sha256), action.copy(arguments=action.arguments+"--ktest_filter=missing").key(Sha256))
+    }
+}
+
+private fun awaitResult(running: RunningAction): ActionResult {
+    val deadline = TimeSource.Monotonic.markNow()
+    while (deadline.elapsedNow().inWholeMilliseconds < 5_000) {
+        running.poll()?.let { return it }
+        usleep(1_000u)
+    }
+    error("Action did not finish")
+}
+
+private fun awaitLaunch(running: RunningAction, launched: () -> Boolean) {
+    val deadline = TimeSource.Monotonic.markNow()
+    while (!launched()) {
+        check(deadline.elapsedNow().inWholeMilliseconds < 5_000) { "Action did not launch" }
+        check(running.poll() == null) { "Action completed before launch handoff" }
+        usleep(1_000u)
     }
 }

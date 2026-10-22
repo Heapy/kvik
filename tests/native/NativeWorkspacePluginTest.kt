@@ -6,6 +6,8 @@ import kvik.cache.NativeContentStore
 import kvik.compiler.jvm.*
 import kvik.execution.NativeRunDirectory
 import kotlin.test.*
+import platform.posix.usleep
+import kotlin.time.TimeSource
 
 class NativeWorkspacePluginTest {
     private val source = LogicalPath("Main.kt")
@@ -100,12 +102,33 @@ class NativeWorkspacePluginTest {
             assertFails { executor.start("run", "altered", action.copy(arguments = action.arguments + "-P")) }
             assertEquals(0, started)
             val running = executor.start("run", "valid", action)
-            if (scenario == "cancelled") running.cancel()
-            val result = running.poll()!!
+            if (scenario == "cancelled") {
+                awaitLaunch(running) { started == 1 }
+                running.cancel()
+            }
+            val result = awaitResult(running)
             running.close(); assertTrue(closed)
             assertEquals(if (scenario == "success") ActionStatus.EXECUTED else if (scenario == "cancelled") ActionStatus.CANCELLED else ActionStatus.FAILED, result.status)
             assertEquals(if (scenario == "success") 2 else 0, result.outputs.files.size)
             if (scenario in setOf("wrong-id", "wrong-exit", "missing-result")) assertTrue(executor.observations.getValue("valid").diagnostics.any { it.code == "KVIK_NATIVE_RESULT_INVALID" })
         }
+    }
+}
+
+private fun awaitResult(running: RunningAction): ActionResult {
+    val deadline = TimeSource.Monotonic.markNow()
+    while (deadline.elapsedNow().inWholeMilliseconds < 5_000) {
+        running.poll()?.let { return it }
+        usleep(1_000u)
+    }
+    error("Action did not finish")
+}
+
+private fun awaitLaunch(running: RunningAction, launched: () -> Boolean) {
+    val deadline = TimeSource.Monotonic.markNow()
+    while (!launched()) {
+        check(deadline.elapsedNow().inWholeMilliseconds < 5_000) { "Action did not launch" }
+        check(running.poll() == null) { "Action completed before launch handoff" }
+        usleep(1_000u)
     }
 }

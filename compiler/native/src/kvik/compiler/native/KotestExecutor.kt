@@ -3,6 +3,7 @@ package kvik.compiler.native
 import kvik.core.*
 import kvik.cache.NativeOutputTrees
 import kvik.execution.NativeRunDirectory
+import kvik.execution.preparingAction
 
 /** Single owned engine invocation: eager initialization is execution, never a discovery subprocess. */
 class KotestNativeExecutor(
@@ -13,14 +14,21 @@ class KotestNativeExecutor(
     private val toolchains: NativeToolchainProvider,
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
+    private val startedActions = mutableSetOf<String>()
     override fun resources(action: ActionSpec) = ResourceRequest(512)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-        require(runId == this.runId && actionId !in observations && action.implementation == "kvik-kotest-native-tests-v1")
+        require(runId == this.runId && actionId !in startedActions && action.implementation == "kvik-kotest-native-tests-v1")
         val fields = action.parameters.fields(setOf("module", "executable"))
         val module = fields.getValue("module").stringValue()
         val executable = LogicalPath(fields.getValue("executable").stringValue())
         require(action == kotestNativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, action.timeoutMillis)) { "Kotest action differs from typed parameters" }
-        val layout = toolchains.verified(action.toolchains)
+        startedActions += actionId
+        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint) },
+            start = { layout -> startVerified(actionId, action, module, executable, layout) })
+    }
+
+    private fun startVerified(actionId: String, action: ActionSpec, module: String, executable: LogicalPath,
+                              layout: NativeToolchainLayout): RunningAction {
         val directory = NativeRunDirectory(runDirectory).path
         val trees = NativeOutputTrees(content)
         trees.materialize(action.inputs, "$directory/input")
