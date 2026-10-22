@@ -2,6 +2,7 @@
 package kvik.cli
 
 import kvik.actioncache.LocalCachingActionExecutor
+import kvik.application.*
 import kvik.cache.*
 import kvik.compiler.jvm.JvmActionExecutor
 import kvik.compiler.native.NativeCompilerExecutor
@@ -30,8 +31,23 @@ private class RunJournal(private val runId: String, directory: String) : AutoClo
     override fun close() = disk.close()
 }
 
-internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
+internal data class PreparedRun(val directory: String, val descriptor: Digest)
+internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null)
+
+internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
+    executeBuild(args, if (test) ProjectMode.TEST else ProjectMode.BUILD).status
+
+internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true): BuildOutcome {
+    val test = mode == ProjectMode.TEST
     val options = buildOptions(args)
+    if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
+        "Application preparation requires exactly one --module and --target"
+    }
+    val command = when (mode) {
+        ProjectMode.BUILD -> "build"
+        ProjectMode.TEST -> "test"
+        ProjectMode.APPLICATION -> "prepare-application"
+    }
     val project = readProject(options.project.project)
     val storePath = projectPath(project.root, options.project.store)
     val lockPath = projectPath(project.root, options.project.lock)
@@ -57,7 +73,7 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
         val settings = target.testSettings ?: error("Declare testSettings.classes and testSettings.engines for $id:jvm; implicit test scanning is unsupported")
         JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it })
     } else emptyMap()
-    val requested = options.modules.flatMap { module -> options.targets.map { target -> "$module:$target:${if (test) "test" else "build"}" } }.toSet()
+    val requested = options.modules.flatMap { module -> options.targets.map { target -> "$module:$target:${mode.name.lowercase()}" } }.toSet()
     val tools = try { BuildTools(toolsPath) } catch (failure: Exception) {
         throw CliFailure("KVIK_TOOLCHAIN_CONFIGURATION", DiagnosticCategory.TOOLCHAIN, failure.message ?: "Invalid tool installations", ExitStatus.INVALID_CONFIGURATION)
     }
@@ -65,7 +81,7 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
     val run = NativeRunDirectory(runsPath)
     NativeFiles.syncDirectory(runsPath)
     val composition = Digest(runtimeComposition, runtimeCompositionSize)
-    val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", if (test) "test" else "build", "--project", project.path,
+    val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command, "--project", project.path,
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
@@ -92,7 +108,7 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
     var cancelled = false
     var began = false
     try {
-        check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
+        if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
         journal.emit("run-started", obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson()))
         began = true
         try {
@@ -100,14 +116,16 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
                 graph = projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities,
-                    ProjectGraphRequest(options.modules, options.targets, if (test) ProjectMode.TEST else ProjectMode.BUILD, selectedTests))
+                    ProjectGraphRequest(options.modules, options.targets, mode, selectedTests))
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
+                    val application = ApplicationBundleExecutor(content)
                     val delegate = object : ActionExecutor {
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
+                            "kvik-application-bundle-v1" -> application
                             "kvik-ksp-native-v1" -> ksp
                             "kvik-kotest-native-tests-v1" -> kotest
                             else -> when (action.target) {
@@ -198,11 +216,34 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
             reproduction, fresh, cancelled)
         // Setup/journal-independent runtime errors are actual failures even when no action could start.
         cancelled = cancelled || kvik_interrupt_requested() != 0
-        val record = when {
+        var record = when {
             cancelled -> evidence.record.copy(status = VerificationStatus.CANCELLED)
             failedSetup && failureExit == ExitStatus.INCOMPLETE -> evidence.record.copy(status = VerificationStatus.INCOMPLETE)
             failedSetup -> evidence.record.copy(status = VerificationStatus.FAILED)
             else -> evidence.record
+        }
+        var prepared: PreparedRun? = null
+        if (mode == ProjectMode.APPLICATION && record.status == VerificationStatus.PASSED) {
+            try {
+                val descriptor = materializePreparedApplication(record, content, run.path)
+                val current = snapshots.freshness(snapshot)
+                cancelled = kvik_interrupt_requested() != 0
+                if (cancelled || current != Freshness.CURRENT) {
+                    record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                        freshnessAtCompletion = current)
+                } else {
+                    prepared = PreparedRun(run.path, Sha256.digest(descriptor.toJson()))
+                    journal.emit("application-prepared", obj("directory" to run.path.json(),
+                        "descriptor" to prepared.descriptor.toJson(), "actionId" to descriptor.actionId.json()))
+                }
+            } catch (failure: Exception) {
+                failedSetup = true
+                failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_APPLICATION_PREPARATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize application bundle"))
+            }
         }
         NativeFiles.writeNew("${run.path}/verification.json", record.toJson().canonical().encodeToByteArray())
         NativeFiles.syncDirectory(run.path)
@@ -212,12 +253,18 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
             "journal" to Sha256.digest(NativeFiles.read("${run.path}/events.jsonl", 16 * 1024 * 1024)).toJson()).canonical().encodeToByteArray())
         NativeFiles.syncDirectory(run.path)
         println(finished.toJson().canonical())
-        return if (cancelled) ExitStatus.CANCELLED else if (failedSetup) failureExit else evidence.exitStatus
+        val status = when {
+            cancelled -> ExitStatus.CANCELLED
+            failedSetup -> failureExit
+            record.status == VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
+            else -> evidence.exitStatus
+        }
+        return BuildOutcome(status, if (status == ExitStatus.SUCCESS) prepared else null)
     } catch (failure: Exception) {
         if (began) throw RunStreamFailure("Run ${run.runId} at ${run.path} has incomplete retained evidence: ${failure.message}")
         throw failure
     } finally {
-        kvik_interrupt_restore()
+        if (ownInterrupts) kvik_interrupt_restore()
         journal.close()
     }
 }

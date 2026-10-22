@@ -3026,6 +3026,37 @@
       ],
       "additionalProperties": false
     },
+    "preparedApplication": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^(?=[^\\u0000-\\u001f]*\\S)[^\\u0000-\\u001f]+$(?![\\s\\S])"
+        },
+        "actionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\\s\\S])"
+        },
+        "verification": {
+          "$ref": "#/$defs/digest"
+        },
+        "outputs": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "actionId",
+        "verification",
+        "outputs"
+      ],
+      "additionalProperties": false,
+      "description": "Canonical UTF-8 descriptor must additionally fit 8 KiB and bind a completed application preparation record."
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -3047,7 +3078,10 @@
             "diagnostic",
             "test-result",
             "run-finished",
-            "session-state"
+            "session-state",
+            "application-prepared",
+            "application-started",
+            "application-finished"
           ]
         },
         "payload": {
@@ -3225,6 +3259,143 @@
                 "required": [
                   "state",
                   "runningSnapshot"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-prepared"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "descriptor": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "actionId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\\s\\S])"
+                  }
+                },
+                "required": [
+                  "directory",
+                  "descriptor",
+                  "actionId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "preparationRun": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "descriptor": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "module": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+                  },
+                  "target": {
+                    "enum": [
+                      "jvm",
+                      "macosArm64"
+                    ]
+                  },
+                  "stdout": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "stderr": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "required": [
+                  "preparationRun",
+                  "descriptor",
+                  "module",
+                  "target",
+                  "stdout",
+                  "stderr"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "application-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "preparationRun": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "exitCode": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "cancelled": {
+                    "type": "boolean"
+                  },
+                  "timedOut": {
+                    "type": "boolean"
+                  },
+                  "stdout": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "stderr": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  }
+                },
+                "required": [
+                  "preparationRun",
+                  "exitCode",
+                  "cancelled",
+                  "timedOut",
+                  "stdout",
+                  "stderr"
                 ],
                 "additionalProperties": false
               }

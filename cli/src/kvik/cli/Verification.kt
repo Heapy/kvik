@@ -4,11 +4,26 @@ import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.projectsnapshot.NativeProjectSnapshotter
 import kvik.runevidence.verificationRecordFromJson
+import kvik.toolchains.ToolComponent
 
-/** Read-only query; missing tools or unstable inputs never preserve a current claim. */
-internal fun verificationCommand(args: List<String>): ExitStatus {
-    require(args.size == 2 && args[0] == "--run") { "Use verification --run PATH" }
-    val directory = projectPath(currentDirectory(), args[1])
+internal data class CheckedRun(
+    val record: VerificationRecord,
+    val metadata: Map<String, JsonValue>,
+    val freshness: Freshness,
+    val reason: String?,
+    val javaExecutable: String?,
+) {
+    val exitStatus: ExitStatus get() = when {
+        freshness != Freshness.CURRENT -> ExitStatus.INCOMPLETE
+        record.status == VerificationStatus.PASSED -> ExitStatus.SUCCESS
+        record.status == VerificationStatus.FAILED -> ExitStatus.FAILED
+        record.status == VerificationStatus.CANCELLED -> ExitStatus.CANCELLED
+        else -> ExitStatus.INCOMPLETE
+    }
+}
+
+/** Read-only validation shared by queries and prepared application execution. */
+internal fun checkRun(directory: String): CheckedRun {
     NativeFiles.ensureDirectory(directory, create = false)
     fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
     val record = verificationRecordFromJson(document("verification.json"))
@@ -17,6 +32,7 @@ internal fun verificationCommand(args: List<String>): ExitStatus {
     require(record.runId == directory.substringAfterLast('/')) { "Verification run identity does not match directory" }
     var current = Freshness.INDETERMINATE
     var reason: String? = null
+    var javaExecutable: String? = null
     try {
         val completion = document("completion.json").fields(setOf("schemaVersion", "verification", "event", "journal"))
         completion.requireVersion()
@@ -47,12 +63,14 @@ internal fun verificationCommand(args: List<String>): ExitStatus {
             else -> {
                 val targets = metadata.getValue("targets").arrayValue().map(JsonValue::stringValue).toSet()
                 require(targets.isNotEmpty() && targets.all { it in setOf("jvm", "macosArm64") }) { "Invalid retained target selection" }
-                val verified = BuildTools(metadata.getValue("toolsPath").stringValue()).verify(targets)
+                val tools = BuildTools(metadata.getValue("toolsPath").stringValue())
+                val verified = tools.verify(targets)
                     .flatMap { (target, identities) -> identities.map { (name, digest) -> "$target:$name" to digest } }.toMap()
                 if (verified != record.toolchains) { current = Freshness.STALE; reason = "Verified tool identities changed" }
                 else {
                     current = freshness(record.inputSnapshot, fingerprint())
                     if (current != Freshness.CURRENT) reason = "Inputs changed or became unavailable during tool verification"
+                    else if ("jvm" in targets) javaExecutable = "${tools.roots.getValue(ToolComponent.JDK)}/bin/java"
                 }
             }
         }
@@ -60,13 +78,14 @@ internal fun verificationCommand(args: List<String>): ExitStatus {
         current = Freshness.INDETERMINATE
         reason = failure.message ?: "Cannot verify current inputs/tools"
     }
-    println(obj("schemaVersion" to CONTRACT_VERSION.json(), "verification" to record.toJson(),
-        "freshness" to current.name.lowercase().json(), "reason" to (reason?.json() ?: JsonValue.Null)).canonical())
-    return when {
-        current != Freshness.CURRENT -> ExitStatus.INCOMPLETE
-        record.status == VerificationStatus.PASSED -> ExitStatus.SUCCESS
-        record.status == VerificationStatus.FAILED -> ExitStatus.FAILED
-        record.status == VerificationStatus.CANCELLED -> ExitStatus.CANCELLED
-        else -> ExitStatus.INCOMPLETE
-    }
+    return CheckedRun(record, metadata, current, reason, javaExecutable)
+}
+
+/** Read-only query; missing tools or unstable inputs never preserve a current claim. */
+internal fun verificationCommand(args: List<String>): ExitStatus {
+    require(args.size == 2 && args[0] == "--run") { "Use verification --run PATH" }
+    val checked = checkRun(projectPath(currentDirectory(), args[1]))
+    println(obj("schemaVersion" to CONTRACT_VERSION.json(), "verification" to checked.record.toJson(),
+        "freshness" to checked.freshness.name.lowercase().json(), "reason" to (checked.reason?.json() ?: JsonValue.Null)).canonical())
+    return checked.exitStatus
 }
