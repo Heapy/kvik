@@ -17,6 +17,7 @@ The agent interface should expose these capabilities:
 | Capability | Intended behavior |
 | --- | --- |
 | Queryable project model | Map a file to its modules, source sets, targets and applicable checks. Expose generated-source origins, artifact relationships and effective settings with their configuration origins. |
+| Package and dependency version queries | Let an LLM list available package versions, inspect dependencies of a selected package version, and read declared and resolved project dependency versions through structured CLI queries. |
 | Change-aware verification | Select affected compilation, tests, ABI checks and generators from a change set. Explain selections and gaps. Start conservatively at module and target granularity; widen verification when impact is uncertain. |
 | Structured diagnostics | Return versioned events with diagnostic codes, source locations, module, target, failed action and reproduction details. Distinguish compilation errors, test failures, missing tools and infrastructure failures. |
 | Evidence tied to exact inputs | Identify the source snapshot, configuration, dependencies, toolchain and checks behind every result. Detect when edits or merges make evidence stale. |
@@ -194,6 +195,14 @@ Provide an explicit noninteractive control/event mode for CI and agents using th
 
 Define versioned JSON schemas for project inspection, diagnostics, run events and final results in K02. Give runs, actions and diagnostics stable identifiers within their documented scope. Machine-readable output must remain parseable without terminal decoration or interleaved tool output; retain raw logs as separately addressable artifacts. Automation must not hang on interactive prompts: report missing required input explicitly. Define exit statuses for failed and incomplete verification alongside the result schema.
 
+Provide read-only package and dependency queries for LLMs, with illustrative commands:
+
+- `kvik packages versions <group:artifact> --json`: list published versions from configured repositories, with explicit stable/prerelease filtering and bounded pagination.
+- `kvik packages dependencies <group:artifact:version> --target <target> --json`: inspect direct and transitive dependency version requirements and supported resolved selections for a specific package version and target/usage.
+- `kvik dependencies --project <path> --json`: list the project's declared and locked versions, including transitive dependencies, module/target/compilation scope, selected variants and dependency paths. An explicit available-versions query can show upgrade candidates alongside the locked version.
+
+Use versioned JSON with package coordinates, repository/source metadata identities, observation time, cache freshness and explicit incomplete/unsupported results. Keep declared requirements, locked selections and available versions distinct; availability alone does not prove compatibility. Queries may cache repository metadata but must not edit project configuration or lockfiles or execute package code. Support explicit refresh and offline queries that identify stale or missing metadata. Validate version listing, prereleases, multiple repositories, scoped dependency graphs, offline/cache behavior and unchanged project/lock bytes. Deliver these commands as K16 using the K05 resolver and K09 machine interface; future MCP tools should expose the same operations.
+
 Each verification record must contain the requested scope, actual checks and targets, input-manifest digest, configuration and lock identities, toolchain identities, action outcomes and reproduction details. Record test identities and discovered, executed, failed and skipped counts, including any unavailable counts or incomplete discovery. Distinguish restored compilation outputs from tests executed during this run. A filter matching no tests must be explicit and must not satisfy a requirement to run tests. Missing required checks or unavailable targets produce incomplete verification even when every executed check passes.
 
 Evidence applies to the recorded inputs and scope. Capture inputs before execution and run against that snapshot, or detect changes during execution and mark the result stale or indeterminate. Rechecking freshness must consider content, added and deleted files, configuration, dependencies and toolchain identity; a Git commit alone is insufficient. Later change-aware verification must account for committed, staged, unstaged and relevant untracked changes relative to its declared baseline. Unknown impact must widen the check set or report a gap.
@@ -257,6 +266,7 @@ Each task handoff must contain the change, exact reproduction commands, test res
 | K13 | Compiler and integration agents add workspace compiler-plugin references | K04, K06, K09; K12 for scripts, K08 for Native consumers | Plugin module builds before consumers without publication; edit–compile–test loop, invalidation, application scope and cycle diagnostics pass the plugin milestone gates |
 | K14 | Integration and cache agents implement source composition, native bootstrap and executable reuse | K02 | Clean source bootstrap, compatible cached startup, source-plugin rebuild, atomic publication and invalidation tests; shared cache integration with K04 |
 | K15 | Execution and CLI agents implement foreground continuous mode | K03, K06, K09, K14 | Reload/watch/test loop, recovery after failure, non-TTY control, process cleanup and concurrent-session isolation |
+| K16 | Resolution and CLI agents add package/dependency version queries for LLMs | K05, K09 | Structured available-version lists, package dependency requirements/selections and scoped declared/locked project versions; source/freshness, offline and read-only behavior verified |
 
 Roles are logical assignments, not a requirement to run all named agents simultaneously. For example, the resolution agent can take the compiler role once dependency contracts are stable.
 
