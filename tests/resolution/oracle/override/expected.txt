@@ -1,0 +1,7 @@
+packaging=jar
+example:inherited:2 scope=compile optional=false
+example:managed:4 scope=compile optional=false
+example:test-only:1 scope=test optional=false
+example:optional-managed:1 scope=compile optional=false
+example:explicit:1 scope=compile optional=false
+example:private-build:1 scope=provided optional=false

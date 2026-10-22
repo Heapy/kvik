@@ -223,5 +223,25 @@
     "file": "io.github.java-diff-utils__java-diff-utils__4.16.pom",
     "hash": "434d598a1e1813111385235161627a4c4ebd62134f7054428d3e202b32cf39de",
     "sizeBytes": 2304
+  },
+  "https://repo.maven.apache.org/maven2/io/github/java-diff-utils/java-diff-utils-parent/4.16/java-diff-utils-parent-4.16.pom": {
+    "file": "io.github.java-diff-utils__java-diff-utils-parent__4.16.pom",
+    "hash": "a4344da58e53a8e8c57be19e923badf24b27dd42b07de6d446d2a659a456509a",
+    "sizeBytes": 9162
+  },
+  "https://repo.maven.apache.org/maven2/net/bytebuddy/byte-buddy/1.17.6/byte-buddy-1.17.6.pom": {
+    "file": "net.bytebuddy__byte-buddy__1.17.6.pom",
+    "hash": "504c47ddbf15b0e73cca63b9db0a01c12a7cde7f8b33a0c5d9d5b506d1946b3e",
+    "sizeBytes": 19385
+  },
+  "https://repo.maven.apache.org/maven2/net/bytebuddy/byte-buddy-agent/1.17.6/byte-buddy-agent-1.17.6.pom": {
+    "file": "net.bytebuddy__byte-buddy-agent__1.17.6.pom",
+    "hash": "670d02cfbc396f4e7e6614dddcf4a0842faf17f9799373d7e0cb7b6aadcd8e6f",
+    "sizeBytes": 14372
+  },
+  "https://repo.maven.apache.org/maven2/net/bytebuddy/byte-buddy-parent/1.17.6/byte-buddy-parent-1.17.6.pom": {
+    "file": "net.bytebuddy__byte-buddy-parent__1.17.6.pom",
+    "hash": "dd15f95fd5605263f065d9dcb8eceecc48ebe4d666c37298ff446001494240bd",
+    "sizeBytes": 64800
   }
 }

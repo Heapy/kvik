@@ -55,11 +55,21 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
-    @Test fun pinnedDiffUtilsParentPomRemainsAnExplicitUnsupportedBoundary() {
+    @Test fun actualParentPomsPreserveExactArtifactAndMetadataClosures() {
         val transport = FixtureTransport()
-        val failure = assertFails { MavenResolver(transport, NativePomParser()).resolve(Coordinate.parse("io.github.java-diff-utils:java-diff-utils:4.16"), jvmVariantRequest("java-runtime", 11), listOf(repo)) }
-        assertTrue(failure.message!!.contains("Unsupported POM semantics"))
-        assertFalse(transport.urls.any { it.endsWith(".jar") })
+        val expected = parseJson(read("$root/compiler/jvm/kotaml-artifacts.lock.json")!!.decodeToString()).objectValue().getValue("artifacts").arrayValue()
+            .associate { value -> value.objectValue().let { it.getValue("coordinate").stringValue() to Digest(it.getValue("sha256").stringValue(), it.getValue("size").longValue()) } }
+        for (name in listOf("io.github.java-diff-utils:java-diff-utils:4.16", "net.bytebuddy:byte-buddy:1.17.6", "net.bytebuddy:byte-buddy-agent:1.17.6")) {
+            val coordinate = Coordinate.parse(name)
+            val selection = MavenResolver(transport, NativePomParser()).resolve(coordinate, jvmVariantRequest("java-runtime", 11), listOf(repo))
+            assertEquals(listOf(coordinate), selection.artifacts.map { it.coordinate })
+            assertEquals(expected.getValue(name), selection.artifacts.single().digest)
+            assertEquals(2, selection.metadata.size)
+            assertEquals(selection.artifacts.map { it.digest }, verifyLocked(selection) { transport.blobs[it] }.map(Sha256::digest))
+            val parent = selection.metadata.last().digest
+            assertFails { verifyLocked(selection) { if (it == parent) byteArrayOf(0) else transport.blobs[it] } }
+            assertFails { verifyLocked(selection) { if (it == parent) null else transport.blobs[it] } }
+        }
     }
     @Test fun actualKotlinTestCapabilitiesSelectOnlyDefaultAndExplicitJunit5Variants() {
         val transport = FixtureTransport()
@@ -224,9 +234,9 @@ class ResolutionTest {
         assertFailsWith<IllegalStateException> { parser.parse("<!DOCTYPE project [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><project>&x;</project>".encodeToByteArray()) }
         assertFailsWith<IllegalStateException> { parser.parse("<project>".encodeToByteArray()) }
         val base = "<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version>%s</project>"
-        for (unsupported in listOf("<parent/>", "<profiles/>", "<repositories/>", "<groupId>duplicate</groupId>")) {
+        for (unsupported in listOf("<parent/>", "<profiles><profile><dependencies/></profile></profiles>", "<repositories/>", "<groupId>duplicate</groupId>")) {
             val bytes = base.replace("%s", unsupported).encodeToByteArray()
-            assertFailsWith<IllegalArgumentException> { MavenResolver(MemoryTransport(mapOf("${repo.url}/example/a/1.0/a-1.0.pom" to bytes)), parser).resolve(example, jvm, listOf(repo)) }
+            assertFails { MavenResolver(MemoryTransport(mapOf("${repo.url}/example/a/1.0/a-1.0.pom" to bytes)), parser).resolve(example, jvm, listOf(repo)) }
         }
     }
 

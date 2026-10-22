@@ -50,6 +50,7 @@ class MavenResolver(
         val active = mutableSetOf<String>()
         val graph = linkedMapOf<String, Component>()
         val capabilityProviders = mutableMapOf<String, Pair<String, String>>()
+        val parentCoordinates = mutableSetOf<Coordinate>()
         val downloaded = linkedMapOf<String, ByteArray>()
         var requests = 0
         var downloadedBytes = 0L
@@ -68,7 +69,7 @@ class MavenResolver(
             val prior = selected[result.key()]
             if (prior == null) selected[result.key()] = result
             require(prior == null || prior == result) { "Conflicting versions: $prior and $result; supply an explicit compatible pin" }
-            require(selected.size <= maxComponents) { "Resolution component bound exceeded" }
+            require(selected.size + parentCoordinates.size <= maxComponents) { "Resolution component/parent bound exceeded" }
             return result
         }
         fun constrain(c: Coordinate) { constraints.getOrPut(c.key()) { mutableListOf() } += c.version }
@@ -78,7 +79,7 @@ class MavenResolver(
             require(key !in active) { "Dependency/redirect cycle: $c" }
             if (key in visited) {
                 require(expectedOwner == null || graph.getValue(key).owner == expectedOwner) { "Conflicting redirect component ownership" }
-                require(repository == null || graph.getValue(key).metadata.single().url.startsWith(repository.url.trimEnd('/') + "/")) { "Conflicting redirect repositories" }
+                require(repository == null || graph.getValue(key).metadata.first().url.startsWith(repository.url.trimEnd('/') + "/")) { "Conflicting redirect repositories" }
                 return key
             }
             active += key
@@ -90,7 +91,7 @@ class MavenResolver(
                     catch (_: MissingResource) { null }
                 }
             } ?: error("Missing metadata for $c")
-            val used = MetadataIdentity(found.url, Sha256.digest(found.bytes))
+            val used = mutableListOf(MetadataIdentity(found.url, Sha256.digest(found.bytes)))
             val edges = mutableListOf<String>()
             val artifacts = mutableListOf<LockedArtifact>()
             var metadataOwner = c
@@ -140,17 +141,19 @@ class MavenResolver(
                     chosen.items("dependencies").forEach { val (d, p) = dependency(it); edges += visit(d, p) }
                 }
             } else {
-                val pom = pomParser.parse(found.bytes)
-                require(pom.name == "project" && pom.value("modelVersion") == "4.0.0") { "Unsupported POM model" }
-                val allowed = setOf("modelVersion", "groupId", "artifactId", "version", "packaging", "dependencies", "dependencyManagement", "name", "description", "url", "licenses", "developers", "scm", "organization", "issueManagement", "ciManagement", "inceptionYear", "properties", "build", "distributionManagement")
-                require(pom.children.all { it.name in allowed }) { "Unsupported POM semantics (parents, profiles, repositories or relocation)" }
-                require(pom.child("distributionManagement")?.child("relocation") == null) { "POM relocation unsupported" }
-                require(Coordinate(pom.value("groupId") ?: error("Missing groupId"), pom.value("artifactId") ?: error("Missing artifactId"), pom.value("version") ?: error("Missing version")) == c) { "POM identity mismatch" }
-                val packaging = pom.value("packaging") ?: "jar"
+                val pom = effectivePom(c, pomParser.parse(found.bytes)) { parent ->
+                    parentCoordinates += parent
+                    require(parentCoordinates.size + selected.size <= maxComponents) { "Resolution component/parent bound exceeded" }
+                    val source = repositories.firstNotNullOfOrNull { candidate ->
+                        val url = candidate.url.trimEnd('/') + "/" + parent.path() + ".pom"
+                        try { Source(candidate, url, metadata(url), false) } catch (_: MissingResource) { null }
+                    } ?: error("Missing parent POM: $parent")
+                    used += MetadataIdentity(source.url, Sha256.digest(source.bytes))
+                    pomParser.parse(source.bytes)
+                }
+                val packaging = pom.packaging
                 require(packaging == if (platform) "pom" else "jar") { "Unsupported POM packaging/platform: $packaging" }
-                val management = pom.child("dependencyManagement")
-                require(management == null || management.children.all { it.name == "dependencies" })
-                pomDependencies(management?.child("dependencies"), variant, management = true).forEach(::constrain)
+                if (platform) pom.managementCoordinates().forEach(::constrain)
                 if (!platform) {
                     // A POM has no producer bytecode version. The known consumer target policy is
                     // retained in the lock, but does not establish a bytecode guarantee for POM jars.
@@ -160,7 +163,7 @@ class MavenResolver(
                     require(bytes.size <= 64 * 1024 * 1024)
                     artifacts += LockedArtifact(c, "maven-$packaging-${variant.usage}", found.repository.id, url, Sha256.digest(bytes))
                 }
-                pomDependencies(pom.child("dependencies"), variant).forEach { edges += visit(it) }
+                pom.dependencies(variant).forEach { edges += visit(it) }
             }
             // No capability conflict-resolution policy is implied by a version pin. Redirect
             // aliases share their terminal provider; independent providers must not coexist.
@@ -169,7 +172,7 @@ class MavenResolver(
                 require(prior == null || prior == (provider to capability.version)) { "Conflicting capability ${capability.key()}: $prior and $provider:${capability.version}; capability substitution is unsupported" }
                 capabilityProviders[capability.key()] = provider to capability.version
             }
-            graph[key] = Component(artifacts, listOf(used), edges, metadataOwner, provider)
+            graph[key] = Component(artifacts, used, edges, metadataOwner, provider)
             active -= key
             visited += key
             return key
@@ -263,23 +266,6 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
         if (producer > consumer) return false
     }
     return true
-}
-
-private fun pomDependencies(node: PomNode?, request: VariantRequest, management: Boolean = false): List<Coordinate> {
-    if (node == null) return emptyList()
-    require(node.children.all { it.name == "dependency" }) { "Unsupported POM dependency list" }
-    return node.children.mapNotNull { d ->
-        require(d.children.all { it.name in setOf("groupId", "artifactId", "version", "scope", "optional", "type") }) { "Unsupported POM dependency semantics" }
-        require(d.value("type") in setOf(null, "jar")) { "POM imports/classifiers/types unsupported" }
-        val scope = d.value("scope") ?: "compile"
-        require(scope in setOf("compile", "runtime", "test", "provided")) { "Unsupported POM scope: $scope" }
-        require(d.value("optional") in setOf(null, "true", "false"))
-        if (!management && (d.value("optional") == "true" || scope in setOf("test", "provided") || scope == "runtime" && request.usage != "java-runtime")) null
-        else {
-            require(!management || scope == "compile" && d.value("optional") != "true") { "Unsupported management entry" }
-            Coordinate(d.value("groupId") ?: error("Missing dependency group"), d.value("artifactId") ?: error("Missing dependency artifact"), d.value("version") ?: error("Unversioned POM dependency unsupported"))
-        }
-    }
 }
 
 /** Offline replay performs no metadata resolution; every byte must match the immutable lock. */
