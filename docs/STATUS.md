@@ -9,8 +9,9 @@ PLAN.md remains the acceptance specification. A working spike does not mark the 
 | K03 | Execution slice implemented | [Scheduler and ownership evidence](evidence/k03.md); independent review and event-schema correction; CLI run coordination remains K09 |
 | K04 | Local store implemented | [Native cache evidence](evidence/k04.md), 17 passing integration checks; independent review, explicit macOS/size/trusted-root limits |
 | K05 | Production dependency slice implemented | [Resolution evidence](evidence/k05.md); 12 binary artifacts match the reference, bounded metadata subset; test/plugin closures and persistent project lock integration remain |
-| K06 / K08 | In progress | JVM and Native compiler/test adapters in isolated worktrees |
-| K07 | In progress | Native remote-cache adapter in isolated worktree |
+| K06 | Worker slice implemented | [JVM evidence](evidence/k06.md); all 2,038 reference tests pass, reviewed classpath/container fixes; native orchestration/cache integration remains |
+| K08 | Under review | Native adapter compiles unchanged production modules; cancellation/parser findings being fixed before integration; upstream Native Kotest/KSP tests remain open |
+| K07 | Under review | Native REAPI adapter passed 13 backend scenario groups in isolated worktree; no compiler portability approval |
 | K09 | In progress | [Read-only native inspection](evidence/k09.md); build/test/run evidence integration remains |
 | K10–K11 | Pending | Adversarial validation and decision |
 | K12–K13 | Pending | Scripts and workspace compiler plugins |
