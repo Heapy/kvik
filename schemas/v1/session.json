@@ -263,7 +263,25 @@
                   "code",
                   "message"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "code": {
+                          "const": "KVIK_SESSION_OBSERVATION"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "message": {
+                          "maxLength": 512
+                        }
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
