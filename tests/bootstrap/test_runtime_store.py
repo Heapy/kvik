@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real filesystem/process K04 runtime-store tests; no compiler or network."""
 import dataclasses
+import errno
 import json
 import multiprocessing
 import os
@@ -268,9 +269,68 @@ class RuntimeStoreTests(unittest.TestCase):
             doc = json.loads(record.record_bytes)
             doc['outputs']['files'] = [{'path': p + '/leaf', 'digest': digest(b''), 'executable': False} for p in [left, right]]
             doc['outputs'] = rs._manifest(doc['outputs'])
-            with self.assertRaises(FileExistsError):
+            with self.assertRaises(rs.RuntimeStoreInvalidTree):
                 self.store.materialize(rs.RuntimeRecord(canonical(doc)), self.root / 'alias-tree')
             self.assertFalse((self.root / 'alias-tree').exists())
+
+    def test_intrinsic_alias_can_be_invalidated_but_final_destination_race_cannot(self):
+        record = self.publish()
+        probe = self.root / 'A'
+        probe.write_bytes(b'')
+        aliases = (self.root / 'a').exists()
+        probe.unlink()
+        if not aliases:
+            self.skipTest('Host filesystem preserves case distinctions')
+        for paths in [('A/leaf', 'a/leaf'), ('A', 'a')]:
+            doc = json.loads(record.record_bytes)
+            doc['outputs']['files'] = [{'path': p, 'digest': digest(b''), 'executable': False} for p in paths]
+            invalid = rs.RuntimeRecord(canonical(doc))
+            self.record_path().chmod(0o600)
+            self.record_path().write_bytes(invalid.record_bytes)
+            self.assertEqual(self.store.lookup(KEY), invalid)
+            with self.store.coordinate(KEY):
+                with self.assertRaises(rs.RuntimeStoreInvalidTree):
+                    self.store.materialize(invalid, self.root / 'aliased')
+                self.store.invalidate(invalid)
+                repaired = self.store.publish(KEY, self.bundle)
+                self.assertEqual(repaired, record)
+            self.assertFalse((self.root / 'aliased').exists())
+        destination = self.root / 'racing'
+        original_rename = rs.rename_new
+        def racing(source, target):
+            target.mkdir()
+            (target / 'untouched').write_bytes(b'owned by another writer')
+            return original_rename(source, target)
+        with mock.patch.object(rs, 'rename_new', side_effect=racing):
+            with self.assertRaises(FileExistsError):
+                self.store.materialize(record, destination)
+        self.assertEqual((destination / 'untouched').read_bytes(), b'owned by another writer')
+        self.assertEqual(self.store.lookup(KEY), record)
+
+    def test_unrepresentable_components_are_intrinsic_but_resource_errors_are_not(self):
+        record = self.publish()
+        for path in ['x' * 256, 'x' * 256 + '/leaf']:
+            doc = json.loads(record.record_bytes)
+            doc['outputs']['files'] = [{'path': path, 'digest': digest(b''), 'executable': False}]
+            invalid = rs.RuntimeRecord(canonical(doc))
+            self.record_path().chmod(0o600)
+            self.record_path().write_bytes(invalid.record_bytes)
+            self.assertEqual(self.store.lookup(KEY), invalid)
+            with self.store.coordinate(KEY):
+                with self.assertRaises(rs.RuntimeStoreInvalidTree):
+                    self.store.materialize(invalid, self.root / 'too-long')
+                self.store.invalidate(invalid)
+                self.assertEqual(self.store.publish(KEY, self.bundle), record)
+        with self.assertRaises(OSError) as result:
+            self.store.materialize(record, self.root / ('x' * 256))
+        self.assertEqual(result.exception.errno, errno.ENAMETOOLONG)
+        self.assertNotIsInstance(result.exception, rs.RuntimeStoreInvalidTree)
+        for error in [PermissionError(errno.EACCES, 'permission'), OSError(errno.ENOSPC, 'space'), OSError(errno.EIO, 'io')]:
+            with mock.patch.object(rs, '_write_new', side_effect=error):
+                with self.assertRaises(OSError) as result:
+                    self.store.materialize(record, self.root / 'io-failure')
+            self.assertIs(result.exception, error)
+            self.assertEqual(self.store.lookup(KEY), record)
 
     def test_invalidation_checks_same_record_and_requires_coordination(self):
         first = self.publish()
@@ -285,6 +345,18 @@ class RuntimeStoreTests(unittest.TestCase):
             self.assertEqual(self.store.lookup(KEY), second)
             self.store.invalidate(second)
             self.assertIsNone(self.store.lookup(KEY))
+
+    def test_compiler_harness_environment_and_launcher_inputs_are_explicit(self):
+        from tools.test_runtime_store import compiler_environment, launcher_inputs
+        environment = compiler_environment(self.root / 'jdk', self.root / 'home', self.root / 'tmp')
+        poison = {key: 'untrusted' for key in ['JAVACMD', 'JAVA_OPTS', 'JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS',
+                  '_JAVA_OPTIONS', 'BASH_ENV', 'DYLD_INSERT_LIBRARIES', 'KONAN_DATA_DIR', 'KONAN_HOME']}
+        with mock.patch.dict(os.environ, poison):
+            self.assertEqual(environment, compiler_environment(self.root / 'jdk', self.root / 'home', self.root / 'tmp'))
+        self.assertTrue(set(environment).isdisjoint(set(poison) - {'KONAN_DATA_DIR'}))
+        launchers = launcher_inputs(self.root / 'konan', self.root / 'jdk')
+        self.assertIn(self.root / 'konan/bin/run_konan', launchers)
+        self.assertIn(self.root / 'konan/tools/env_blacklist', launchers)
 
     def test_concurrent_publish_and_persistent_lock_inodes(self):
         context = multiprocessing.get_context('spawn')

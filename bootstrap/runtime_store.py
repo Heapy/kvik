@@ -5,6 +5,7 @@ validation and composition freshness remain the launcher's responsibility.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
 import fcntl
 import os
 from pathlib import Path
@@ -28,6 +29,10 @@ class RuntimeStoreError(ValueError):
 
 class RuntimeStoreConflict(RuntimeStoreError):
     pass
+
+
+class RuntimeStoreInvalidTree(RuntimeStoreError):
+    """Record paths cannot coexist on this filesystem; safe to invalidate it."""
 
 
 def _digest(value):
@@ -390,10 +395,20 @@ class RuntimeStore:
                 for index in range(1, len(parts)):
                     prefix = '/'.join(parts[:index])
                     if prefix not in directories:
-                        (stage / prefix).mkdir(mode=0o700)  # Exclusive: rejects physical aliases.
+                        try:
+                            (stage / prefix).mkdir(mode=0o700)
+                        except OSError as error:
+                            if error.errno not in (errno.EEXIST, errno.ENAMETOOLONG):
+                                raise
+                            raise RuntimeStoreInvalidTree(f'Unrepresentable runtime directory: {prefix}') from error
                         directories.add(prefix)
                 data = self._verified_blob(entry['digest'])
-                _write_new(stage / entry['path'], data, entry['executable'])
+                try:
+                    _write_new(stage / entry['path'], data, entry['executable'])
+                except OSError as error:
+                    if error.errno not in (errno.EEXIST, errno.ENAMETOOLONG):
+                        raise
+                    raise RuntimeStoreInvalidTree(f"Unrepresentable runtime file: {entry['path']}") from error
             for path in sorted(directories, key=lambda p: p.count('/') + bool(p), reverse=True):
                 sync_directory(stage / path)
             rename_new(stage, destination)

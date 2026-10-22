@@ -7,6 +7,7 @@ actual restored executable use. --no-build requires a matching retained receipt.
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -22,6 +23,20 @@ def write(path, value):
     path.write_bytes(canonical(value))
 
 
+def compiler_environment(java_home, home, temporary_directory):
+    # No inherited JVM/shell/dynamic-loader/developer flags reach the compiler.
+    return dict(PATH='/usr/bin:/bin:/usr/sbin:/sbin', JAVA_HOME=str(java_home.resolve()),
+                HOME=str(home.resolve()), KONAN_DATA_DIR=str((home / '.konan').resolve()),
+                DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
+                TMPDIR=str(temporary_directory.resolve()), LANG='C', LC_ALL='C', TZ='UTC',
+                KONAN_USE_COMPILER_SERVER='false')
+
+
+def launcher_inputs(konan_home, java_home):
+    return [konan_home / 'bin/konanc', konan_home / 'bin/run_konan', konan_home / 'tools/env_blacklist',
+            java_home / 'bin/java', *sorted((konan_home / 'konan/lib').glob('*.jar'))]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--konan-home', type=Path, default=Path.home() / '.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20')
@@ -32,12 +47,12 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     executable = output / 'probe.kexe'
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'tests/runtime-store').rglob('*.kt'))
-    command = [str(args.konan_home.resolve() / 'bin/konanc'), '-target', 'macos_arm64', '-entry',
+    command = [str(args.konan_home.resolve() / 'bin/konanc'), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-entry',
                'kvik.runtimestore.tests.main', '-o', str(executable), *map(str, sources)]
     inputs = {str(p.relative_to(ROOT)): file_digest(p) for p in sources}
-    tool_inputs = {str(p): file_digest(p) for p in [args.konan_home.resolve() / 'bin/konanc',
-                  args.konan_home.resolve() / 'konan/lib/kotlin-native-compiler-embeddable.jar', args.java_home.resolve() / 'bin/java']}
-    stamp = {'command': command, 'inputs': inputs, 'toolInputs': tool_inputs, 'javaHome': str(args.java_home.resolve())}
+    tool_inputs = {str(p): file_digest(p) for p in launcher_inputs(args.konan_home.resolve(), args.java_home.resolve())}
+    compiler_env = compiler_environment(args.java_home, Path.home(), Path(tempfile.gettempdir()))
+    stamp = {'command': command, 'inputs': inputs, 'toolInputs': tool_inputs, 'environment': compiler_env}
     receipt = output / 'build.json'
     if args.no_build:
         previous = json.loads(receipt.read_bytes())
@@ -45,10 +60,17 @@ def main():
     else:
         write(output / 'build-command.json', stamp)
         with (output / 'compile.log').open('wb') as log:
-            subprocess.run(command, cwd=ROOT, env=dict(os.environ, JAVA_HOME=str(args.java_home.resolve())),
+            subprocess.run(command, cwd=ROOT, env=compiler_env,
                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=300)
+        assert inputs == {str(p.relative_to(ROOT)): file_digest(p) for p in sources}, 'Sources changed during build'
+        assert tool_inputs == {str(p): file_digest(p) for p in launcher_inputs(args.konan_home.resolve(), args.java_home.resolve())}, 'Compiler launch inputs changed during build'
         write(receipt, {'stamp': stamp, 'binary': file_digest(executable), 'log': file_digest(output / 'compile.log')})
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output))
+    shutil.copy2(receipt, case / 'build.json')
+    shutil.copy2(output / 'compile.log', case / 'compile.log')
+    shutil.copy2(executable, case / 'probe.kexe')
+    executable = case / 'probe.kexe'
+    assert file_digest(executable) == json.loads((case / 'build.json').read_bytes())['binary']
     test_log = case / 'python-tests.log'
     with test_log.open('wb') as log:
         subprocess.run([sys.executable, '-B', str(ROOT / 'tests/bootstrap/test_runtime_store.py'), '-v'],
@@ -58,11 +80,11 @@ def main():
         argv = [str(executable), operation, str(store), canonical(key).decode()]
         if tree is not None:
             argv.append(str(tree))
-        result = subprocess.run(argv, capture_output=True, timeout=30)
+        result = subprocess.run(argv, env=compiler_env, capture_output=True, timeout=30)
         index = len(calls)
         (case / f'native-{index}.stdout').write_bytes(result.stdout)
         (case / f'native-{index}.stderr').write_bytes(result.stderr)
-        calls.append({'argv': argv, 'exitCode': result.returncode,
+        calls.append({'argv': argv, 'environment': compiler_env, 'exitCode': result.returncode,
                       'stdout': digest(result.stdout), 'stderr': digest(result.stderr)})
         assert (result.returncode == 0) == success, (argv, result.stdout, result.stderr)
         return json.loads(result.stdout) if success else None
@@ -124,7 +146,7 @@ def main():
         else:
             raise AssertionError('Expected Python publication conflict')
     assert record_path.read_bytes() == py_record.record_bytes
-    write(case / 'summary.json', {'passed': True, 'case': str(case), 'buildReceipt': file_digest(receipt),
+    write(case / 'summary.json', {'passed': True, 'case': str(case), 'buildReceipt': file_digest(case / 'build.json'), 'binary': file_digest(executable),
           'pythonTests': file_digest(test_log), 'pythonSources': {p: file_digest(ROOT / p) for p in
           ['bootstrap/runtime_store.py', 'bootstrap/identity.py', 'bootstrap/source_files.py',
            'bootstrap/source_graph.py', 'bootstrap/native_libraries.py',

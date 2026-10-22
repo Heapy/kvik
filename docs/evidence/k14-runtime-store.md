@@ -34,7 +34,12 @@ are made here. Valid cross-language records have identical semantics.
 
 Restoration writes independent files into a private sibling tree, fsyncs it,
 and exposes it with an atomic absent-only rename. It never hardlinks mutable
-materialized files to CAS. A failed restoration never exposes a partial tree.
+materialized files to CAS. A failed restoration never exposes a partial tree. `RuntimeStoreInvalidTree`
+identifies `EEXIST`/`ENAMETOOLONG` only from creating descendants/files inside the
+private staging tree. The launcher can invalidate this intrinsically unusable
+record under coordination and rebuild. Final destination races, permission,
+space and general I/O failures retain their ordinary error types and do not grant
+invalidation permission.
 Invalidation compares the observed record digest under its record lock before
 quarantining, so a stale rejection cannot remove a replacement record.
 
@@ -46,8 +51,8 @@ Run the Python filesystem/process suite:
 python3 -B tests/bootstrap/test_runtime_store.py -v
 ```
 
-The twelve groups cover defensive values, canonical/path/type/boundary rejection,
-actual case/Unicode aliases, corruption/missing data repair, preserved valid
+The fifteen groups cover defensive values, canonical/path/type/boundary rejection,
+actual case/Unicode aliases, host component-length limits, corruption/missing data repair, preserved valid
 inodes, conflicts, actual mode-000 read errors and injected read-I/O errors,
 symlinks/special files/ancestors, absent-only restoration, independent copied
 inodes, same-record invalidation, four concurrent producers, persistent locks,
@@ -66,8 +71,16 @@ It compiles unchanged production `NativeContentStore`, `NativeActionCache`, and
 source digests, command, compiler entrypoint/JAR and Java executable digests,
 compile log, and binary digest under `.kvik/tests/runtime-store/build.json`.
 `--no-build` requires that receipt to match before rerunning light interop checks.
+The complete compiler environment is constructed explicitly; inherited JVM,
+shell, developer and dynamic-loader overrides are absent. The stamp includes
+that environment, `run_konan`, `tools/env_blacklist`, Java, and every compiler
+library JAR, and the compiler uses `airplaneMode=true`. A changed launch-support
+file or environment changes the receipt and rejects `--no-build` reuse. Tests
+also poison ambient option variables to verify they do not enter the environment.
 The receipt is a focused compiler-input record, not a fresh inventory of the
-entire installed Native/JDK toolchain.
+entire installed Native/JDK/toolchain/SDK installation. Each final case retains
+its own copied executable, build receipt and compiler log so later probe rebuilds
+do not erase that invocation's evidence.
 
 The synthetic five-file bundle includes an executable flag, empty file, binary
 bytes, UTF-8 text, and supplementary/private-use Unicode filenames whose UTF-16
@@ -82,9 +95,9 @@ Actual interoperability passed on the provisioned macOS arm64 host with Kotlin
 Native 2.4.20 and JDK 25.0.4. The compile invocation completed successfully with
 an empty compiler log. Its fourteen Kotlin source digests and command are in
 `.kvik/tests/runtime-store/build.json` (SHA-256
-`bf6ebe6e337e312a5107b9b617069aae8d71b2de249f0ed63d3c72a12519d067`).
+`9ce92a44a3be9a476a9c54f85bde247b887c8eb8859412314e5e67f236ec1a1c`).
 The 1,166,664-byte probe has SHA-256
-`1165c5888dbef6ce3b5d7a29e7ce5dbafb77955fd28e899503b568a9a29f3a22`.
+`c75bccd5aca7c226230e6fd9ee4b81eec8882ba4ac02e5899909823b3f6bbf6d`.
 
 The final matching light replay was:
 
@@ -92,12 +105,12 @@ The final matching light replay was:
 python3 -B tools/test_runtime_store.py --no-build
 ```
 
-It returned zero with twelve Python groups passing in 1.238 seconds and eight
+It returned zero with fifteen Python groups passing in 0.662 seconds and eight
 actual Native calls, including the expected nonzero conflict/no-overwrite
 probes. Retained final case:
-`/private/tmp/kvik-k14-runtime-store-impl/.kvik/tests/runtime-store/case-s8h15730`.
+`/private/tmp/kvik-k14-runtime-store-impl/.kvik/tests/runtime-store/case-r4s3i0qb`.
 Its `summary.json` SHA-256 is
-`e9d7b33204543e37960e22ac715eb7d2c3db254b2eecfe069f0624aa575f526d`.
+`39437ab2024a40c8851ef968a85c6a4d90084699e95dfca8b3412f62226cd3ea`.
 The summary binds the seven Python implementation/harness dependency files,
 Python executable, complete native command/output receipts, canonical record,
 and both restored tree inventories. Earlier cases remain retained; the final
