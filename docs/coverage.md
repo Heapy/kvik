@@ -31,7 +31,7 @@ The output contains `coverage.json` (normalized data), `coverage/<module>/jacoco
 
 Coverage completeness is separate from test success. A failed, incomplete or cancelled test execution keeps that outcome; reporting cannot turn it into a passing run. Retained freshness describes completion time and does not verify today's source tree. Use `verification --run PATH` for current source/tool freshness.
 
-The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Exclusions through CLI settings, merging separate reports or CI runs, and publishing to external services remain separate features.
+The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Exclusions through CLI settings and publishing to external services remain separate features. Compatible reports can be combined with `coverage-aggregate` as described below.
 
 ## Check a threshold
 
@@ -46,10 +46,36 @@ Use repeatable `--module ID` instead of `--all-modules` to select production mod
 
 Only `line` is currently supported. `branch` and `function` produce a structured `unsupported` result rather than borrowing JaCoCo counters that lack normalized source mapping. The command verifies the original report artifacts against their retained digests and requires a new output directory outside the report directory.
 
-Selected modules contribute one combined line ratio, not an average of module percentages. A shared logical source path counts once only when its content digest, line count and every line state agree across the selected modules. Conflicting copies yield an incomplete result. This combines modules within one report; it does not merge separate test scopes or runs.
+Selected modules contribute one combined line ratio, not an average of module percentages. A shared logical source path counts once only when its content digest, line count and every line state agree across the selected modules. Conflicting copies yield an incomplete result. This threshold command consumes one normalized report. It does not yet accept a `coverage-aggregate` result.
 
 A passing threshold requires retained sources for every selected module, complete, current-at-completion coverage from a passing source run, and at least one executable line. Unknown lines, partial reports and zero executable lines cannot pass, even with a zero-percent minimum. Checking a historical report does not establish freshness against today's sources.
 
 The output contains `threshold.json`, `evaluation.json`, `policy.json` and `graph.json`, including when coverage is below the threshold. Stdout returns the structured result and output artifact manifest. Exit codes follow the result status: 0 for passed, 1 for failed, 3 for incomplete, and 130 for cancelled. Unsupported metrics normally yield incomplete. A failed, incomplete or cancelled source report preserves its status even when the measured ratio passes or the metric is unsupported. Invalid command arguments use exit code 2.
 
 The JSON contracts are `coverageThresholdPolicy`, `coverageThresholdResult`, `coverageThresholdExport` (stdout) and `coverageThresholdGraph` in `schemas/v1/contracts.json`. The result retains the source-report digest, selected policy, measured counts and diagnostics; `outcome` describes the comparison while `status` also preserves the source report’s outcome.
+
+## Aggregate coverage across checks
+
+Combine compatible reports while retaining an explicit list of expected test checks:
+
+```sh
+kvik coverage-aggregate \
+  --run /path/to/run-a --run /path/to/run-b \
+  --report /path/to/report-a/coverage.json --report /path/to/report-b/coverage.json \
+  --expect library:jvm:test --expect app:jvm:test \
+  --output /path/to/new-aggregate-directory
+```
+
+For one retained run, the default expected matrix is its requested test checks. With multiple runs, repeat `--expect module:target:test` to state the complete expected matrix. Available report files never define completeness. Repeat `--module ID` and `--target ID` to filter that matrix; unmatched selectors are rejected. Reports are optional so an explicitly expected check can be recorded as missing. At most one report may contribute to each selected check, including across repeated runs.
+
+The command requires compatible input snapshots, configurations, dependency locks and runtime compositions. Overlapping toolchain identities must agree. Each report must match the exact committed verification from one supplied run, and each selected report’s original artifacts must still match their digests. Aggregation reads retained data without running tests or tools. It does not combine arbitrary CI jobs from different source or build configurations.
+
+Within each JVM target, matching logical source paths are counted once. Their content digests, line counts and executable-line maps must agree. Contributors that share a production module must declare the same source inventory for that module. A line is covered if any contributor observed it covered, but an unknown observation remains unknown even when another contributor observed a hit. A non-executable versus executable mapping conflict is rejected. Sources retain their module/source-set owners and contributing check IDs. Coverage is never combined across targets.
+
+Missing checks remain visible. Unsupported targets remain both missing and unsupported. A target with missing or incomplete measurements has null counters rather than a partial percentage. Data completeness is separate from source-run success: failed, cancelled or incomplete verification cannot become passed through aggregation.
+
+The new output directory contains `aggregate.json`, `report.json` (the exported aggregate), `scope.json` and `graph.json`. Selected reports and their originals are copied under `contributors/<report-hash>/`; supplied run records are copied under `runs/<runId>/` as `verification.json`, `completion.json` and `events.jsonl`. The aggregate embeds each canonical contributor report with its digest. Stdout identifies the aggregate digest, status, completeness and output artifacts. Valid negative results are saved: exit codes are 0 for passed, 1 for failed, 3 for incomplete and 130 for cancelled.
+
+Aggregation currently exports line coverage only. Threshold checking of aggregate output is not yet supported; `coverage-check` continues to accept an individual `coverage.json` report.
+
+The aggregate contract is `coverageAggregate` in `schemas/v1/contracts.json`, with supporting `coverageAggregationScope`, `coverageContribution`, `coverageMergedSource` and `coverageAggregateTarget` definitions. `coverageAggregateExport` describes stdout and `coverageAggregateGraph` describes `graph.json`.

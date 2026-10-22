@@ -5220,6 +5220,713 @@
       ],
       "additionalProperties": false
     },
+    "coverageAggregationScope": {
+      "type": "object",
+      "properties": {
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLock": {
+          "$ref": "#/$defs/digest"
+        },
+        "expectedChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "inputSnapshot",
+        "configuration",
+        "dependencyLock",
+        "expectedChecks"
+      ],
+      "additionalProperties": false
+    },
+    "coverageContribution": {
+      "type": "object",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "report": {
+          "$ref": "#/$defs/coverageReport"
+        }
+      },
+      "required": [
+        "digest",
+        "report"
+      ],
+      "additionalProperties": false
+    },
+    "coverageMergedSource": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "allOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            {
+              "type": "string",
+              "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+            }
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "owners": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageSource"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "lineCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageLine"
+          },
+          "maxItems": 1000000,
+          "uniqueItems": true
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "digest",
+        "owners",
+        "contributors",
+        "lineCount",
+        "lines",
+        "complete"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lines": {
+                "items": {
+                  "properties": {
+                    "state": {
+                      "not": {
+                        "const": "unknown"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lineCount": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lines": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "lines": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageAggregateTarget": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "expectedChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "actualChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\\s\\S])"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "missingChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\\s\\S])"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "unsupportedChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\\s\\S])"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageMergedSource"
+          },
+          "uniqueItems": true
+        },
+        "covered": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unknown": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "expectedChecks",
+        "actualChecks",
+        "missingChecks",
+        "unsupportedChecks",
+        "sources",
+        "covered",
+        "executable",
+        "unknown",
+        "complete",
+        "status"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "const": "jvm"
+              },
+              "missingChecks": {
+                "maxItems": 0
+              },
+              "unsupportedChecks": {
+                "maxItems": 0
+              },
+              "actualChecks": {
+                "minItems": 1
+              },
+              "sources": {
+                "minItems": 1,
+                "items": {
+                  "properties": {
+                    "complete": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              "covered": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "executable": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "unknown": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "covered": {
+                "type": "null"
+              },
+              "executable": {
+                "type": "null"
+              },
+              "unknown": {
+                "type": "null"
+              },
+              "status": {
+                "not": {
+                  "const": "passed"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "const": "jvm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "unsupportedChecks": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "actualChecks": {
+                "maxItems": 0
+              },
+              "missingChecks": {
+                "minItems": 1
+              },
+              "unsupportedChecks": {
+                "minItems": 1
+              },
+              "sources": {
+                "maxItems": 0
+              },
+              "complete": {
+                "const": false
+              },
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageAggregate": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "coverage-aggregate"
+        },
+        "scope": {
+          "$ref": "#/$defs/coverageAggregationScope"
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageContribution"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "semantics": {
+          "const": "covered-in-any-contributor-per-target"
+        },
+        "capabilities": {
+          "const": [
+            "line"
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageAggregateTarget"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "scope",
+        "contributors",
+        "semantics",
+        "capabilities",
+        "targets",
+        "complete",
+        "status",
+        "diagnostics"
+      ],
+      "additionalProperties": false,
+      "$comment": "Kotlin CoverageAggregate.fromJson reconstructs the aggregate from scope and canonical contributions, verifies report digests and compatibility, and rejects any contradictory derived fields. JSON Schema cannot verify digest bindings, expected-check partitions, source ownership or line-union arithmetic.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "items": {
+                  "properties": {
+                    "complete": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "targets": {
+                "contains": {
+                  "properties": {
+                    "complete": {
+                      "const": false
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "targets": {
+                "contains": {
+                  "properties": {
+                    "status": {
+                      "const": "cancelled"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "targets": {
+                  "contains": {
+                    "properties": {
+                      "status": {
+                        "const": "failed"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              }
+            },
+            "else": {
+              "if": {
+                "properties": {
+                  "targets": {
+                    "contains": {
+                      "properties": {
+                        "status": {
+                          "const": "incomplete"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "status": {
+                    "const": "incomplete"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "status": {
+                    "const": "passed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageAggregateExport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "outputDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "aggregate": {
+          "$ref": "#/$defs/digest"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/tree"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "outputDirectory",
+        "aggregate",
+        "status",
+        "complete",
+        "artifacts"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "not": {
+                  "const": "passed"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageAggregateGraph": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "scope": {
+          "$ref": "#/$defs/coverageAggregationScope"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "verification": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "required": [
+              "runId",
+              "verification"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "action": {
+                "$ref": "#/$defs/action"
+              }
+            },
+            "required": [
+              "actionId",
+              "dependencies",
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "scope",
+        "runs",
+        "actions",
+        "results",
+        "events"
+      ],
+      "additionalProperties": false
+    },
     "verificationQuery": {
       "type": "object",
       "properties": {

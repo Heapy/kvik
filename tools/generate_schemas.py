@@ -408,6 +408,61 @@ DEFS["coverageThresholdExport"] = versioned({"outputDirectory": NONEMPTY,
 DEFS["coverageThresholdGraph"] = versioned({"sourceReport": ref("digest"),
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+COVERAGE_EXPECTED_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z][A-Za-z0-9_.-]*:test(?![\s\S])"}
+DEFS["coverageAggregationScope"] = object_({
+    **{name: ref("digest") for name in ("inputSnapshot", "configuration", "dependencyLock")},
+    "expectedChecks": array(COVERAGE_EXPECTED_CHECK, minItems=1, maxItems=1000, uniqueItems=True)})
+DEFS["coverageContribution"] = object_({"digest": ref("digest"), "report": ref("coverageReport")})
+DEFS["coverageMergedSource"] = object_({"path": COVERAGE_PATH, "digest": ref("digest"),
+    "owners": array(ref("coverageSource"), minItems=1, uniqueItems=True),
+    "contributors": array(COVERAGE_EXPECTED_CHECK, minItems=1, maxItems=1000, uniqueItems=True),
+    "lineCount": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
+    "lines": array(ref("coverageLine"), maxItems=1_000_000, uniqueItems=True), "complete": BOOL})
+DEFS["coverageMergedSource"]["allOf"] = deepcopy(DEFS["sourceCoverage"]["allOf"])
+DEFS["coverageAggregateTarget"] = object_({"target": COVERAGE_ID,
+    "expectedChecks": array(COVERAGE_EXPECTED_CHECK, minItems=1, maxItems=1000, uniqueItems=True),
+    **{name: array(COVERAGE_EXPECTED_CHECK, maxItems=1000, uniqueItems=True)
+       for name in ("actualChecks", "missingChecks", "unsupportedChecks")},
+    "sources": array(ref("coverageMergedSource"), uniqueItems=True),
+    **{name: nullable(INT) for name in ("covered", "executable", "unknown")}, "complete": BOOL, "status": REPORT_STATUS})
+DEFS["coverageAggregateTarget"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": True}}}, "then": {"properties": {
+        "target": {"const": "jvm"}, "missingChecks": {"maxItems": 0}, "unsupportedChecks": {"maxItems": 0},
+        "actualChecks": {"minItems": 1}, "sources": {"minItems": 1, "items": {"properties": {"complete": {"const": True}}}},
+        "covered": INT, "executable": INT, "unknown": {"const": 0}}},
+     "else": {"properties": {**{name: {"type": "null"} for name in ("covered", "executable", "unknown")},
+                             "status": {"not": {"const": "passed"}}}}},
+    {"if": {"properties": {"target": {"const": "jvm"}}}, "then": {"properties": {"unsupportedChecks": {"maxItems": 0}}},
+     "else": {"properties": {"actualChecks": {"maxItems": 0}, "missingChecks": {"minItems": 1},
+        "unsupportedChecks": {"minItems": 1}, "sources": {"maxItems": 0}, "complete": {"const": False}, "status": {"const": "incomplete"}}}},
+]
+DEFS["coverageAggregate"] = versioned({"kind": {"const": "coverage-aggregate"}, "scope": ref("coverageAggregationScope"),
+    "contributors": array(ref("coverageContribution"), maxItems=1000, uniqueItems=True),
+    "semantics": {"const": "covered-in-any-contributor-per-target"}, "capabilities": {"const": ["line"]},
+    "targets": array(ref("coverageAggregateTarget"), minItems=1, maxItems=1000, uniqueItems=True),
+    "complete": BOOL, "status": REPORT_STATUS, "diagnostics": array(STRING)})
+DEFS["coverageAggregate"]["$comment"] = ("Kotlin CoverageAggregate.fromJson reconstructs the aggregate from scope and canonical "
+    "contributions, verifies report digests and compatibility, and rejects any contradictory derived fields. "
+    "JSON Schema cannot verify digest bindings, expected-check partitions, source ownership or line-union arithmetic.")
+DEFS["coverageAggregate"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": True}}},
+     "then": {"properties": {"targets": {"items": {"properties": {"complete": {"const": True}}}}}},
+     "else": {"properties": {"targets": {"contains": {"properties": {"complete": {"const": False}}}}}}},
+    {"if": {"properties": {"targets": {"contains": {"properties": {"status": {"const": "cancelled"}}}}}},
+     "then": {"properties": {"status": {"const": "cancelled"}}}, "else": {
+        "if": {"properties": {"targets": {"contains": {"properties": {"status": {"const": "failed"}}}}}},
+        "then": {"properties": {"status": {"const": "failed"}}}, "else": {
+            "if": {"properties": {"targets": {"contains": {"properties": {"status": {"const": "incomplete"}}}}}},
+            "then": {"properties": {"status": {"const": "incomplete"}}}, "else": {"properties": {"status": {"const": "passed"}}}}}},
+]
+DEFS["coverageAggregateExport"] = versioned({"outputDirectory": NONEMPTY, "aggregate": ref("digest"),
+    "status": REPORT_STATUS, "complete": BOOL, "artifacts": ref("tree")})
+DEFS["coverageAggregateExport"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": False}}}, "then": {"properties": {"status": {"not": {"const": "passed"}}}}}]
+DEFS["coverageAggregateGraph"] = versioned({"scope": ref("coverageAggregationScope"),
+    "runs": array(object_({"runId": NONEMPTY, "verification": ref("digest")}), minItems=1, maxItems=100, uniqueItems=True),
+    "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
+    "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
 APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({
