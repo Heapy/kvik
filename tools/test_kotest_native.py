@@ -27,7 +27,7 @@ def digest(path):
 
 
 def bootstrap_sources():
-    sources = [p for directory in ['core/src', 'cache/src', 'execution/src', 'compiler/native/src', 'compiler/ksp/src', 'integration/action-cache/src']
+    sources = [p for directory in ['core/src', 'cache/src', 'execution/src', 'compiler/native/src', 'compiler/jvm/native/src', 'compiler/ksp/src', 'integration/action-cache/src']
                for p in sorted((ROOT/directory).rglob('*.kt'))]
     units = sorted((ROOT/'tests/native').glob('*Test.kt')) + sorted((ROOT/'tests/ksp').glob('*Test.kt'))
     return sources, units

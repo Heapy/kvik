@@ -6,6 +6,7 @@ import platform.posix.*
 import kvik.core.*
 import kvik.cache.NativeOutputTrees
 import kvik.execution.NativeRunDirectory
+import kvik.compiler.jvm.JvmToolchainProvider
 
 /** Provider verifies distribution/JDK/SDK plus LLVM/libffi/Xcode identities before returning paths.
  * native-dependencies is nativeDependenciesIdentity of the three verified component inventories.
@@ -13,8 +14,9 @@ import kvik.execution.NativeRunDirectory
  * verified LLVM/libffi versions selected by the verified compiler's properties in offline mode.
  */
 fun interface NativeToolchainProvider { fun verified(identities: Map<String, Digest>): NativeToolchainLayout }
-data class NativeToolchainLayout(val compiler: String, val javaHome: String, val sdk: String, val dependencies: String, val developerDirectory: String) {
-    init { require(listOf(compiler, javaHome, sdk, dependencies, developerDirectory).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
+data class NativeToolchainLayout(val compiler: String, val javaHome: String, val sdk: String, val dependencies: String, val developerDirectory: String,
+    val nativeHome: String = compiler.substringBeforeLast('/').substringBeforeLast('/').ifEmpty { "/" }) {
+    init { require(listOf(compiler, javaHome, sdk, dependencies, developerDirectory, nativeHome).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
 }
 
 data class NativeActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: NativeTestReport? = null, val stdout: String, val stderr: String, val directory: String)
@@ -26,6 +28,7 @@ class NativeCompilerExecutor(
     private val host: ProcessHost,
     private val content: ContentStore,
     private val toolchains: NativeToolchainProvider,
+    private val jvmToolchains: JvmToolchainProvider? = null,
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
     override fun resources(action: ActionSpec) = ResourceRequest(if (action.kind == ActionKind.TEST) 512 else 2048)
@@ -46,8 +49,19 @@ class NativeCompilerExecutor(
             filter = fields.getValue("filter").let { if (it == JsonValue.Null) null else it.stringValue() }
             require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis) == action)
         }
-        val layout = toolchains.verified(action.toolchains)
-        val directory = NativeRunDirectory(runDirectory).path
+        val nativeIdentities = action.toolchains.filterKeys { it in setOf("native", "jdk", "sdk", "native-dependencies") }
+        val layout = toolchains.verified(nativeIdentities)
+        val workspacePlugins = compile?.pluginApplications?.isNotEmpty() == true
+        val jvm = if (workspacePlugins) {
+            val identities = action.toolchains.filterKeys { it in setOf("jdk", "jvm-compiler", "jvm-worker", "junit") }
+            requireNotNull(jvmToolchains) { "Native workspace plugins require a verified JVM worker provider" }.verified(identities).also {
+                require(it.identities == identities && it.identities.getValue("jdk") == nativeIdentities.getValue("jdk")) { "Native/JVM toolchain identity mismatch" }
+                require(it.javaExecutable == "${layout.javaHome}/bin/java") { "Native and JVM providers selected different JDKs" }
+                require(Sha256.digest(parseJson(readNativeFile(it.compilerManifest, 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))) == identities.getValue("jvm-compiler")) { "Native plugin JVM manifest identity mismatch" }
+            }
+        } else null
+        val reservation = NativeRunDirectory(runDirectory)
+        val directory = reservation.path
         val trees = NativeOutputTrees(content)
         trees.materialize(action.inputs, "$directory/input")
         mkdirNew("$directory/output"); mkdirNew("$directory/home")
@@ -62,8 +76,9 @@ class NativeCompilerExecutor(
             var current = "$directory/output"
             parent.split('/').forEach { current += "/$it"; mkdirNew(current) }
         }
+        if (workspacePlugins) mkdirNew("$directory/tmp")
         val environment = action.environment + mapOf("JAVA_HOME" to layout.javaHome, "SDKROOT" to layout.sdk, "KONAN_DATA_DIR" to layout.dependencies,
-            "DEVELOPER_DIR" to layout.developerDirectory, "HOME" to "$directory/home")
+            "DEVELOPER_DIR" to layout.developerDirectory, "HOME" to "$directory/home") + if (workspacePlugins) mapOf("TMPDIR" to "$directory/tmp", "LIBCLANG_DISABLE_CRASH_RECOVERY" to "1") else emptyMap()
         val started = kotlin.time.TimeSource.Monotonic.markNow()
         var phase = if (compile == null) "discovery" else "compile"
         fun launch(arguments: List<String>, phase: String): OwnedProcess = host.start(ProcessRequest(arguments, directory, environment, "$directory/$phase.stdout", "$directory/$phase.stderr", maxOf(1L, action.timeoutMillis - started.elapsedNow().inWholeMilliseconds)))
@@ -73,7 +88,25 @@ class NativeCompilerExecutor(
             if (compile?.includedLibrary != null && argument == "-Xinclude=input/${compile.includedLibrary.value}")
                 "-Xinclude=$directory/input/${compile.includedLibrary.value}" else argument
         }
-        var process = if (compile != null) launch(listOf(layout.compiler) + compilerArguments, phase)
+        val compileCommand = if (jvm != null) {
+            fun staged(plugin: JvmPluginApplication): JvmPluginApplication {
+                fun input(path: LogicalPath) = LogicalPath("input/${path.value}")
+                fun output(path: LogicalPath) = LogicalPath("output/${path.value}")
+                return plugin.copy(classpath = plugin.classpath.map(::input), inputs = plugin.inputs.map(::input), outputs = plugin.outputs.map(::output),
+                    pathOptions = plugin.pathOptions.map { it.copy(path = if (it.kind == PluginPathKind.INPUT_FILE) input(it.path) else output(it.path)) })
+            }
+            val request = obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to reservation.runId.json(),
+                "compiler" to action.toolchains.getValue("jvm-compiler").toJson(), "arguments" to compilerArguments.map { it.json() }.json(),
+                "libraries" to compile!!.libraries.map { "input/${it.value}".json() }.json(),
+                "pluginApplications" to compile.pluginApplications.map { staged(it).toJson() }.json())
+            writeNativeFile("$directory/request.json", request.canonical().encodeToByteArray())
+            listOf(jvm.javaExecutable, "-ea", "-Xmx3G", "-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED",
+                "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Djava.awt.headless=true",
+                "-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-Dkonan.home=${layout.nativeHome}",
+                "-cp", listOf(jvm.workerClasses, jvm.btaApiJar, jvm.stdlibJar).joinToString(":"), "kvik.jvm.NativePluginWorker",
+                directory, "request.json", "result.json", jvm.compilerArtifacts, jvm.compilerManifest, layout.nativeHome)
+        } else listOf(layout.compiler) + compilerArguments
+        var process = if (compile != null) launch(compileCommand, phase)
                       else launch(listOf("$directory/input/${executable!!.value}", "--ktest_list_tests") + listOfNotNull(filter?.let { "--ktest_filter=$it" }), phase)
         return object : RunningAction {
             private var result: ActionResult? = null
@@ -102,7 +135,19 @@ class NativeCompilerExecutor(
                     process = launch(listOf("$directory/input/${executable!!.value}") + action.arguments, phase)
                     return null
                 }
-                val diagnostics = if (compile != null) nativeCompilerDiagnostics(stdout + "\n" + stderr, module, actionId) else emptyList()
+                var diagnostics = if (compile != null) nativeCompilerDiagnostics(stdout + "\n" + stderr, module, actionId) else emptyList()
+                if (workspacePlugins && !exit.cancelled && !exit.timedOut) {
+                    try {
+                        val worker = WorkerResult.fromJson(parseJson(readNativeFile("$directory/result.json", 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
+                        require(worker.requestId == reservation.runId && worker.exitCode == exit.exitCode && worker.status != WorkerStatus.CANCELLED) { "Native worker result identity/exit mismatch" }
+                        require(worker.status != WorkerStatus.SUCCESS || worker.diagnostics.none { it.code == "KVIK_NATIVE_ERROR" }) { "Native worker success contains errors" }
+                        diagnostics = worker.diagnostics.map { it.copy(actionId = actionId, module = module, target = "macosArm64") }
+                    } catch (failure: Exception) {
+                        return finish(exit, listOf(Diagnostic("KVIK_NATIVE_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
+                            failure.message ?: "Invalid Native worker result", actionId, module, "macosArm64")), null, stdout, stderr,
+                            failure.message ?: "Invalid Native worker result")
+                    }
+                }
                 val report = if (phase == "test") nativeTestReport(module, discovered, stdout, exit) else if (phase == "discovery") NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, "Native discovery failed") else null
                 return finish(exit, diagnostics, report, stdout, stderr,
                     if (phase == "discovery") "Native test discovery did not complete" else null)

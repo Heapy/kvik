@@ -50,7 +50,7 @@ def main():
         command(['ar', 'rcs', output/'libkvik-process.a', output/'process.o'])
         command([native/'cinterop', '-def', process/'process.def', '-compiler-option', '-I'+str(process), '-libraryPath', output,
                  '-target', 'macos_arm64', '-o', output/'process'])
-        sources = [p for base in ('core/src', 'cache/src', 'execution/src', 'compiler/native/src', 'integration/toolchains/src')
+        sources = [p for base in ('core/src', 'cache/src', 'execution/src', 'compiler/native/src', 'compiler/jvm/native/src', 'integration/toolchains/src')
                    for p in sorted((ROOT/base).rglob('*.kt'))]
         sources += [ROOT/'integration/compiler-tools/src/kvik/compilertools'/name for name in ('CompilerFiles.kt', 'NativeTools.kt')]
         base = [native/'konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',

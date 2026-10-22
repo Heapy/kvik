@@ -43,7 +43,7 @@ def main():
         command(['clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-c', native / 'process.c', '-o', output / 'process.o'])
         command(['ar', 'rcs', output / 'libkvik-process.a', output / 'process.o'])
         command([args.konan_home / 'bin/cinterop', '-def', native / 'process.def', '-compiler-option', f'-I{native}', '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'])
-        sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'execution/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'compiler/native/src').rglob('*.kt'))
+        sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'execution/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'compiler/native/src').rglob('*.kt')) + sorted((ROOT / 'compiler/jvm/native/src').rglob('*.kt'))
         base = [args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-library', output / 'process.klib', *sources]
         command([*base, ROOT / 'tests/native/NativeUnitTest.kt', '-generate-test-runner', '-o', output / 'unit.kexe'])
         command([output / 'unit.kexe'])

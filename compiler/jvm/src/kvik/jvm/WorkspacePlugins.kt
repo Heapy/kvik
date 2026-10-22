@@ -26,14 +26,23 @@ internal fun prepareOutputRoots(staging: Path, logical: List<LogicalPath>): Map<
     return roots
 }
 
+internal data class PreparedWorkspacePlugin(val id: String, val classpath: List<Path>, val options: List<String>)
+
 internal fun workspacePlugins(request: WorkerRequest, workspace: Workspace, outputs: Map<LogicalPath, Path>, compilerLoader: ClassLoader,
-                              compilerArtifacts: List<Path>): List<CompilerPlugin> = request.pluginApplications.map { application ->
-    if (application.classpath.any { !it.value.startsWith("input/") || it.value in request.classpath } || application.inputs.any { !it.value.startsWith("input/") })
+                              compilerArtifacts: List<Path>): List<CompilerPlugin> =
+    validatedWorkspacePlugins(request.pluginApplications, request.classpath.map(workspace::classpath), workspace, outputs,
+        compilerLoader, compilerArtifacts).map { plugin -> CompilerPlugin(plugin.id, plugin.classpath,
+            plugin.options.map { CompilerPluginOption(it.substringBefore('='), it.substringAfter('=')) }, emptySet()) }
+
+/** Native hosts authorize the pinned JVM API dependency while loading their own verified parent API. */
+internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>, consumerClasspath: List<Path>, workspace: Workspace,
+    outputs: Map<LogicalPath, Path>, compilerLoader: ClassLoader, compilerArtifacts: List<Path>,
+    nativeParentApi: Path? = null): List<PreparedWorkspacePlugin> = applications.map { application ->
+    if (application.classpath.any { !it.value.startsWith("input/") } || application.inputs.any { !it.value.startsWith("input/") })
         reject("KVIK_UNSUPPORTED_PLUGIN", "Plugin classpath/inputs must be separate declared input paths")
     if (application.outputs.any { !it.value.startsWith("output/plugins/${application.id}/") })
         reject("KVIK_PLUGIN_OUTPUT", "Plugin outputs must belong to output/plugins/${application.id}/")
     val classpath = application.classpath.map { workspace.classpath(it.value) }
-    val consumerClasspath = request.classpath.map(workspace::classpath)
     if (classpath.indices.any { i -> classpath.drop(i + 1).any { Files.isSameFile(classpath[i], it) } } ||
         classpath.any { plugin -> consumerClasspath.any { Files.isSameFile(plugin, it) } })
         reject("KVIK_UNSUPPORTED_PLUGIN", "Plugin classpath aliases itself or the consumer classpath")
@@ -64,6 +73,10 @@ internal fun workspacePlugins(request: WorkerRequest, workspace: Workspace, outp
         ?: reject("KVIK_COMPILER_IDENTITY", "Pinned compiler API artifact is missing or ambiguous")
     for (path in classpath) if (resource(path, apiClass) != null && (!Files.isRegularFile(path) || fileDigest(path) != fileDigest(hostApi)))
         reject("KVIK_PLUGIN_INCOMPATIBLE", "Plugin classpath contains a different compiler API")
+    if (nativeParentApi != null) for (name in listOf(registrar, processor, "org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension")) {
+        val origin = compilerLoader.loadClass(name).protectionDomain?.codeSource?.location?.toURI()?.let(Path::of)?.toRealPath()
+        if (origin != nativeParentApi.toRealPath()) reject("KVIK_COMPILER_IDENTITY", "Native parent API origin mismatch: $name")
+    }
     // Validation runs inside the owned worker, never inside the Native orchestrator. BTA subsequently
     // creates its own loader; plugin constructors must tolerate normal repeated service instantiation.
     try {
@@ -84,8 +97,8 @@ internal fun workspacePlugins(request: WorkerRequest, workspace: Workspace, outp
     }
     if ((application.options.isNotEmpty() || application.pathOptions.isNotEmpty()) && processors.isEmpty())
         reject("KVIK_PLUGIN_SERVICE", "Plugin options require a command-line processor")
-    val options = application.options.map { CompilerPluginOption(it.substringBefore('='), it.substringAfter('=')) } + application.pathOptions.map {
-        CompilerPluginOption(it.name, (if (it.kind == PluginPathKind.INPUT_FILE) workspace.path(it.path.value) else outputs.getValue(it.path)).toString())
+    val options = application.options + application.pathOptions.map {
+        it.name + "=" + (if (it.kind == PluginPathKind.INPUT_FILE) workspace.path(it.path.value) else outputs.getValue(it.path)).toString()
     }
-    CompilerPlugin(application.id, classpath, options, emptySet())
+    PreparedWorkspacePlugin(application.id, classpath, options)
 }

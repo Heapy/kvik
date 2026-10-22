@@ -24,17 +24,25 @@ data class NativeCompilation(
     val kotestLauncher: LogicalPath? = null,
     val includedLibrary: LogicalPath? = null,
     val entryPoint: String? = null,
+    val pluginApplications: List<JvmPluginApplication> = emptyList(),
 ) {
     init {
         require(entryPoint == null || produce == NativeOutput.PROGRAM && entryPoint.length in 1..1024 &&
             entryPoint.matches(Regex("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))) { "Explicit Native entry point requires a PROGRAM and a qualified function name" }
+        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
+        require(pluginApplications.all { plugin ->
+            plugin.classpath.none { it in libraries } && plugin.outputs.all { root ->
+                root.value.startsWith("plugins/${plugin.id}/") && !pathsOverlap(root, output) &&
+                    !pathsOverlap(root, LogicalPath(output.value + ".dSYM"))
+            }
+        }) { "Plugin paths overlap compilation inputs/outputs or leave the plugin namespace" }
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(moduleName.matches(Regex("[A-Za-z0-9_.:-]+")))
         require(sources.distinct().size == sources.size && sources.all { it.value.endsWith(".kt") })
         require((sources + libraries + plugins + listOfNotNull(includedLibrary)).none { "," in it.value }) { "Comma-separated compiler path syntax unsupported" }
         if (includedLibrary == null) require(sources.isNotEmpty()) else {
             require(sources.isEmpty() && produce != NativeOutput.LIBRARY && includedLibrary.value.endsWith(".klib") && includedLibrary !in libraries) { "Included klib requires a distinct source-free link input" }
-            require(commonSources.isEmpty() && plugins.isEmpty() && optIns.isEmpty() && !explicitApi && kotestLauncher == null) { "Source compilation options are invalid for source-free linking" }
+            require(commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && optIns.isEmpty() && !explicitApi && kotestLauncher == null) { "Source compilation options are invalid for source-free linking" }
         }
         require(commonSources.distinct().size == commonSources.size && commonSources.all { it in sources })
         require(libraries.distinct().size == libraries.size && libraries.all { it.value.endsWith(".klib") })
@@ -73,13 +81,13 @@ data class NativeCompilation(
         "commonSources" to commonSources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
         "plugins" to plugins.map { it.value.json() }.json(), "output" to output.value.json(), "produce" to produce.name.json(),
         "moduleName" to moduleName.json(), "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
-            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }).toMap())
+            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
         }
     companion object {
         fun fromJson(value: JsonValue): NativeCompilation {
-            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint"))
+            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications"))
             fun paths(name: String) = d.getValue(name).arrayValue().map { LogicalPath(it.stringValue()) }
-            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue())
+            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
         }
     }
 }
@@ -87,10 +95,18 @@ data class NativeCompilation(
 fun nativeCompileAction(compilation: NativeCompilation, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 180_000): ActionSpec {
     val declared = inputs.files.map { it.path }.toSet()
     require((compilation.sources + compilation.libraries + compilation.plugins + listOfNotNull(compilation.includedLibrary)).all { it in declared }) { "Undeclared compiler input" }
-    require(toolchains.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Complete Native toolchain identities required" }
+    compilation.pluginApplications.forEach { plugin ->
+        require(plugin.inputs.all { it in declared }) { "Undeclared compiler plugin input" }
+        plugin.classpath.forEach { path -> require(inputs.files.any {
+            it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/")
+        }) { "Undeclared/unsupported plugin classpath: ${path.value}" } }
+    }
+    val identities = setOf("native", "jdk", "sdk", "native-dependencies") +
+        if (compilation.pluginApplications.isEmpty()) emptySet() else setOf("jvm-compiler", "jvm-worker", "junit")
+    require(toolchains.keys == identities) { "Complete Native toolchain identities required" }
     return ActionSpec("kvik-native-compiler-v1", composition, if (compilation.produce == NativeOutput.LIBRARY) ActionKind.COMPILE else ActionKind.LINK,
         mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(compilation.output) + if (compilation.produce == NativeOutput.LIBRARY) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM")), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
+        listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs } + (if (compilation.produce == NativeOutput.LIBRARY) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM"))), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
 fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, filter: String? = null, timeoutMillis: Long = 60_000): ActionSpec {

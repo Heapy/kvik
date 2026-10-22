@@ -14,9 +14,9 @@ import org.jetbrains.kotlin.buildtools.api.jvm.JvmPlatformToolchain
 
 private const val SERIALIZATION_ID = "org.jetbrains.kotlinx.serialization"
 
-private data class Distribution(val classpath: List<Path>, val serialization: Digest?)
+internal data class Distribution(val classpath: List<Path>, val serialization: Digest?)
 
-private fun distribution(root: Path, manifest: JsonValue, expected: Digest): Distribution {
+internal fun distribution(root: Path, manifest: JsonValue, expected: Digest): Distribution {
     if (Sha256.digest(manifest) != expected) reject("KVIK_COMPILER_IDENTITY", "Compiler distribution identity does not match the request")
     val fields = manifest.fields(setOf("schemaVersion", "version", "artifacts", "serializationPlugin"))
     fields.requireVersion()
