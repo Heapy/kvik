@@ -85,6 +85,27 @@ or actual source-plugin recompilation. The previous recomposition slice retains
 that evidence separately. The public CLI composed-build check for this slice is
 pending the shared compiler queue; no passing result is claimed here yet.
 
+`tools/test_foreground_keys_cli.py` prepares that public gate. It is separate from
+the frozen production candidate and has only passed Python syntax/import/help
+checks so far. It accepts the exact combined `--source-root` and `--runtime`,
+copies the source and immutable passed two-module fixture, and refuses an initial
+composition mismatch. Its planned run performs one actual source-plugin rebuild,
+checks immediate keys and the same owner/restorer across raw handoff, executes the
+exact Native consumer test with valid tools, queries current verification, and
+compares exact terminal/descriptor restoration after q and physical Ctrl-C.
+
+```sh
+/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python tools/test_foreground_keys_cli.py \
+  --runtime /absolute/path/to/reviewed/runtime/kvik.kexe \
+  --source-root /absolute/path/to/that/runtime/source \
+  --fixture /Users/yoda/dev/pet/kvik/.kvik/tests/native-scope-review/case-6jrzkpwg \
+  --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 \
+  --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
+```
+
+This command starts real Native compilation and must use an allocated compiler
+slot. No successful public-gate result is implied by the prepared harness.
+
 The first integration-probe compile found a test-only POSIX `read` size literal
 type error; it was corrected to `1uL` before the passing run. No test was weakened.
 
