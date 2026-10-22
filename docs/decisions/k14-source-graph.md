@@ -1,0 +1,118 @@
+# K14 source-graph input lock v1 (proposal)
+
+Status: contract proposal for review. No loader, provisioner or launcher changes are implemented by this document. The example is `examples/k14-source-graph.lock.json`.
+
+## Goal and trust boundary
+
+Build the complete Kvik Native runtime from a pinned remote Kvik source package, selected remote build plugins, their transitive source dependencies, and an explicit complete Native artifact closure. Keep the existing local `bootstrap/composition.json` behavior when `--source-lock` is absent. This is not a consumer-project dependency resolver and must work before any Kvik executable exists.
+
+The caller selects a trusted, declarative input lock. Acquiring sources never executes package Python, shell, Kotlin, Git hooks, checkout filters, or package build scripts. Remote `bootstrap/*.py`, `kvik`, package manifests and recipes are data only: the invoking launcher's versioned bootstrap implementation remains authoritative. Compiling/running the selected Native composition is the later, explicit execution boundary.
+
+The source input lock is distinct from generated `runtime.lock.json`. Ordinary launch neither rewrites the input lock nor chooses versions. Pin updates are explicit maintenance operations. Local development nodes are the deliberate exception to immutable source bytes: their actual current inventories enter the observed/generated lock.
+
+## Input document
+
+Top-level required fields (unknown fields and duplicate JSON keys fail):
+
+- `schemaVersion: 1`, `implementation: "kvik-source-graph-v1"`, `pluginApiVersion: 1`.
+- `target: "macos_arm64"` and `kotlinVersion: "2.4.20"`: compatibility requirements against the invoking launcher's trusted tool lock, not tool-download instructions.
+- `sources`: source nodes sorted by unique `id`.
+- `runtime`: the selected Kvik source node and bounded support recipe.
+- `plugins`: ordered static registry entries. Order is meaningful and retained.
+- `nativeArtifacts`: immutable Native KLIB nodes sorted by unique `id`.
+- `providedLibraries`: explicit bindings to verified compiler-distribution libraries.
+- `nativeLibraryOrder`: each reachable external Native artifact ID exactly once, in the order passed to the compiler.
+- `compilerOptions`: the existing bounded `-target macos_arm64`, `-entry kvik.cli.main`, optional `-opt`/`-g` vocabulary. File-bearing arbitrary flags remain forbidden.
+
+A source node has exactly `id`, `pin`, `kotlinRoots`, `dependencies`, `nativeLibraries`. Source-root and dependency lists are duplicate-free and lexically sorted. Non-runtime plugin source nodes explicitly depend on the runtime source node for its BuildPlugin API; the generated registry is a separate composition input, not a reverse source dependency. The selected roots are `runtime.source` and every `plugins[].source`; all source nodes must be reachable. Reject cycles with their path, missing IDs, unused nodes, duplicate logical files, and overlapping Kotlin roots. A dependency is a source package compiled into this one Native composition; it does not introduce a JVM runtime or imply separately enforced Kotlin module visibility.
+
+`pin` is one of:
+
+- Git: `{kind:"git", origin:<HTTPS repository URL>, revision:<full 40/64 lowercase hex object ID>, tree:<Digest>}`. Verify the requested commit object and canonical checked-out content; never resolve a branch/tag as a pin. Read blobs/modes from Git objects without running a working-tree checkout. Gitlinks/submodules require separately declared source nodes; implicit submodule/LFS acquisition is rejected.
+- Archive: `{kind:"archive", origin:<HTTPS URL>, archiveDigest:<Digest>, format:"tar.gz"|"zip", rootPrefix:<normalized relative directory or empty string>, tree:<Digest>}`. Verify exact transport bytes and then the selected normalized content inventory. No inferred stripping of a top-level directory. Entries outside a nonempty prefix may only be directory ancestors; no silently ignored payloads.
+- Local: `{kind:"local", origin:<normalized relative directory below the input-lock directory>, tree:null}`. Resolve containment and hash fresh bytes on every observation. No remote pin is silently replaced by a local path. A pinned local tree can instead be represented as an archive/Git fixture. Physical paths never substitute for a tree identity.
+
+`Digest` retains existing `{hash:<64 lowercase hex>, sizeBytes:<nonnegative integer>}` semantics. Tree size is canonical inventory byte length, not the sum of file sizes. Tree identity uses existing `bootstrap.identity.inventory` canonical regular-file records: normalized relative path, SHA-256/size, executable bit, sorted paths, no `.git` transport state. Remote snapshots consist of all selected package content, not only `.kt` files. Symlinks, hardlinks, devices/FIFOs, traversal, file/directory collisions and Unicode-normalization/case-fold collisions are rejected before publication. Local nodes follow the same source-tree restrictions.
+
+`runtime` has exactly `source`, `nativePlatform`, `nativeLibraries`, `jvmWorkerSources`. These paths are relative to its source node. `nativePlatform` must expose the existing four-file process/guardian recipe. `nativeLibraries` retains the current fixed `resolution` and `toolchains` recipe vocabulary and source locations. `jvmWorkerSources` is `compiler/jvm/src`; the runtime node must include `core/src`. These restrictions preserve current guardian, interop and worker contracts. Arbitrary package-defined commands/native recipes are not admitted by v1.
+
+Registry entries have exactly `id`, `source`, `implementation`. The implementation is a bounded qualified Kotlin class name; `id` is unique and must match the instantiated BuildPlugin's id/API version. Its source node must select the implementation through `kotlinRoots`. The Kvik package can also supply the builtin `kvik.kotlin` plugin without duplicating its sources in another node.
+
+## Native artifact closure
+
+Each artifact has exactly `id`, `coordinate`, `variant`, `url`, `digest`, `metadata`, `uniqueName`, `dependencies`, `providedDependencies`.
+
+- `url` is an exact HTTPS `.klib` resource and `digest` identifies its complete bytes. No JAR/AAR substitution, directory search or arbitrary host library path.
+- `metadata` is a nonempty list of at most 32 exact `{url,digest}` immutable metadata provenance records. The trusted input lock records the selected closure; bootstrap does not perform version selection, Maven conflict resolution or execute a second build to produce it. Full published metadata-resolution policy remains the responsibility of the explicit lock-generation/review operation.
+- `uniqueName` is the decoded KLIB manifest `unique_name`. `dependencies` names external artifact IDs; `providedDependencies` names entries in `providedLibraries`. Both lists are sorted, duplicate-free and exact.
+- After byte verification, read the bounded KLIB manifest and require NATIVE platform, requested native target, matching unique name, and an exact match between its decoded `depends` names and declared external/provided references. Reject duplicate unique names, cycles, missing dependencies and unreachable extra artifacts. This proves the locked compiler-input closure; it does not retroactively prove Maven version mediation.
+- Compiler/ABI compatibility is pinned to the requested compiler and validated by the real compile/link gate. A producer compiler version need not equal the consumer compiler version. Do not fabricate an ABI-compatibility guarantee from the version strings.
+
+V1 `providedLibraries` initially permits only `{id:"stdlib", toolchain:"kotlinNative", path:"klib/common/stdlib", uniqueName:"stdlib"}`. The complete installed Native distribution is verified through its existing tool lock; check that manifest's unique name and target. This is the actual Native stdlib, not a claim that JVM libraries such as kotlin-reflect are provided. Existing runtime platform/interop recipes continue to bind their platform libraries through the complete trusted Native/SDK inventories.
+
+Every `sources[].nativeLibraries` entry is a root artifact ID. `nativeArtifacts` must equal the transitive closure of all these roots; `nativeLibraryOrder` must contain that exact set once. The entire order, source-to-library edges, metadata identities and provided bindings enter composition identity. No implicit transitive acquisition or ambient KLIB cache lookup is allowed.
+
+The example uses real retained serialization-json/core macosArm64 1.11.0 KLIB and `.module` pins. Their decoded manifests contain `json -> core + stdlib` and `core -> stdlib`, producer compiler 2.3.20 and ABI 2.3.0. That is evidence for the example's declared dependency names, not a completed Kvik composition compatibility test. Example source URLs/revisions/tree hashes are explicitly illustrative and are not provisionable.
+
+## Declared identity versus verified provisioned bytes
+
+`observe_graph` validates the complete input document and computes:
+
+1. `inputLock`: SHA-256/size of canonical parsed input (whitespace alone is immaterial).
+2. `observedGraph`: canonical full graph plus fresh local tree digests; remote nodes retain their declared immutable tree pins.
+3. `sourceGraph`: SHA-256/size of that canonical observed graph.
+
+All source files have logical names `packages/<source-id>/<package-relative-path>`; cache paths, checkout roots and staging directories are excluded from portable identity. Source order is deterministic dependency-first with lexical tie breaks. The registry and Native library order remain explicit arrays. Existing fixed worker/interop recipes receive a source-root mapping; their logical paths are resolved relative to `runtime.source`, not guessed from arbitrary package directories. The worker exclusion in Native compilation must use an explicit role, not the old physical/logical prefix heuristic.
+
+Observation does **not** fetch, create caches, write bytecode, verify a cached executable or claim remote bytes are present. Thus `--print-composition` can report the desired declared remote composition while offline with an empty source cache, and still freshly observes local development sources. A missing/unreadable local node is an explicit query error. The desired key additionally binds the invoking bootstrap recipe, complete tool/host identities, JVM worker artifact lock and effective native settings exactly as today.
+
+Provisioning returns verified physical roots only after every remote transport/tree and Native artifact/metadata blob has passed its declared identities. Before compiler/plugin code execution, copy selected source/support bytes into private staging while checking their observed identities. Re-read the input lock and re-observe local source trees before atomic runtime publication; changed inputs discard that attempt. Verified immutable remote cache entries must be revalidated on use; paths alone are not proof. Per-key producers publish only complete manifests/trees, repair corrupt entries under coordination, and never expose partial files.
+
+The generated runtime lock retains all existing source/tool/recipe/environment/worker bindings and adds a versioned source-graph field containing `inputLock`, `sourceGraph`, the full observed graph and exact Native artifact order. Root owns deciding the additive runtime-lock schema/version migration; simply hashing an opaque input-lock path is insufficient. No runtime-lock schema change is made by this proposal.
+
+## Python boundary API
+
+Names and return values are proposed for root review:
+
+```python
+# bootstrap/source_graph.py: pure strict parsing and declared/local observation
+parse_source_lock(data: bytes) -> SourceGraph
+observe_graph(graph: SourceGraph, lock_directory: Path) -> ObservedGraph
+# ObservedGraph: graph, input_lock_digest, graph_digest, observed_document,
+#               local_roots, local_inventories; no acquired remote paths.
+
+# bootstrap/source_store.py: explicit effects, no package code execution
+provision_graph(observed: ObservedGraph, cache: Path, offline: bool,
+                owned_runner: OwnedRunner) -> VerifiedGraph
+# VerifiedGraph: observed identity, verified source roots/manifests,
+#                verified artifact and metadata files; never unchecked paths.
+
+snapshot_graph(verified: VerifiedGraph, destination: Path) -> CompositionInputs
+# CompositionInputs: native Kotlin files, JVM worker files, native support files,
+#                    ordered verified KLIBs, registry; each has role + logical path + digest.
+
+revalidate_observation(observed: ObservedGraph, lock_bytes: bytes,
+                       lock_directory: Path) -> None
+# Fail if current canonical lock/local tree observations differ before publication.
+```
+
+`OwnedRunner` is injected by the trusted launcher, with explicit argv/environment, deadline, bounded diagnostics and process-group cleanup; source modules cannot construct detached subprocesses. Archive HTTPS acquisition uses streaming digest/size verification and a whole-transfer deadline. Git transport uses the explicitly selected trusted host Git executable (never package content or an inherited PATH search), with its resolved path/version recorded in acquisition evidence, through an owned, sanitized process with system/global/repository overrides and hooks/filters disabled, explicit HTTPS protocol policy and no interactive credentials. Git's deadline and post-fetch object/tree publication limits must be distinguished from a hard network-byte quota: stock Git does not make the latter promise. An implementation must document and test this boundary rather than claim a nonexistent strict transfer cap. Verified commit/tree bytes remain authoritative regardless of acquisition-tool version; this does not claim a newly verified full Git installation. No remote execution service/daemon is involved.
+
+Proposed initial limits: input lock 1 MiB; 64 source nodes/256 edges; 128 Native artifacts; 4 KiB URLs; 1,024-byte logical paths; depth 64; 100,000 files; source file 64 MiB; expanded source node 512 MiB; complete source graph 1 GiB; archive transport 256 MiB; KLIB 64 MiB; Native artifact and metadata bytes aggregate 256 MiB; individual metadata 1 MiB; tree manifest 16 MiB. All limits are checked without silently truncating the graph. Git fetch has a 120-second whole-process deadline and rejects oversized fetched content before publication. Actual fixture inventories must confirm the limits before any completion claim.
+
+## Launcher integration and ownership
+
+Root owns additive `--source-lock <path>` and `--source-cache <path>`, launcher/core/schema integration and generated runtime-lock compatibility. With no source lock, preserve the local default. A source cache without a source lock is rejected to avoid an ineffective option. Resolve physical lock/cache paths once; capture both as absolute arguments in the bounded foreground launch descriptor along with existing offline/no-build/tool options. Preserve canonical source-lock policy on restart; never replace it with a fetched package's launcher or Python module.
+
+`--print-composition` stays read-only and never provisions. `--no-build` never acquires sources to rescue a missing runtime: a verified compatible executable may be reused from the declared key, otherwise fail. Ordinary allowed builds provision the complete graph; `--offline` requires all needed remote bytes already verified in cache. Failure has no stale-composition fallback. Source cache entries live outside all observed local trees and private build output; physical overlap is rejected before writing.
+
+After contract approval, cache-agent ownership is `bootstrap/source_graph.py`, `bootstrap/source_store.py`, focused tests/fixtures and their evidence. Root owns `bootstrap/launcher.py`, composition/default migration, shared schemas/contracts and foreground descriptor consumers. Coordinate the public API before either side edits production. No PLAN or unrelated source changes are part of this slice.
+
+## Acceptance gates
+
+- Real full Native Kvik bootstrap from remote pinned Kvik sources plus two source plugins sharing a transitive helper and the complete real serialization-json/core Native closure. Prove helper/library-dependent behavior through the composed executable, retain discovered schemas, and run an existing production consumer build/test smoke. A download-only fixture is insufficient.
+- Cold acquisition/build, relocated checkout/cache, offline cached startup with absent compilers, and offline rebuild from verified provisioned inputs. Preserve no-daemon ownership for Git, tools and compiler workers.
+- Independently mutate runtime/plugin/helper content (including same size/mtime), graph edges, registry order, Native artifact bytes/order, provided binding, recipe and tools. Consumer-only edits preserve runtime reuse.
+- Reject incomplete/cyclic/unreachable graphs, wrong IDs/trees/commits, wrong-target KLIBs, undeclared KLIB dependencies, conflicting unique names, corrupt metadata, archive traversal/collisions/special entries and excess bounds. Test interrupted transfers/producers, concurrent same-key launchers and corrupt-cache repair without overwriting valid publication.
+- Prove queries create no files or acquisition processes; descriptor replay preserves source/cache/offline/no-build options; source-lock/local-source changes during build cannot publish stale results. Failed compilation cannot launch an older composition.
+- Keep action-dispatch integration, arbitrary new C interop recipes, remote executable reuse and foreground recomposition completion as separate explicit gates. This source-distribution slice does not claim them merely because the static registry loads.

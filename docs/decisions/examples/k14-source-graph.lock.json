@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "implementation": "kvik-source-graph-v1",
+  "pluginApiVersion": 1,
+  "target": "macos_arm64",
+  "kotlinVersion": "2.4.20",
+  "sources": [
+    {
+      "id": "kvik",
+      "pin": {
+        "kind": "git",
+        "origin": "https://example.invalid/kvik.git",
+        "revision": "1111111111111111111111111111111111111111",
+        "tree": {
+          "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "sizeBytes": 1
+        }
+      },
+      "kotlinRoots": [
+        "cache/src",
+        "cli/src",
+        "compiler/jvm/native/src",
+        "compiler/ksp/src",
+        "compiler/native/src",
+        "core/src",
+        "execution/src",
+        "integration/action-cache/src",
+        "integration/compiler-tools/src",
+        "integration/foreground/src",
+        "integration/package-queries/src",
+        "integration/project-graph/src",
+        "integration/project-snapshot/src",
+        "integration/resolution/src",
+        "integration/run-evidence/src",
+        "integration/toolchains/src",
+        "plugins/kotlin/src",
+        "resolution/src"
+      ],
+      "dependencies": [],
+      "nativeLibraries": []
+    },
+    {
+      "id": "plugin-a",
+      "pin": {
+        "kind": "archive",
+        "origin": "https://example.invalid/plugin-a-v1.tar.gz",
+        "archiveDigest": {
+          "hash": "3333333333333333333333333333333333333333333333333333333333333333",
+          "sizeBytes": 1
+        },
+        "format": "tar.gz",
+        "rootPrefix": "plugin-a",
+        "tree": {
+          "hash": "4444444444444444444444444444444444444444444444444444444444444444",
+          "sizeBytes": 1
+        }
+      },
+      "kotlinRoots": [
+        "src"
+      ],
+      "dependencies": [
+        "kvik",
+        "shared-helper"
+      ],
+      "nativeLibraries": []
+    },
+    {
+      "id": "plugin-b",
+      "pin": {
+        "kind": "archive",
+        "origin": "https://example.invalid/plugin-b-v1.tar.gz",
+        "archiveDigest": {
+          "hash": "3333333333333333333333333333333333333333333333333333333333333333",
+          "sizeBytes": 1
+        },
+        "format": "tar.gz",
+        "rootPrefix": "plugin-b",
+        "tree": {
+          "hash": "4444444444444444444444444444444444444444444444444444444444444444",
+          "sizeBytes": 1
+        }
+      },
+      "kotlinRoots": [
+        "src"
+      ],
+      "dependencies": [
+        "kvik",
+        "shared-helper"
+      ],
+      "nativeLibraries": []
+    },
+    {
+      "id": "shared-helper",
+      "pin": {
+        "kind": "git",
+        "origin": "https://example.invalid/shared-helper.git",
+        "revision": "2222222222222222222222222222222222222222",
+        "tree": {
+          "hash": "2222222222222222222222222222222222222222222222222222222222222222",
+          "sizeBytes": 1
+        }
+      },
+      "kotlinRoots": [
+        "src"
+      ],
+      "dependencies": [],
+      "nativeLibraries": [
+        "serialization-json"
+      ]
+    }
+  ],
+  "runtime": {
+    "source": "kvik",
+    "nativePlatform": "execution/platform",
+    "nativeLibraries": [
+      "resolution",
+      "toolchains"
+    ],
+    "jvmWorkerSources": "compiler/jvm/src"
+  },
+  "plugins": [
+    {
+      "id": "kvik.kotlin",
+      "source": "kvik",
+      "implementation": "kvik.plugins.kotlin.KotlinBuildPlugin"
+    },
+    {
+      "id": "example.a",
+      "source": "plugin-a",
+      "implementation": "example.a.BuildPluginA"
+    },
+    {
+      "id": "example.b",
+      "source": "plugin-b",
+      "implementation": "example.b.BuildPluginB"
+    }
+  ],
+  "nativeArtifacts": [
+    {
+      "id": "serialization-core",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-macosarm64:1.11.0",
+      "variant": "macosArm64ApiElements-published",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib",
+      "digest": {
+        "hash": "551d11833d5611afe63dac02c05dd21611fe5f43d002e014cbe61b380551e3e4",
+        "sizeBytes": 394849
+      },
+      "metadata": [
+        {
+          "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.module",
+          "digest": {
+            "hash": "eb487f5308ffdf69ec02097e87941859b90ba83851f30852c42dc318393008fa",
+            "sizeBytes": 3680
+          }
+        }
+      ],
+      "uniqueName": "org.jetbrains.kotlinx:kotlinx-serialization-core",
+      "dependencies": [],
+      "providedDependencies": [
+        "stdlib"
+      ]
+    },
+    {
+      "id": "serialization-json",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-macosarm64:1.11.0",
+      "variant": "macosArm64ApiElements-published",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.klib",
+      "digest": {
+        "hash": "422eb1c46ccf299e35575cbca2227d23e8873d2da9ce86c5e968a7a3ddedcb2b",
+        "sizeBytes": 382253
+      },
+      "metadata": [
+        {
+          "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.module",
+          "digest": {
+            "hash": "49a1b9a4841e1aa2792470f0e079057b06849d4d6fb8fdc4af1f934619475a50",
+            "sizeBytes": 4045
+          }
+        }
+      ],
+      "uniqueName": "org.jetbrains.kotlinx:kotlinx-serialization-json",
+      "dependencies": [
+        "serialization-core"
+      ],
+      "providedDependencies": [
+        "stdlib"
+      ]
+    }
+  ],
+  "providedLibraries": [
+    {
+      "id": "stdlib",
+      "toolchain": "kotlinNative",
+      "path": "klib/common/stdlib",
+      "uniqueName": "stdlib"
+    }
+  ],
+  "nativeLibraryOrder": [
+    "serialization-core",
+    "serialization-json"
+  ],
+  "compilerOptions": [
+    "-target",
+    "macos_arm64",
+    "-entry",
+    "kvik.cli.main"
+  ]
+}
