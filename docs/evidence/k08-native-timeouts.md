@@ -61,3 +61,21 @@ targets and asserts exact budgets for all five phases. Preparation preserved
 the 61 source hashes and 1,880 golden test identities. No full consumer compile
 or retry was run in this slice; a successful full cold/warm public gate remains
 required before claiming all Native fixture tests pass through the CLI.
+
+Independent integration review rehashed all 27 recorded Kotlin inputs, the
+compiler command, compiler jar, binary and original log; rerunning the retained
+binary passed all 47 tests. The generated schema matched its generator, and
+the six schema groups and 11 examples passed again. Review evidence is
+`/private/tmp/kvik-native-timeouts-review-pkhz4wbn/report.json`.
+The separate timeout diagnostic change also passed independent review and
+all nine Native unit groups; see `k08-native-timeout-diagnostic.md`.
+
+Both changes are integrated in `e0c3c32`. The composed CLI built successfully
+with composition `2bd5e75a4c6bb1f76c595545edf2f974a7bee9d25895c38f5ecb7242361e4620`
+(10,421 canonical bytes), with a recorded compile duration of 50,053 ms.
+Executable SHA-256 is
+`8ee0020cba81683e2c8ec45c2fc42048072d37e493ca95f7af9b5882671d63dc`
+(4,761,048 bytes). Integration rechecked the canonical runtime lock,
+executable, guardian and complete worker bundle, and `runtime-info` reported
+the Kotlin/Native backend. This proves the integrated runtime builds; the
+full public consumer gate is tracked separately in `k08-kotaml-native-cli.md`.
