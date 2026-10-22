@@ -4,10 +4,12 @@ import argparse
 import json
 import os
 from pathlib import Path
+import queue
 import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,11 +90,53 @@ def main():
             produced = run(writer, 'publish', 'executed')
             reader = project('reader', 'read')
             assert run(reader, 'restore', 'remote_hit') == produced
+            # A foreground coordinator must preserve online policy and receive its configured token.
+            development = project('development', 'read')
+            commands = [str(runtime), 'dev', '--control', 'jsonl', '--initial', 'test',
+                '--project', str(development / 'kvik.json'), '--tools', str(development / 'tools.json'),
+                '--module', 'consumer', '--target', 'jvm', '--remote-cache', str(development / 'remote.json')]
+            with (development / 'session.stderr').open('w') as errors, (development / 'session.jsonl').open('w') as output:
+                process = subprocess.Popen(commands, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=errors, text=True, bufsize=1)
+                events = queue.Queue()
+                def read_events():
+                    for line in process.stdout:
+                        output.write(line); output.flush()
+                        try:
+                            events.put(json.loads(line))
+                        except Exception as failure:
+                            events.put(failure)
+                    events.put(None)
+                reader_thread = threading.Thread(target=read_events, daemon=True); reader_thread.start()
+                try:
+                    deadline = time.monotonic() + 180
+                    while True:
+                        event = events.get(timeout=max(.01, deadline - time.monotonic()))
+                        assert isinstance(event, dict), event
+                        if event['type'] == 'operation-finished':
+                            assert event['payload']['exitCode'] == 0, event
+                            directory = Path(event['payload']['evidenceDirectory'])
+                            records = list((directory / 'runs').glob('*/verification.json')); assert len(records) == 1
+                            record = json.loads(records[0].read_text()); assert record['status'] == 'passed'
+                            compiled = [a for a in record['actions'] if a['actionId'] in produced]
+                            assert len(compiled) == 3 and all(a['status'] == 'remote_hit' for a in compiled), record
+                            assert {a['actionId']: (a['key'], a['outputs']) for a in compiled} == produced
+                            assert record['testCounts']['executed'] == 1
+                            process.stdin.write(json.dumps(dict(schemaVersion=1, requestId='quit', command='q')) + '\n')
+                            process.stdin.flush()
+                            assert process.wait(timeout=15) == 0
+                            break
+                finally:
+                    if process.poll() is None:
+                        process.kill(); process.wait(timeout=15)
+                    reader_thread.join(timeout=5)
+                    assert not reader_thread.is_alive()
+            assert secret not in (development / 'session.jsonl').read_text() + (development / 'session.stderr').read_text()
             server.terminate(); server.wait(timeout=10)
             assert run(reader, 'offline', 'local_hit', offline=True) == produced
             outage = project('outage', 'read-write', 'http://127.0.0.1:1')
             assert run(outage, 'fallback', 'executed') == produced
-            print(f'PASS public remote restore, offline local reuse, outage fallback and fresh tests: {case}')
+            print(f'PASS public/foreground remote restore, offline local reuse, outage fallback and fresh tests: {case}')
         finally:
             if server.poll() is None:
                 server.terminate()

@@ -45,13 +45,19 @@ internal class RemoteCacheConfiguration(document: JsonValue) {
 
 internal fun remoteSessionCredentials(root: String, options: BuildOptions): Map<String, String> {
     if (options.project.offline) return emptyMap()
-    val configuration = options.remoteCache?.let { RemoteCacheConfiguration.read(projectPath(root, it)) } ?: return emptyMap()
-    val name = configuration.tokenEnvironment ?: return emptyMap()
-    val endpoint = configuration.endpoint { boundedEnvironment(it, 8192) }
-    return mapOf(name to checkNotNull(endpoint.bearerToken))
+    // Configuration/credential errors belong to the operation's diagnostics, not the control loop.
+    // The worker rereads and validates the complete configuration before using this environment.
+    return try {
+        val configuration = options.remoteCache?.let { RemoteCacheConfiguration.read(projectPath(root, it)) } ?: return emptyMap()
+        val name = configuration.tokenEnvironment ?: return emptyMap()
+        val token = boundedEnvironment(name, 8192) ?: return emptyMap()
+        mapOf(name to token)
+    } catch (_: Exception) { emptyMap() }
 }
 
 internal fun remoteOperationEnvironment(root: String, arguments: List<String>): Map<String, String> {
     val start = if (arguments.getOrNull(1) == "stage-application") 6 else 2
-    return remoteSessionCredentials(root, buildOptions(arguments.drop(start)))
+    val options = buildOptions(arguments.drop(start))
+    return remoteSessionCredentials(root, options) +
+        if (options.remoteCache != null && !options.project.offline) mapOf("KVIK_BOOTSTRAP_OFFLINE" to "0") else emptyMap()
 }
