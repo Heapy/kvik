@@ -113,6 +113,42 @@ class NativePreparationTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             cli.assert_transition(before, broken, changed)
 
+    def test_report_only_link_boundary_follows_klib_bytes_and_rejects_reports(self):
+        before, after, before_specs, after_specs = {}, {}, {}, {}
+        for module in cli.SELECTED[:2]:
+            compilation = f'{module}:macosArm64:test-compile'
+            link = f'{module}:macosArm64:test-link'
+            old = dict(path='tests.klib', digest=cli.digest(b'old'), executable=False)
+            new = dict(old, digest=cli.digest(b'changed staging path'))
+            before[compilation] = dict(outputs=dict(files=[old]))
+            after[compilation] = dict(outputs=dict(files=[new]))
+            def spec(entry):
+                return dict(action=dict(arguments=['-Xinclude=input/test.klib'], inputs=dict(schemaVersion=1,
+                    files=[dict(entry, path=f'modules/{module}/macosArm64/test.klib')])))
+            before_specs[link], after_specs[link] = spec(old), spec(new)
+        self.assertEqual(cli.report_only_link_changes(before, before, before_specs, before_specs), set())
+        self.assertEqual(cli.report_only_link_changes(before, after, before_specs, after_specs),
+                         {f'{m}:macosArm64:test-link' for m in cli.SELECTED[:2]})
+        broken = copy.deepcopy(after_specs)
+        broken['consumer:macosArm64:test-link']['action']['inputs']['files'].append(dict(path='plugins/report', digest=cli.digest(b'report'), executable=False))
+        with self.assertRaises(AssertionError):
+            cli.report_only_link_changes(before, after, before_specs, broken)
+        broken = copy.deepcopy(after_specs)
+        broken['consumer:macosArm64:test-link']['action']['arguments'] = ['different']
+        with self.assertRaises(AssertionError):
+            cli.report_only_link_changes(before, after, before_specs, broken)
+
+    def test_continuation_rejects_wrong_command_or_label(self):
+        with tempfile.TemporaryDirectory() as temp:
+            case = Path(temp)
+            (case / 'cold.command.json').write_bytes(cli.canonical(['/runtime', 'test']))
+            (case / 'cold.stdout.jsonl').write_bytes(b'retained stdout')
+            self.assertEqual(cli.retained_output(case, 'cold', ['/runtime', 'test']), b'retained stdout')
+            with self.assertRaises(AssertionError):
+                cli.retained_output(case, 'cold', ['/other-runtime', 'test'])
+            with self.assertRaises(FileNotFoundError):
+                cli.retained_output(case, 'warm', ['/runtime', 'test'])
+
 
 if __name__ == '__main__':
     unittest.main()

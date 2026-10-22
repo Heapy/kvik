@@ -80,28 +80,71 @@ def assert_transition(previous, current, changed):
             assert result['status'] == ('executed' if action_id in changed else 'local_hit'), (action_id, result)
 
 
-def verify_cold_resume(project, fixture, document, tools):
+def native_fixture_bytes(fixture, document, tools, version='v1', message='hello'):
     expected = {p.relative_to(fixture).as_posix(): p.read_bytes() for p in fixture.rglob('*') if p.is_file()
                 and p.relative_to(fixture).parts[0] not in {'consumer-test', 'unrelated-test', 'kvik.json', 'tools.json'}}
     for name in ['consumer-test', 'unrelated-test']:
         root = ROOT / 'tests/workspace-plugins/native' / name
         expected.update({name + '/' + p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()})
     expected.update({'kvik.json': canonical(document), 'tools.json': tools.read_bytes()})
+    if version == 'v2':
+        assert expected['plugin/Plugin.kt'].count(b'"v1:"') == 1
+        expected['plugin/Plugin.kt'] = expected['plugin/Plugin.kt'].replace(b'"v1:"', b'"v2:"')
+    if message != 'hello':
+        expected['message.txt'] = (message + '\n').encode()
+    return expected
+
+
+def verify_cold_resume(project, fixture, document, tools, version='v1', message='hello'):
+    expected = native_fixture_bytes(fixture, document, tools, version, message)
     actual = {p.relative_to(project).as_posix(): p.read_bytes() for p in project.rglob('*') if p.is_file()
               and p.relative_to(project).as_posix() not in {'kvik.lock.json', '.kvik-dependency-publication.lock'}}
-    assert actual == expected, 'Cold continuation requires unchanged fixture, configuration and tool inputs'
+    assert actual == expected, 'Continuation requires the expected fixture, configuration and tool inputs'
+
+
+def report_only_link_changes(previous, current, previous_specs, specs):
+    """KLIB bytes may embed staging paths; links must depend only on the actual KLIB."""
+    changed = set()
+    for module in SELECTED[:2]:
+        link = f'{module}:macosArm64:test-link'
+        compilation = f'{module}:macosArm64:test-compile'
+        for results, actions in [(previous, previous_specs), (current, specs)]:
+            klib, = [e for e in results[compilation]['outputs']['files'] if e['path'] == 'tests.klib']
+            assert actions[link]['action']['inputs'] == dict(schemaVersion=1, files=[
+                dict(klib, path=f'modules/{module}/macosArm64/test.klib')])
+        before, after = previous_specs[link]['action'], specs[link]['action']
+        assert {k: v for k, v in before.items() if k != 'inputs'} == {k: v for k, v in after.items() if k != 'inputs'}
+        if before['inputs'] != after['inputs']:
+            changed.add(link)
+    return changed
+
+
+def retained_output(case, label, command):
+    assert json.loads((case / (label + '.command.json')).read_bytes()) == command, label
+    return (case / (label + '.stdout.jsonl')).read_bytes()
 
 
 def run_native(args):
     runtime, fixture = args.runtime.resolve(), args.fixture.resolve()
     output = (args.output_dir or ROOT / '.kvik/tests/workspace-plugins-cli').resolve()
     output.mkdir(parents=True, exist_ok=True)
-    case = args.resume_native_cold.resolve() if args.resume_native_cold else Path(tempfile.mkdtemp(prefix='native-', dir=output))
+    resume = args.resume_native_cold or args.resume_native_options
+    case = resume.resolve() if resume else Path(tempfile.mkdtemp(prefix='native-', dir=output))
     project = case / 'project'
     original = {p.relative_to(fixture).as_posix(): digest(p.read_bytes()) for p in fixture.rglob('*') if p.is_file()}
     request_bytes = args.graph_request.read_bytes()
     document = native_project(json.loads(request_bytes)['project'])
-    if args.resume_native_cold:
+    replay = {'cold'} if args.resume_native_cold else set()
+    if args.resume_native_options:
+        replay = {'resolve', 'cold', 'warm', 'producer-edit', 'input-edit', 'resolve-options', 'option-edit'}
+        assert {p.name for p in case.glob('*.command.json')} == {label + '.command.json' for label in replay}
+        expected_document = copy.deepcopy(document)
+        for module in expected_document['modules']:
+            for plugin in module.get('compilerPlugins', []):
+                plugin['options'] = EDITED_NATIVE_OPTIONS.copy()
+        verify_cold_resume(project, fixture, expected_document, args.tools, 'v2', 'changed')
+        assert not (case / 'summary.json').exists()
+    elif args.resume_native_cold:
         assert {p.name for p in case.glob('*.command.json')} == {'resolve.command.json', 'cold.command.json'}, 'Only an unfinished cold audit can continue'
         verify_cold_resume(project, fixture, document, args.tools)
         assert not (case / 'summary.json').exists()
@@ -125,10 +168,9 @@ def run_native(args):
 
     def invoke(label, arguments):
         command = [str(runtime), *arguments]
-        if args.resume_native_cold and label == 'cold':
-            assert json.loads((case / 'cold.command.json').read_bytes()) == command
-            print('Rechecking retained cold run:', case, flush=True)
-            return (case / 'cold.stdout.jsonl').read_bytes()
+        if label in replay:
+            print('Rechecking retained', label, flush=True)
+            return retained_output(case, label, command)
         (case / (label + '.command.json')).write_bytes(canonical(command))
         started = time.monotonic()
         process = subprocess.run(command, env=env, capture_output=True, timeout=1800)
@@ -139,7 +181,8 @@ def run_native(args):
         return process.stdout
 
     def resolve(label):
-        (project / 'kvik.json').write_bytes(canonical(document))
+        if label not in replay:
+            (project / 'kvik.json').write_bytes(canonical(document))
         validate(json.loads(invoke(label, ['resolve', *shared])), 'dependencyResolution')
 
     print('Test case:', case, flush=True)
@@ -150,9 +193,10 @@ def run_native(args):
     commands += [flag for module in SELECTED for flag in ('--module', module)]
     records = []
     previous = None
+    previous_specs = None
 
     def check(label, version, message, options, changed, main_only=False):
-        nonlocal previous
+        nonlocal previous, previous_specs
         config = (project / 'kvik.json').read_bytes()
         lock = (project / 'kvik.lock.json').read_bytes()
         journal = invoke(label, commands)
@@ -172,7 +216,6 @@ def run_native(args):
                 'fixture.consumer.ConsumerTest.transformedProductionAndTestHaveExpectedBehavior') for m in SELECTED}
         results = {a['actionId']: a for a in record['actions']}
         assert len(results) == len(record['actions'])
-        assert_transition(previous, results, changed)
         run = runs / record['runId']
         assert (run / 'events.jsonl').read_bytes() == journal
         assert json.loads((run / 'verification.json').read_bytes()) == record
@@ -183,6 +226,22 @@ def run_native(args):
         metadata = json.loads((run / 'run.json').read_bytes())
         assert metadata['targets'] == ['macosArm64'] and set(metadata['toolTargets']) == {'jvm', 'macosArm64'}
         specs = {s['actionId']: s for path in (run / 'actions').glob('*.json') for s in [json.loads(path.read_bytes())]}
+        if label == 'option-edit':
+            changed = changed | report_only_link_changes(previous, results, previous_specs, specs)
+        assert_transition(previous, results, changed)
+        run_config = (run / 'configuration.json').read_bytes()
+        run_lock = (run / 'dependency-lock.json').read_bytes()
+        assert run_config == canonical(document)
+        assert digest(canonical(json.loads(run_lock))) == record['dependencyLock']
+        if label in replay:
+            expected_inputs = native_fixture_bytes(fixture, document, args.tools, version, message)
+            expected_inputs = {p: digest(data) for p, data in expected_inputs.items() if p not in {'kvik.json', 'tools.json'}}
+            inputs = json.loads((run / 'inputs.json').read_bytes())['files']
+            assert {e['path']: e['digest'] for e in inputs} == expected_inputs
+            assert all(not e['executable'] for e in inputs)
+            assert json.loads((run / 'tools.json').read_bytes()) == json.loads(args.tools.read_bytes())
+            if label == 'option-edit':
+                assert config == run_config and lock == run_lock
         observations = {o['actionId']: o['observation'] for path in (run / 'observations').glob('*.json')
                         for o in [json.loads(path.read_bytes())]}
         producer = specs['producer:jvm:main']['action']['parameters']
@@ -239,27 +298,31 @@ def run_native(args):
             expected = 'PLUGIN_MARKER' if module == 'consumer' and main_only else value
             assert 'MAIN:' + expected in logs and 'TEST:' + expected in logs, (module, logs)
         assert (project / 'kvik.json').read_bytes() == config and (project / 'kvik.lock.json').read_bytes() == lock
-        records.append(dict(label=label, run=str(run), configuration=digest(config), lock=digest(lock), record=record))
+        records.append(dict(label=label, run=str(run), configuration=digest(run_config), lock=digest(run_lock), record=record))
         previous = results
+        previous_specs = specs
 
     affected = {'consumer:macosArm64:main', 'consumer:macosArm64:test-compile', 'consumer:macosArm64:test-link',
                 'consumerTwo:macosArm64:test-compile', 'consumerTwo:macosArm64:test-link'}
     options = ['value=first,comma', 'value=second=literal']
     check('cold', 'v1', 'hello', options, set())
     check('warm', 'v1', 'hello', options, set())
-    plugin = project / 'plugin/Plugin.kt'
-    before = plugin.read_text()
-    assert before.count('"v1:"') == 1
-    plugin.write_text(before.replace('"v1:"', '"v2:"'))
+    if not args.resume_native_options:
+        plugin = project / 'plugin/Plugin.kt'
+        before = plugin.read_text()
+        assert before.count('"v1:"') == 1
+        plugin.write_text(before.replace('"v1:"', '"v2:"'))
     check('producer-edit', 'v2', 'hello', options, affected | {'producer:jvm:main'})
-    (project / 'message.txt').write_text('changed\n')
+    if not args.resume_native_options:
+        (project / 'message.txt').write_text('changed\n')
     check('input-edit', 'v2', 'changed', options, affected)
     options = EDITED_NATIVE_OPTIONS.copy()
     for module in document['modules']:
         for plugin in module.get('compilerPlugins', []):
             plugin['options'] = options
     resolve('resolve-options')
-    # These literal options affect only the declared report. No report may enter a link key.
+    # Options affect the report, but rebuilt KLIBs may encode different staging paths.
+    # Link changes must follow actual KLIB byte changes, never report inputs.
     check('option-edit', 'v2', 'changed', options, {p for p in affected if not p.endswith(':test-link')})
     next(m for m in document['modules'] if m['id'] == 'consumer')['compilerPlugins'][0]['scopes'] = ['main']
     resolve('resolve-scopes')
@@ -285,10 +348,12 @@ def main():
     parser.add_argument('--schema-root', type=Path, default=ROOT)
     parser.add_argument('--target', choices=['jvm', 'macosArm64'], default='jvm')
     parser.add_argument('--output-dir', type=Path)
-    parser.add_argument('--resume-native-cold', type=Path, help='Recheck an unchanged retained cold run, then continue remaining Native scenarios')
+    resume = parser.add_mutually_exclusive_group()
+    resume.add_argument('--resume-native-cold', type=Path, help='Recheck an unchanged retained cold run, then continue remaining Native scenarios')
+    resume.add_argument('--resume-native-options', type=Path, help='Recheck completed runs through option-edit, then execute the remaining scope scenarios')
     args = parser.parse_args()
-    if args.resume_native_cold and args.target != 'macosArm64':
-        parser.error('--resume-native-cold requires --target macosArm64')
+    if (args.resume_native_cold or args.resume_native_options) and args.target != 'macosArm64':
+        parser.error('Native continuation requires --target macosArm64')
     if args.target == 'macosArm64':
         return run_native(args)
     runtime, fixture = args.runtime.resolve(), args.fixture.resolve()
