@@ -25,6 +25,7 @@ data class JvmCompilation(
     val warningsAsErrors: Boolean = false,
     val jdkRelease: Int? = null,
     val pluginApplications: List<JvmPluginApplication> = emptyList(),
+    val includeStandardLibrary: Boolean = false,
 ) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
@@ -57,16 +58,18 @@ data class JvmCompilation(
         "commonSources" to commonSources.jsonPaths(), "friendPaths" to friendPaths.jsonPaths(), "jvmTarget" to jvmTarget.json(),
         "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
             val release = if (jdkRelease == null) it else JsonValue.Object(it.objectValue() + ("jdkRelease" to jdkRelease.json()))
-            if (pluginApplications.isEmpty()) release else JsonValue.Object(release.values + ("pluginApplications" to pluginApplications.map { p -> p.toJson() }.json()))
+            val plugins = if (pluginApplications.isEmpty()) release else JsonValue.Object(release.values + ("pluginApplications" to pluginApplications.map { p -> p.toJson() }.json()))
+            if (!includeStandardLibrary) plugins else JsonValue.Object(plugins.values + ("includeStandardLibrary" to true.json()))
         }
     companion object {
         fun fromJson(value: JsonValue): JvmCompilation {
-            val d = value.fields(setOf("module", "sources", "classpath", "output", "plugins", "commonSources", "friendPaths", "jvmTarget", "optIns", "explicitApi", "warningsAsErrors"), setOf("jdkRelease", "pluginApplications"))
+            val d = value.fields(setOf("module", "sources", "classpath", "output", "plugins", "commonSources", "friendPaths", "jvmTarget", "optIns", "explicitApi", "warningsAsErrors"), setOf("jdkRelease", "pluginApplications", "includeStandardLibrary"))
             return JvmCompilation(d.getValue("module").stringValue(), d.paths("sources"), d.paths("classpath"), LogicalPath(d.getValue("output").stringValue()),
                 d.paths("plugins"), d.paths("commonSources"), d.paths("friendPaths"), d.getValue("jvmTarget").longValue().also { require(it in 1..25) }.toInt(),
                 d.getValue("optIns").arrayValue().map(JsonValue::stringValue), d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(),
                 d["jdkRelease"]?.longValue()?.also { require(it in 1..25) }?.toInt(),
-                d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
+                d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(),
+                d["includeStandardLibrary"]?.booleanValue() ?: false)
         }
     }
 }

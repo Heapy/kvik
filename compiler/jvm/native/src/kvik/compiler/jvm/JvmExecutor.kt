@@ -72,6 +72,13 @@ class JvmActionExecutor(
             parent.split('/').forEach { path += "/$it"; mkdirJvm(path) }
         }
         fun staged(paths: List<LogicalPath>) = paths.map { "input/${it.value}" }
+        // The worker identity binds this tool-owned library. It is staged separately from user
+        // inputs and follows declared dependencies, matching the script launch classpath order.
+        val languageRuntime = if (compilation?.includeStandardLibrary == true) {
+            mkdirJvm("$directory/tool-libraries")
+            writeJvmFile("$directory/tool-libraries/kotlin-stdlib.jar", readJvmFile(layout.stdlibJar))
+            listOf("tool-libraries/kotlin-stdlib.jar")
+        } else emptyList()
         fun stagedPlugin(plugin: JvmPluginApplication): JvmPluginApplication {
             fun input(path: LogicalPath) = LogicalPath("input/${path.value}")
             fun output(path: LogicalPath) = LogicalPath("output/${path.value}")
@@ -79,7 +86,7 @@ class JvmActionExecutor(
                 pathOptions = plugin.pathOptions.map { it.copy(path = if (it.kind == PluginPathKind.INPUT_FILE) input(it.path) else output(it.path)) })
         }
         val request = if (compilation != null) WorkerRequest(requestId, "jvm-compile", action.toolchains.getValue("jvm-compiler"),
-            staged(compilation.sources), staged(compilation.classpath), staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}",
+            staged(compilation.sources), staged(compilation.classpath) + languageRuntime, staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}",
             compilation.pluginApplications.map(::stagedPlugin)).toJson()
         else obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json(),
             "classpath" to staged(selection!!.classpath).map { it.json() }.json(), "testClasses" to selection.classes.map { it.json() }.json(), "engines" to selection.engines.map { it.json() }.json())

@@ -168,7 +168,7 @@ private class ScriptGraphBuilder(
             require(plugin.published.none { path -> plugin.files.single { it.path == path }.digest in compileArtifacts.map { it.digest } }) { "Compiler plugin appears in script compile classpath" }
             jvmCompileAction(JvmCompilation("script-${script.name}", sources.map { it.path }, compileClosure.modules.map(::moduleRoot) + compileArtifacts.map { it.path },
                 LogicalPath("classes"), plugin.published, jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi,
-                warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications),
+                warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications, includeStandardLibrary = true),
                 merge(sources, resources, compileArtifacts, modules, plugin.files), composition, tools)
         }
         val runEdges = runtimeClosure.modules.map(::moduleId).toSet() + compileId
