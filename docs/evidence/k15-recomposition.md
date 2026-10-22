@@ -4,6 +4,16 @@ This slice adds owned bootstrap composition polling and same-PID native session
 replacement. It remains a library build/test session; application launch/restart,
 runnable artifact selection and raw single-key controls are not implemented.
 
+Independent review of frozen candidate `7677509` found no confirmed defects.
+Four C probes rebuilt in a separate checkout passed same-PID pending INT/TERM
+delivery, refusal after an observed interrupt, and mask/handler recovery after a
+failed exec. The retained audit checked 78 events across seven sessions, exact
+journals, replacement bindings, stale gating, partial controls, pending intent,
+backpressure and a genuine compiler failure. Reports are retained at
+`/private/tmp/kvik-recomposition-exec-review.json` and
+`/private/tmp/kvik-recomposition-audit-f300c75.json`. This review does not replace
+the pending successful consumer-after-handoff gate described below.
+
 ## Boundaries
 
 The current `KVIK_BOOTSTRAP_LAUNCH` must bind the running native composition and
