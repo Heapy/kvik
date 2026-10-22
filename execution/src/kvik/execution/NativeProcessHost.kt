@@ -7,7 +7,10 @@ import kvik.core.*
 import kvik.execution.platform.*
 import platform.posix.*
 
-/** macOS ARM64 boundary. Helper must be built and verified with the runtime composition. */
+/** macOS ARM64 boundary. Helper must be built and verified with the runtime composition.
+ * A zero [ProcessRequest.timeoutMillis] removes only the deadline, never process ownership:
+ * cancel/close, owner loss and ordinary leader exit still stop remaining descendants.
+ */
 class NativeProcessHost(private val guardianExecutable: String) : ProcessHost {
     private val processes = mutableSetOf<NativeOwnedProcess>()
     private var closed = false

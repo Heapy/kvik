@@ -135,6 +135,10 @@ interface ActionExecutor {
     fun start(runId: String, actionId: String, action: ActionSpec): RunningAction
 }
 
+/** An owned process: zero timeout means no deadline; positive values bound its lifetime in milliseconds.
+ * Cancellation, owner loss and descendant cleanup still apply without a deadline. Action deadlines
+ * are separate: [ActionSpec.timeoutMillis] must remain strictly positive.
+ */
 data class ProcessRequest(
     val arguments: List<String>,
     val workingDirectory: String,
@@ -143,7 +147,7 @@ data class ProcessRequest(
     val stderrFile: String,
     val timeoutMillis: Long,
 ) {
-    init { require(arguments.isNotEmpty() && timeoutMillis > 0) }
+    init { require(arguments.isNotEmpty() && timeoutMillis >= 0) }
 }
 
 data class ProcessResult(val exitCode: Int, val timedOut: Boolean = false, val cancelled: Boolean = false)

@@ -124,8 +124,12 @@ int main(int argc, char **argv) {
     sigemptyset(&action.sa_mask);
     sigaction(SIGINT, &action, NULL); sigaction(SIGTERM, &action, NULL); sigaction(SIGHUP, &action, NULL);
     fcntl(3, F_SETFD, FD_CLOEXEC); fcntl(4, F_SETFD, FD_CLOEXEC);
-    long long timeout_ms = strtoll(argv[4], NULL, 10), start = now_ms();
-    if (timeout_ms <= 0 || owner_gone()) { report(130, 0, 1); return 0; }
+    char *timeout_end = NULL;
+    errno = 0;
+    long long timeout_ms = strtoll(argv[4], &timeout_end, 10), start = now_ms();
+    if (argv[4][0] < '0' || argv[4][0] > '9' || errno == ERANGE ||
+            !timeout_end || *timeout_end || timeout_ms < 0) { report(125, 0, 0); return 0; }
+    if (owner_gone()) { report(130, 0, 1); return 0; }
     pid_t child = fork();
     if (child < 0) { report(125, 0, 0); return 0; }
     if (!child) {
@@ -158,7 +162,7 @@ int main(int argc, char **argv) {
             break;
         }
         if (owner_gone()) { cancelled = 1; code = 130; break; }
-        if (now_ms() - start >= timeout_ms) { timed_out = 1; code = 124; break; }
+        if (timeout_ms > 0 && now_ms() - start >= timeout_ms) { timed_out = 1; code = 124; break; }
         usleep(10000);
     }
     /* Also clean descendants after ordinary leader exit; success cannot leave servers behind. */

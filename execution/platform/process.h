@@ -1,5 +1,7 @@
 #ifndef KVIK_PROCESS_H
 #define KVIK_PROCESS_H
+/* timeout_ms: zero means no deadline, positive means bounded milliseconds; negative is EINVAL.
+ * Every lifetime remains owned and cancellable, including when the owner disappears. */
 void *kvik_process_start(const char *helper, const char *cwd, const char *out, const char *err,
                          long long timeout_ms, char *const *argv, char *const *envp);
 int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancelled);

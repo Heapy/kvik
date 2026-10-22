@@ -66,6 +66,7 @@ typedef struct {
  * POSIX_SPAWN_CLOEXEC_DEFAULT also prevents leaking other invocations' ownership pipes. */
 void *kvik_process_start(const char *helper, const char *cwd, const char *out, const char *err,
                          long long timeout_ms, char *const *argv, char *const *envp) {
+    if (timeout_ms < 0) { errno = EINVAL; return NULL; }
     int control[2], result[2];
     if (pipe(control)) return NULL;
     if (pipe(result)) { close(control[0]); close(control[1]); return NULL; }
