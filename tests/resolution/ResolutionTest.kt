@@ -55,6 +55,55 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun pinnedDiffUtilsParentPomRemainsAnExplicitUnsupportedBoundary() {
+        val transport = FixtureTransport()
+        val failure = assertFails { MavenResolver(transport, NativePomParser()).resolve(Coordinate.parse("io.github.java-diff-utils:java-diff-utils:4.16"), jvmVariantRequest("java-runtime", 11), listOf(repo)) }
+        assertTrue(failure.message!!.contains("Unsupported POM semantics"))
+        assertFalse(transport.urls.any { it.endsWith(".jar") })
+    }
+    @Test fun actualKotlinTestCapabilitiesSelectOnlyDefaultAndExplicitJunit5Variants() {
+        val transport = FixtureTransport()
+        val pins = listOf("org.junit.jupiter:junit-jupiter-api:5.13.4", "org.junit.jupiter:junit-jupiter-engine:5.13.4", "org.junit.platform:junit-platform-launcher:1.13.4").map(Coordinate::parse)
+        val resolver = MavenResolver(transport, NativePomParser(), pins)
+        val expected = parseJson(read("$root/compiler/jvm/kotaml-artifacts.lock.json")!!.decodeToString()).objectValue().getValue("artifacts").arrayValue()
+            .associate { value -> value.objectValue().let { it.getValue("coordinate").stringValue() to Digest(it.getValue("sha256").stringValue(), it.getValue("size").longValue()) } }
+        for (usage in listOf("java-api", "java-runtime")) {
+            val request = jvmVariantRequest(usage, 11)
+            val base = resolver.resolve(Coordinate.parse("org.jetbrains.kotlin:kotlin-test:2.4.20"), request, listOf(repo))
+            assertEquals(listOf("kotlin-test", "kotlin-stdlib", "annotations"), base.artifacts.map { it.coordinate.name })
+            val result = resolver.resolve(Coordinate.parse("org.jetbrains.kotlin:kotlin-test-junit5:2.4.20"), request, listOf(repo))
+            assertEquals("jvmJUnit5${if (usage == "java-api") "Api" else "Runtime"}Elements", result.artifacts.first().variant)
+            assertEquals(if (usage == "java-api") 8 else 10, result.artifacts.size)
+            result.artifacts.forEach { assertEquals(expected.getValue(it.coordinate.toString()), it.digest) }
+            assertEquals(result, resolver.resolve(result.requested, request, listOf(repo)))
+            assertTrue(result.metadata.any { it.url.endsWith("kotlin-test-2.4.20.module") })
+            assertFalse(transport.urls.any { it.contains("kotlin-test-junit/") || it.contains("kotlin-test-testng/") })
+        }
+    }
+
+    @Test fun capabilitiesFilterFeaturesAndRejectConflictingProvidersAndUnsupportedSelectors() {
+        fun caps(vararg names: String) = ",\"capabilities\":[" + names.joinToString(",") { """{"group":"example","name":"$it","version":"1.0"}""" } + "]"
+        val feature = variant(extra = caps("feature"), attrs = ",\"unrequested.feature\":\"x\"")
+        assertTrue(resolve(module(example, variant() + "," + feature)).artifacts.isEmpty())
+        assertTrue(resolve(module(example, variant(extra = caps("a", "framework")))).artifacts.isEmpty())
+        assertFails { resolve(module(example, feature)) }
+        assertFails { resolve(module(example, variant() + "," + variant(extra = caps("a", "framework")))) }
+        for (bad in listOf("null", "[{}]", "[{\"group\":\"example\",\"name\":\"a\",\"version\":\"1.0\",\"unknown\":true}]",
+            "[{\"group\":\"example\",\"name\":\"a\",\"version\":\"LATEST\"}]"))
+            assertFails { resolve(module(example, variant(extra = ",\"capabilities\":$bad"))) }
+        assertFails { resolve(module(example, variant(extra = caps("a", "a")))) }
+        val b = Coordinate("example", "b", "1.0")
+        val bUrl = "${repo.url}/example/b/1.0/b-1.0.module"
+        val dependency = ",\"dependencies\":[{\"group\":\"example\",\"module\":\"b\",\"version\":{\"requires\":\"1.0\"}}]"
+        val conflict = assertFails { resolve(module(example, variant(dependency, caps("a", "framework"))), extra = mapOf(bUrl to module(b, variant(extra = caps("b", "framework"))))) }
+        assertTrue(conflict.message!!.contains("Conflicting capability example:framework"))
+        assertFails { resolve(module(example, variant(dependency, caps("a", "b"))), extra = mapOf(bUrl to module(b, variant()))) }
+        val requested = dependency.replace("\"version\":{", "\"requestedCapabilities\":[{\"group\":\"example\",\"name\":\"feature\",\"version\":\"1.0\"}],\"version\":{")
+        assertFails { resolve(module(example, variant(requested))) }
+        val redirect = ",\"available-at\":{\"url\":\"../../b/1.0/b-1.0.module\",\"group\":\"example\",\"module\":\"b\",\"version\":\"1.0\"}"
+        val target = module(example, variant(extra = caps("b", "a"))).decodeToString().replace("\"component\":{", "\"component\":{\"url\":\"../../a/1.0/a-1.0.module\",").encodeToByteArray()
+        assertTrue(resolve(module(example, variant(extra = redirect)), extra = mapOf(bUrl to target)).artifacts.isEmpty())
+    }
     @Test fun actualJunitApiRuntimeAndBomMetadataResolveWithExplicitJvmTarget() {
         val transport = FixtureTransport()
         val resolver = MavenResolver(transport, NativePomParser())
@@ -137,7 +186,7 @@ class ResolutionTest {
         assertFailsWith<IllegalArgumentException> { resolve(module(example, variant() + "," + variant())) }
         assertFailsWith<IllegalArgumentException> { resolve(module(example, variant()), native) }
         assertFailsWith<IllegalArgumentException> { resolve(module(example, variant(attrs = ",\"unknown.attribute\":\"value\""))) }
-        assertFailsWith<IllegalArgumentException> { resolve(module(example, variant(extra = ",\"capabilities\":[]"))) }
+        assertTrue(resolve(module(example, variant(extra = ",\"capabilities\":[]"))).artifacts.isEmpty())
     }
 
     @Test fun unsupportedVersionExclusionAndRedirectSemanticsFail() {

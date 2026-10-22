@@ -193,5 +193,35 @@
     "file": "org.opentest4j__opentest4j__1.3.0.module",
     "hash": "48bf1d6c8b5dc94f74652bd17900f654deb714350248cf5e8fca27b9090c8e0d",
     "sizeBytes": 3461
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-test/2.4.20/kotlin-test-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-test__2.4.20.module",
+    "hash": "0d3008eef3e2931524308e21f40ef88a1cd54be1d5fdcfc02a4cdf2599fe2d0c",
+    "sizeBytes": 20293
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-test-junit5/2.4.20/kotlin-test-junit5-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-test-junit5__2.4.20.module",
+    "hash": "7b0b9a68debb4750ad920a430c7be087f69705d47125f5056e8787ffdc2a76ad",
+    "sizeBytes": 4851
+  },
+  "https://repo.maven.apache.org/maven2/org/junit/jupiter/junit-jupiter-engine/5.13.4/junit-jupiter-engine-5.13.4.module": {
+    "file": "org.junit.jupiter__junit-jupiter-engine__5.13.4.module",
+    "hash": "ceeee6d0034a738135bd9f3820cfe089c6569163c623ba8e3e9b44f7208fd21a",
+    "sizeBytes": 5260
+  },
+  "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-engine/1.13.4/junit-platform-engine-1.13.4.module": {
+    "file": "org.junit.platform__junit-platform-engine__1.13.4.module",
+    "hash": "35e4fd68ebf314e62660148936436b39ae105d355beaac1aa54eb91c2066ca77",
+    "sizeBytes": 5036
+  },
+  "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-launcher/1.13.4/junit-platform-launcher-1.13.4.module": {
+    "file": "org.junit.platform__junit-platform-launcher__1.13.4.module",
+    "hash": "115f77455740e0c3c5398bcdd841c8aa699c2d8002b1100f2ae7a643d9405928",
+    "sizeBytes": 4734
+  },
+  "https://repo.maven.apache.org/maven2/io/github/java-diff-utils/java-diff-utils/4.16/java-diff-utils-4.16.pom": {
+    "file": "io.github.java-diff-utils__java-diff-utils__4.16.pom",
+    "hash": "434d598a1e1813111385235161627a4c4ebd62134f7054428d3e202b32cf39de",
+    "sizeBytes": 2304
   }
 }

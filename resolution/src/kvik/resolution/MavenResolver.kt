@@ -49,6 +49,7 @@ class MavenResolver(
         val visited = mutableSetOf<String>()
         val active = mutableSetOf<String>()
         val graph = linkedMapOf<String, Component>()
+        val capabilityProviders = mutableMapOf<String, Pair<String, String>>()
         val downloaded = linkedMapOf<String, ByteArray>()
         var requests = 0
         var downloadedBytes = 0L
@@ -93,6 +94,8 @@ class MavenResolver(
             val edges = mutableListOf<String>()
             val artifacts = mutableListOf<LockedArtifact>()
             var metadataOwner = c
+            var provided = listOf(c)
+            var provider = key
             if (found.module) {
                 val module = parseJson(found.bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("formatVersion", "component", "variants"), setOf("createdBy"))
                 require(module.string("formatVersion") == "1.1") { "Unsupported Gradle metadata version" }
@@ -105,9 +108,14 @@ class MavenResolver(
                 if ("url" in identity) {
                     require(owner.group == c.group && owner.version == c.version && identity.string("url") == "../../${owner.name}/${owner.version}/${owner.name}-${owner.version}.module") { "Invalid component ownership URL" }
                 } else require(owner == c) { "Metadata identity mismatch: $c" }
-                val candidates = module.getValue("variants").arrayValue().map { it.objectValue() }.filter { matches(it, variant, platform) }
+                // A normal coordinate requests its default capability. Feature variants with
+                // matching platform/usage but different capabilities are not alternatives to it.
+                val candidates = module.getValue("variants").arrayValue().map { it.objectValue() }.filter {
+                    c in capabilities(it, c) && matches(it, variant, platform)
+                }
                 require(candidates.size == 1) { "Unsupported or ambiguous variant for $c ($variant): ${candidates.map { it["name"] }}" }
-                val chosen = JsonValue.Object(candidates.single()).fields(setOf("name", "attributes"), setOf("dependencies", "dependencyConstraints", "files", "available-at"))
+                val chosen = JsonValue.Object(candidates.single()).fields(setOf("name", "attributes"), setOf("dependencies", "dependencyConstraints", "files", "available-at", "capabilities"))
+                provided = capabilities(chosen, c)
                 val name = chosen.string("name")
                 val redirect = chosen["available-at"]
                 if (redirect != null) {
@@ -116,6 +124,7 @@ class MavenResolver(
                     val target = Coordinate(r.string("group"), r.string("module"), r.string("version"))
                     require(target.group == c.group && r.string("url") == "../../${target.name}/${target.version}/${target.name}-${target.version}.module") { "Unsupported available-at URL" }
                     edges += visit(target, platform, found.repository, owner)
+                    provider = graph.getValue(edges.single()).capabilityProvider
                 } else {
                     chosen.items("dependencyConstraints").forEach { constrain(dependency(it, constraint = true).first) }
                     for (f in chosen.items("files")) {
@@ -153,7 +162,14 @@ class MavenResolver(
                 }
                 pomDependencies(pom.child("dependencies"), variant).forEach { edges += visit(it) }
             }
-            graph[key] = Component(artifacts, listOf(used), edges, metadataOwner)
+            // No capability conflict-resolution policy is implied by a version pin. Redirect
+            // aliases share their terminal provider; independent providers must not coexist.
+            for (capability in provided) {
+                val prior = capabilityProviders[capability.key()]
+                require(prior == null || prior == (provider to capability.version)) { "Conflicting capability ${capability.key()}: $prior and $provider:${capability.version}; capability substitution is unsupported" }
+                capabilityProviders[capability.key()] = provider to capability.version
+            }
+            graph[key] = Component(artifacts, listOf(used), edges, metadataOwner, provider)
             active -= key
             visited += key
             return key
@@ -177,7 +193,20 @@ class MavenResolver(
     }
 
     private data class Source(val repository: Repository, val url: String, val bytes: ByteArray, val module: Boolean)
-    private data class Component(val artifacts: List<LockedArtifact>, val metadata: List<MetadataIdentity>, val edges: List<String>, val owner: Coordinate)
+    private data class Component(val artifacts: List<LockedArtifact>, val metadata: List<MetadataIdentity>, val edges: List<String>, val owner: Coordinate, val capabilityProvider: String)
+}
+
+/** Only literal provided capabilities are modeled. Requested capability selectors remain unsupported. */
+private fun capabilities(variant: Map<String, JsonValue>, coordinate: Coordinate): List<Coordinate> {
+    val declared = variant["capabilities"]?.arrayValue().orEmpty()
+    require(declared.size <= 32) { "Too many variant capabilities" }
+    if (declared.isEmpty()) return listOf(coordinate)
+    return declared.map { value ->
+        val fields = value.fields(setOf("group", "name", "version"))
+        Coordinate(fields.string("group"), fields.string("name"), fields.string("version"))
+    }.also { values ->
+        require(values.map { it.key() }.distinct().size == values.size) { "Duplicate/conflicting variant capabilities" }
+    }
 }
 
 private fun atLeast(selected: String, required: String): Boolean {
