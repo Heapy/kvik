@@ -26,9 +26,38 @@ class VerifiedToolchains internal constructor(
     operator fun get(component: ToolComponent): VerifiedToolComponent = components.getValue(component)
 }
 
-/** No memoization: each verify call re-reads every regular file in all six installations. */
+/** No memoization: each call re-reads every regular file in the requested installations. */
 class InstalledToolchainVerifier(private val limits: InventoryLimits = InventoryLimits()) {
     fun verify(lockJson: String, roots: Map<ToolComponent, String>): VerifiedToolchains {
+        val lock = parseLock(lockJson)
+        require(roots.keys == ToolComponent.entries.toSet()) { "Explicit roots for all six tool components are required" }
+        val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
+        for (component in ToolComponent.entries) {
+            val captured = captureInventory(roots.getValue(component), limits, component == ToolComponent.SDK)
+            require(captured.summary.digest == lock.components.getValue(component)) { "Tool inventory mismatch: ${component.lockName}; expected ${lock.components.getValue(component)}, actual ${captured.summary.digest}" }
+            if (component == ToolComponent.SDK) {
+                val settings = captured.sdkSettings ?: throw ToolchainVerificationFailure("Unsupported SDK host data: regular SDKSettings.json is required")
+                val sdk = parseJson(settings.decodeToString(throwOnInvalidSequence = true)).objectValue()["Version"]?.stringValue()
+                    ?: throw ToolchainVerificationFailure("Unsupported SDK host data: SDKSettings.json Version is required")
+                require(sdk.isNotBlank() && sdk == lock.host.sdk) { "Tool lock SDK version does not match verified SDKSettings.json: $sdk" }
+            }
+            verified[component] = VerifiedToolComponent(captured.root, captured.summary)
+        }
+        return VerifiedToolchains(lock.host, lock.kotlinVersion, verified)
+    }
+
+    /** A JVM worker consumes the JDK, not Native/LLVM/Xcode. No SDK verification is claimed. */
+    fun verifyJdk(lockJson: String, root: String): VerifiedToolComponent {
+        val lock = parseLock(lockJson)
+        val captured = captureInventory(root, limits, false)
+        val expected = lock.components.getValue(ToolComponent.JDK)
+        require(captured.summary.digest == expected) { "Tool inventory mismatch: jdk; expected $expected, actual ${captured.summary.digest}" }
+        return VerifiedToolComponent(captured.root, captured.summary)
+    }
+
+    private data class Lock(val host: ToolHost, val kotlinVersion: String, val components: Map<ToolComponent, Digest>)
+
+    private fun parseLock(lockJson: String): Lock {
         require(lockJson.length <= 1048576 && lockJson.encodeToByteArray(throwOnInvalidSequence = true).size <= 1048576) { "Tool lock exceeds 1 MiB" }
         val lock = parseJson(lockJson).fields(setOf("schemaVersion", "kotlinVersion", "host", "components"))
         lock.requireVersion()
@@ -40,22 +69,9 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
         val actualHost = nativeHost()
         require(expectedHost.os == actualHost.first && expectedHost.architecture == actualHost.second && expectedHost.release == actualHost.third) { "Tool lock host does not match uname: $actualHost" }
         require(actualHost.first == "Darwin" && actualHost.second == "arm64") { "Unsupported toolchain host: $actualHost" }
-        require(roots.keys == ToolComponent.entries.toSet()) { "Explicit roots for all six tool components are required" }
         val components = lock.getValue("components").fields(ToolComponent.entries.map { it.lockName }.toSet())
         val expected = ToolComponent.entries.associateWith { Digest.fromJson(components.getValue(it.lockName)) }
-        val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
-        for (component in ToolComponent.entries) {
-            val captured = captureInventory(roots.getValue(component), limits, component == ToolComponent.SDK)
-            require(captured.summary.digest == expected.getValue(component)) { "Tool inventory mismatch: ${component.lockName}; expected ${expected.getValue(component)}, actual ${captured.summary.digest}" }
-            if (component == ToolComponent.SDK) {
-                val settings = captured.sdkSettings ?: throw ToolchainVerificationFailure("Unsupported SDK host data: regular SDKSettings.json is required")
-                val sdk = parseJson(settings.decodeToString(throwOnInvalidSequence = true)).objectValue()["Version"]?.stringValue()
-                    ?: throw ToolchainVerificationFailure("Unsupported SDK host data: SDKSettings.json Version is required")
-                require(sdk.isNotBlank() && sdk == expectedHost.sdk) { "Tool lock SDK version does not match verified SDKSettings.json: $sdk" }
-            }
-            verified[component] = VerifiedToolComponent(captured.root, captured.summary)
-        }
-        return VerifiedToolchains(expectedHost, kotlinVersion, verified)
+        return Lock(expectedHost, kotlinVersion, expected)
     }
 }
 

@@ -37,7 +37,7 @@ def main():
     command(['ar', 'rcs', output / 'libkvik-process.a', output / 'process.o'])
     command([native / 'cinterop', '-def', process / 'process.def', '-compiler-option', '-I' + str(process),
              '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'])
-    sources = [p for base in ('core/src', 'cache/src', 'execution/src', 'compiler/jvm/native/src', 'integration/toolchains/src',
+    sources = [p for base in ('core/src', 'cache/src', 'execution/src', 'compiler/jvm/native/src', 'compiler/native/src', 'integration/toolchains/src',
                               'integration/compiler-tools/src', 'tests/compiler-tools') for p in sorted((ROOT / base).rglob('*.kt'))]
     sources += [ROOT / 'cli/src/kvik/cli/RuntimeWorkers.kt', ROOT / 'cli/src/kvik/cli/RuntimeProcesses.kt']
     executable = output / 'compiler-tools.kexe'
@@ -87,7 +87,7 @@ def main():
             verify = {'op': 'verify', 'identities': identities}
             ask(setup); result = ask(verify)
             assert result['value']['identities'] == identities and result['value']['java'] == str(java)
-            passed('Full provider composes six installed inventories, bundle and streamed compiler/plugin jars')
+            passed('JVM provider verifies complete JDK inventory, bundle and streamed compiler/plugin jars')
 
             for name in identities:
                 changed = copy.deepcopy(identities); changed[name]['hash'] = '0' * 64
@@ -97,13 +97,22 @@ def main():
             passed('All four requested identities and exact key set enforced')
 
             for path in (class_file, bundle / 'lib/api.jar', bundle / 'lib/stdlib.jar', bundle / 'lib/junit.jar',
-                         bundle / 'compiler-manifest.json', compiler, plugin, java, roots['llvm'] / 'tool'):
+                         bundle / 'compiler-manifest.json', compiler, plugin, java):
                 before = path.stat(); data = path.read_bytes()
                 path.write_bytes(bytes([data[0] ^ 1]) + data[1:]); os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
                 ask(verify, ok=False)
                 path.write_bytes(data); os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
                 ask(verify)
             passed('Same provider rejects same-size preserved-mtime corruption in every tool layer, then recovers')
+
+            for name in ('kotlinNative', 'llvm', 'libffi', 'sdk', 'xcodeToolchain'):
+                moved = roots[name].with_name(name + '-unused')
+                roots[name].rename(moved)
+                try:
+                    ask(verify)
+                finally:
+                    moved.rename(roots[name])
+            passed('JVM provider does not require or inspect unused Native/LLVM/libffi/SDK/Xcode installations')
 
             original = compiler.read_bytes()
             compiler.unlink(); ask(verify, ok=False)
@@ -151,7 +160,7 @@ def main():
                 workspace = fixture / 'compile'; workspace.mkdir(); (workspace / 'home').mkdir(); (workspace / 'tmp').mkdir()
                 (workspace / 'Hello.kt').write_text('fun main() { println("verified provider") }\n')
                 shutil.copyfile(bundle_root / worker['stdlib']['path'], workspace / 'stdlib.jar')
-                print('Verifying all installed tools and real bundle/compiler jars, then running one owned BTA compile...', flush=True)
+                print('Verifying installed JDK and real bundle/compiler jars, then running one owned BTA compile...', flush=True)
                 result = ask({'op': 'compile', 'identities': actual_ids, 'workspace': str(workspace), 'guardian': str(runtime / 'guardian')})
                 (output / 'installed-result.json').write_text(json.dumps(result, indent=2) + '\n')
                 shutil.copyfile(workspace / 'result.json', output / 'worker-result.json')

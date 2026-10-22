@@ -47,8 +47,7 @@ class InstalledJvmToolchainProvider(
         // Existing distribution schema pins this supported plugin by digest, without a path field.
         val plugin = fields.getValue("serializationPlugin")
         if (plugin != JsonValue.Null) verifyJar("kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar", Digest.fromJson(plugin))
-        val installed = InstalledToolchainVerifier().verify(trustedToolLock, toolRoots)
-        val jdk = installed[ToolComponent.JDK]
+        val jdk = InstalledToolchainVerifier().verifyJdk(trustedToolLock, toolRoots.getValue(ToolComponent.JDK))
         require(requested.getValue("jdk") == jdk.digest) { "Requested JDK identity differs from verified installation" }
         val java = "${jdk.root}/bin/java"
         NativeFiles.ensureDirectory("${jdk.root}/bin", create = false)

@@ -135,25 +135,44 @@ def main():
             assert result['value']['components']['jdk']['root'] == roots['jdk']
             passed('All six verified roots and inventory SHA+canonical length returned; SDK version derived from verified bytes')
 
+            jdk_query = {'op': 'verify-jdk', 'lock': lock, 'root': roots['jdk']}
+            jdk_result = request(jdk_query)
+            assert jdk_result['value'] == result['value']['components']['jdk']
+            for name in components[1:]:
+                source = Path(roots[name]); moved = source.with_name(name + '-not-installed')
+                source.rename(moved)
+                try:
+                    request(jdk_query)
+                    request(query, ok=False)
+                finally:
+                    moved.rename(source)
+            passed('JDK-only proof equals full JDK proof and needs no Native/backend/SDK roots; full verification still requires each')
+
             tool = Path(roots['jdk']) / 'tool'
             original = tool.stat()
             tool.write_bytes(b'version two')
             os.utime(tool, ns=(original.st_atime_ns, original.st_mtime_ns))
             assert tool.stat().st_size == original.st_size and tool.stat().st_mtime_ns == original.st_mtime_ns
             request(query, ok=False)
+            request(jdk_query, ok=False)
             tool.write_bytes(b'version one')
             os.utime(tool, ns=(original.st_atime_ns, original.st_mtime_ns))
             request(query)
+            request(jdk_query)
             tool.chmod(0o755)
             request(query, ok=False)
+            request(jdk_query, ok=False)
             tool.chmod(original.st_mode)
             (Path(roots['jdk']) / 'new').write_bytes(b'new')
             request(query, ok=False)
+            request(jdk_query, ok=False)
             (Path(roots['jdk']) / 'new').unlink()
             tool.rename(tool.with_name('renamed'))
             request(query, ok=False)
+            request(jdk_query, ok=False)
             tool.with_name('renamed').rename(tool)
             request(query)
+            request(jdk_query)
             passed('Same verifier rehashes on every call: same-size preserved-mtime edits, executable changes, added/renamed files invalidate')
 
             malformed = [[], {}, dict(lock, schemaVersion=2), dict(lock, kotlinVersion='other'), dict(lock, extra=True)]
@@ -166,16 +185,21 @@ def main():
             malformed += ['{"schemaVersion":1,"schemaVersion":1}', '{"schemaVersion":1.0}']
             for bad in malformed:
                 request(dict(query, lock=bad), ok=False)
+                if not isinstance(bad, dict) or bad.get('host', {}).get('sdk') != 'wrong':
+                    request(dict(jdk_query, lock=bad), ok=False)
             request(dict(query, roots={}), ok=False)
+            request(dict(jdk_query, root=str(fixture / 'missing-jdk')), ok=False)
             settings.unlink()
             no_settings_lock = copy.deepcopy(lock)
             no_settings_lock['components']['sdk'] = digest(canonical(inventory(roots['sdk'], True)))
             response = request(dict(query, lock=no_settings_lock), ok=False)
             assert 'Unsupported SDK host data' in response['error'], response
+            request(dict(jdk_query, lock=no_settings_lock))
             settings.write_text('{}')
             no_settings_lock['components']['sdk'] = digest(canonical(inventory(roots['sdk'], True)))
             response = request(dict(query, lock=no_settings_lock), ok=False)
             assert 'Unsupported SDK host data' in response['error'], response
+            request(dict(jdk_query, lock=no_settings_lock))
             passed('Malformed/version/host/digest/missing-root locks rejected; missing SDK host data reported explicitly')
 
         if args.fixtures_only:
@@ -190,6 +214,10 @@ def main():
                 assert result['value']['components'][name]['inventory']['digest'] == installed_lock['components'][name]
             (output / 'installed-result.json').write_text(json.dumps(result, indent=2) + '\n')
             passed(f'Full provisioned roots match Python lock; elapsed={result["elapsedMs"]} ms, process peak RSS={result["maxRssBytes"]} bytes')
+            jdk_result = request({'op': 'verify-jdk', 'root': installed['jdk'], 'lock': installed_lock})
+            assert jdk_result['value'] == result['value']['components']['jdk']
+            (output / 'installed-jdk-result.json').write_text(json.dumps(jdk_result, indent=2) + '\n')
+            passed(f'JDK-only proof matches full proof; elapsed={jdk_result["elapsedMs"]} ms, file bytes={jdk_result["value"]["inventory"]["fileBytes"]}')
         print(f'{count} toolchain verification scenario groups passed', flush=True)
     finally:
         process.stdin.close()

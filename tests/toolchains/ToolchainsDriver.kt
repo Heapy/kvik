@@ -32,6 +32,11 @@ fun main() {
                         component.lockName to obj("root" to verified[component].root.json(), "inventory" to summary(verified[component].inventory))
                     }), "sdk" to verified.host.sdk.json())
                 }
+                "verify-jdk" -> {
+                    val lock = request.getValue("lock")
+                    val verified = verifier.verifyJdk(if (lock is JsonValue.StringValue) lock.value else lock.canonical(), request.getValue("root").stringValue())
+                    obj("root" to verified.root.json(), "inventory" to summary(verified.inventory))
+                }
                 else -> error("Unknown driver operation")
             }
             obj("ok" to true.json(), "value" to response)
