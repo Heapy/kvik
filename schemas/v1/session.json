@@ -251,7 +251,8 @@
                     "enum": [
                       "KVIK_SESSION_CONTROL",
                       "KVIK_SESSION_RESTART",
-                      "KVIK_SESSION_APPLICATION"
+                      "KVIK_SESSION_APPLICATION",
+                      "KVIK_SESSION_OBSERVATION"
                     ]
                   },
                   "message": {

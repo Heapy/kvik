@@ -32,6 +32,15 @@ class SchemaTest(unittest.TestCase):
             value=dict(schemaVersion=1,sessionId='s',sequence=1,type=kind,payload=payload);validator.validate(value)
             invalid=copy.deepcopy(value);del invalid['payload']['composition'];self.assertFalse(validator.is_valid(invalid))
 
+    def test_snapshot_diagnostic_has_bounded_strict_payload(self):
+        validator=jsonschema.Draft202012Validator({**SCHEMA,'$ref':'#/$defs/event'},registry=REGISTRY)
+        event=dict(schemaVersion=1,sessionId='session',sequence=1,type='diagnostic',
+            payload=dict(code='KVIK_SESSION_OBSERVATION',message='Snapshot unavailable: exit=125; evidence=/session/scan'))
+        validator.validate(event)
+        for payload in (dict(code='KVIK_SESSION_OBSERVATION',message='x'*513),dict(code='KVIK_UNKNOWN',message='x'),
+                        dict(code='KVIK_SESSION_OBSERVATION',message='x',unbound=True)):
+            invalid=copy.deepcopy(event);invalid['payload']=payload;self.assertFalse(validator.is_valid(invalid))
+
     def test_bootstrap_ownership_is_optional_for_library_and_required_for_application(self):
         launch=dict(schemaVersion=1,sourceRoot='/source',python='/python',launcher='/source/kvik',
             bootstrapArguments=['--konan-data','/data','--cache-dir','/cache','--artifact-cache','/artifacts'],
