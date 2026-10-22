@@ -117,3 +117,5 @@ process peak RSS including preceding fixtures was **20,414,464 bytes (19.5 MiB)*
 by Darwin `getrusage`. This is one run with uncontrolled filesystem cache state, not a cold-cache
 benchmark or performance bound. Full verification on every provider call has substantial cost;
 mtime shortcuts are deliberately absent. No broad compiler or launcher suite was run for this slice.
+
+Independent review found no confirmed defect. Twelve independently generated nested trees with supplementary/BMP Unicode, control/quote/backslash names, executable-bit changes and internal/root symlinks produced identical Native and Python digests and canonical byte lengths. The documented stable-root and synchronous-scan limits remain applicable.
