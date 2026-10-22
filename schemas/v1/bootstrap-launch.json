@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/launch",
+  "$defs": {
+    "digest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hash", "sizeBytes"],
+      "properties": {
+        "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "sizeBytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "path": {"type": "string", "pattern": "^/", "minLength": 1, "maxLength": 32768},
+    "compositionQuery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "composition"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "composition": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "launch": {
+      "description": "Invocation-local context, limited by the producer to 32 KiB of UTF-8 JSON. Paths and flags are trusted launch context, not authenticated remote metadata.",
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "sourceRoot", "python", "launcher", "bootstrapArguments", "composition", "runtime"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "sourceRoot": {"$ref": "#/$defs/path"},
+        "python": {"$ref": "#/$defs/path"},
+        "launcher": {"$ref": "#/$defs/path"},
+        "runtime": {"$ref": "#/$defs/path"},
+        "composition": {"$ref": "#/$defs/digest"},
+        "bootstrapArguments": {
+          "type": "array", "minItems": 6, "maxItems": 12,
+          "items": {"oneOf": [
+            {"enum": ["--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--offline", "--no-build"]},
+            {"$ref": "#/$defs/path"}
+          ]}
+        }
+      }
+    }
+  }
+}

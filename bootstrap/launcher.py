@@ -162,6 +162,26 @@ def validate_tools(args, expected):
     return roots
 
 
+def launch_descriptor(args, key, executable):
+    """Invocation-local restart context; never part of a portable executable cache entry."""
+    arguments = []
+    for flag, value in (("--java-home", args.java_home), ("--konan-home", args.konan_home),
+                        ("--konan-data", args.konan_data), ("--cache-dir", args.cache_dir),
+                        ("--artifact-cache", args.artifact_cache)):
+        if value is not None:
+            arguments.extend((flag, str(Path(value).absolute())))
+    for flag, enabled in (("--offline", args.offline), ("--no-build", args.no_build)):
+        if enabled:
+            arguments.append(flag)
+    value = {"schemaVersion": 1, "sourceRoot": str(ROOT),
+             "python": str(Path(sys.executable).resolve()), "launcher": str(ROOT / "kvik"),
+             "bootstrapArguments": arguments, "composition": key, "runtime": str(executable)}
+    encoded = canonical(value)
+    if len(encoded) > 32 * 1024:
+        raise ValueError("Bootstrap launch descriptor exceeds 32 KiB")
+    return encoded.decode("utf-8")
+
+
 def run_owned(command, environment, log, timeout=300):
     """Pipe lifetime owns the compiler even when the launcher receives SIGKILL."""
     process = None
@@ -294,19 +314,28 @@ def main():
     parser.add_argument("--artifact-cache", type=Path, default=ROOT / ".kvik/tool-artifacts")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-build", action="store_true")
-    parser.add_argument("--print-runtime", action="store_true")
+    query = parser.add_mutually_exclusive_group()
+    query.add_argument("--print-runtime", action="store_true")
+    query.add_argument("--print-launch", action="store_true")
+    query.add_argument("--print-composition", action="store_true")
     args, command = parser.parse_known_args()
     if command[:1] == ["--"]:
         command = command[1:]
     try:
+        if (args.print_composition or args.print_launch) and command:
+            raise ValueError("Bootstrap queries cannot include a runtime command")
         args.cache_dir = args.cache_dir.resolve()
         args.artifact_cache = args.artifact_cache.absolute()
         recipe, selected, lock, key = composition()
+        if args.print_composition:
+            print(canonical({"schemaVersion": 1, "composition": key}).decode("utf-8"))
+            return
         builds = args.cache_dir / "executables"
         locks = args.cache_dir / "locks"
+        destination = builds / key["hash"]
+        description = None if args.print_runtime else launch_descriptor(args, key, destination / "kvik.kexe")
         builds.mkdir(parents=True, exist_ok=True)
         locks.mkdir(parents=True, exist_ok=True)
-        destination = builds / key["hash"]
         with (locks / (key["hash"] + ".lock")).open("a+b") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             if not cached(destination, key):
@@ -319,8 +348,11 @@ def main():
         executable = destination / "kvik.kexe"
         if args.print_runtime:
             print(executable)
+        elif args.print_launch:
+            print(description)
         else:
             os.environ["KVIK_BOOTSTRAP_OFFLINE"] = "1" if args.offline else "0"
+            os.environ["KVIK_BOOTSTRAP_LAUNCH"] = description
             os.execv(executable, [str(executable), *command])
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, BootstrapInterrupted) as failure:
         emit("bootstrap-error", message=str(failure))
