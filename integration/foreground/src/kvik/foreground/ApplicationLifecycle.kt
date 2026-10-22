@@ -56,8 +56,13 @@ internal class ApplicationLifecycle(
     }
     fun observeRevision(revision: Long) {
         if (active?.revision != revision) markStale()
-        candidate?.takeIf { it.revision != revision }?.let { cancel(it) }
+        candidate?.takeIf { it.revision != revision }?.let(::invalidateCandidate)
         if (handoffRevision != null && handoffRevision != revision) invalidateHandoff()
+    }
+    private fun invalidateCandidate(child: Child) {
+        // The consumed reload intent survives a transient observation, including after old-owner reap.
+        if (!child.cancelled) retryPreparation = true
+        cancel(child)
     }
     private fun invalidateHandoff() {
         if (handoff != null) retryPreparation = true
@@ -128,7 +133,7 @@ internal class ApplicationLifecycle(
         observeRevision(revision)
         if (closing) cancelAll()
         if (handoff != null && handoff!!.composition != composition) invalidateHandoff()
-        candidate?.takeIf { it.composition != composition }?.let { cancel(it) }
+        candidate?.takeIf { it.composition != composition }?.let(::invalidateCandidate)
         active?.let { records(it); if (poll(it)) active = null }
         val child = candidate ?: return
         records(child)

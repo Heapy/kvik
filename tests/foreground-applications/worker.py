@@ -25,6 +25,10 @@ def publish(path, value):
     os.replace(temporary, path)
 
 if args[0] == 'snapshot-query':
+    failure=root/'snapshot-failure'
+    if failure.exists() and failure.read_text()=='fail':
+        failure.write_text('hold');sys.exit(125)
+    while failure.exists():time.sleep(.005)
     source = (root/'source').read_bytes()
     print(canonical(dict(schemaVersion=1, fingerprint=digest(source))).decode())
     sys.exit(0)
@@ -61,6 +65,8 @@ authorization = json.loads((gate/'activate.json').read_bytes())
 assert authorization == dict(schemaVersion=1, token=token, ready=digest(canonical(ready)))
 if digest((root/'source').read_bytes()) != source:
     sys.exit(3)
+while (root/'hold-start').exists():
+    time.sleep(.005)
 execution = preparation/'application-runs'/'execution'; execution.mkdir(parents=True)
 # Descendants deliberately ignore TERM: guardian cleanup must finish before replacement activates.
 child = subprocess.Popen([sys.executable, '-c', 'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(120)'])

@@ -192,15 +192,24 @@ class ForegroundSession(
             if (mode == SessionMode.APPLICATION && result.cancelled) return@scannerResult
             observedRuntime = child.runtime
             var fingerprint: String? = null
+            var observationError: String? = if (result.exitCode != 0 || result.timedOut) "Snapshot worker did not complete successfully" else null
             if (result.exitCode == 0 && !result.cancelled && !result.timedOut) {
                 try {
                     val fields = parseJson(NativeFiles.read("${child.path}/stdout.jsonl", 8192).decodeToString()).fields(setOf("schemaVersion", "fingerprint"))
                     fields.requireVersion()
                     fingerprint = fields.getValue("fingerprint").let { if (it == JsonValue.Null) null else Digest.fromJson(it).toJson().canonical() }
-                } catch (_: Exception) { /* Invalid/unstable observations are never a current claim. */ }
+                } catch (failure: Exception) { observationError = failure.message ?: "Invalid snapshot observation" }
             }
             val firstObservation = !observedOnce
             val changed = observedOnce && fingerprint != observed
+            if ((firstObservation || changed) && fingerprint == null) {
+                val retained = obj("schemaVersion" to 1.json(), "exitCode" to result.exitCode.json(),
+                    "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(),
+                    "error" to (observationError?.take(512)?.json() ?: JsonValue.Null))
+                NativeFiles.writeNew("${child.path}/observation-result.json", retained.canonical().encodeToByteArray())
+                event("diagnostic", obj("code" to "KVIK_SESSION_OBSERVATION".json(),
+                    "message" to "Snapshot unavailable: exit=${result.exitCode}, timedOut=${result.timedOut}; evidence=${child.path}".take(512).json()))
+            }
             if (!observedOnce || changed) {
                 observed = fingerprint; observedOnce = true; revision++
                 applications?.observeRevision(revision)
@@ -246,7 +255,7 @@ class ForegroundSession(
         apps.tick(revision, composition, closing == null && observed != null && observedRuntime == runtime, closing != null)
         if (apps.consumeRetry() && closing == null) {
             pending.request(Operation.APPLICATION); replacementAttempt = null
-            event("diagnostic", obj("code" to "KVIK_SESSION_APPLICATION".json(), "message" to "Prepared handoff became unavailable; queued one fresh preparation".json()))
+            event("diagnostic", obj("code" to "KVIK_SESSION_APPLICATION".json(), "message" to "Application preparation became unavailable; queued one fresh preparation".json()))
         }
         handoffApplication = apps.preparedForHandoff
         if (handoffApplication != null && (handoffApplication!!.composition != composition || closing != null)) {
@@ -269,6 +278,8 @@ class ForegroundSession(
             if (!prepareApplication { apps.start(runtime, composition, revision, generation, prepared = prepared) }) pending.request(Operation.APPLICATION)
             return
         }
+        // Do not consume the retained reload while a transient observation is unavailable or debouncing.
+        if (pending.pending == Operation.APPLICATION && (observed == null || watchPending)) return
         pending.take()?.let { kind ->
             if (kind == Operation.APPLICATION) {
                 generation++; prepareApplication { apps.start(runtime, composition, revision, generation) }

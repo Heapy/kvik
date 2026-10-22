@@ -93,6 +93,20 @@ class ApplicationLifecycleTest {
         f.host.processes[0].finish(); f.tick(2)
         assertFalse(f.activated(1)); assertTrue(f.host.processes[1].cancels > 0)
     }
+    @Test fun transientObservationAfterOldReapRetainsOneReloadIntent() = fixture { f ->
+        f.active(); f.start(); f.ready(); f.tick()
+        f.host.processes[0].finish(); f.tick()
+        assertTrue(f.activated(1)); assertFalse(f.lifecycle.hasActive)
+        f.tick(2, allowed = false)
+        assertTrue(f.lifecycle.consumeRetry()); assertFalse(f.lifecycle.consumeRetry())
+        f.tick(2, allowed = false); assertFalse(f.lifecycle.consumeRetry())
+        f.host.processes[1].finish(130); f.tick(3, allowed = false)
+        assertFalse(f.lifecycle.busy); assertFalse(f.lifecycle.consumeRetry())
+        // Session retains that consumed intent even when the restored fingerprint is unchanged.
+        f.start(3); f.ready(); f.tick(3); f.started(); f.tick(3)
+        assertTrue(f.lifecycle.hasActive); assertEquals(3, f.host.requests.size)
+        assertFalse(f.lifecycle.consumeRetry())
+    }
     @Test fun crashIsVisibleAndDoesNotAutoRestart() = fixture { f ->
         f.active(); f.host.processes[0].finish(7); f.tick(); repeat(3) { f.tick() }
         assertFalse(f.lifecycle.busy); assertEquals(1, f.host.requests.size)

@@ -189,6 +189,19 @@ def main():
     (s.root/'crash').touch();s.wait('application-finished',lambda p:p['exitCode']==7)
     assert s.drain_status()['application']['active'] is None;s.control('r');s.wait('application-started');s.finish()
 
+    s=Session('transient-observation');s.wait('application-started');first=s.effects()[0];s.capture()
+    (s.root/'hold-start').touch();s.control('r');s.wait('application-activating')
+    (s.root/'snapshot-failure').write_text('fail');s.wait('inputs-observed',lambda p:not p['available'])
+    s.wait('application-finished',lambda p:not p['started'] and p['cancelled'])
+    status=s.drain_status();assert status['application']['active'] is None and status['application']['candidate'] is None
+    assert status['pendingIntents']==['application'] and len(s.effects())==1
+    assert first['pid'] not in {row[0] for row in table()} and first['child'] not in {row[0] for row in table()}
+    retained=[json.loads(p.read_text()) for p in (s.root/'.kvik/sessions').glob('*/*/observation-result.json')]
+    assert any(value['exitCode']==125 and not value['cancelled'] and not value['timedOut'] for value in retained)
+    (s.root/'hold-start').unlink();(s.root/'snapshot-failure').unlink()
+    s.wait('application-started');assert len(s.effects())==2
+    assert s.drain_status()['pendingIntents']==[];s.finish()
+
     for how in ('q','eof','int','term','kill'):
         s=Session('ownership-'+how);s.wait('application-started');(s.root/'hold-prepare').touch();s.control('r');s.wait('application-preparing');s.finish(how)
     one=Session('owner-one');two=Session('owner-two');one.wait('application-started');two.wait('application-started');one.finish('kill')

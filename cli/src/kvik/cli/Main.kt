@@ -42,7 +42,8 @@ private fun command(args: Array<String>) {
             Standalone companions: FILE.kvik.json and default FILE.kvik.lock.json alongside FILE.kt; no nearby-project discovery
             Applications: prepare-application or run-application plus build options; select exactly one module and target
             Prepared replay: run-prepared --run PATH --descriptor DIGEST_JSON (requires current successful preparation)
-            Dev: dev [--control keys|jsonl|lines] (TTY defaults to immediate r/t/q/? keys) [--watch-ms 1000] [--initial build|test] plus build options
+            Application mode requires one application module/target; r reloads, t runs fresh tests without changing app mode.
+            Dev: dev [--mode library|application] [--control keys|jsonl|lines] (TTY defaults to immediate r/t/q/? keys) [--watch-ms 1000] [--initial build|test] plus build options
             Packages: packages versions GROUP:ARTIFACT --project PATH [--channel all|stable|prerelease] [--limit N] [--cursor TOKEN]
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target jvm|macosArm64 --usage USAGE --project PATH
             Query cache: --query-cache PATH [--refresh|--offline] --json

@@ -199,7 +199,7 @@ def main():
             s.witness()
             source=project/'app'/('jvm' if target=='jvm' else 'native')/'Application.kt';original=source.read_bytes();restore_sources[source]=original
             source.write_bytes(original+b'\nTHIS IS NOT VALID KOTLIN\n');s.wait('application-stale')
-            s.wait('application-finished',lambda p:not p['started'] and p['exitCode']!=0)
+            s.wait('application-finished',lambda p:not p['started'] and p['exitCode']!=0 and not p['cancelled'] and not p['timedOut'])
             assert s.status()['application']['active'] is not None and len(effects(target))==initial_effects+1
             source.write_bytes(original);repaired=s.started();assert len(effects(target))==initial_effects+2
             before=len(effects(target));s.control('t');finished=s.wait('operation-finished',lambda p:p['operation']=='test')
@@ -234,7 +234,7 @@ def main():
             source=project/'app/jvm/Application.kt';original=source.read_bytes();restore_sources[source]=original
             source.write_bytes(original+b'\nINVALID APPLICATION CANDIDATE\n')
             s.control('r');s.wait('rebuild-finished',lambda p:p['accepted'])
-            s.wait('application-finished',lambda p:not p['started'] and p['exitCode']!=0)
+            s.wait('application-finished',lambda p:not p['started'] and p['exitCode']!=0 and not p['cancelled'] and not p['timedOut'])
             assert s.status()['application']['active'] is not None and old_pids <= {row[0] for row in table()}
             source.write_bytes(original);s.control('t');s.control('r')
             s.process.stdin.write('{"schemaVersion":1,"requestId":"handoff-partial","command":"sta');s.process.stdin.flush()
