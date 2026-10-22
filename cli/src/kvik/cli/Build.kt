@@ -38,9 +38,9 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
     val policy = options.project.resolverPolicy()
     // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
     // against the captured configuration below, since the project may change meanwhile.
-    effectiveConfiguration(project.configuration, policy)
+    val initialEffective = effectiveConfiguration(project.configuration, policy)
     requireDisjointStore(project, storePath, lockPath, toolsPath)
-    val content = NativeContentStore(storePath)
+    val content = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes)
     val snapshots = NativeProjectSnapshotter(project.root, content)
     val snapshot = when (val captured = snapshots.capture(project.name, lockPath, Sha256.digest(project.bytes))) {
         is SnapshotCapture.Captured -> captured.snapshot

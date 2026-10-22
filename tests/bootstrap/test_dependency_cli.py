@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real Native resolve/check-lock commands, online publication and offline failure behavior."""
 import json
+import hashlib
 import fcntl
 import os
 from pathlib import Path
@@ -22,8 +23,17 @@ class DependencyCliTest(unittest.TestCase):
         cls.executable = Path(result.stdout.strip())
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="kvik-resolve-")
-        self.root = Path(self.temporary.name).resolve()
+        evidence = os.environ.get("KVIK_DEPENDENCY_CLI_EVIDENCE")
+        if evidence:
+            destination = Path(evidence).resolve()
+            destination.mkdir(parents=True, exist_ok=True)
+            self.temporary = None
+            self.case = Path(tempfile.mkdtemp(prefix=self._testMethodName + "-", dir=destination))
+        else:
+            self.temporary = tempfile.TemporaryDirectory(prefix="kvik-resolve-")
+            self.case = Path(self.temporary.name).resolve()
+        self.root = self.case / "project"
+        self.root.mkdir()
         self.project = self.root / "kvik.json"
         self.document = {"schemaVersion": 1, "name": "locked", "repositories": [{"id": "central", "url": "https://repo.maven.apache.org/maven2"}],
             "modules": [{"id": "library", "sourceSets": [{"name": "main", "directories": ["src"], "resources": [], "dependsOn": [],
@@ -32,7 +42,8 @@ class DependencyCliTest(unittest.TestCase):
         self.write_project()
 
     def tearDown(self):
-        self.temporary.cleanup()
+        if self.temporary is not None:
+            self.temporary.cleanup()
 
     def write_project(self):
         self.project.write_text(json.dumps(self.document))
@@ -43,8 +54,12 @@ class DependencyCliTest(unittest.TestCase):
         environment.pop("KVIK_BOOTSTRAP_OFFLINE", None)
         if command == "check-lock" or "--offline" in options or launcher_offline:
             environment.update(https_proxy="http://127.0.0.1:1", HTTPS_PROXY="http://127.0.0.1:1")
-        result = subprocess.run([*map(str, prefix), command, "--project", str(self.project), *options],
+        arguments = [*map(str, prefix), command, "--project", str(self.project), *options]
+        result = subprocess.run(arguments,
             capture_output=True, text=True, timeout=90, env=environment)
+        with (self.case / "commands.jsonl").open("a") as log:
+            log.write(json.dumps(dict(arguments=arguments, exitCode=result.returncode,
+                                      stdout=result.stdout, stderr=result.stderr)) + "\n")
         self.assertEqual(expected, result.returncode, result.stdout + result.stderr)
         value = json.loads(result.stdout)
         definition = "diagnostic" if expected else "inspection" if command == "inspect" else "dependencyResolution"
@@ -77,6 +92,80 @@ class DependencyCliTest(unittest.TestCase):
         # Canonical lock identity ignores authoring whitespace; freshness checks compare the observed raw bytes.
         (self.root / "kvik.lock.json").write_text(json.dumps(lock, indent=2) + "\n")
         self.assertEqual(resolved["dependencyLock"], self.invoke("check-lock")["dependencyLock"])
+
+    def test_native_ksp_large_artifact_replays_readonly_and_ordinary_domains_keep_their_bound(self):
+        module = self.document["modules"][0]
+        module["sourceSets"][0]["dependencies"] = []
+        module["sourceSets"].append(dict(name="tests", directories=["test"], resources=[],
+                                          dependsOn=["main"], dependencies=[]))
+        module["targets"] = [dict(name="macosArm64", main="main", test="tests", compilerOptions=[],
+            nativeTestSettings=dict(engine="kotest", kspVersion="2.3.12",
+                                    processor="io.kotest:kotest-framework-symbol-processor:6.2.5"))]
+        self.write_project()
+        # The upstream host-tool closures request both 2.2.21 and 2.3.20.
+        # Resolve that conflict explicitly, using the successful KSP probe's stdlib.
+        pins = ["--pin", "org.jetbrains.kotlin:kotlin-stdlib:2.3.20"]
+        resolved = self.invoke("resolve", pins)
+        lock_path = self.root / "kvik.lock.json"
+        lock_bytes = lock_path.read_bytes()
+        lock = json.loads(lock_bytes)
+        coordinate = "com.google.devtools.ksp:symbol-processing-aa-embeddable:2.3.12"
+        large = [(selection["domain"], artifact) for selection in lock["selections"]
+                 for artifact in selection["artifacts"] if artifact["coordinate"] == coordinate]
+        self.assertTrue(large)
+        for domain, artifact in large:
+            self.assertEqual("ksp-runtime", domain["purpose"])
+            self.assertEqual(dict(hash="862f0042fc2467cdcf7752e15880f97396a29e2469741dc6453f37584f1b4c69",
+                                  sizeBytes=80_992_357), artifact["digest"])
+        def snapshot():
+            # Hash the large immutable fixture without retaining several 80 MiB copies.
+            result = {}
+            for path in self.root.rglob("*"):
+                info = path.stat()
+                if path.is_file():
+                    with path.open("rb") as source:
+                        identity = hashlib.file_digest(source, "sha256").hexdigest()
+                    result[str(path.relative_to(self.root))] = (identity, info.st_size, info.st_mode, info.st_mtime_ns)
+                else:
+                    result[str(path.relative_to(self.root))] = ("directory", info.st_mode)
+            return result
+        before = snapshot()
+        (self.case / "readonly-before.json").write_text(json.dumps(before, sort_keys=True))
+        for command, options in [("check-lock", ()), ("resolve", ["--offline"])]:
+            checked = self.invoke(command, [*pins, *options])
+            self.assertEqual(resolved["dependencyLock"], checked["dependencyLock"])
+            after = snapshot()
+            self.assertEqual(before, after)
+            (self.case / f"readonly-after-{command}.json").write_text(json.dumps(after, sort_keys=True))
+        identity = large[0][1]["digest"]
+        blob = self.root / ".kvik/cache/blobs" / f'{identity["hash"]}-{identity["sizeBytes"]}'
+        original_stat = blob.stat()
+        blob.chmod(0o644)
+        with blob.open("r+b") as file:
+            original = file.read(1)
+            file.seek(0)
+            file.write(bytes([original[0] ^ 1]))
+        blob.chmod(original_stat.st_mode)
+        os.utime(blob, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        corrupt = snapshot()
+        (self.case / "corrupt-before.json").write_text(json.dumps(corrupt, sort_keys=True))
+        self.assertEqual("KVIK_LOCK_INVALID", self.invoke("check-lock", pins, expected=2)["diagnostic"]["code"])
+        corrupt_after = snapshot()
+        self.assertEqual(corrupt, corrupt_after)
+        (self.case / "corrupt-after.json").write_text(json.dumps(corrupt_after, sort_keys=True))
+        self.assertEqual(lock_bytes, lock_path.read_bytes())
+        # The same large dependency in an ordinary JVM domain must still fail.
+        module["sourceSets"][0]["dependencies"] = [dict(coordinate=coordinate)]
+        module["targets"] = [dict(name="jvm", main="main", test=None, compilerOptions=["-jvm-target", "25"])]
+        self.write_project()
+        rejected = self.invoke("resolve", pins, expected=1)
+        self.assertEqual("KVIK_RESOLUTION_FAILED", rejected["diagnostic"]["code"])
+        self.assertIn(rejected["diagnostic"]["message"], [
+            "Artifact exceeds byte bound", "Blob exceeds 67108864 byte limit",
+            "HTTPS response exceeds 67108864 byte bound: https://repo.maven.apache.org/maven2/"
+            "com/google/devtools/ksp/symbol-processing-aa-embeddable/2.3.12/symbol-processing-aa-embeddable-2.3.12.jar",
+        ])
+        self.assertEqual(lock_bytes, lock_path.read_bytes())
 
     def test_corrupt_blob_is_never_repaired_by_check_or_offline_resolve(self):
         self.invoke("resolve")

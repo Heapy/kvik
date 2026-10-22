@@ -21,6 +21,10 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KVIK_RESOLUTION_ROOT=str(ROOT), KVIK_RESOLUTION_ONLINE=str(args.online_smoke))
     sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
+    subprocess.run(['clang', '-I' + str(ROOT / 'resolution/native'), '-I' + sdk + '/usr/include/libxml2',
+                    str(ROOT / 'tests/resolution/transport_bound.c'), '-lcurl', '-lxml2',
+                    '-o', str(output / 'transport-bound')], env=env, check=True)
+    subprocess.run([str(output / 'transport-bound')], env=env, check=True)
     subprocess.run([str(args.konan_home / 'bin/cinterop'), '-def', str(ROOT / 'resolution/native/resolution.def'), '-compiler-option', '-I' + str(ROOT / 'resolution/native'), '-compiler-option', '-I' + sdk + '/usr/include/libxml2', '-o', str(output / 'resolution')], env=env, check=True)
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'resolution/src').rglob('*.kt')) + sorted((ROOT / 'tests/resolution').glob('*.kt'))
     subprocess.run([str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner', '-library', str(output / 'resolution.klib'), '-o', str(output / 'tests.kexe'), *map(str, sources)], env=env, check=True)

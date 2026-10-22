@@ -33,13 +33,17 @@ private fun lockOutsideStore(destination: String, store: String): Boolean {
 }
 
 /** A check never creates directories, repairs a blob, or receives a network transport. */
-internal class ReadOnlyContentStore(private val root: String) : ContentStore {
-    init { NativeFiles.ensureDirectory(root, create = false); NativeFiles.ensureDirectory("$root/blobs", create = false) }
+internal class ReadOnlyContentStore(private val root: String, private val maxBlobBytes: Int = 64 * 1024 * 1024) : ContentStore {
+    init {
+        require(maxBlobBytes in 1..128 * 1024 * 1024) { "Unsupported dependency blob read bound" }
+        NativeFiles.ensureDirectory(root, create = false)
+        NativeFiles.ensureDirectory("$root/blobs", create = false)
+    }
     override fun put(bytes: ByteArray): Digest = error("Locked dependency checks cannot publish content")
     override fun get(digest: Digest): ByteArray? {
-        if (digest.sizeBytes > 64 * 1024 * 1024) return null
+        if (digest.sizeBytes > maxBlobBytes) return null
         return try {
-            NativeFiles.read("$root/blobs/${digest.hash}-${digest.sizeBytes}", 64 * 1024 * 1024).takeIf { Sha256.digest(it) == digest }
+            NativeFiles.read("$root/blobs/${digest.hash}-${digest.sizeBytes}", maxBlobBytes).takeIf { Sha256.digest(it) == digest }
         } catch (_: CacheFailure) { null }
     }
 }
@@ -88,10 +92,10 @@ internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): Js
     val lock = if (update) {
         NativeFiles.ensureDirectory(destination.substringBeforeLast('/'))
         val previous = existingLock(destination)
-        val content = NativeContentStore(store)
+        val content = NativeContentStore(store, maxBlobBytes = effective.maxArtifactBytes)
         require(lockOutsideStore(destination, store)) { "Dependency lock must be outside the content store" }
         val resolved = try {
-            DependencyLocks(content, NativePomParser()).resolve(effective, NativeHttpsTransport())
+            DependencyLocks(content, NativePomParser()).resolve(effective, NativeHttpsTransport(maxBytes = effective.maxArtifactBytes))
         } catch (failure: Exception) {
             throw CliFailure("KVIK_RESOLUTION_FAILED", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Dependency resolution failed")
         }
@@ -102,7 +106,7 @@ internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): Js
         NativeFiles.ensureDirectory(destination.substringBeforeLast('/'), create = false)
         val bytes = NativeFiles.read(destination, LOCK_LIMIT)
         observedLock = Sha256.digest(bytes)
-        DependencyLocks(ReadOnlyContentStore(store), NativePomParser()).loadLocked(bytes, effective)
+        DependencyLocks(ReadOnlyContentStore(store, effective.maxArtifactBytes), NativePomParser()).loadLocked(bytes, effective)
     } catch (failure: Exception) {
         throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Dependency lock is unavailable", ExitStatus.INVALID_CONFIGURATION)
     }

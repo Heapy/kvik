@@ -12,7 +12,8 @@ class NativeHttpsTransport(private val maxBytes: Int = 64 * 1024 * 1024, private
         val response = kvik_fetch(url, maxBytes.toULong(), timeoutSeconds.toLong()) ?: error("Transport allocation failed")
         try {
             val r = response.pointed
-            check(r.error == 0) { "HTTPS transfer failed or exceeded bounds (${r.error}): $url" }
+            check(r.limit_exceeded == 0) { "HTTPS response exceeds $maxBytes byte bound: $url" }
+            check(r.error == 0) { "HTTPS transfer failed (${r.error}): $url" }
             if (r.status == 404L) throw MissingResource(url)
             check(r.status == 200L) { "HTTP ${r.status}: $url" }
             return if (r.size == 0UL) byteArrayOf() else r.data!!.reinterpret<ByteVar>().readBytes(r.size.toInt())

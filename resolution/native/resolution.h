@@ -6,12 +6,12 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-typedef struct { unsigned char *data; size_t size; size_t limit; long status; int error; } kvik_response;
+typedef struct { unsigned char *data; size_t size; size_t limit; long status; int error; int limit_exceeded; } kvik_response;
 static size_t kvik_write(char *p, size_t size, size_t count, void *user) {
     kvik_response *r = (kvik_response *)user;
-    if (count && size > SIZE_MAX / count) return 0;
+    if (count && size > SIZE_MAX / count) { r->limit_exceeded = 1; return 0; }
     size_t n = size * count;
-    if (n > r->limit - r->size) return 0;
+    if (n > r->limit - r->size) { r->limit_exceeded = 1; return 0; }
     unsigned char *next = realloc(r->data, r->size + n);
     if (!next && n) return 0;
     r->data = next; memcpy(r->data + r->size, p, n); r->size += n; return n;
