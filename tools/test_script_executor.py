@@ -38,6 +38,7 @@ def main():
         KONAN_DATA_DIR=str(Path.home() / '.konan'), DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
         TMPDIR=tempfile.gettempdir(), LANG='C', LC_ALL='C', TZ='UTC', KONAN_USE_COMPILER_SERVER='false', KONAN_USE_INTERNAL_SERVER='0')
     clang = Path(subprocess.run(['/usr/bin/xcrun', '--find', 'clang'], env=environment, check=True, stdout=subprocess.PIPE).stdout.decode().strip())
+    sdk = Path(subprocess.run(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path'], env=environment, check=True, stdout=subprocess.PIPE).stdout.decode().strip())
     source_roots = ('core/src', 'execution/src', 'cache/src', 'compiler/jvm/native/src', 'integration/action-cache/src')
     sources = [p for root in source_roots for p in sorted((ROOT / root).rglob('*.kt'))]
     tests = sorted((ROOT / 'tests/script-executor').glob('*.kt'))
@@ -48,7 +49,7 @@ def main():
     tools = [java, clang, Path('/usr/bin/ar'), Path('/usr/bin/xcrun'), konan / 'bin/konanc', konan / 'bin/cinterop',
         konan / 'bin/run_konan', konan / 'tools/env_blacklist', *sorted((konan / 'konan/lib').glob('*.jar')), *artifacts.values()]
     receipt = dict(passed=False, inputs={str(p): file_digest(p) for p in inputs}, tools={str(p): file_digest(p) for p in tools},
-        environment=environment, commands=[], sourceRoots=list(source_roots), limitation='Fixture provider hashes consumed java launcher and stdlib per invocation; complete installed JDK/worker identity verification is covered by the production provider gate. SDK/JDK support and Native dependency roots must stay stable during this build.')
+        environment=environment, sdk=str(sdk), commands=[], sourceRoots=list(source_roots), limitation='Fixture provider hashes consumed java launcher and stdlib per invocation; complete installed JDK/worker identity verification is covered by the production provider gate. SDK/JDK support and Native dependency roots must stay stable during this build.')
     def retain(): (case / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     def run(name, command, timeout=240, env=None):
         command = list(map(str, command)); actual_env = environment if env is None else env
@@ -65,10 +66,11 @@ def main():
         run('jvm-fixture', [java, '-cp', os.pathsep.join(map(str, artifacts.values())), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
             '-no-stdlib', '-no-reflect', '-jvm-target', '11', '-classpath', stdlib, '-d', classes, fixture])
         receipt['classes'] = {str(p.relative_to(classes)): file_digest(p) for p in sorted(classes.rglob('*')) if p.is_file()}
-        run('guardian', [clang, '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', platform / 'guardian.c', '-o', case / 'guardian'])
-        run('process', [clang, '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-c', platform / 'process.c', '-o', case / 'process.o'])
+        run('guardian', [clang, '-isysroot', sdk, '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', platform / 'guardian.c', '-o', case / 'guardian'])
+        run('process', [clang, '-isysroot', sdk, '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-c', platform / 'process.c', '-o', case / 'process.o'])
         run('archive', ['/usr/bin/ar', 'rcs', case / 'libkvik-process.a', case / 'process.o'])
         run('interop', [konan / 'bin/cinterop', '-def', platform / 'process.def', '-compiler-option', f'-I{platform}',
+            '-compiler-option', '-isysroot', '-compiler-option', sdk,
             '-libraryPath', case, '-target', 'macos_arm64', '-o', case / 'process'])
         executable = case / 'tests.kexe'
         run('native-compile', [konan / 'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
