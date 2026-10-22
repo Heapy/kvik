@@ -39,9 +39,10 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
     // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
     // against the captured configuration below, since the project may change meanwhile.
     effectiveConfiguration(project.configuration, policy)
+    requireDisjointStore(project, storePath, lockPath, toolsPath)
     val content = NativeContentStore(storePath)
     val snapshots = NativeProjectSnapshotter(project.root, content)
-    val snapshot = when (val captured = snapshots.capture(project.name, lockPath)) {
+    val snapshot = when (val captured = snapshots.capture(project.name, lockPath, Sha256.digest(project.bytes))) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }

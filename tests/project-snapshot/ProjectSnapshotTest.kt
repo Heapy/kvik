@@ -58,6 +58,20 @@ private class Fixture {
 private inline fun fixture(block: (Fixture) -> Unit) { val f = Fixture(); try { block(f) } finally { f.close() } }
 
 class ProjectSnapshotTest {
+    @Test fun changedPreflightConfigurationNeverPublishesInputs() = fixture { f ->
+        val expected = Sha256.digest(NativeFiles.read("${f.root}/kvik.json", 4096))
+        write("${f.root}/kvik.json", document(listOf("src", "new-store-input")))
+        val result = f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, expected)
+        assertIs<SnapshotCapture.Indeterminate>(result)
+        assertTrue(result.reason.contains("preflight"))
+        assertEquals(0, f.store.puts)
+        assertNull(f.snapshotter.currentFingerprint(LogicalPath("kvik.json"), f.lock, expected))
+        val accepted = f.snapshotter.capture(LogicalPath("kvik.json"), f.lock,
+            Sha256.digest(NativeFiles.read("${f.root}/kvik.json", 4096)))
+        assertIs<SnapshotCapture.Captured>(accepted)
+        assertTrue(f.store.puts > 0)
+    }
+
     @Test fun exactBytesAndDeclaredInputsAreStoredAndFreshnessNeverPublishes() = fixture { f ->
         val snapshot = f.capture()
         assertEquals(setOf("src/A.kt", "resources/data.txt", "plugin/options.json"), snapshot.inputs.files.map { it.path.value }.toSet())

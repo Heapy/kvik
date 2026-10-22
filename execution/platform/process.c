@@ -139,3 +139,82 @@ void kvik_process_close(void *handle) {
     while (!kvik_process_poll(p, &code, &timeout, &cancelled)) usleep(10000);
     close(p->result); free(p);
 }
+
+#include <poll.h>
+#include <sys/event.h>
+#include <sys/stat.h>
+#include <limits.h>
+/* Session has exclusive stream ownership. Never mutate inherited open-file flags:
+ * TTY descriptors are independent opens; pipes use readiness and atomic-size writes.
+ * Regular-file IO can still be delayed by the filesystem, as can journal IO. */
+typedef struct { int queue, input, output, own_input, own_output; pid_t parent; } Foreground;
+static int foreground_stream(int fd, int output, int *owned) {
+    if (isatty(fd)) {
+        char name[PATH_MAX];
+        if (ttyname_r(fd, name, sizeof(name))) return -1;
+        struct stat original, reopened;
+        if (fstat(fd, &original)) return -1;
+        int copy = open(name, (output ? O_WRONLY : O_RDONLY) | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+        if (copy < 0) return -1;
+        if (fstat(copy, &reopened) || !isatty(copy) || original.st_rdev != reopened.st_rdev) {
+            close(copy); errno = ESTALE; return -1;
+        }
+        *owned = 1;
+        return copy;
+    }
+    struct stat status, null_status;
+    if (fstat(fd, &status)) return -1;
+    if (S_ISREG(status.st_mode) || S_ISFIFO(status.st_mode)) return fd;
+    if (S_ISCHR(status.st_mode) && !stat("/dev/null", &null_status) && status.st_rdev == null_status.st_rdev) return fd;
+    errno = ENOTSUP; return -1;
+}
+void *kvik_foreground_open(void) {
+    Foreground *f = calloc(1, sizeof(*f));
+    if (!f) return NULL;
+    f->parent = getppid(); f->queue = kqueue(); f->input = f->output = -1;
+    if (f->queue < 0) { free(f); return NULL; }
+    fcntl(f->queue, F_SETFD, FD_CLOEXEC);
+    struct kevent change;
+    EV_SET(&change, f->parent, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, NULL);
+    if (f->parent <= 1 || kevent(f->queue, &change, 1, NULL, 0, NULL) < 0 || getppid() != f->parent) {
+        close(f->queue); free(f); errno = ESRCH; return NULL;
+    }
+    f->input = foreground_stream(STDIN_FILENO, 0, &f->own_input);
+    f->output = foreground_stream(STDOUT_FILENO, 1, &f->own_output);
+    if (f->input < 0 || f->output < 0) { kvik_foreground_close(f); return NULL; }
+    return f;
+}
+int kvik_foreground_read(void *handle, char *buffer, int capacity) {
+    Foreground *f = handle;
+    struct kevent event; struct timespec zero = {0, 0};
+    int parent_event = kevent(f->queue, NULL, 0, &event, 1, &zero);
+    if (getppid() != f->parent || parent_event > 0) return -3;
+    if (parent_event < 0 && errno != EINTR) return -1;
+    struct pollfd input = {f->input, POLLIN | POLLHUP, 0};
+    int ready = poll(&input, 1, 0);
+    if (ready < 0) return errno == EINTR ? 0 : -1;
+    if (!ready) return 0;
+    ssize_t count = read(f->input, buffer, (size_t)capacity);
+    if (count == 0) return -2;
+    if (count < 0) return errno == EAGAIN || errno == EINTR ? 0 : -1;
+    return (int)count;
+}
+int kvik_foreground_write(void *handle, const char *buffer, int size) {
+    Foreground *f = handle;
+    struct pollfd output = {f->output, POLLOUT, 0};
+    int ready = poll(&output, 1, 0);
+    if (ready < 0) return errno == EINTR ? 0 : -1;
+    if (!ready) return 0;
+    /* POSIX pipe readiness guarantees an atomic write of PIPE_BUF with one writer. */
+    if (size > _POSIX_PIPE_BUF) size = _POSIX_PIPE_BUF;
+    ssize_t count = write(f->output, buffer, (size_t)size);
+    if (count < 0) return errno == EAGAIN || errno == EINTR ? 0 : -1;
+    return (int)count;
+}
+void kvik_foreground_close(void *handle) {
+    if (!handle) return;
+    Foreground *f = handle;
+    if (f->own_input) close(f->input);
+    if (f->own_output) close(f->output);
+    close(f->queue); free(f);
+}

@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvik.dev/schemas/v1/session.json",
+  "$defs": {
+    "control": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+(?![\\s\\S])"
+        },
+        "command": {
+          "enum": [
+            "r",
+            "t",
+            "q",
+            "?",
+            "status"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "type": {
+          "enum": [
+            "session-started",
+            "control",
+            "diagnostic",
+            "inputs-observed",
+            "operation-started",
+            "operation-finished",
+            "closing",
+            "session-finished"
+          ]
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sessionId",
+        "sequence",
+        "type",
+        "payload"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "session-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "control": {
+                    "enum": [
+                      "jsonl",
+                      "lines"
+                    ]
+                  },
+                  "directory": {
+                    "type": "string"
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "control",
+                  "directory",
+                  "capabilities",
+                  "limitations"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "control"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "command": {
+                    "enum": [
+                      "r",
+                      "t",
+                      "q",
+                      "?",
+                      "status"
+                    ]
+                  },
+                  "active": {
+                    "enum": [
+                      "build",
+                      "test",
+                      null
+                    ]
+                  },
+                  "pending": {
+                    "enum": [
+                      "build",
+                      "test",
+                      null
+                    ]
+                  },
+                  "help": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "requestId",
+                  "command",
+                  "active",
+                  "pending",
+                  "help"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "diagnostic"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "KVIK_SESSION_CONTROL"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "inputs-observed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "revision": {
+                    "type": "integer"
+                  },
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "fingerprint": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "hash": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "sizeBytes": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "hash",
+                          "sizeBytes"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scope": {
+                    "const": "project-inputs-and-tools-document-only"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "available",
+                  "fingerprint",
+                  "scope"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "operation-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer"
+                  },
+                  "operation": {
+                    "enum": [
+                      "build",
+                      "test"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "operation",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "operation-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "generation": {
+                    "type": "integer"
+                  },
+                  "operation": {
+                    "enum": [
+                      "build",
+                      "test"
+                    ]
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "cancelled": {
+                    "type": "boolean"
+                  },
+                  "timedOut": {
+                    "type": "boolean"
+                  },
+                  "inputsChangedSinceStart": {
+                    "type": "boolean"
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "operation",
+                  "exitCode",
+                  "cancelled",
+                  "timedOut",
+                  "inputsChangedSinceStart",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "closing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "session-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

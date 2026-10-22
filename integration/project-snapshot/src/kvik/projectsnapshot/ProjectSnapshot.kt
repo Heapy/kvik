@@ -53,12 +53,12 @@ sealed interface SnapshotCapture {
 class NativeProjectSnapshotter(private val root: String, private val content: ContentStore, private val limits: SnapshotLimits = SnapshotLimits()) {
     init { physicalDirectory(root) }
 
-    fun capture(configurationPath: LogicalPath, lockPath: String): SnapshotCapture {
-        val first = try { scan(configurationPath, lockPath, publish = true) }
+    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null): SnapshotCapture {
+        val first = try { scan(configurationPath, lockPath, publish = true, expectedConfiguration) }
         catch (race: SnapshotRace) { return SnapshotCapture.Indeterminate(race.message ?: "Inputs changed while capturing") }
         catch (failure: SnapshotFailure) { throw failure }
         catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Cannot capture project inputs") }
-        val second = try { scan(configurationPath, lockPath, publish = false) }
+        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration) }
         catch (failure: Exception) { return SnapshotCapture.Indeterminate(failure.message ?: "Inputs changed while confirming capture") }
         if (first.fingerprint != second.fingerprint) return SnapshotCapture.Indeterminate("Project inputs changed between capture observations")
         return SnapshotCapture.Captured(first)
@@ -75,16 +75,16 @@ class NativeProjectSnapshotter(private val root: String, private val content: Co
     }
 
     /** Read-only post-exit query; no deserialization of a prior capture or CAS access is required. */
-    fun currentFingerprint(configurationPath: LogicalPath, lockPath: String): Digest? {
-        val first = try { scan(configurationPath, lockPath, publish = false) }
+    fun currentFingerprint(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null): Digest? {
+        val first = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration) }
         catch (_: SnapshotRace) { return null }
-        val second = try { scan(configurationPath, lockPath, publish = false) }
+        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration) }
         catch (_: Exception) { return null }
         return first.fingerprint.takeIf { it == second.fingerprint }
     }
 
-    private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean): ProjectInputSnapshot =
-        Observation(root, content.takeIf { publish }, limits).capture(configurationPath, lockPath)
+    private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean, expectedConfiguration: Digest?): ProjectInputSnapshot =
+        Observation(root, content.takeIf { publish }, limits).capture(configurationPath, lockPath, expectedConfiguration)
 }
 
 private fun physicalDirectory(path: String) {
@@ -116,21 +116,24 @@ private class Observation(private val root: String, private val content: Content
     private var directoryCount = 0
     private var entryCount = 0
 
-    fun capture(configurationPath: LogicalPath, lockPath: String): ProjectInputSnapshot {
+    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest?): ProjectInputSnapshot {
         physicalDirectory(root)
         NativeFiles.validateAbsolute(lockPath)
         physicalDirectory(lockPath.substringBeforeLast('/'))
         val configurationFile = "$root/${configurationPath.value}"
         require(configurationFile != lockPath) { "Configuration and lock paths must differ" }
         ancestors(configurationPath.value)
-        val configurationBytes = readFile(configurationFile, minOf(limits.maxFileBytes, 4 * 1024 * 1024))
-        val lockBytes = readFile(lockPath, minOf(limits.maxFileBytes, 16 * 1024 * 1024))
+        val configurationBytes = readFile(configurationFile, minOf(limits.maxFileBytes, 4 * 1024 * 1024), publish = false)
+        if (expectedConfiguration != null && Sha256.digest(configurationBytes) != expectedConfiguration)
+            throw SnapshotRace("Configuration changed after input/store preflight")
+        val lockBytes = readFile(lockPath, minOf(limits.maxFileBytes, 16 * 1024 * 1024), publish = false)
         val configuration = try { parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true))) }
         catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Invalid configuration") }
         val roots = configuration.project.modules.flatMap { module -> module.sourceSets.flatMap { it.directories + it.resources } }.distinct().sortedBy { it.value }
         val plugins = configuration.project.modules.flatMap { it.compilerPlugins.flatMap { plugin -> plugin.inputs } }.distinct().sortedBy { it.value }
         if (roots.size + plugins.size > limits.maxEntries) throw SnapshotFailure("Too many declared input paths")
         for (path in roots + plugins) requireDeclared(path)
+        publish(configurationBytes); publish(lockBytes)
         for (directory in roots) {
             ancestors(directory.value)
             visit(directory.value, directory.value.split('/').size, allowMissing = true)
@@ -228,7 +231,11 @@ private class Observation(private val root: String, private val content: Content
         entries[path] = FileEntry(path, Sha256.digest(data), value.mode and 73 != 0)
     }
 
-    private fun readFile(path: String, limit: Int): ByteArray {
+    private fun publish(data: ByteArray) {
+        if (content != null && content.put(data) != Sha256.digest(data)) throw SnapshotFailure("ContentStore returned an incorrect input digest")
+    }
+
+    private fun readFile(path: String, limit: Int, publish: Boolean = true): ByteArray {
         bytes[path]?.let { return it }
         if (bytes.size >= limits.maxFiles) throw SnapshotFailure("Too many input files (including configuration and lock)")
         val before = status(path) ?: throw SnapshotFailure("Missing required input file: $path")
@@ -239,7 +246,7 @@ private class Observation(private val root: String, private val content: Content
         catch (failure: Exception) { throw SnapshotRace(failure.message ?: "Input changed while reading: $path") }
         if (status(path) != before || data.size.toLong() != before.size) throw SnapshotRace("Input changed while reading: $path")
         totalBytes += data.size
-        if (content != null && content.put(data) != Sha256.digest(data)) throw SnapshotFailure("ContentStore returned an incorrect input digest")
+        if (publish) this.publish(data)
         bytes[path] = data
         return data
     }

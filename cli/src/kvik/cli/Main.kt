@@ -29,12 +29,13 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, resolve, check-lock, build, test, verification, help
+            Commands: runtime-info, inspect, resolve, check-lock, build, test, verification, dev, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Lock options: --lock PATH --store PATH --offline
             Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N
+            Dev: dev --control jsonl|lines [--watch-ms 1000] [--initial build|test] plus build options
             Evidence: verification --run PATH
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
@@ -54,6 +55,8 @@ private fun command(args: Array<String>) {
         }
         "resolve", "check-lock" -> println(dependencyCommand(args.drop(1), updateRequested = args[0] == "resolve").canonical())
         "build", "test" -> exitProcess(buildCommand(args.drop(1), test = args[0] == "test").code)
+        "dev" -> exitProcess(devCommand(args.drop(1)))
+        "snapshot-query" -> println(snapshotQueryCommand(args.drop(1)).canonical())
         "verification" -> exitProcess(verificationCommand(args.drop(1)).code)
         else -> {
             println(obj("schemaVersion" to CONTRACT_VERSION.json(), "diagnostic" to Diagnostic("KVIK_UNSUPPORTED_COMMAND", DiagnosticCategory.CONFIGURATION,

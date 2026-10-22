@@ -11,4 +11,10 @@ char *kvik_executable_directory(void);
 int kvik_interrupt_install(void);
 int kvik_interrupt_requested(void);
 void kvik_interrupt_restore(void);
+/* Invocation-local line input/output and parent-exit monitor. No terminal mode changes. */
+void *kvik_foreground_open(void);
+/* >0 bytes; 0 not ready; -2 EOF; -3 parent exited; -1 IO error. */
+int kvik_foreground_read(void *handle, char *buffer, int capacity);
+int kvik_foreground_write(void *handle, const char *buffer, int size);
+void kvik_foreground_close(void *handle);
 #endif
