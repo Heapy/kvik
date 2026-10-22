@@ -76,6 +76,28 @@ def main():
         assert p.stat().st_ino == valid_inode
         passed('corrupt entries repair automatically; valid immutable inodes remain unchanged')
 
+        run('put', 'permission-test')
+        unreadable = blob('permission-test')
+        original_inode = unreadable.stat().st_ino
+        original_size = unreadable.stat().st_size
+        original_mode = unreadable.stat().st_mode & 0o777
+        unreadable.chmod(0o000)
+        try:
+            result = get('permission-test')
+            if 'HIT permission-test' in result:
+                run('put', 'permission-test')
+                print(f'SKIP unreadable-file preservation: uid={os.geteuid()} can read chmod000 files', flush=True)
+            else:
+                assert 'MISS' in result and 'blob-unavailable' in result, result
+                run('put', 'permission-test', succeeds=False)
+                assert unreadable.stat().st_ino == original_inode
+                assert unreadable.stat().st_size == original_size
+                assert unreadable.stat().st_mode & 0o777 == 0
+                passed('chmod000 reads miss; same-size failed write preserves the unreadable inode')
+        finally:
+            unreadable.chmod(original_mode)
+        assert unreadable.read_bytes() == b'permission-test'
+
         tree = manifest(('bin/run', 'hello', True), ('text.txt', 'héllo world', False))
         run('publish', 'build', tree)
         assert 'HIT' in run('lookup', 'build')

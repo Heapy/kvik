@@ -2,7 +2,7 @@ package kvik.cache
 
 import kvik.core.*
 
-/** Whole-buffer prototype, bounded to 64 MiB per blob (hashing also allocates a padded copy). */
+/** Whole-buffer prototype, bounded to 64 MiB per blob. */
 class NativeContentStore(
     val root: String,
     val maxBlobBytes: Int = 64 * 1024 * 1024,
