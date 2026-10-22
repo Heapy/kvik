@@ -7,13 +7,45 @@ import kvik.core.*
 import kvik.execution.NativeEventJournal
 import kvik.execution.NativeRunDirectory
 import kvik.execution.platform.*
+import kvik.foreground.*
 import kvik.projectgraph.ProjectMode
 import kvik.runevidence.verificationRecordFromJson
 import platform.posix.usleep
+import kotlin.time.TimeSource
 
 internal fun prepareApplicationCommand(args: List<String>): ExitStatus = executeBuild(args, ProjectMode.APPLICATION).status
 
-internal fun runApplicationCommand(args: List<String>): Int {
+internal fun runApplicationCommand(args: List<String>): Int = buildAndRunApplication(args)
+
+/** Internal supervisor boundary; the foreground owner creates a dedicated empty gate directory. */
+internal fun stageApplicationCommand(args: List<String>): Int {
+    require(args.size > 4 && args[0] == "--activation" && args[2] == "--token") {
+        "Use stage-application --activation DIR --token DIGEST_JSON [build options]"
+    }
+    val gate = activationGate(args)
+    return buildAndRunApplication(args.drop(4), gate)
+}
+
+internal fun stagePreparedApplicationCommand(args: List<String>): Int {
+    require(args.size == 8 && args[0] == "--activation" && args[2] == "--token" && args[4] == "--run" && args[6] == "--descriptor") {
+        "Use stage-prepared --activation DIR --token DIGEST_JSON --run PATH --descriptor DIGEST_JSON"
+    }
+    val gate = activationGate(args)
+    require(args[7].encodeToByteArray().size <= 256) { "Prepared descriptor digest exceeds bound" }
+    return executePreparedApplication(PreparedRun(projectPath(currentDirectory(), args[5]), Digest.fromJson(parseJson(args[7]))), gate = gate)
+}
+
+private fun activationGate(args: List<String>): ApplicationGate {
+    require(args[3].encodeToByteArray().size <= 256) { "Activation token exceeds bound" }
+    val directory = args[1]
+    NativeFiles.ensureDirectory(directory, create = false)
+    require(NativeFiles.names(directory).isEmpty()) { "Activation directory must be fresh and empty" }
+    val token = Digest.fromJson(parseJson(args[3]))
+    require(token.toJson().canonical() == args[3]) { "Activation token must be canonical" }
+    return ApplicationGate(directory, token)
+}
+
+private fun buildAndRunApplication(args: List<String>, gate: ApplicationGate? = null): Int {
     check(kvik_interrupt_install() == 0) { "Cannot install application interruption handlers" }
     try {
         val outcome = executeBuild(args, ProjectMode.APPLICATION, ownInterrupts = false)
@@ -21,7 +53,7 @@ internal fun runApplicationCommand(args: List<String>): Int {
         if (outcome.status != ExitStatus.SUCCESS) return outcome.status.code
         // Keep the same interruption latch across preparation and execution.
         try {
-            return executePreparedApplication(checkNotNull(outcome.preparation), ownInterrupts = false)
+            return executePreparedApplication(checkNotNull(outcome.preparation), ownInterrupts = false, gate = gate)
         } catch (failure: RunStreamFailure) {
             throw failure
         } catch (failure: Exception) {
@@ -41,39 +73,34 @@ internal fun runPreparedApplicationCommand(args: List<String>): Int {
     return executePreparedApplication(PreparedRun(projectPath(currentDirectory(), args[1]), Digest.fromJson(parseJson(args[3]))))
 }
 
-private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boolean = true): Int {
+private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boolean = true, gate: ApplicationGate? = null): Int {
     if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install application interruption handlers" }
     var streamStarted = false
     try {
         if (kvik_interrupt_requested() != 0) return ExitStatus.CANCELLED.code
-        val directory = prepared.directory
-        val descriptorBytes = NativeFiles.read("$directory/prepared.json", 8192)
-        require(Sha256.digest(descriptorBytes) == prepared.descriptor) { "Prepared application descriptor changed" }
-        val descriptor = PreparedApplicationDescriptor.fromJson(parseJson(descriptorBytes.decodeToString(throwOnInvalidSequence = true)))
-        val record = verificationRecordFromJson(parseJson(NativeFiles.read("$directory/verification.json", 16 * 1024 * 1024)
-            .decodeToString(throwOnInvalidSequence = true)))
-        // Hash the complete materialized bundle before the final source/tool observation.
-        val launch = validatePreparedApplication(record, descriptor, directory)
-        val checked = checkRun(directory)
-        require(Sha256.digest(checked.record.toJson()) == descriptor.verification) { "Preparation verification changed during validation" }
-        if (checked.exitStatus != ExitStatus.SUCCESS) throw CliFailure("KVIK_APPLICATION_PREPARATION_STALE", DiagnosticCategory.CONFIGURATION,
-            checked.reason ?: "Application preparation is not current and successful", checked.exitStatus)
+        var plan = validateApplicationPlan(prepared)
+        val ready = gate?.let {
+            val value = ApplicationReady(it.token, prepared.directory, prepared.descriptor, plan.descriptor.verification,
+                plan.record.composition, plan.launch.module, plan.launch.target)
+            if (!it.awaitActivation(value)) return ExitStatus.CANCELLED.code
+            val current = validateApplicationPlan(prepared)
+            require(current == plan) { "Validated application launch changed after readiness" }
+            plan = current
+            value
+        }
         if (kvik_interrupt_requested() != 0) return ExitStatus.CANCELLED.code
-        val inputs = "$directory/prepared/application/input"
-        val arguments = if (launch.target == "jvm") {
-            require(':' !in inputs) { "JVM bundle directory cannot contain the classpath separator ':'" }
-            listOf(checkNotNull(checked.javaExecutable), "--disable-@files", "-cp",
-                launch.classpath.joinToString(":") { "$inputs/${it.value}" }, launch.application.entryPoint) + launch.application.arguments
-        } else listOf("$inputs/${checkNotNull(launch.executable).value}") + launch.application.arguments
-        require("KVIK_APPLICATION_INPUTS" !in launch.application.environment) { "KVIK_APPLICATION_INPUTS is supplied by the application runner" }
-        val environment = mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC") +
-            launch.application.environment + ("KVIK_APPLICATION_INPUTS" to inputs)
+        val directory = prepared.directory
+        val descriptor = plan.descriptor
+        val record = plan.record
+        val launch = plan.launch
+        val arguments = plan.arguments
+        val environment = plan.environment
         NativeFiles.ensureDirectory("$directory/application-runs")
         val execution = NativeRunDirectory("$directory/application-runs")
         NativeFiles.syncDirectory("$directory/application-runs")
         val stdout = "${execution.path}/application.stdout"
         val stderr = "${execution.path}/application.stderr"
-        val request = ProcessRequest(arguments, checked.metadata.getValue("projectRoot").stringValue(), environment, stdout, stderr, 0)
+        val request = ProcessRequest(arguments, plan.workingDirectory, environment, stdout, stderr, 0)
         NativeFiles.writeNew("${execution.path}/request.json", obj("schemaVersion" to CONTRACT_VERSION.json(),
             "preparation" to prepared.descriptor.toJson(), "verification" to descriptor.verification.toJson(),
             "arguments" to arguments.map { it.json() }.json(), "workingDirectory" to request.workingDirectory.json(),
@@ -90,6 +117,7 @@ private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boo
             runtimeProcessHost().use { host ->
                 if (kvik_interrupt_requested() != 0) return ExitStatus.CANCELLED.code
                 host.start(request).use { process ->
+                    if (gate != null) gate.started(checkNotNull(ready), execution.path)
                     emit("application-started", obj("preparationRun" to record.runId.json(), "descriptor" to prepared.descriptor.toJson(),
                         "module" to launch.module.json(), "target" to launch.target.json(), "stdout" to stdout.json(), "stderr" to stderr.json()))
                     var result: ProcessResult? = null
@@ -116,5 +144,64 @@ private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boo
             failure.message ?: "Cannot run prepared application")
     } finally {
         if (ownInterrupts) kvik_interrupt_restore()
+    }
+}
+
+private data class ApplicationPlan(
+    val descriptor: PreparedApplicationDescriptor,
+    val record: VerificationRecord,
+    val launch: ApplicationLaunch,
+    val arguments: List<String>,
+    val environment: Map<String, String>,
+    val workingDirectory: String,
+)
+
+private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
+    val directory = prepared.directory
+    val descriptorBytes = NativeFiles.read("$directory/prepared.json", 8192)
+    require(Sha256.digest(descriptorBytes) == prepared.descriptor) { "Prepared application descriptor changed" }
+    val descriptor = PreparedApplicationDescriptor.fromJson(parseJson(descriptorBytes.decodeToString(throwOnInvalidSequence = true)))
+    val record = verificationRecordFromJson(parseJson(NativeFiles.read("$directory/verification.json", 16 * 1024 * 1024)
+        .decodeToString(throwOnInvalidSequence = true)))
+    // Hash the complete materialized bundle before the final source/tool observation.
+    val launch = validatePreparedApplication(record, descriptor, directory)
+    val checked = checkRun(directory)
+    require(Sha256.digest(checked.record.toJson()) == descriptor.verification) { "Preparation verification changed during validation" }
+    if (checked.exitStatus != ExitStatus.SUCCESS) throw CliFailure("KVIK_APPLICATION_PREPARATION_STALE", DiagnosticCategory.CONFIGURATION,
+        checked.reason ?: "Application preparation is not current and successful", checked.exitStatus)
+    val inputs = "$directory/prepared/application/input"
+    val arguments = if (launch.target == "jvm") {
+        require(':' !in inputs) { "JVM bundle directory cannot contain the classpath separator ':'" }
+        listOf(checkNotNull(checked.javaExecutable), "--disable-@files", "-cp",
+            launch.classpath.joinToString(":") { "$inputs/${it.value}" }, launch.application.entryPoint) + launch.application.arguments
+    } else listOf("$inputs/${checkNotNull(launch.executable).value}") + launch.application.arguments
+    require("KVIK_APPLICATION_INPUTS" !in launch.application.environment) { "KVIK_APPLICATION_INPUTS is supplied by the application runner" }
+    val environment = mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC") +
+        launch.application.environment + ("KVIK_APPLICATION_INPUTS" to inputs)
+    return ApplicationPlan(descriptor, record, launch, arguments, environment, checked.metadata.getValue("projectRoot").stringValue())
+}
+
+private class ApplicationGate(val directory: String, val token: Digest) {
+    fun awaitActivation(ready: ApplicationReady): Boolean {
+        if (kvik_interrupt_requested() != 0) return false
+        require(NativeFiles.names(directory).isEmpty()) { "Activation files appeared before readiness" }
+        val bytes = ready.toJson().canonical().encodeToByteArray()
+        NativeFiles.publish("$directory/ready.json", bytes, APPLICATION_ACTIVATION_MAX_BYTES)
+        val start = TimeSource.Monotonic.markNow()
+        while (true) {
+            if (kvik_interrupt_requested() != 0) return false
+            require(start.elapsedNow().inWholeMilliseconds < APPLICATION_ACTIVATION_WAIT_MILLIS) { "Application activation timed out after 60 seconds" }
+            if (NativeFiles.info("$directory/activate.json") != null) {
+                ApplicationActivation.parse(NativeFiles.read("$directory/activate.json", APPLICATION_ACTIVATION_MAX_BYTES)).requireReady(ready)
+                require(NativeFiles.read("$directory/ready.json", APPLICATION_ACTIVATION_MAX_BYTES).contentEquals(bytes)) { "Application readiness changed" }
+                require(NativeFiles.info("$directory/started.json") == null) { "Application started record appeared before activation" }
+                return kvik_interrupt_requested() == 0
+            }
+            usleep(10_000u)
+        }
+    }
+    fun started(ready: ApplicationReady, executionDirectory: String) {
+        val value = ApplicationStarted(token, Sha256.digest(ready.toJson()), executionDirectory)
+        NativeFiles.publish("$directory/started.json", value.toJson().canonical().encodeToByteArray(), APPLICATION_ACTIVATION_MAX_BYTES)
     }
 }

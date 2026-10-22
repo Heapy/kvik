@@ -230,6 +230,17 @@ DEFS["preparedApplication"] = versioned({
     "actionId": APPLICATION_CHECK, "verification": ref("digest"), "outputs": ref("digest"),
 })
 DEFS["preparedApplication"]["description"] = "Canonical UTF-8 descriptor must additionally fit 8 KiB and bind a completed application preparation record."
+# Invocation-local application readiness/activation; canonical byte checks remain Native semantics.
+DEFS["applicationActivationDigest"] = {"allOf": [ref("digest"), {"properties": {"hash": {"maxLength": 64}}}]}
+ACTIVATION_PATH = {"type": "string", "maxLength": 4096,
+    "pattern": r"^/(?:(?!\.{1,2}(?:/|$))[^/\u0000-\u001f]+/)*(?!\.{1,2}(?:/|$))[^/\u0000-\u001f]+$(?![\s\S])"}
+DEFS["applicationReady"] = versioned({"token": ref("applicationActivationDigest"), "preparationDirectory": ACTIVATION_PATH,
+    "descriptor": ref("applicationActivationDigest"), "verification": ref("applicationActivationDigest"), "composition": ref("applicationActivationDigest"),
+    "module": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"}, "target": enum("jvm", "macosArm64")})
+DEFS["applicationActivation"] = versioned({"token": ref("applicationActivationDigest"), "ready": ref("applicationActivationDigest")})
+DEFS["applicationStarted"] = versioned({"token": ref("applicationActivationDigest"), "ready": ref("applicationActivationDigest"), "executionDirectory": ACTIVATION_PATH})
+for name in ("applicationReady", "applicationActivation", "applicationStarted"):
+    DEFS[name]["description"] = "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": object_({"requestedChecks": array(STRING), "inputSnapshot": ref("digest")}),

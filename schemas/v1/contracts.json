@@ -3057,6 +3057,115 @@
       "additionalProperties": false,
       "description": "Canonical UTF-8 descriptor must additionally fit 8 KiB and bind a completed application preparation record."
     },
+    "applicationActivationDigest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/digest"
+        },
+        {
+          "properties": {
+            "hash": {
+              "maxLength": 64
+            }
+          }
+        }
+      ]
+    },
+    "applicationReady": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "token": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "preparationDirectory": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        },
+        "descriptor": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "verification": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "composition": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "token",
+        "preparationDirectory",
+        "descriptor",
+        "verification",
+        "composition",
+        "module",
+        "target"
+      ],
+      "additionalProperties": false,
+      "description": "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
+    },
+    "applicationActivation": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "token": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "ready": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "token",
+        "ready"
+      ],
+      "additionalProperties": false,
+      "description": "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
+    },
+    "applicationStarted": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "token": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "ready": {
+          "$ref": "#/$defs/applicationActivationDigest"
+        },
+        "executionDirectory": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "token",
+        "ready",
+        "executionDirectory"
+      ],
+      "additionalProperties": false,
+      "description": "Invocation-local strict canonical JSON, at most 8 KiB UTF-8; Native parsing additionally enforces valid Unicode, UTF-16 path lengths and digest bindings. Started means process-host acceptance, not health or successful exit."
+    },
     "event": {
       "type": "object",
       "properties": {
