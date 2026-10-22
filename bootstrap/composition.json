@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "coreSources": ["core/src", "cache/src", "execution/src", "cli/src"],
   "nativePlatform": "execution/platform",
+  "jvmWorkerSources": "compiler/jvm/src",
   "plugins": [
     {"id": "kvik.kotlin", "directory": "plugins/kotlin", "sourceDirectories": ["src"], "implementation": "kvik.plugins.kotlin.KotlinBuildPlugin"}
   ],

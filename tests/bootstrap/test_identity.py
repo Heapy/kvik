@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from bootstrap.identity import canonical, digest, inventory, read_json
+from bootstrap.identity import canonical, digest, file_digest, inventory, read_json
 from bootstrap.launcher import cached, validate_options
 
 
@@ -50,6 +50,18 @@ class IdentityTest(unittest.TestCase):
                 file.write_text(content)
                 with self.assertRaises(ValueError):
                     read_json(file)
+
+    def test_special_file_metadata_never_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "manifest.json"
+            os.mkfifo(file)
+            for operation in (read_json, file_digest):
+                with self.assertRaisesRegex(ValueError, "Not a regular file"):
+                    operation(file)
+            file.unlink()
+            file.write_bytes(b" " * (4 * 1024 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, "exceeds"):
+                read_json(file)
 
     def test_malformed_cache_metadata_is_a_miss(self):
         with tempfile.TemporaryDirectory() as directory:

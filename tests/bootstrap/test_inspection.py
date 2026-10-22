@@ -90,6 +90,7 @@ class InspectionTest(unittest.TestCase):
         executable = Path(result.stdout.strip())
         shutil.copy2(executable, self.root / "kvik.kexe")
         shutil.copy2(executable.parent / "guardian", self.root / "guardian")
+        shutil.copytree(executable.parent / "jvm", self.root / "jvm")
         command = [str(self.root / "kvik.kexe"), "runtime-info"]
         result = subprocess.run(command, capture_output=True, text=True, check=True)
         self.assertEqual("kotlin-native", json.loads(result.stdout)["backend"])

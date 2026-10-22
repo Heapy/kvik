@@ -18,12 +18,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--java-home", required=True)
     parser.add_argument("--konan-home", required=True)
+    parser.add_argument("--artifact-cache", default=str(ROOT / ".kvik/tool-artifacts"))
     parser.add_argument("--quick", action="store_true", help="Use the repository's existing runtime for cached-startup checks only")
     args = parser.parse_args()
     evidence = []
 
     def invoke(root, cache, options=(), expected=0):
-        command = [sys.executable, root / "kvik", "--cache-dir", cache, "--java-home", args.java_home, "--konan-home", args.konan_home, *options, "--", "runtime-info"]
+        command = [sys.executable, root / "kvik", "--cache-dir", cache, "--java-home", args.java_home, "--konan-home", args.konan_home, "--artifact-cache", args.artifact_cache, *options, "--", "runtime-info"]
         start = time.monotonic()
         result = subprocess.run([str(x) for x in command], capture_output=True, text=True, timeout=420)
         if result.returncode != expected:
@@ -51,12 +52,12 @@ def main():
             first.mkdir()
             recipe = json.loads((ROOT / "bootstrap/composition.json").read_text())
             directories = {"bootstrap", *(path.split("/")[0] for path in recipe["coreSources"]),
-                *(plugin["directory"].split("/")[0] for plugin in recipe["plugins"]), recipe["nativePlatform"].split("/")[0]}
+                *(plugin["directory"].split("/")[0] for plugin in recipe["plugins"]), recipe["nativePlatform"].split("/")[0], recipe["jvmWorkerSources"].split("/")[0]}
             for name in sorted(directories):
                 shutil.copytree(ROOT / name, first / name, ignore=shutil.ignore_patterns("__pycache__"))
             shutil.copy2(ROOT / "kvik", first / "kvik")
             cache = work / "cache"
-            command = [sys.executable, str(first / "kvik"), "--cache-dir", str(cache), "--java-home", args.java_home, "--konan-home", args.konan_home, "--", "runtime-info"]
+            command = [sys.executable, str(first / "kvik"), "--cache-dir", str(cache), "--java-home", args.java_home, "--konan-home", args.konan_home, "--artifact-cache", args.artifact_cache, "--", "runtime-info"]
             # Interrupt a real native compiler, then retry against the same cache.
             interrupted = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             start = time.monotonic()
@@ -107,6 +108,7 @@ def main():
                 ("native-options", second / "bootstrap/composition.json", lambda data: data.replace(b'"-target"', b'"-opt", "-target"')),
                 ("plugin-registry", second / "bootstrap/composition.json", lambda data: data.replace(b"KotlinBuildPlugin", b"ChangedBuildPlugin")),
                 ("native-helper-source", second / "execution/platform/guardian.c", lambda data: data + b"\n"),
+                ("jvm-worker-source", second / "compiler/jvm/src/kvik/jvm/WorkerFiles.kt", lambda data: data + b"\n"),
                 ("tool-lock", second / "bootstrap/toolchains.lock.json", lambda data: data.replace(b'"hash":"9', b'"hash":"0', 1)),
             ]
             for name, path, mutate in mutations:

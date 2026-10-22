@@ -14,6 +14,7 @@ import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json
 from bootstrap.pin_tools import host_identity, tool_roots
+from bootstrap import jvm_worker
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +40,7 @@ def relative(root, value):
 
 def composition():
     recipe = read_json(ROOT / "bootstrap/composition.json")
-    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "nativePlatform", "plugins", "compilerOptions"}:
+    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "nativePlatform", "jvmWorkerSources", "plugins", "compilerOptions"}:
         raise ValueError("Unsupported composition schema")
     if not isinstance(recipe["coreSources"], list) or not recipe["coreSources"] or not isinstance(recipe["plugins"], list):
         raise ValueError("Invalid composition sources/options")
@@ -57,6 +58,13 @@ def composition():
         tree = inventory(path)
         pins.append({"id": "core-" + str(len(pins)), "kind": "local", "origin": directory, "revision": None, "tree": digest(canonical(tree))})
         selected.extend((path / item["path"], directory + "/" + item["path"], item["digest"]) for item in tree["files"] if item["path"].endswith(".kt"))
+    if "core/src" not in recipe["coreSources"] or recipe["jvmWorkerSources"] != "compiler/jvm/src":
+        raise ValueError("Worker compilation requires the shared core and explicit JVM worker sources")
+    worker_sources = relative(ROOT, recipe["jvmWorkerSources"])
+    worker_tree = inventory(worker_sources)
+    pins.append({"id": "jvm-worker", "kind": "local", "origin": recipe["jvmWorkerSources"], "revision": None, "tree": digest(canonical(worker_tree))})
+    selected.extend((worker_sources / item["path"], recipe["jvmWorkerSources"] + "/" + item["path"], item["digest"])
+        for item in worker_tree["files"] if item["path"].endswith(".kt"))
     seen = set()
     for plugin in recipe["plugins"]:
         if not isinstance(plugin, dict) or set(plugin) != {"id", "directory", "sourceDirectories", "implementation"}:
@@ -79,7 +87,7 @@ def composition():
                     selected.append((source_root / item["path"], logical, item["digest"]))
     if not selected or len({entry[1] for entry in selected}) != len(selected):
         raise ValueError("Empty or overlapping source composition")
-    bootstrap_files = [ROOT / "kvik", *sorted((ROOT / "bootstrap").glob("*.py")), ROOT / "bootstrap/composition.json"]
+    bootstrap_files = [ROOT / "kvik", *sorted((ROOT / "bootstrap").glob("*.py")), ROOT / "bootstrap/composition.json", ROOT / "bootstrap/jvm-artifacts.lock.json"]
     bootstrap_identity = [{"path": str(p.relative_to(ROOT)), "digest": file_digest(p)} for p in bootstrap_files]
     tools = read_json(ROOT / "bootstrap/toolchains.lock.json")
     host = host_identity()
@@ -94,7 +102,7 @@ def composition():
                 type(component["sizeBytes"]) is not int or component["sizeBytes"] < 0):
             raise ValueError("Invalid toolchain component digest")
     lock = {"schemaVersion": 1, "sources": pins, "pluginApiVersion": 1, "registry": [p["implementation"] for p in recipe["plugins"]],
-            "toolchains": tools["components"], "libraries": [], "recipe": digest(canonical(bootstrap_identity)),
+            "toolchains": tools["components"], "libraries": jvm_worker.libraries(jvm_worker.read_lock(ROOT)), "recipe": digest(canonical(bootstrap_identity)),
             "arguments": recipe["compilerOptions"], "environment": {"LANG": "C", "LC_ALL": "C", "TZ": "UTC", "nativeDependencies": "offline",
                 "DEVELOPER_DIR": "$TOOL:xcodeToolchain/../..", "SDKROOT": "$TOOL:sdk"}, "platform": host}
     return recipe, selected, lock, digest(canonical(lock))
@@ -131,11 +139,12 @@ def cached(directory, key):
         guardian = directory / "guardian"
         if not isinstance(manifest, dict) or directory.is_symlink() or executable.is_symlink() or guardian.is_symlink():
             return False
+        jvm_worker.verify_bundle(directory, manifest.get("jvmWorkerBundle"))
         return (manifest.get("schemaVersion") == 1 and manifest.get("composition") == key and
                 digest(canonical(read_json(directory / "runtime.lock.json"))) == key and
                 manifest.get("executable") == file_digest(executable) and os.access(executable, os.X_OK) and
                 manifest.get("guardian") == file_digest(guardian) and os.access(guardian, os.X_OK))
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError):
         return False
 
 
@@ -192,6 +201,8 @@ def run_owned(command, environment, log, timeout=300):
 
 def build(args, recipe, selected, lock, key, destination):
     roots = validate_tools(args, lock["toolchains"])
+    jvm_lock = jvm_worker.read_lock(ROOT)
+    artifacts = jvm_worker.acquire(jvm_lock, args.artifact_cache, args.offline)
     temporary = Path(tempfile.mkdtemp(prefix=key["hash"] + "-", dir=destination.parent))
     started = time.monotonic()
     try:
@@ -203,7 +214,7 @@ def build(args, recipe, selected, lock, key, destination):
             output = temporary / "sources" / logical
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(data)
-            if logical.endswith(".kt"):
+            if logical.endswith(".kt") and not logical.startswith(recipe["jvmWorkerSources"] + "/"):
                 source_files.append(output)
         registry = temporary / "sources/Registry.kt"
         implementations = ", ".join(p["implementation"] + "()" for p in recipe["plugins"])
@@ -231,10 +242,14 @@ def build(args, recipe, selected, lock, key, destination):
             for command in commands:
                 run_owned(command, environment, log)
             guardian_digest = file_digest(guardian)
+            worker_digest = jvm_worker.build_bundle(temporary, temporary / "sources", recipe["jvmWorkerSources"], jvm_lock,
+                artifacts, roots["jdk"] / "bin/java", environment, log, run_owned)
             registry.write_text("package kvik.cli\n" + f'const val runtimeComposition: String = "{key["hash"]}"\n' +
                 f'const val runtimeCompositionSize: Long = {key["sizeBytes"]}L\n' +
                 f'const val runtimeGuardianHash: String = "{guardian_digest["hash"]}"\n' +
                 f'const val runtimeGuardianSize: Long = {guardian_digest["sizeBytes"]}L\n' +
+                f'const val runtimeJvmWorkerHash: String = "{worker_digest["hash"]}"\n' +
+                f'const val runtimeJvmWorkerSize: Long = {worker_digest["sizeBytes"]}L\n' +
                 f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
             run_owned([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
                 "-library", bridge / "process.klib", "-o", executable, *source_files, registry], environment, log)
@@ -243,18 +258,13 @@ def build(args, recipe, selected, lock, key, destination):
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
         manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
+            "jvmWorkerBundle": worker_digest,
             "compileMillis": round((time.monotonic() - started) * 1000)}
         (temporary / "manifest.json").write_bytes(canonical(manifest) + b"\n")
-        for path in (executable, guardian, temporary / "manifest.json", temporary / "runtime.lock.json"):
-            with path.open("rb") as handle:
-                os.fsync(handle.fileno())
         shutil.rmtree(temporary / "sources")
         shutil.rmtree(bridge)
-        descriptor = os.open(temporary, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        jvm_worker.verify_bundle(temporary, worker_digest)
+        jvm_worker.sync_tree(temporary)
         if destination.exists():
             quarantine = destination.with_name(destination.name + "-corrupt-" + str(time.time_ns()))
             destination.rename(quarantine)
@@ -276,6 +286,7 @@ def main():
     parser.add_argument("--konan-home", default=os.environ.get("KONAN_HOME"))
     parser.add_argument("--konan-data", default=str(Path.home() / ".konan"))
     parser.add_argument("--cache-dir", type=Path, default=ROOT / ".kvik/runtime")
+    parser.add_argument("--artifact-cache", type=Path, default=ROOT / ".kvik/tool-artifacts")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--print-runtime", action="store_true")
@@ -284,6 +295,7 @@ def main():
         command = command[1:]
     try:
         args.cache_dir = args.cache_dir.resolve()
+        args.artifact_cache = args.artifact_cache.absolute()
         recipe, selected, lock, key = composition()
         builds = args.cache_dir / "executables"
         locks = args.cache_dir / "locks"

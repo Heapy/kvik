@@ -204,5 +204,168 @@
         ]
       }
     ]
+  },
+  "bundledJvmWorkers": {
+    "launcher": [
+      {
+        "name": "interrupted-native-bootstrap-no-publication",
+        "seconds": 25.286851999990176,
+        "details": null
+      },
+      {
+        "name": "concurrent-cold-launchers",
+        "seconds": 53.8708528749994,
+        "details": "67079d7e1de72ca8c8b4f8aa2e08376654813e922e2a474248e006956f39382c"
+      },
+      {
+        "name": "relocated-cached-runtime",
+        "seconds": 0.092,
+        "details": null
+      },
+      {
+        "name": "invalidate-core-source",
+        "seconds": 0.0533,
+        "details": null
+      },
+      {
+        "name": "invalidate-native-options",
+        "seconds": 0.0518,
+        "details": null
+      },
+      {
+        "name": "invalidate-plugin-registry",
+        "seconds": 0.0524,
+        "details": null
+      },
+      {
+        "name": "invalidate-native-helper-source",
+        "seconds": 0.0517,
+        "details": null
+      },
+      {
+        "name": "invalidate-jvm-worker-source",
+        "seconds": 0.0523,
+        "details": null
+      },
+      {
+        "name": "invalidate-tool-lock",
+        "seconds": 0.0529,
+        "details": null
+      },
+      {
+        "name": "consumer-edit-and-no-compiler-needed",
+        "seconds": 0.0901,
+        "details": null
+      },
+      {
+        "name": "same-size-same-mtime-plugin-invalidation",
+        "seconds": 0.0525,
+        "details": null
+      },
+      {
+        "name": "source-plugin-recomposition",
+        "seconds": 51.2245,
+        "details": "3d87e0b8cd38ba47a8c8eefbba92b7774173e2d3105355030c7dbbeb58dff1fe"
+      },
+      {
+        "name": "corrupt-executable-rejected",
+        "seconds": 0.2103,
+        "details": null
+      },
+      {
+        "name": "corrupt-executable-rebuilt",
+        "seconds": 52.874,
+        "details": null
+      },
+      {
+        "name": "corrupt-native-helper-rejected",
+        "seconds": 0.0702,
+        "details": null
+      },
+      {
+        "name": "failed-rebuild-no-stale-fallback",
+        "seconds": 36.0089,
+        "details": null
+      },
+      {
+        "name": "source-restore-reuses-original-composition",
+        "seconds": 0.176,
+        "details": null
+      }
+    ],
+    "cachedStartup": [
+      {
+        "name": "cached-offline-startup",
+        "seconds": 2.0445,
+        "details": [
+          0.2368,
+          0.2605,
+          0.2094,
+          0.2333,
+          0.2691,
+          0.3124,
+          0.1383,
+          0.1287,
+          0.1303,
+          0.1257
+        ]
+      }
+    ],
+    "bundleChecksBeforeTransferTimerFix": {
+      "composition": {
+        "hash": "67079d7e1de72ca8c8b4f8aa2e08376654813e922e2a474248e006956f39382c",
+        "sizeBytes": 7639
+      },
+      "worker": {
+        "hash": "a30846ba7c5255d779afbe1b6972787265b6ef68d96203ee9e0a2ab5ee616395",
+        "sizeBytes": 481
+      },
+      "checks": [
+        "relocated-direct-native-bundle",
+        "preserved-mtime-corrupt-bundle-entry-0",
+        "preserved-mtime-corrupt-bundle-entry-1",
+        "preserved-mtime-corrupt-bundle-entry-2",
+        "preserved-mtime-corrupt-bundle-entry-3",
+        "extra-library-and-class-directory-symlink-rejected",
+        "relocated-bundled-BTA-compile",
+        "relocated-bundled-JUnit-test",
+        "cached-offline-launch-without-compiler-artifacts"
+      ]
+    },
+    "reviewFixes": [
+      "Nonblocking no-follow regular-file metadata reads",
+      "Whole-operation transfer timer covering connection, headers and body"
+    ],
+    "acquisitionBoundaryTests": 4,
+    "identityTests": 7,
+    "inspectionTests": 6,
+    "finalBundleChecks": {
+      "composition": {
+        "hash": "103077d7b75ce6752733c958d4d0f58e963afa6188cb23a9dad589766e47420a",
+        "sizeBytes": 7639
+      },
+      "worker": {
+        "hash": "a30846ba7c5255d779afbe1b6972787265b6ef68d96203ee9e0a2ab5ee616395",
+        "sizeBytes": 481
+      },
+      "checks": [
+        "relocated-direct-native-bundle",
+        "preserved-mtime-corrupt-bundle-entry-0",
+        "preserved-mtime-corrupt-bundle-entry-1",
+        "preserved-mtime-corrupt-bundle-entry-2",
+        "preserved-mtime-corrupt-bundle-entry-3",
+        "extra-library-and-class-directory-symlink-rejected",
+        "relocated-bundled-BTA-compile",
+        "relocated-bundled-JUnit-test",
+        "cached-offline-launch-without-compiler-artifacts"
+      ]
+    },
+    "freshArtifactDownload": {
+      "artifacts": 15,
+      "bytes": 73971576,
+      "downloadSeconds": 9.799713333020918,
+      "offlineReplay": true
+    },
+    "finalRuntimeLockSchemaValid": true
   }
 }

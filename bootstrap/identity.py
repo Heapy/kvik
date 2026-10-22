@@ -33,10 +33,30 @@ def digest(data):
 
 
 def file_digest(path):
-    with Path(path).open("rb") as source:
+    with regular_file(path) as source:
         value = hashlib.file_digest(source, "sha256").hexdigest()
         size = source.tell()
     return {"hash": value, "sizeBytes": size}
+
+
+def regular_file(path):
+    """Reject links and special files without blocking on a FIFO or device open."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    source = os.fdopen(descriptor, "rb")
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        source.close()
+        raise ValueError(f"Not a regular file: {path}")
+    return source
+
+
+def read_regular(path, limit):
+    with regular_file(path) as source:
+        if os.fstat(source.fileno()).st_size > limit:
+            raise ValueError(f"File exceeds {limit} bytes: {path}")
+        data = source.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError(f"File exceeds {limit} bytes: {path}")
+        return data
 
 
 def inventory(root, allow_internal_symlinks=False):
@@ -57,7 +77,7 @@ def inventory(root, allow_internal_symlinks=False):
     return {"schemaVersion": 1, "files": files}
 
 
-def read_json(path):
+def parse_json(text):
     def pairs(entries):
         result = {}
         for key, value in entries:
@@ -67,6 +87,10 @@ def read_json(path):
         return result
     def invalid(value):
         raise ValueError(f"Unsupported JSON number: {value}")
-    result = json.loads(Path(path).read_text(encoding="utf-8", errors="strict"), object_pairs_hook=pairs, parse_float=invalid, parse_constant=invalid)
+    result = json.loads(text, object_pairs_hook=pairs, parse_float=invalid, parse_constant=invalid)
     canonical(result)
     return result
+
+
+def read_json(path):
+    return parse_json(read_regular(path, 4 * 1024 * 1024).decode("utf-8", errors="strict"))
