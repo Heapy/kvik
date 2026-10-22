@@ -55,8 +55,9 @@ def main():
         command([args.konan_home / 'bin/cinterop', '-def', platform / 'process.def', '-compiler-option', f'-I{platform}', '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'])
         sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
         command([args.konan_home / 'bin/cinterop', '-def', ROOT / 'resolution/native/resolution.def', '-compiler-option', f'-I{ROOT / "resolution/native"}', '-compiler-option', f'-I{sdk}/usr/include/libxml2', '-o', output / 'resolution'])
-        sources = [p for base in ['core/src', 'execution/src', 'cache/src', 'compiler/jvm/native/src', 'resolution/src', 'integration/resolution/src', 'integration/project-graph/src', 'integration/action-cache/src'] for p in sorted((ROOT / base).rglob('*.kt'))]
-        sources += [ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt', ROOT / 'tests/workspace-plugins/GraphProbe.kt']
+        sources = [p for base in ['core/src', 'execution/src', 'cache/src', 'compiler/jvm/native/src', 'resolution/src', 'integration/resolution/src', 'integration/project-graph/src', 'integration/action-cache/src', 'integration/application/src'] for p in sorted((ROOT / base).rglob('*.kt'))]
+        sources += [ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt',
+                    ROOT / 'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt', ROOT / 'tests/workspace-plugins/GraphProbe.kt']
         command([args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-library', output / 'process.klib', '-library', output / 'resolution.klib', '-entry', 'kvik.workspaceplugins.main', '-o', output / 'probe.kexe', *sources])
     compiler = dict(schemaVersion=1, version='2.4.20', artifacts=[dict(path=p.name, digest=digest(p)) for p in jars.values()], serializationPlugin=digest(plugin))
     manifest = output / 'compiler-manifest.json'
