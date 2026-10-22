@@ -48,9 +48,9 @@ fun aggregateRunEvidence(
     require(results.all { it.actionId in graph }) { "Scheduler result is outside the planned graph" }
     val byId = results.associateBy { it.actionId }
     for (check in checks.filter(::scriptExecutionCheck)) {
+        require(byId[check]?.status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) { "Script execution cannot be a cache hit: $check" }
         terminals[check]?.let { terminal ->
             require(terminal == check) { "Script execution requires its distinct run terminal: $check" }
-            require(byId[terminal]?.status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) { "Script execution cannot be a cache hit: $check" }
         }
     }
     val testChecks = checks.filter { it.endsWith(":test") }

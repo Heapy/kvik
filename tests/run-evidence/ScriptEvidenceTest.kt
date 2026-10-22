@@ -20,6 +20,10 @@ class ScriptEvidenceTest {
         assertFailsWith<IllegalArgumentException> { evidence(listOf(result(compile)), terminal = compile) }
         for (status in listOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) {
             assertFailsWith<IllegalArgumentException> { evidence(listOf(result(compile), result(run, status))) }
+            assertFailsWith<IllegalArgumentException> {
+                aggregateRunEvidence("script-run", setOf(run), emptyMap(), mapOf(run to emptySet()), listOf(result(run, status)), emptyMap(),
+                    digest, digest, digest, digest, mapOf("jdk" to digest), listOf("kvik", "run-script", "task"), Freshness.CURRENT)
+            }
         }
     }
 
