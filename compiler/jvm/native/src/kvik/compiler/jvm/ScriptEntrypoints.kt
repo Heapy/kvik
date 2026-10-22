@@ -11,7 +11,7 @@ package kvik.compiler.jvm
 fun selectScriptMainClass(classes: Map<String, ByteArray>, requested: String? = null): String {
     require(classes.size in 1..20_000) { "Script must produce 1..20000 class files" }
     require(classes.values.sumOf { it.size.toLong() } <= 256L * 1024 * 1024) { "Script classes exceed 256 MiB" }
-    val candidates = classes.toSortedMap().mapNotNull { (path, bytes) ->
+    val candidates = classes.entries.sortedBy { it.key }.mapNotNull { (path, bytes) ->
         require(path.endsWith(".class") && !path.startsWith('/') && path.split('/').none { it in setOf("", ".", "..") }) {
             "Invalid script class output path: $path"
         }
