@@ -27,3 +27,13 @@ class PendingOperation(initial: Operation) {
     }
     fun take(): Operation? = pending.also { pending = null }
 }
+
+/** Raw mode never buffers a line. Ctrl-D is handled as EOF by the session. */
+fun keyControl(byte: Byte): Control? = when (byte.toInt() and 255) {
+    10, 13 -> null
+    114 -> Control(null, "r")
+    116 -> Control(null, "t")
+    113 -> Control(null, "q")
+    63 -> Control(null, "?")
+    else -> error("Supported keys: r, t, q, ?; Ctrl-D closes the session")
+}

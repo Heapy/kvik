@@ -37,7 +37,10 @@ internal fun replaceSession(state: SessionResume) {
         fun strings(values: List<String>) = allocArray<CPointerVar<ByteVar>>(values.size + 1).also { array ->
             values.forEachIndexed { index, value -> array[index] = value.cstr.ptr }; array[values.size] = null
         }
-        kvik_foreground_exec(launch.runtime, strings(arguments), strings(environment.entries.sortedBy { it.key }.map { "${it.key}=${it.value}" }))
+        val argv = strings(arguments)
+        val envp = strings(environment.entries.sortedBy { it.key }.map { "${it.key}=${it.value}" })
+        if (state.terminalLease == null) kvik_foreground_exec(launch.runtime, argv, envp)
+        else kvik_foreground_exec_terminal(launch.runtime, argv, envp, state.terminalLease)
         error("Cannot replace foreground runtime: errno=$errno")
     }
 }
@@ -66,7 +69,7 @@ internal fun resumeDev(args: List<String>): Int {
         try { ForegroundSession(host, launch.runtime, state.directory, state.workingDirectory, state.arguments,
             listOf("--project", paths[0], "--lock", paths[1], "--tools", paths[3], "--store", paths[2]), state.jsonControls,
             state.watchMillis, state.pending, launch, bootstrapEnvironment(), state.watched, state.partialInput,
-            state.previousDirectory, resumed = true, restart = ::replaceSession).run() }
+            state.previousDirectory, resumed = true, restart = ::replaceSession, keys = state.terminalLease != null, inheritedTerminalLease = state.terminalLease).run() }
         catch (failure: Exception) { throw RunStreamFailure("Resumed foreground session failed: ${failure.message}") }
     }
 }

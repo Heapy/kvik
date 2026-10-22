@@ -35,7 +35,7 @@ private fun command(args: Array<String>) {
             Lock options: --lock PATH --store PATH --offline
             Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N
-            Dev: dev --control jsonl|lines [--watch-ms 1000] [--initial build|test] plus build options
+            Dev: dev [--control keys|jsonl|lines] (TTY defaults to immediate r/t/q/? keys) [--watch-ms 1000] [--initial build|test] plus build options
             Packages: packages versions GROUP:ARTIFACT --project PATH [--channel all|stable|prerelease] [--limit N] [--cursor TOKEN]
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target jvm|macosArm64 --usage USAGE --project PATH
             Query cache: --query-cache PATH [--refresh|--offline] --json

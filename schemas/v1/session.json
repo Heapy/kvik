@@ -58,7 +58,8 @@
             "composition-observed",
             "rebuild-started",
             "rebuild-finished",
-            "session-restarting"
+            "session-restarting",
+            "replacement-checked"
           ]
         },
         "payload": {
@@ -90,7 +91,8 @@
                   "control": {
                     "enum": [
                       "jsonl",
-                      "lines"
+                      "lines",
+                      "keys"
                     ]
                   },
                   "directory": {
@@ -589,6 +591,46 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "replacement-checked"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "composition": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "compatible": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidenceDirectory": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "composition",
+                  "compatible",
+                  "error",
+                  "evidenceDirectory"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
         }
       ]
     },
@@ -610,7 +652,31 @@
       ],
       "additionalProperties": false
     },
-    "resume": {
+    "terminalLease": {
+      "description": "Invocation-local macOS ARM64 ABI-bound lease; C boundary validates owner, direct helper child, pipe and TTY identities, challenge and termios backup.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "platform": {
+          "const": "macos-arm64"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096,
+          "pattern": "^(?:[0-9a-f]{2})+(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "platform",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "resumeV1": {
       "description": "UTF-8 representation bounded to 128 KiB; digest is carried in literal exec argv. Trusted invocation-local state.",
       "type": "object",
       "properties": {
@@ -692,6 +758,158 @@
         "watched",
         "partialInput",
         "launch"
+      ],
+      "additionalProperties": false
+    },
+    "resumeV2": {
+      "description": "UTF-8 representation bounded to 128 KiB; digest is carried in literal exec argv. Trusted invocation-local state.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "previousDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "workingDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+        },
+        "arguments": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]*(?![\\s\\S])"
+          }
+        },
+        "jsonControls": {
+          "const": false
+        },
+        "watchMillis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "pending": {
+          "enum": [
+            "build",
+            "test"
+          ]
+        },
+        "watched": {
+          "enum": [
+            "build",
+            "test"
+          ]
+        },
+        "partialInput": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255,
+            "not": {
+              "const": 10
+            }
+          }
+        },
+        "launch": {
+          "$ref": "bootstrap-launch.json#/$defs/launch"
+        },
+        "terminalLease": {
+          "$ref": "#/$defs/terminalLease"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "directory",
+        "previousDirectory",
+        "workingDirectory",
+        "arguments",
+        "jsonControls",
+        "watchMillis",
+        "pending",
+        "watched",
+        "partialInput",
+        "launch",
+        "terminalLease"
+      ],
+      "additionalProperties": false
+    },
+    "resume": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/resumeV1"
+        },
+        {
+          "$ref": "#/$defs/resumeV2"
+        }
+      ]
+    },
+    "sessionCapabilities": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "resumeVersions": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "terminalLease": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "platform": {
+              "const": "macos-arm64"
+            },
+            "sizeBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2048
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "platform",
+            "sizeBytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "composition",
+        "runtime",
+        "resumeVersions",
+        "terminalLease"
       ],
       "additionalProperties": false
     }

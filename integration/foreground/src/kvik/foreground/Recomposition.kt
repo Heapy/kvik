@@ -12,11 +12,14 @@ class Recomposition(
     private val environment: Map<String, String>,
     private val interval: Long,
     private val event: (String, JsonValue.Object) -> Unit,
+    private val terminalLeaseBytes: Int? = null,
 ) {
     private data class Child(val process: OwnedProcess, val directory: String, val composition: Digest?, val epoch: Int)
     private var epoch = 0
     private var query: Child? = null
     private var build: Child? = null
+    private var compatibility: Child? = null
+    private var compatible = terminalLeaseBytes == null
     private var nextQuery = 0L
     private var candidate: Digest? = null
     private var observed = false
@@ -26,18 +29,19 @@ class Recomposition(
     private var confirmed = false
     var allowWork = false
         private set
-    val busy: Boolean get() = query != null || build != null
-    val ready: Pair<BootstrapLaunch, ByteArray>? get() = replacement.takeIf { confirmed && !busy }
+    val busy: Boolean get() = query != null || build != null || compatibility != null
+    val ready: Pair<BootstrapLaunch, ByteArray>? get() = replacement.takeIf { confirmed && compatible && !busy }
     fun retry() { attempted = null; nextQuery = 0 }
-    fun replacementFailed() { replacement = null; confirmed = false }
-    fun cancel() { query?.process?.cancel(); build?.process?.cancel() }
+    fun replacementFailed() { replacement = null; confirmed = false; compatible = terminalLeaseBytes == null }
+    fun cancel() { query?.process?.cancel(); build?.process?.cancel(); compatibility?.process?.cancel() }
 
-    private fun start(kind: BootstrapQuery, composition: Digest?): Child {
+    private fun start(kind: BootstrapQuery, composition: Digest?): Child = startCommand(launch.command(kind), composition,
+        if (kind == BootstrapQuery.COMPOSITION) 60_000 else 15 * 60_000)
+    private fun startCommand(command: List<String>, composition: Digest?, timeout: Long): Child {
         val path = NativeRunDirectory(directory).path
-        val command = launch.command(kind)
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         val process = host.start(ProcessRequest(command, launch.sourceRoot, environment,
-            "$path/stdout.jsonl", "$path/stderr.log", if (kind == BootstrapQuery.COMPOSITION) 60_000 else 15 * 60_000))
+            "$path/stdout.jsonl", "$path/stderr.log", timeout))
         return Child(process, path, composition, epoch)
     }
     private fun completed(child: Child): ProcessResult? = child.process.poll()?.also { child.process.close() }
@@ -58,9 +62,10 @@ class Recomposition(
             else NativeFiles.removeTree(child.directory)
             allowWork = digest == launch.composition && (repeats >= 2 || !changed && allowWork)
             if (digest != build?.composition) build?.process?.cancel()
+            if (digest != compatibility?.composition) compatibility?.process?.cancel()
             replacement?.let { (selected, _) ->
                 if (digest == selected.composition) confirmed = true
-                else { replacement = null; confirmed = false }
+                else { replacementFailed() }
             }
             }
         } }
@@ -77,14 +82,31 @@ class Recomposition(
                 else error = "Source composition changed during rebuild"
             } catch (failure: Exception) { error = failure.message ?: "Invalid replacement descriptor" }
             else error = "Bootstrap did not produce a replacement"
-            replacement = selected; confirmed = false; nextQuery = 0
+            replacement = selected; confirmed = false; compatible = terminalLeaseBytes == null; nextQuery = 0
             epoch++; query?.process?.cancel()
             event("rebuild-finished", obj("composition" to child.composition!!.toJson(), "exitCode" to result.exitCode.json(),
                 "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(), "accepted" to (selected != null).json(),
                 "error" to (error?.take(512)?.json() ?: JsonValue.Null), "evidenceDirectory" to child.directory.json()))
         } }
+        compatibility?.let { child -> completed(child)?.let { result ->
+            compatibility = null
+            var error: String? = null
+            val selected = replacement?.first
+            val accepted = if (result.exitCode == 0 && !result.cancelled && !result.timedOut && selected != null && selected.composition == child.composition) try {
+                requireKeySessionCapabilities(NativeFiles.read("${child.directory}/stdout.jsonl", 8192), selected, checkNotNull(terminalLeaseBytes))
+                true
+            } catch (failure: Exception) { error = failure.message ?: "Invalid session capabilities"; false }
+            else { error = "Replacement did not accept terminal handoff"; false }
+            compatible = accepted
+            if (!accepted) replacementFailed()
+            event("replacement-checked", obj("composition" to child.composition!!.toJson(), "compatible" to accepted.json(),
+                "error" to (error?.take(512)?.json() ?: JsonValue.Null), "evidenceDirectory" to child.directory.json()))
+        } }
         if (stopping) { cancel(); return }
         if (ready != null) return
+        if (confirmed && !compatible && compatibility == null) replacement?.first?.let { selected ->
+            compatibility = startCommand(listOf(selected.runtime, "dev", "--session-capabilities"), selected.composition, 60_000)
+        }
         if (query == null && now >= nextQuery) query = start(BootstrapQuery.COMPOSITION, null)
         val desired = candidate
         if (!allowWork && consumersIdle && build == null && replacement == null && repeats >= 2 && desired != null &&

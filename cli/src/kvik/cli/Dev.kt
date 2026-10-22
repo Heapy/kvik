@@ -3,12 +3,20 @@ package kvik.cli
 
 import kvik.cache.NativeFiles
 import kvik.core.*
+import kvik.execution.platform.kvik_foreground_terminal_lease_bytes
 import kvik.execution.NativeRunDirectory
 import kvik.foreground.*
 import platform.posix.*
 
 internal fun devCommand(args: List<String>): Int {
     if (args.firstOrNull() == "--resume") return resumeDev(args)
+    if (args == listOf("--session-capabilities")) {
+        println(obj("schemaVersion" to 1.json(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
+            "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "resumeVersions" to listOf(1.json(), 2.json()).json(),
+            "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to "macos-arm64".json(),
+                "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
+        return 0
+    }
     val bootstrap = bootstrapContext()
     val session = mutableMapOf<String, String>()
     val build = mutableListOf<String>()
@@ -23,8 +31,9 @@ internal fun devCommand(args: List<String>): Int {
             if (flag != "--offline") { require(index < args.size) { "Missing $flag value" }; build += args[index++] }
         }
     }
-    val control = session["--control"] ?: if (isatty(0) == 1) "lines" else error("Non-TTY dev requires --control jsonl or --control lines")
-    require(control in setOf("jsonl", "lines")) { "Unsupported control mode" }
+    val control = session["--control"] ?: if (isatty(0) == 1) "keys" else error("Non-TTY dev requires --control jsonl or --control lines")
+    require(control in setOf("jsonl", "lines", "keys")) { "Unsupported control mode" }
+    require(control != "keys" || isatty(0) == 1) { "Key controls require a foreground controlling TTY; use --control jsonl or lines for non-TTY input" }
     val interval = session["--watch-ms"]?.toLongOrNull() ?: if ("--watch-ms" in session) error("Invalid watch interval") else 1000L
     require(interval in 100..60_000) { "Watch interval must be 100..60000 milliseconds" }
     val initial = when (session["--initial"] ?: "build") { "build" -> Operation.BUILD; "test" -> Operation.TEST; else -> error("Invalid initial operation") }
@@ -46,7 +55,7 @@ internal fun devCommand(args: List<String>): Int {
     val directory = NativeRunDirectory(parent).path
     return runtimeProcessHost().use { host ->
         ForegroundSession(host, "${runtimeDirectory()}/kvik.kexe", directory, project.root, arguments,
-            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession).let { foreground ->
+            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession, keys = control == "keys").let { foreground ->
                 try { foreground.run() }
                 catch (failure: Exception) { throw RunStreamFailure("Foreground session failed: ${failure.message}") }
             }

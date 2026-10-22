@@ -27,7 +27,11 @@ class ForegroundSession(
     private val previousDirectory: String? = null,
     private val resumed: Boolean = false,
     private val restart: ((SessionResume) -> Unit)? = null,
+    private val keys: Boolean = false,
+    private val inheritedTerminalLease: String? = null,
+    private val terminalGuardian: String = "${executable.substringBeforeLast('/')}/guardian",
 ) {
+    init { require(!keys || !jsonControls); require(inheritedTerminalLease == null || keys) }
     private val pending = PendingOperation(initial)
     private var watchedOperation = initialWatched
     private var sequence = 0L
@@ -47,7 +51,7 @@ class ForegroundSession(
     private var outputBytes = 0
     private var outputOffset = 0
     private var line = initialPartialInput.toMutableList()
-    private val sources = bootstrap?.let { Recomposition(it, host, directory, bootstrapEnvironment, watchMillis, ::event) }
+    private val sources = bootstrap?.let { Recomposition(it, host, directory, bootstrapEnvironment, watchMillis, ::event, if (keys) kvik_foreground_terminal_lease_bytes() else null) }
     private var sourceGated = false
     private var nextSessionDirectory: String? = null
     private var handoffStarted = 0L
@@ -103,19 +107,26 @@ class ForegroundSession(
             "q" -> stop("quit")
         }
         event("control", obj("requestId" to (value.requestId?.json() ?: JsonValue.Null), "command" to value.command.json(),
-            "help" to (if (value.command == "?") "r: queue build; t: queue fresh tests; q: close; status: active/pending; input watching never asserts tool freshness".json() else JsonValue.Null),
+            "help" to (if (value.command == "?") "r: queue build; t: queue fresh tests; q: close; ?: help/status; ${if (keys) "keys are immediate; Ctrl-D: close" else "controls require newline"}; input watching never asserts tool freshness".json() else JsonValue.Null),
             "compositionReady" to (sources?.allowWork ?: true).json(),
             "active" to (operation?.operation?.command?.json() ?: JsonValue.Null), "pending" to (pending.pending?.command?.json() ?: JsonValue.Null)))
     }
     private fun pollInput() = memScoped {
         val buffer = allocArray<ByteVar>(4096)
         when (val count = kvik_foreground_read(boundary, buffer, 4096)) {
+            -4 -> stop("terminal-failure")
             -3 -> stop("parent-exit")
             -2 -> stop("end-of-input")
             -1 -> stop("input-error")
             else -> if (count > 0) for (index in 0 until count) {
                 if (closing != null) break
                 val byte = buffer[index]
+                if (keys) {
+                    if (byte.toInt() == 4) stop("end-of-input")
+                    else try { keyControl(byte)?.let(::control) }
+                    catch (failure: Exception) { event("diagnostic", obj("code" to "KVIK_SESSION_CONTROL".json(), "message" to (failure.message ?: "Invalid key").json())) }
+                    continue
+                }
                 if (byte.toInt() == 10) {
                     try { control(parseControl(line.toByteArray().decodeToString(throwOnInvalidSequence = true), jsonControls)) }
                     catch (failure: Exception) { event("diagnostic", obj("code" to "KVIK_SESSION_CONTROL".json(), "message" to (failure.message ?: "Invalid control").take(512).json())) }
@@ -184,11 +195,13 @@ class ForegroundSession(
         val previousPipe = signal(SIGPIPE, SIG_IGN)
         if (resumed) kvik_foreground_resume_signals()
         try {
-            boundary = kvik_foreground_open()
-            check(boundary != null) { "Cannot establish foreground parent/stream ownership" }
+            boundary = if (keys) {
+                if (inheritedTerminalLease != null) kvik_foreground_resume_keys(inheritedTerminalLease) else kvik_foreground_open_keys(terminalGuardian)
+            } else kvik_foreground_open()
+            check(boundary != null) { "Cannot establish foreground terminal/stream ownership (errno=$errno)" }
             journal = open("$directory/session.jsonl", O_WRONLY or O_CREAT or O_EXCL or O_NOFOLLOW or O_CLOEXEC, 384)
             check(journal >= 0) { "Cannot create session journal" }
-            event("session-started", obj("control" to (if (jsonControls) "jsonl" else "lines").json(),
+            event("session-started", obj("control" to (if (keys) "keys" else if (jsonControls) "jsonl" else "lines").json(),
                 "directory" to directory.json(), "previousSessionDirectory" to (previousDirectory?.json() ?: JsonValue.Null),
                 "composition" to (bootstrap?.composition?.toJson() ?: JsonValue.Null),
                 "capabilities" to (listOf("library-build", "library-test", "input-watch") + if (bootstrap != null) listOf("source-recomposition") else emptyList()).map { it.json() }.json(),
@@ -227,7 +240,10 @@ class ForegroundSession(
                             check(fsync(journal) == 0) { "Cannot persist restart boundary" }
                             checkNotNull(restart) { "Missing runtime replacement boundary" }.invoke(SessionResume(nextSessionDirectory!!,
                                 directory, workingDirectory, arguments, jsonControls, watchMillis, pending.pending ?: watchedOperation,
-                                watchedOperation, line.toList(), selected.second))
+                                watchedOperation, line.toList(), selected.second, if (keys) {
+                                    val encoded = checkNotNull(kvik_foreground_export_terminal(boundary)) { "Cannot preserve terminal lease" }
+                                    try { encoded.toKString() } finally { free(encoded) }
+                                } else null))
                             error("Runtime replacement unexpectedly returned")
                         } catch (failure: Exception) {
                             sources.replacementFailed(); nextSessionDirectory = null
@@ -244,9 +260,15 @@ class ForegroundSession(
             while (output.isNotEmpty() && now() - closingAt < 1000) { flushOutput(); usleep(10_000u) }
             return if (closing == "signal" || closing == "parent-exit") 130 else if (closing in setOf("quit", "end-of-input")) 0 else 1
         } finally {
-            host.close()
-            if (journal >= 0) { fsync(journal); close(journal) }
-            kvik_foreground_close(boundary); kvik_interrupt_restore(); signal(SIGPIPE, previousPipe)
+            try {
+                host.close()
+                if (journal >= 0) { fsync(journal); close(journal) }
+            } finally {
+                val restored = kvik_foreground_close_checked(boundary)
+                val restoreError = errno
+                kvik_interrupt_restore(); signal(SIGPIPE, previousPipe)
+                check(restored == 0) { "Terminal restoration failed (errno=$restoreError)" }
+            }
         }
     }
 }
