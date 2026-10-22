@@ -137,3 +137,31 @@ compiler identity and plugin-option invalidation, and concurrent-worktree isolat
 The standalone phase above has no external dependency; the workspace plugin is not
 the published serialization compiler plugin. Full installed tool inventories and
 historical filesystem no-write assertions have the limits described in the audit.
+
+## Published-plugin diagnostic follow-up
+
+Commit `3bf1b8e` preserves the supported published-plugin contract while reporting
+distinct errors for an unsupported coordinate, a compiler-version mismatch, options
+and file inputs. Each message identifies the supplied plugin and the supported
+coordinate or a corrective action. The graph tests cover all four failures and a
+supported plugin. A separate test holds configuration, sources and composition fixed,
+changes only `jvm-compiler`, and proves the action keys change while restoring that
+tool identity makes the complete action specifications equal.
+
+The Native graph/contracts/evidence gate passed 108 tests in 15 cases (550 ms test
+execution), retained at `.kvik/tests/project-graph/case-7k0c90f1`. Summary SHA-256:
+`d0d444606284000e94edcfcf6ff41f2c0b91f2a97d05fb0aae7ecfdf3ed0512c`.
+Independent source/build/log audit:
+`/private/tmp/kvik-script-graph108-audit-aojzmbf9/report.json`, SHA-256
+`d98fa9d975b4d24192911594c1e4f016219abc9c0886215862816fa3ca019b32`.
+This is graph evidence; actual alternate-compiler execution remains separate.
+
+The native runtime rebuilt from `3bf1b8e` with all tracked source bytes unchanged,
+in 106.164 seconds wall time. Receipts are under `.kvik/script-cli-diagnostics/`.
+Composition:
+`2f5b5ccdd270b064b4829fb631b18187b1aff5cc300e771036e89c6894f70e53`.
+Executable SHA-256:
+`ccc0860084ed3cecf12491e49fa5226fcdef5cea19e6aeab50d79667ba24311d`
+(5,585,480 bytes). The guardian digest is unchanged from the prior runtime. This
+build establishes the executable for the next published-plugin acceptance phase;
+it does not itself prove consumer compilation or execution.
