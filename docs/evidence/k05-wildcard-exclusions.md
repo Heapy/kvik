@@ -37,3 +37,13 @@ python3 tools/test_resolution.py \
 The existing Native resolver suite plus the focused additions passes 24 tests.
 The independent workspace-plugin graph harness also resolves and replays the
 compiler closure through the v2 dependency-lock/CAS integration.
+
+Independent integration review applied this resolver commit without the K13
+contract/adapter changes in an isolated worktree. All 27 Native tests passed,
+including three additional tests in `WildcardReviewTest.kt`: redirected excluded
+and ordinary paths in either order, constraint isolation versus an ordinary
+path, and rejection of property-based/duplicate exclusions. The retained log is
+`/private/tmp/kvik-wildcard-review.log`. An initial compile of the added review
+test used a lambda for the ordinary `ArtifactTransport` interface; it was fixed
+to an explicit implementation before the successful run. No production fix was
+required by review.
