@@ -85,14 +85,14 @@ def main():
             KVIK_TEST_AMBIENT='must-not-reach-child', JAVA_TOOL_OPTIONS='-Dkvik.fixture.ambient=must-not-reach-child'))
         log = (case / 'tests.log').read_text()
         passed = [line for line in log.splitlines() if line.startswith('[       OK ]')]
-        assert len(passed) == 20 and len(set(passed)) == 20, log
+        assert len(passed) == 23 and len(set(passed)) == 23, log
         observations = {p.parent.name: json.loads(p.read_text()) for p in sorted(evidence.glob('*/observation.json'))}
         assert len(observations) == 10, observations.keys()
         receipt['observations'] = observations
         receipt['evidence'] = {str(p.relative_to(case)): file_digest(p) for p in sorted(evidence.rglob('*')) if p.is_file() and not p.is_symlink()}
         assert receipt['inputs'] == {str(p): file_digest(p) for p in inputs}, 'Inputs changed'
         assert receipt['tools'] == {str(p): file_digest(p) for p in tools}, 'Tools changed'
-        receipt.update(passed=True, unitGroups=14, actualGroups=6, actualInvocations=10)
+        receipt.update(passed=True, unitGroups=17, actualGroups=6, actualInvocations=10)
         print(log, end='')
     except BaseException as error:
         receipt['failure'] = f'{type(error).__name__}: {error}'

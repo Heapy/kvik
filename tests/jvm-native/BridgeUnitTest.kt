@@ -1,10 +1,12 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 package kvik.compiler.jvm
 
 import kvik.core.*
 import kvik.cache.*
 import kvik.execution.*
 import kotlin.test.*
+import kotlin.concurrent.atomics.AtomicInt
+import platform.posix.usleep
 
 class BridgeUnitTest {
     private val digest = Sha256.digest(byteArrayOf())
@@ -79,10 +81,49 @@ class BridgeUnitTest {
         assertFailsWith<IllegalArgumentException> { executor.start(root.runId, "unsafe-args", action.copy(arguments = listOf("arbitrary"))) }
         assertFailsWith<IllegalArgumentException> { executor.start(root.runId, "unsafe-env", action.copy(environment = mapOf("JAVA_TOOL_OPTIONS" to "unsafe"))) }
         assertEquals(0, launches)
-        executor.start(root.runId, "cancelled", action).use { running -> running.cancel(); assertEquals(ActionStatus.CANCELLED, running.poll()!!.status) }
+        executor.start(root.runId, "cancelled", action).use { running ->
+            repeat(10_000) { if (launches == 0) { assertNull(running.poll()); usleep(1000u) } }
+            assertEquals(1, launches)
+            running.cancel(); assertEquals(ActionStatus.CANCELLED, awaitBridgeResult(running).status) }
         assertEquals(1, launches)
         assertEquals(VerificationStatus.CANCELLED, executor.observations.getValue("cancelled").tests!!.status)
         assertEquals(0, executor.observations.getValue("cancelled").tests!!.counts.executed)
+    }
+
+    @Test fun verificationIsAsynchronousReservesIdAndCancellationJoinsWithoutLaunching() {
+        val root = NativeRunDirectory("/private/tmp")
+        val entered = AtomicInt(0); val exited = AtomicInt(0)
+        val identities = jvmIdentities.associateWith { digest }
+        val provider = object : JvmToolchainProvider {
+            override fun verified(identities: Map<String, Digest>): JvmToolchainLayout = error("checkpoint overload required")
+            override fun verified(identities: Map<String, Digest>, checkpoint: () -> Unit): JvmToolchainLayout {
+                entered.store(1)
+                try {
+                    repeat(10_000) { checkpoint(); usleep(1000u) }
+                    error("verification was not cancelled")
+                } finally { exited.store(1) }
+            }
+        }
+        val host = object : ProcessHost {
+            override fun start(request: ProcessRequest): OwnedProcess = error("launched before verification")
+            override fun close() = Unit
+        }
+        val content = object : ContentStore {
+            override fun get(digest: Digest): ByteArray? = error("materialized before verification")
+            override fun put(bytes: ByteArray): Digest = error("unexpected write")
+        }
+        val executor = JvmActionExecutor(root.runId, root.path, host, content, provider)
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("runtime.jar"), digest)))
+        val action = jvmTestAction(JvmTestSelection("m", listOf(LogicalPath("runtime.jar")), listOf("fixture.Test")), inputs, digest, identities)
+        executor.start(root.runId, "run", action).use { running ->
+            repeat(10_000) { if (entered.load() == 0) usleep(1000u) }
+            assertEquals(1, entered.load()); assertNull(running.poll())
+            assertFails { executor.start(root.runId, "run", action) }
+            running.cancel()
+            assertEquals(1, exited.load())
+            assertEquals(ActionStatus.CANCELLED, awaitBridgeResult(running).status)
+            assertTrue(executor.observations.isEmpty())
+        }
     }
 
     @Test fun incompleteCannotConcealFailedTestsOrContainerFailures() {
@@ -127,11 +168,16 @@ class BridgeUnitTest {
             }
             val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
             executor.start(root.runId, variant, action).use { running ->
-                val result = running.poll()!!
+                val result = awaitBridgeResult(running)
                 assertEquals(ActionStatus.FAILED, result.status, variant)
                 assertTrue(result.outputs.files.isEmpty(), variant)
                 assertEquals("KVIK_JVM_RESULT_INVALID", executor.observations.getValue(variant).diagnostics.last().code)
             }
         }
     }
+}
+
+private fun awaitBridgeResult(running: RunningAction): ActionResult {
+    repeat(10_000) { running.poll()?.let { return it }; usleep(1000u) }
+    error("JVM action did not finish")
 }
