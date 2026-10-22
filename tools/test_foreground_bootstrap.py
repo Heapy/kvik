@@ -56,6 +56,8 @@ def main():
     policy.source_lock = Path('/source locks $(literal)/../selected.json')
     policy.source_cache = Path('/source cache $(literal)/../selected')
     graph = launcher.launch_descriptor(policy, key, runtime).encode('utf-8')
+    policy.runtime_store = Path('/shared store $(literal)/../selected')
+    shared = launcher.launch_descriptor(policy, key, runtime).encode('utf-8')
     after = producer_identity(producer_file)
     assert before == after, 'Producer changed while importing/generating fixtures; rerun'
     graph_doc = json.loads(graph)
@@ -66,20 +68,21 @@ def main():
     schema = json.loads(schema_file.read_text())
     jsonschema.Draft202012Validator.check_schema(schema)
     validator = jsonschema.Draft202012Validator(schema)
-    for name, encoded in [('producer.json', legacy), ('source-graph-producer.json', graph)]:
+    for name, encoded in [('producer.json', legacy), ('source-graph-producer.json', graph), ('shared-store-producer.json', shared)]:
         validator.validate(json.loads(encoded))
         (output / name).write_bytes(encoded)
     lock_only = {**graph_doc, 'bootstrapArguments': graph_doc['bootstrapArguments'][:12] + graph_doc['bootstrapArguments'][14:]}
     validator.validate(lock_only)
     for invalid in [
         {**graph_doc, 'bootstrapArguments': graph_doc['bootstrapArguments'][:10] + graph_doc['bootstrapArguments'][12:]},
-        {**graph_doc, 'bootstrapArguments': graph_doc['bootstrapArguments'] + ['--offline']},
+        {**graph_doc, 'bootstrapArguments': graph_doc['bootstrapArguments'] + ['--offline'] * 3},
     ]:
         assert not validator.is_valid(invalid), 'Schema accepted cache-only or oversized arguments'
     generated = output / 'Producer.kt'
     generated.write_text('package kvik.foreground\n' + '\n'.join(
         'val ' + name + ' = byteArrayOf(' + ','.join(str(x if x < 128 else x - 256) for x in encoded) + ')'
-        for name, encoded in [('producerDescriptor', legacy), ('sourceGraphProducerDescriptor', graph)]) + '\n')
+        for name, encoded in [('producerDescriptor', legacy), ('sourceGraphProducerDescriptor', graph),
+                              ('sharedStoreProducerDescriptor', shared)]) + '\n')
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + [
         ROOT / 'integration/foreground/src/kvik/foreground' / name
         for name in ('BootstrapLaunch.kt', 'Protocol.kt', 'SessionResume.kt')
@@ -99,7 +102,7 @@ def main():
         'compilerInputs': {str(path): digest(path.read_bytes()) for path in
             [konan / 'bin/konanc', konan / 'bin/run_konan', konan / 'tools/env_blacklist',
              *sorted((konan / 'konan/lib').glob('*.jar'))]},
-        'fixtureSha256': {'legacy': digest(legacy), 'sourceGraph': digest(graph)}}
+        'fixtureSha256': {'legacy': digest(legacy), 'sourceGraph': digest(graph), 'sharedStore': digest(shared)}}
     (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     print(f'Evidence: {output}', flush=True)
     started = time.monotonic()

@@ -33,7 +33,7 @@ class BootstrapLaunch private constructor(
     }
 
     companion object {
-        private val pathFlags = listOf("--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache")
+        private val pathFlags = listOf("--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache", "--runtime-store")
         private val policyFlags = listOf("--offline", "--no-build")
 
         fun parse(bytes: ByteArray): BootstrapLaunch {
@@ -46,7 +46,7 @@ class BootstrapLaunch private constructor(
             val launcher = absolute(fields.getValue("launcher").stringValue())
             require(launcher == child(root, "kvik")) { "Bootstrap launcher must belong to its source root" }
             val arguments = fields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
-            require(arguments.size in 6..16) { "Invalid bootstrap argument count" }
+            require(arguments.size in 6..18) { "Invalid bootstrap argument count" }
             val paths = mutableMapOf<String, String>()
             var cursor = 0
             var previousFlag = -1

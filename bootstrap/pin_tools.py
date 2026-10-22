@@ -13,12 +13,18 @@ from bootstrap.identity import canonical, digest, inventory
 def tool_roots(java_home, konan_home, konan_data):
     sdk = Path(subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()).resolve()
     clang = Path(subprocess.check_output(["xcrun", "--find", "clang"], text=True).strip()).resolve()
-    return {
-        "jdk": Path(java_home).resolve(), "kotlinNative": Path(konan_home).resolve(),
+    roots = {
         "llvm": Path(konan_data).resolve() / "dependencies/llvm-21-aarch64-macos-essentials-97",
         "libffi": Path(konan_data).resolve() / "dependencies/libffi-3.3-1-macos-arm64",
         "sdk": sdk, "xcodeToolchain": clang.parents[2],
     }
+    # Read-only bootstrap queries may omit compiler homes. SDK and Native data
+    # locations are still known and must remain separate from writable stores.
+    if java_home is not None:
+        roots["jdk"] = Path(java_home).resolve()
+    if konan_home is not None:
+        roots["kotlinNative"] = Path(konan_home).resolve()
+    return roots
 
 
 def host_identity():

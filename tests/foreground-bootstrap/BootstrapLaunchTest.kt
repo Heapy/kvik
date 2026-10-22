@@ -88,6 +88,30 @@ class BootstrapLaunchTest {
         )) assertFails { BootstrapLaunch.parse(descriptor(invalid)) }
     }
 
+    @Test fun sharedStorePolicySurvivesQueriesAndCannotChangeAtReplacement() {
+        val launch = BootstrapLaunch.parse(sharedStoreProducerDescriptor)
+        val fields = parseJson(sharedStoreProducerDescriptor.decodeToString()).objectValue()
+        val arguments = fields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
+        assertEquals(18, arguments.size)
+        assertEquals(listOf("--runtime-store", "/shared store $(literal)/../selected"), arguments.subList(14, 16))
+        assertEquals(listOf(launch.python, launch.launcher) + arguments + "--print-launch", launch.command(BootstrapQuery.LAUNCH))
+        fun parse(values: List<String>) = BootstrapLaunch.parse(JsonValue.Object(fields +
+            ("bootstrapArguments" to values.map { it.json() }.json())).canonical().encodeToByteArray())
+        // The shared store is also valid for legacy local-source compositions.
+        val legacy = arguments.filterIndexed { index, _ -> index !in 10..13 }
+        assertEquals(legacy, parse(legacy).command(BootstrapQuery.LAUNCH).drop(2).dropLast(1))
+        for (invalid in listOf(arguments.take(15), arguments + "--runtime-store",
+            arguments.toMutableList().also { it[15] = "relative/store" },
+            arguments.toMutableList().also { it[15] = "/store\u0000path" },
+            arguments.take(10) + arguments.subList(14, 16) + arguments.subList(10, 14))) {
+            assertFails { parse(invalid) }
+        }
+        for (changed in listOf(arguments.toMutableList().also { it[15] = "/different-store" },
+            arguments.filterIndexed { index, _ -> index !in 14..15 })) {
+            assertFails { parse(changed).requireReplacement(launch, launch.composition) }
+        }
+    }
+
     @Test fun replacementCannotChangeSourceLockOrCachePolicy() {
         val current = BootstrapLaunch.parse(sourceGraphProducerDescriptor)
         val graphFields = parseJson(sourceGraphProducerDescriptor.decodeToString()).objectValue()

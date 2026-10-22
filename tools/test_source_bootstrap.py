@@ -117,17 +117,21 @@ def audit_runtime(directory, expected_lock, key, records):
     actual = {entry['path']: entry for entry in inputs}
     assert len(actual) == len(inputs)
     acquisitions = read(directory/'source-acquisition.json')
-    assert len(acquisitions) == len(expected_lock['sources'])
+    remote_ids = {node['id'] for node in expected_lock['sources'] if node['pin']['kind'] != 'local'}
+    assert len(acquisitions) == len(remote_ids)
     acquisition_by_id = {item['source']: item['receipt'] for item in acquisitions}
-    assert set(acquisition_by_id) == {node['id'] for node in expected_lock['sources']}
+    assert set(acquisition_by_id) == remote_ids
     expected_source = {}
     def covered(path, roots):
         return any(path == root or path.startswith(root + '/') for root in roots)
     for node in expected_lock['sources']:
         name = ('shared-helper-v2' if 'shared-helper-v2' in node['pin']['origin'] else 'shared-helper-v1') if node['id'] == 'shared-helper' else node['id']
-        acquisition = acquisition_by_id[node['id']]
-        assert acquisition['pin'] == node['pin'] and acquisition['tree'] == node['pin']['tree']
-        assert acquisition['contentPaths'] == node['contentPaths']
+        if node['id'] in remote_ids:
+            acquisition = acquisition_by_id[node['id']]
+            assert acquisition['pin'] == node['pin'] and acquisition['tree'] == node['pin']['tree']
+            assert acquisition['contentPaths'] == node['contentPaths']
+        else:
+            assert digest(canonical(records[name]['inventory'])) == node['pin']['tree']
         for item in records[name]['inventory']['files']:
             logical = f"packages/{node['id']}/{item['path']}"
             expected_source[logical] = item

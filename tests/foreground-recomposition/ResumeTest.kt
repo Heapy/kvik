@@ -4,10 +4,11 @@ import kvik.core.*
 import kotlin.test.*
 
 class ResumeTest {
-    private fun descriptor(sourceGraph: Boolean = false) = obj("schemaVersion" to 1.json(), "sourceRoot" to "/source $(literal)".json(),
+    private fun descriptor(sourceGraph: Boolean = false, runtimeStore: Boolean = false) = obj("schemaVersion" to 1.json(), "sourceRoot" to "/source $(literal)".json(),
         "python" to "/python".json(), "launcher" to "/source $(literal)/kvik".json(),
         "bootstrapArguments" to (listOf("--konan-data", "/data", "--cache-dir", "/cache", "--artifact-cache", "/artifacts") +
             (if (sourceGraph) listOf("--source-lock", "/locks $(literal)/../source.json", "--source-cache", "/source cache") else emptyList()) +
+            (if (runtimeStore) listOf("--runtime-store", "/shared $(literal)/runtime-store") else emptyList()) +
             listOf("--offline", "--no-build")).map { it.json() }.json(),
         "composition" to Digest("a".repeat(64), 42).toJson(), "runtime" to "/cache/executables/${"a".repeat(64)}/kvik.kexe".json()).canonical().encodeToByteArray()
     private fun state() = SessionResume("/project/.kvik/sessions/new", "/project/.kvik/sessions/old", "/project", listOf("--pin", "a:b:1"),
@@ -20,8 +21,8 @@ class ResumeTest {
         assertEquals(listOf("--offline", "--no-build", "--print-launch"), BootstrapLaunch.parse(decoded.launchBytes).command(BootstrapQuery.LAUNCH).takeLast(3))
     }
     @Test fun sourceGraphPathsSurviveLegacyAndTerminalContinuations() {
-        for (sourceGraph in listOf(false, true)) for (keys in listOf(false, true)) {
-            val original = state().copy(launchBytes = descriptor(sourceGraph), jsonControls = !keys,
+        for (sourceGraph in listOf(false, true)) for (runtimeStore in listOf(false, true)) for (keys in listOf(false, true)) {
+            val original = state().copy(launchBytes = descriptor(sourceGraph, runtimeStore), jsonControls = !keys,
                 partialInput = if (keys) emptyList() else state().partialInput, terminalLease = if (keys) "abcd" else null)
             val document = original.toJson()
             assertEquals(if (keys) 2L else 1L, document.values.getValue("schemaVersion").longValue())

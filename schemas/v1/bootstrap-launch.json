@@ -31,13 +31,13 @@
         "runtime": {"$ref": "#/$defs/path"},
         "composition": {"$ref": "#/$defs/digest"},
         "bootstrapArguments": {
-          "type": "array", "minItems": 6, "maxItems": 16,
+          "type": "array", "minItems": 6, "maxItems": 18,
           "allOf": [{
             "if": {"contains": {"const": "--source-cache"}},
             "then": {"contains": {"const": "--source-lock"}}
           }],
           "items": {"oneOf": [
-            {"enum": ["--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache", "--offline", "--no-build"]},
+            {"enum": ["--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache", "--runtime-store", "--offline", "--no-build"]},
             {"$ref": "#/$defs/path"}
           ]}
         }

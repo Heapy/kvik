@@ -153,6 +153,25 @@ def validate_graph_outputs(args, observed):
         raise ValueError("Source cache must be separate from runtime and JVM artifact caches")
 
 
+def validate_runtime_store(args, selected, lock):
+    """Store paths are invocation policy, never source or composition identity."""
+    from bootstrap.source_files import overlap
+    store = args.runtime_store
+    protected = [ROOT / "kvik", ROOT / "bootstrap", args.cache_dir, args.artifact_cache]
+    protected.append(Path(args.konan_data))
+    protected.extend(tool_roots(args.java_home, args.konan_home, args.konan_data).values())
+    if isinstance(selected, source_graph.ObservedGraph):
+        protected.extend([args.source_lock, args.source_cache])
+        roots = selected.local_roots
+        protected.extend(roots[node["id"]] / path for node in selected.graph.document["sources"]
+            if node["pin"]["kind"] == "local" for path in node["contentPaths"])
+    else:
+        # Legacy identity inventories whole roots, including non-Kotlin files.
+        protected.extend(ROOT / source["origin"] for source in lock["sources"])
+    if store.is_symlink() or any(overlap(store, path) for path in protected):
+        raise ValueError("Runtime store overlaps bootstrap inputs or another bootstrap cache")
+
+
 def validate_options(options):
     """No external files/libraries/plugins until their contents enter the lock."""
     if not isinstance(options, list) or not all(isinstance(value, str) for value in options):
@@ -218,7 +237,8 @@ def launch_descriptor(args, key, executable):
     for flag, value in (("--java-home", args.java_home), ("--konan-home", args.konan_home),
                         ("--konan-data", args.konan_data), ("--cache-dir", args.cache_dir),
                         ("--artifact-cache", args.artifact_cache), ("--source-lock", getattr(args, "source_lock", None)),
-                        ("--source-cache", getattr(args, "source_cache", None))):
+                        ("--source-cache", getattr(args, "source_cache", None)),
+                        ("--runtime-store", getattr(args, "runtime_store", None))):
         if value is not None:
             arguments.extend((flag, str(Path(value).absolute())))
     for flag, enabled in (("--offline", args.offline), ("--no-build", args.no_build)):
@@ -384,19 +404,70 @@ def build(args, recipe, selected, lock, key, destination):
         jvm_worker.sync_tree(temporary)
         if desired_composition(args)[3] != key:
             raise ValueError("Runtime sources changed during compilation/publication; refusing stale composition, retry")
-        if destination.exists():
-            quarantine = destination.with_name(destination.name + "-corrupt-" + str(time.time_ns()))
-            destination.rename(quarantine)
-        temporary.rename(destination)
-        descriptor = os.open(destination.parent, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        publish_runtime(temporary, destination)
         emit("runtime-built", composition=key["hash"], milliseconds=manifest["compileMillis"])
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
+
+
+def publish_runtime(staged, destination):
+    if destination.exists() or destination.is_symlink():
+        quarantine = destination.with_name(destination.name + "-corrupt-" + str(time.time_ns()))
+        destination.rename(quarantine)
+    staged.rename(destination)
+    descriptor = os.open(destination.parent, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def restore_runtime(args, key, destination, store, record):
+    from bootstrap.runtime_store import RuntimeStoreInvalidTree
+    with tempfile.TemporaryDirectory(prefix=key["hash"] + "-restore-", dir=destination.parent) as temporary:
+        staged = Path(temporary) / "runtime"
+        try:
+            store.materialize(record, staged)
+        except RuntimeStoreInvalidTree as failure:
+            store.invalidate(record)
+            emit("runtime-store-miss", composition=key["hash"], message=str(failure))
+            return False
+        except (OSError, ValueError) as failure:
+            emit("runtime-store-miss", composition=key["hash"], message=str(failure))
+            return False
+        if not cached(staged, key):
+            store.invalidate(record)
+            emit("runtime-store-miss", composition=key["hash"], message="Shared bundle failed runtime verification")
+            return False
+        if desired_composition(args)[3] != key:
+            raise ValueError("Runtime inputs changed during shared restore; retry")
+        publish_runtime(staged, destination)
+    emit("runtime-store-hit", composition=key["hash"])
+    return True
+
+
+def shared_runtime(args, recipe, selected, lock, key, destination):
+    from bootstrap.runtime_store import RuntimeStore
+    store = RuntimeStore(args.runtime_store)
+    with store.coordinate(key):
+        record = store.lookup(key)
+        if cached(destination, key):
+            if record is None:
+                if desired_composition(args)[3] != key:
+                    raise ValueError("Runtime inputs changed before shared publication; retry")
+                store.publish(key, destination)
+                emit("runtime-store-published", composition=key["hash"])
+            return True
+        if record is not None and restore_runtime(args, key, destination, store, record):
+            return False
+        if args.no_build:
+            raise ValueError("No valid executable in local cache or runtime store (--no-build)")
+        emit("runtime-building", composition=key["hash"])
+        build(args, recipe, selected, lock, key, destination)
+        store.publish(key, destination)
+        emit("runtime-store-published", composition=key["hash"])
+        return False
 
 
 def main():
@@ -408,6 +479,7 @@ def main():
     parser.add_argument("--artifact-cache", type=Path, default=ROOT / ".kvik/tool-artifacts")
     parser.add_argument("--source-lock", type=Path)
     parser.add_argument("--source-cache", type=Path)
+    parser.add_argument("--runtime-store", type=Path)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-build", action="store_true")
     query = parser.add_mutually_exclusive_group()
@@ -432,6 +504,9 @@ def main():
         recipe, selected, lock, key = desired_composition(args)
         if args.source_lock is not None:
             validate_graph_outputs(args, selected)
+        if args.runtime_store is not None:
+            args.runtime_store = args.runtime_store.absolute()
+            validate_runtime_store(args, selected, lock)
         if args.print_composition:
             print(canonical({"schemaVersion": 1, "composition": key}).decode("utf-8"))
             return
@@ -443,8 +518,9 @@ def main():
         locks.mkdir(parents=True, exist_ok=True)
         with (locks / (key["hash"] + ".lock")).open("a+b") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            cache_hit = cached(destination, key)
-            if not cache_hit:
+            cache_hit = (shared_runtime(args, recipe, selected, lock, key, destination)
+                         if args.runtime_store is not None else cached(destination, key))
+            if args.runtime_store is None and not cache_hit:
                 if args.no_build:
                     raise ValueError("No valid executable for the current composition (--no-build)")
                 emit("runtime-building", composition=key["hash"])
