@@ -78,6 +78,44 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun nativeTimeoutOverridesBindOnlyTheirCompilerPhaseAndKeepDefaultIdentities() {
+        for (kotest in listOf(false, true)) {
+            val document = if (kotest) project.document.canonical().replace("\"name\":\"macosArm64\"",
+                """"name":"macosArm64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")
+                .replace("g:tests:1", "io.kotest:kotest-framework-engine-macosarm64:6.2.5") else project.document.canonical()
+            fun configured(timeouts: String? = null) = parseProjectConfiguration(parseJson(if (timeouts == null) document else
+                document.replace("\"name\":\"macosArm64\"", "\"name\":\"macosArm64\",\"nativeTimeouts\":$timeouts")))
+            fun actions(timeouts: String? = null) = resolved(graph(configured(timeouts), request = request(ProjectMode.TEST, "macosArm64")))
+            val defaults = actions()
+            val explicitDefaults = actions("""{"compileMillis":180000,"linkMillis":180000}""")
+            assertEquals(defaults, explicitDefaults)
+            val linkOnly = actions("""{"linkMillis":600000}""")
+            val compileOnly = actions("""{"compileMillis":240000}""")
+            val both = actions("""{"compileMillis":240000,"linkMillis":600000}""")
+            for ((id, action) in defaults) {
+                val phase = id.substringAfterLast(':')
+                val compilerPhase = phase in setOf("main", "test-compile")
+                val expectedDefault = when (phase) { "test" -> 60_000L; "ksp-test" -> 120_000L; else -> 180_000L }
+                assertEquals(expectedDefault, action.timeoutMillis)
+                assertEquals(if (phase == "test-link") 600_000L else expectedDefault, linkOnly.getValue(id).timeoutMillis)
+                assertEquals(if (compilerPhase) 240_000L else expectedDefault, compileOnly.getValue(id).timeoutMillis)
+                assertEquals(if (compilerPhase) 240_000L else if (phase == "test-link") 600_000L else expectedDefault, both.getValue(id).timeoutMillis)
+                if (phase == "test-link") assertNotEquals(action.key(Sha256), linkOnly.getValue(id).key(Sha256))
+                else assertEquals(action, linkOnly.getValue(id))
+                if (compilerPhase) assertNotEquals(action.key(Sha256), compileOnly.getValue(id).key(Sha256))
+                else assertEquals(action, compileOnly.getValue(id))
+                // Result content is held fixed here: downstream identity changes only when producer bytes change.
+                if (action.implementation == "kvik-native-compiler-v1") assertEquals(action,
+                    nativeCompileAction(NativeCompilation.fromJson(action.parameters), action.inputs, composition, tools.getValue("macosArm64")))
+            }
+            assertNotEquals(effectiveConfiguration(configured()).digest, effectiveConfiguration(configured("""{"linkMillis":600000}""")).digest)
+            assertEquals(effectiveConfiguration(configured()).requests, effectiveConfiguration(configured("""{"linkMillis":600000}""")).requests)
+            val build = resolved(graph(configured("""{"compileMillis":240000}"""), request = request(ProjectMode.BUILD, "macosArm64")))
+            assertTrue(build.values.all { it.timeoutMillis == 240_000L })
+            assertEquals(resolved(graph(configured())), resolved(graph(configured("""{"linkMillis":600000}"""))))
+        }
+    }
+
     @Test fun nativeRuntimeSelectionChangesOnlyLinkInputsAndRejectsMalformedCompiledOutput() {
         val effective = effectiveConfiguration(project, policy = ResolverPolicy(scopedPins = listOf(
             ScopedPin(ResolutionDomain("app", "macosArm64", "test", "kotlin-runtime"), Coordinate.parse("g:library:2")))))

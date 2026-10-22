@@ -1,4 +1,4 @@
-# K08 public Native kotaml CLI gate (prepared, execution pending)
+# K08 public Native kotaml CLI gate (partial execution, full gate pending)
 
 `tools/test_kotaml_native_cli.py` prepares a private copy of exactly 61 unchanged
 common source/test files at fixture commit
@@ -14,6 +14,11 @@ runtime-only coroutines/io version declarations. Native compiler module names
 and main-only explicit API mode follow the source configuration. Separate KSP
 runtime and symbol-processor domains explicitly pin host stdlib 2.3.20; Native
 stdlib remains 2.4.20. Version pins do not add dependency roots or exports.
+The generated targets now explicitly declare `nativeTimeouts: {linkMillis: 600000}`.
+The harness checks every action budget: main and test-library compilation
+180,000 ms, source-free test linking 600,000 ms, KSP generation 120,000 ms,
+and test execution 60,000 ms. This changes the fixture's declared link budget;
+the default compiler/link budget remains 180,000 ms for other projects.
 
 ## Intended gate
 
@@ -105,12 +110,44 @@ Retained script `/private/tmp/kvik-native-cli-harness-audit.py` was run with
 Preparation `case-295emnl9` again verified all 61 source hashes and 1,880 IDs.
 No compiler ran for this review.
 
-The production metadata policy and API/link split are integrated, but a new
+The production metadata policy and API/link split were integrated, but a
 public resolve-only attempt (`case-pkxxb5hr`, runtime `47bd832...`) reached an
 unsupported `version: {prefers: "2.2.0"}` stdlib dependency in atomicfu 0.32.1
-metadata. That needs a separate bounded rich-version resolver implementation,
-not another exclusion. Full public Native execution remains pending; this
-document makes no public execution success claim.
+metadata. The reviewed explicit-pin-only preference support subsequently
+resolved that blocker without another exclusion; see `k05-preferred-versions.md`.
+
+### Retained 180-second link failure
+
+The first full public gate after preference support is retained at
+`/Users/yoda/dev/pet/kvik/.kvik/tests/kotaml-native-cli/case-_4es_3sp`, run
+`kvik-run-sTpSFI`. Runtime composition was
+`178653da1e6f33e99813865c52bef298b4476bd65982675ed0c7a7bc3ae8bace`,
+executable SHA-256
+`4980b82e69b02847ffbc6e2bb18fb5a35f006fab3af96229c30863620497309a`.
+Production resolution, all eight exact Native API/runtime artifact sets,
+the 12 metadata corrections, and offline lock replay passed. JSON's 322 exact
+test identities passed through its generated Native test executable. The root
+module's source-free test link hit its declared 180,000 ms action limit and
+returned exit 124 with no published outputs. The root test was blocked;
+verification correctly reports `failed`, with 322 executed leaves and
+incomplete discovery. The outer CLI gate exited 1 after 576.453 seconds.
+There was no warm run and no full 1,880-test success claim.
+
+An independent read-only audit rehashed all 61 copied/original sources, all
+153 referenced CAS blobs (121,100,735 bytes), 268 materialized files, nine
+resolved action keys, runtime/guardian identities, metadata provenance and
+terminal journal/completion hashes. JSON's raw typed journal has the same
+322 leaf identities as its report. It also re-extracted the 1,880 expected
+identities independently from both retained K01 logs. The audit is retained as
+`/private/tmp/kvik-public-native-independent-audit.py` and
+`/private/tmp/kvik-public-native-independent-audit.json` (`partial-terminal-failure`).
+
+The failed case is preserved unchanged. The explicit 600,000 ms fixture link
+budget requires a rebuilt CLI and a new full invocation; changing this budget
+does not establish that the larger run succeeds. Preparation with that setting
+passed in `/private/tmp/kvik-k08-native-timeouts/.kvik/tests/kotaml-native-cli/case-hxjctca7`
+without invoking resolution, compilers or tests. Contract and graph validation
+is recorded in `k08-native-timeouts.md`.
 
 
 ## Reproduction

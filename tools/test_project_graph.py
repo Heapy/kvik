@@ -14,6 +14,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--java-home', type=Path, required=True)
+    parser.add_argument('--include-contracts', action='store_true', help='Run the core contracts in the same Native test binary')
     args = parser.parse_args()
     output = ROOT / '.kvik/tests/project-graph'
     output.mkdir(parents=True, exist_ok=True)
@@ -33,7 +34,12 @@ def main():
                for p in sorted((ROOT / directory).rglob('*.kt'))]
     sources += [ROOT / 'resolution/src/kvik/resolution/MavenResolver.kt', ROOT / 'resolution/src/kvik/resolution/PomModel.kt', ROOT / 'resolution/src/kvik/resolution/ResolutionGraph.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt',
                 ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt', ROOT / 'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt']
-    subprocess.run([str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner', '-o', str(output / 'tests.kexe'), *map(str, sources)], env=env, check=True)
+    if args.include_contracts:
+        sources += sorted((ROOT / 'tests/contracts').rglob('*.kt'))
+    command = [str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner', '-o', str(output / 'tests.kexe'), *map(str, sources)]
+    (output / 'compile-command.json').write_text(json.dumps(command, indent=2)+'\n')
+    (output / 'compile-inputs.json').write_text(json.dumps({str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}, indent=2)+'\n')
+    subprocess.run(command, env=env, check=True)
     subprocess.run([str(output / 'tests.kexe')], env=env, check=True)
 
 

@@ -47,6 +47,7 @@ def configuration():
             targets=[dict(name=TARGET, main='commonMain', test='commonTest',
                           compilerOptions=['-module-name=io.heapy.kotaml:'+module, '-Xexplicit-api=strict'],
                           testCompilerOptions=['-module-name=io.heapy.kotaml:'+module+'-test'],
+                          nativeTimeouts=dict(linkMillis=600000),
                           nativeTestSettings=dict(engine='kotest', kspVersion='2.3.12', processor='io.kotest:kotest-framework-symbol-processor:6.2.5'))],
             compilerPlugins=([dict(coordinate='org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20',
                                    targets=[TARGET], scopes=['main', 'test'], options=[], inputs=[])] if module == 'kotaml' else [])))
@@ -221,6 +222,7 @@ def audit_actions(run, record, store, reference, host, source_files, tools, lock
         module, target, phase = action_id.split(':')
         assert target == TARGET and action['target'] == TARGET
         assert action['cachePolicy'] == ('never' if phase == 'test' else 'local')
+        assert action['timeoutMillis'] == {'main': 180000, 'test-compile': 180000, 'test-link': 600000, 'ksp-test': 120000, 'test': 60000}[phase]
         parameters = action['parameters']; inputs = {entry['path']: entry for entry in action['inputs']['files']}
         audit_producer_bindings(module, phase, parameters, inputs, results)
         if phase not in ('test', 'test-link'):

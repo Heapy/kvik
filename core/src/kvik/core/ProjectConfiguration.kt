@@ -71,7 +71,7 @@ private fun parseModule(value: JsonValue): ModuleSpec {
     validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
     val names = sourceSets.map { it.name }.toSet()
     val targets = fields.getValue("targets").arrayValue().map { target ->
-        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions", "nativeTestSettings"))
+        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
         val name = entry.getValue("name").stringValue()
         require(name in setOf("jvm", "macosArm64")) { "Unsupported target: $name" }
         val main = entry.getValue("main").identifier()
@@ -87,7 +87,11 @@ private fun parseModule(value: JsonValue): ModuleSpec {
             NativeTestSettings(selection.getValue("engine").stringValue(), selection.getValue("kspVersion").stringValue(),
                 Coordinate.parse(selection.getValue("processor").stringValue()))
         }
-        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings, entry["testCompilerOptions"]?.strings(), nativeSettings)
+        val nativeTimeouts = entry["nativeTimeouts"]?.let { value ->
+            val timeouts = value.fields(emptySet(), setOf("compileMillis", "linkMillis"))
+            NativeTimeouts(timeouts["compileMillis"]?.longValue(), timeouts["linkMillis"]?.longValue())
+        }
+        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings, entry["testCompilerOptions"]?.strings(), nativeSettings, nativeTimeouts)
     }
     require(targets.isNotEmpty()) { "Module $id requires targets" }
     targets.map { it.name }.unique("target in $id")

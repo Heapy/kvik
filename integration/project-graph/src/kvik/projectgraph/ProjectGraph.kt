@@ -258,7 +258,8 @@ private class Builder(
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
-                moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target))
+                moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target),
+                timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
     }
 
@@ -325,7 +326,8 @@ private class Builder(
                     explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
                 else nativeCompileAction(NativeCompilation(module, source.paths + generated.map { it.path }, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.klib"),
                     NativeOutput.LIBRARY, options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors,
-                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }), inputs, composition, tools.getValue(target))
+                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }), inputs, composition, tools.getValue(target),
+                    timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
             }
             if (target == "macosArm64") {
                 val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
@@ -339,7 +341,8 @@ private class Builder(
                     val inputs = merge(listOf(included), runtimeArtifacts, dependencyFiles)
                     nativeCompileAction(NativeCompilation(module, emptyList(), libraries = runtimeDependencies.map { modulePath(it, target, "main") } + runtimeArtifacts.map { it.path },
                         output = LogicalPath("tests.kexe"), produce = if (kotest == null) NativeOutput.TEST else NativeOutput.KOTEST_TEST,
-                        moduleName = options.nativeModuleName, warningsAsErrors = options.warningsAsErrors, includedLibrary = included.path), inputs, composition, tools.getValue(target))
+                        moduleName = options.nativeModuleName, warningsAsErrors = options.warningsAsErrors, includedLibrary = included.path), inputs, composition, tools.getValue(target),
+                        timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
                 }
             }
         } else require(selectedPlugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }

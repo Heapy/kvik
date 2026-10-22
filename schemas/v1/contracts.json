@@ -227,6 +227,24 @@
       ],
       "additionalProperties": false
     },
+    "nativeTimeouts": {
+      "type": "object",
+      "properties": {
+        "compileMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "linkMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "minProperties": 1
+    },
     "target": {
       "type": "object",
       "properties": {
@@ -268,6 +286,9 @@
         },
         "nativeTestSettings": {
           "$ref": "#/$defs/nativeTestSettings"
+        },
+        "nativeTimeouts": {
+          "$ref": "#/$defs/nativeTimeouts"
         }
       },
       "required": [
@@ -325,6 +346,20 @@
               "test": {
                 "type": "string",
                 "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "nativeTimeouts"
+            ]
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "macosArm64"
               }
             }
           }

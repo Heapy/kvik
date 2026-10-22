@@ -3,6 +3,36 @@ package kvik.core
 import kotlin.test.*
 
 class ProjectConfigurationTest {
+    @Test fun nativeTimeoutsAreBoundedOptionalAndPreserveTheDocument() {
+        val native = example.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")
+        fun selected(value: String) = native.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"nativeTimeouts\":$value")
+        assertNull(parse(native).project.modules.single().targets.single().nativeTimeouts)
+        for ((json, expected) in listOf(
+            """{"compileMillis":1}""" to NativeTimeouts(compileMillis = 1),
+            """{"linkMillis":3600000}""" to NativeTimeouts(linkMillis = 3_600_000),
+            """{"compileMillis":180000,"linkMillis":600000}""" to NativeTimeouts(180_000, 600_000),
+        )) {
+            val parsed = parse(selected(json))
+            assertEquals(expected, parsed.project.modules.single().targets.single().nativeTimeouts)
+            assertEquals(parseJson(selected(json)), parsed.document)
+            assertEquals(parsed, parse(parsed.document.canonical()))
+            assertNotEquals(parse(native).digest, parsed.digest)
+            assertEquals(expected, parse(selected(json).replace("\"test\":\"jvmTest\"", "\"test\":null"))
+                .project.modules.single().targets.single().nativeTimeouts)
+            assertFails { parse(selected(json).replace("\"name\":\"macosArm64\"", "\"name\":\"jvm\"")) }
+        }
+        for (json in listOf("null", "[]", "{}", """{"compileMillis":1,"typo":1}""", """{"timeoutMillis":1}"""))
+            assertFails("accepted $json") { parse(selected(json)) }
+        for (field in listOf("compileMillis", "linkMillis")) {
+            for (value in listOf("null", "true", "\"600000\"", "1.5", "[]", "{}", "0", "-1", "3600001", "9223372036854775807", "9223372036854775808"))
+                assertFails("accepted $field=$value") { parse(selected("""{"$field":$value}""")) }
+        }
+        assertFails { NativeTimeouts() }
+        assertFails { NativeTimeouts(compileMillis = 0) }
+        assertFails { NativeTimeouts(linkMillis = 3_600_001) }
+        assertFails { TargetSpec("jvm", "main", null, emptyList(), nativeTimeouts = NativeTimeouts(linkMillis = 1)) }
+    }
+
     @Test fun nativeKotestSelectionIsPinnedExplicitAndDoesNotChangeLegacyTargets() {
         val settings = """{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}"""
         val native = example.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")

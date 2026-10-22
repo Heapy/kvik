@@ -12,6 +12,20 @@ VALIDATOR = Draft202012Validator({**SCHEMA, "$ref": "#/$defs/target"})
 
 
 class ProjectSettingsSchemaTest(unittest.TestCase):
+    def test_native_timeouts_are_optional_bounded_and_native_only(self):
+        target = {**self.target(), 'name': 'macosArm64'}
+        VALIDATOR.validate(target)
+        for settings in [dict(compileMillis=1), dict(linkMillis=3600000), dict(compileMillis=180000, linkMillis=600000)]:
+            for test in ['test', None]:
+                VALIDATOR.validate({**target, 'test': test, 'nativeTimeouts': settings})
+            self.assertFalse(VALIDATOR.is_valid({**target, 'name': 'jvm', 'nativeTimeouts': settings}))
+        invalid = [None, [], {}, dict(compileMillis=1, typo=1), dict(timeoutMillis=1)]
+        invalid += [{field: value} for field in ['compileMillis', 'linkMillis']
+                    for value in [None, True, '600000', 1.5, [], {}, 0, -1, 3600001, 9223372036854775807]]
+        for settings in invalid:
+            with self.subTest(settings=settings):
+                self.assertFalse(VALIDATOR.is_valid({**target, 'nativeTimeouts': settings}))
+
     def test_native_kotest_settings_and_separate_host_domains(self):
         settings = dict(engine='kotest', kspVersion='2.3.12', processor='io.kotest:kotest-framework-symbol-processor:6.2.5')
         target = {**self.target(), 'name': 'macosArm64', 'nativeTestSettings': settings}
