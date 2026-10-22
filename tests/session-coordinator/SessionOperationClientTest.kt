@@ -22,10 +22,10 @@ class SessionOperationClientTest {
         override fun start(request: ProcessRequest): OwnedProcess = Process().also { requests += request; processes += it }
         override fun close() {}
     }
-    private class Fixture {
+    private class Fixture(environment: () -> Map<String, String> = { emptyMap() }) {
         val directory = NativeRunDirectory("/private/tmp").path
         val host = Host()
-        val pool = OwnedSessionOperations(host, directory, "/project")
+        val pool = OwnedSessionOperations(host, directory, "/project") { environment() }
         fun request(command: String = "test", runtime: String = "/runtime/kvik.kexe"): ProcessRequest {
             val path = NativeRunDirectory(directory).path
             val prefix = if (command == "stage-application") {
@@ -51,6 +51,30 @@ class SessionOperationClientTest {
         fun close() { pool.close(); NativeFiles.removeTree(directory) }
     }
     private inline fun fixture(body: (Fixture) -> Unit) { val f = Fixture(); try { body(f) } finally { f.close() } }
+
+    @Test fun credentialChangesReplaceOnlyTheIdleWorkerAndNeverEnterApplicationEnvironmentOrRequests() {
+        var token = "first-secret"
+        val f = Fixture { mapOf("CACHE_TOKEN" to token) }
+        try {
+            val app = f.pool.start(f.request("stage-application")); app.poll()
+            assertEquals(token, f.host.requests[0].environment["CACHE_TOKEN"])
+            val (directory, pending) = f.pending()
+            assertFalse(pending.bytes().decodeToString().contains(token))
+            assertFalse(NativeFiles.read("$directory/command.json", 64 * 1024).decodeToString().contains(token))
+            f.complete(); app.poll()
+            assertFalse("CACHE_TOKEN" in f.host.requests[1].environment)
+            token = "replacement-secret"
+            val test = f.pool.start(f.request()); assertNull(test.poll())
+            assertEquals(2, f.host.requests.size)
+            assertTrue(f.host.processes[0].cancellations > 0)
+            assertEquals(0, f.host.processes[1].cancellations)
+            f.host.processes[0].result = ProcessResult(130, cancelled = true)
+            test.poll(); assertEquals(3, f.host.requests.size)
+            assertEquals(token, f.host.requests[2].environment["CACHE_TOKEN"])
+            f.complete(index = 2); assertEquals(ProcessResult(0), test.poll()); test.close()
+            app.cancel(); f.host.processes[1].result = ProcessResult(130, cancelled = true); app.poll(); app.close()
+        } finally { f.close() }
+    }
 
     @Test fun noOpOperationsReuseOneWorkerButRequireSeparateBoundRequestsAndResults() = fixture { f ->
         repeat(2) { index ->

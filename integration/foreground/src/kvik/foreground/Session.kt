@@ -120,7 +120,8 @@ class ForegroundSession(
     private fun launch(kind: Operation?, runtime: String = executable): Child {
         val path = NativeRunDirectory(directory).path
         val command = if (kind == null) listOf(runtime, "snapshot-query") + snapshotArguments
-            else listOf(executable, kind.command) + arguments + listOf("--runs", "$path/runs", "--offline")
+            else listOf(executable, kind.command) + arguments + listOf("--runs", "$path/runs") +
+                (if ("--remote-cache" in arguments || "--offline" in arguments) emptyList() else listOf("--offline"))
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         val request = ProcessRequest(command, workingDirectory,
             mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to "1"),

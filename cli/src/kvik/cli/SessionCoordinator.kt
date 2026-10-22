@@ -34,7 +34,8 @@ internal fun sessionCoordinatorCommand(args: List<String>): Int {
             val exit = withOperationLogs(request.directory) {
                 try {
                     val options = buildOptions(request.arguments)
-                    require(options.runs == "${request.directory}/runs" && options.project.offline) { "Coordinator requires dedicated runs and offline locked builds" }
+                    // Builds consume the existing lock; remote output access never enables dependency resolution.
+                    require(options.runs == "${request.directory}/runs") { "Coordinator requires dedicated run directories" }
                     val mode = when (request.operation) {
                         "test" -> ProjectMode.TEST
                         "prepare-application" -> ProjectMode.APPLICATION

@@ -32,7 +32,8 @@ internal fun replaceSession(state: SessionResume) {
     NativeFiles.syncDirectory(state.directory)
     val launch = BootstrapLaunch.parse(state.launchBytes)
     val arguments = listOf(launch.runtime, "dev", "--resume", path, "--resume-hash", Sha256.digest(bytes).hash)
-    val environment = bootstrapEnvironment() + ("KVIK_BOOTSTRAP_LAUNCH" to state.launchBytes.decodeToString(throwOnInvalidSequence = true))
+    val environment = bootstrapEnvironment() + remoteSessionCredentials(state.workingDirectory, buildOptions(state.arguments)) +
+        ("KVIK_BOOTSTRAP_LAUNCH" to state.launchBytes.decodeToString(throwOnInvalidSequence = true))
     memScoped {
         fun strings(values: List<String>) = allocArray<CPointerVar<ByteVar>>(values.size + 1).also { array ->
             values.forEachIndexed { index, value -> array[index] = value.cstr.ptr }; array[values.size] = null
@@ -76,7 +77,7 @@ internal fun resumeDev(args: List<String>): Int {
             mode = state.mode, currentComposition = launch.composition, applicationModule = state.applicationModule,
             applicationTarget = state.applicationTarget, initialIntents = if (state.mode == SessionMode.APPLICATION) state.pendingIntents else null,
             preparedApplication = state.preparedApplication,
-            operations = OwnedSessionOperations(host, state.directory, state.workingDirectory)).run() }
+            operations = OwnedSessionOperations(host, state.directory, state.workingDirectory) { remoteOperationEnvironment(state.workingDirectory, it) }).run() }
         catch (failure: Exception) { throw RunStreamFailure("Resumed foreground session failed: ${failure.message}") }
     }
 }

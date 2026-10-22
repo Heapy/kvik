@@ -42,3 +42,16 @@ internal class RemoteCacheConfiguration(document: JsonValue) {
             NativeFiles.read(path, 64 * 1024).decodeToString(throwOnInvalidSequence = true)))
     }
 }
+
+internal fun remoteSessionCredentials(root: String, options: BuildOptions): Map<String, String> {
+    if (options.project.offline) return emptyMap()
+    val configuration = options.remoteCache?.let { RemoteCacheConfiguration.read(projectPath(root, it)) } ?: return emptyMap()
+    val name = configuration.tokenEnvironment ?: return emptyMap()
+    val endpoint = configuration.endpoint { boundedEnvironment(it, 8192) }
+    return mapOf(name to checkNotNull(endpoint.bearerToken))
+}
+
+internal fun remoteOperationEnvironment(root: String, arguments: List<String>): Map<String, String> {
+    val start = if (arguments.getOrNull(1) == "stage-application") 6 else 2
+    return remoteSessionCredentials(root, buildOptions(arguments.drop(start)))
+}

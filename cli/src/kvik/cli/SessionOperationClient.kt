@@ -8,8 +8,9 @@ import kotlin.time.TimeSource
 
 /** The controller polls only bounded protocol files. Tool and source work runs in the owned worker. */
 internal class OwnedSessionOperations(private val host: ProcessHost, private val session: String,
-    private val workingDirectory: String) : SessionOperations {
-    private class Worker(val runtime: String, val directory: String, val process: OwnedProcess) {
+    private val workingDirectory: String,
+    private val operationEnvironment: (List<String>) -> Map<String, String> = { emptyMap() }) : SessionOperations {
+    private class Worker(val runtime: String, val directory: String, val process: OwnedProcess, val environment: Map<String, String>) {
         var sequence = 0L
         var draining = false
     }
@@ -32,6 +33,7 @@ internal class OwnedSessionOperations(private val host: ProcessHost, private val
     }
     private fun worker(runtime: String, environment: Map<String, String>): Worker? {
         workers[runtime]?.let {
+            if (it.environment != environment) { it.draining = true; it.process.cancel() }
             if (it.process.poll() == null) return it.takeUnless { worker -> worker.draining }
             remove(it) // Idle death: no request was submitted, so a fresh worker is safe.
         }
@@ -46,7 +48,7 @@ internal class OwnedSessionOperations(private val host: ProcessHost, private val
         val command = listOf(runtime, "session-coordinator", "--directory", directory)
         NativeFiles.writeNew("$directory/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         return Worker(runtime, directory, host.start(ProcessRequest(command, workingDirectory, environment,
-            "$directory/worker.stdout", "$directory/worker.stderr", 0))).also { workers[runtime] = it }
+            "$directory/worker.stdout", "$directory/worker.stderr", 0)), environment.toMap()).also { workers[runtime] = it }
     }
 
     override fun drain(): Boolean {
@@ -97,7 +99,8 @@ internal class OwnedSessionOperations(private val host: ProcessHost, private val
                 return finish(ProcessResult(if (cancelled) 130 else 124, timedOut = !cancelled && timedOut, cancelled = cancelled))
             }
             val runtime = request.arguments[0]
-            val owned = worker ?: this@OwnedSessionOperations.worker(runtime, request.environment)?.also { worker = it } ?: return null
+            val owned = worker ?: this@OwnedSessionOperations.worker(runtime,
+                request.environment + operationEnvironment(request.arguments))?.also { worker = it } ?: return null
             val existing = submitted
             if (existing == null) {
                 val application = request.arguments[1] == "stage-application"

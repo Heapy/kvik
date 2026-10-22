@@ -59,6 +59,8 @@ internal fun devCommand(args: List<String>): Int {
     requireDisjointStore(project, store, lock, tools)
     val arguments = listOf("--project", project.path, "--lock", lock, "--store", store, "--tools", tools,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
+        (options.remoteCache?.let { listOf("--remote-cache", projectPath(project.root, it)) } ?: emptyList()) +
+        (if (options.project.offline) listOf("--offline") else emptyList()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
         options.project.metadataExclusions.flatMap { listOf("--exclude-metadata-edge", it.toJson().canonical()) } +
@@ -74,7 +76,7 @@ internal fun devCommand(args: List<String>): Int {
             applicationTarget = if (mode == SessionMode.APPLICATION) options.targets.single() else null,
             initialWatched = if (mode == SessionMode.APPLICATION) Operation.APPLICATION else initial,
             initialIntents = if (mode == SessionMode.APPLICATION && initial == Operation.TEST) listOf(Operation.TEST, Operation.APPLICATION) else null,
-            operations = OwnedSessionOperations(host, directory, project.root)).let { foreground ->
+            operations = OwnedSessionOperations(host, directory, project.root) { remoteOperationEnvironment(project.root, it) }).let { foreground ->
                 try { foreground.run() }
                 catch (failure: Exception) { throw RunStreamFailure("Foreground session failed: ${failure.message}") }
             }
