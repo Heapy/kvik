@@ -22,6 +22,14 @@ including production full installed-tool verification. These are single-run
 observations under local load, not a benchmark. Exactly 13 dependency metadata
 and artifact blobs were seeded per fresh store. Three audit-helper tests passed.
 
+Independent integration review re-read all three retained runs, recomputed the
+complete action keys, output inventories and CAS digests, and checked journal,
+completion and verification consistency against the tracked result. It confirmed
+two executed actions and five files/1,977 bytes in every phase. The three helper
+tests also passed independently. Review report:
+`/private/tmp/kvik-k10-independent-review.json`. No new compiler run was needed
+for this retained-evidence audit.
+
 A preparatory attempt at `case-2bvcclf2` compiled A1 successfully but stopped in
 the harness: it incorrectly included the JSONL newline when checking the final
 event's canonical JSON digest. That assertion was corrected; the complete matrix

@@ -13,7 +13,8 @@ PLAN.md remains the acceptance specification. A working spike does not mark the 
 | K08 | Adapter and small CLI fixture implemented | [Native evidence](evidence/k08.md); unchanged production modules compile; [two-module CLI fixture](evidence/k09-build-cli.md) proves common/actual, tests, local reuse, failure and zero-test handling; upstream Native Kotest/KSP tests remain open |
 | K07 | Client slice implemented | [Remote cache evidence](evidence/k07.md); 13 backend scenario groups and independent wire review; synchronous bounded I/O, no compiler portability approval |
 | K09 | In progress | [Read-only native inspection](evidence/k09.md), reviewed [dependency commands](evidence/k09-dependency-cli.md), [full Native tool verification](evidence/k09-toolchains.md), [validated JVM/Native CLI and retained evidence](evidence/k09-build-cli.md), [full kotaml JVM run](evidence/k09-kotaml-cli.md); action explanations and broader interface gates remain |
-| K10–K11 | Pending | Adversarial validation and decision |
+| K10 | In progress | Reviewed [same-host JVM repeatability and relocation](evidence/k10-jvm-portability.md): three forced builds have identical action specifications and five exact output files; remote eligibility, cross-machine reuse and broader mandatory gates remain |
+| K11 | Pending | Evidence-backed experiment decision and agent-workflow comparison |
 | K12 | Pending | Project and standalone scripts |
 | K13 | In progress | Workspace JVM compiler-plugin contracts reviewed; graph, worker and fixture implementation in an isolated branch; script/Native combinations remain |
 | K14 | In progress | [Local source composition and launcher](evidence/k14.md), verified native helper and source-built JVM worker bundle, 17 launcher checks; reviewed [launch context and read-only composition query](evidence/k14-launch-context.md) prepare foreground recomposition; Native handoff, remote source provisioning/shared executable cache integration remain |
