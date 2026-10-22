@@ -28,6 +28,7 @@ class CompilerPluginsTest {
         assertFails { plugin.copy(options = listOf("missing-value")) }
         assertFails { plugin.copy(options = listOf("file=undeclared")) }
         assertFails { plugin.copy(pathOptions = emptyList()) }
+        assertEquals(2, plugin.copy(inputs = listOf(input, LogicalPath("input/ancillary.txt"))).inputs.size)
         assertFails { plugin.copy(outputs = listOf(output, LogicalPath("output/report/nested"))) }
         assertFails { plugin.copy(classpath = listOf(output)) }
         assertFails { JvmPluginApplication.fromJson(JsonValue.Object(plugin.toJson().objectValue() + ("unknown" to true.json()))) }

@@ -53,7 +53,6 @@ internal fun validatePluginOptions(options: List<String>, inputs: List<LogicalPa
     require(inputs.distinct().size == inputs.size && outputs.distinct().size == outputs.size && paths.distinct().size == paths.size) { "Duplicate plugin path declaration" }
     require(outputs.indices.all { i -> outputs.drop(i + 1).none { pathsOverlap(outputs[i], it) } }) { "Overlapping plugin output roots" }
     require(paths.all { it.path in if (it.kind == PluginPathKind.INPUT_FILE) inputs else outputs }) { "Plugin path option references an undeclared path" }
-    require(inputs.all { input -> paths.any { it.kind == PluginPathKind.INPUT_FILE && it.path == input } } &&
-        outputs.all { output -> paths.any { it.kind == PluginPathKind.OUTPUT_DIRECTORY && it.path == output } }) { "Plugin paths require explicit option bindings" }
+    require(outputs.all { output -> paths.any { it.kind == PluginPathKind.OUTPUT_DIRECTORY && it.path == output } }) { "Plugin outputs require explicit option bindings" }
     require(paths.map { it.name }.none { name -> options.any { it.substringBefore('=') == name } }) { "Plugin option cannot be both literal and a path" }
 }

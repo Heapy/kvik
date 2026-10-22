@@ -8,7 +8,8 @@ their existing shape. Script and Native workspace applications are rejected.
 Literal `options` preserve ordered `name=value` entries, including repeated
 names and values containing `=`. `PluginPathOption(name, kind, path)` binds a
 declared input file or output directory through `input-file` or
-`output-directory`. Every declared input/output requires a binding. Outputs
+`output-directory`. Every declared output requires a binding in this slice;
+ancillary inputs may be declared without a path-valued option. Outputs
 are unique nonoverlapping logical directory roots. Physical path substitution
 belongs to the worker; user strings are never shell commands.
 
