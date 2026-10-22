@@ -1,0 +1,116 @@
+package kvik.core
+
+/** Validated declarative configuration; retain the document for origins and identity. */
+data class ProjectConfiguration(val project: ProjectSpec, val document: JsonValue.Object) {
+    val digest: Digest get() = Sha256.digest(document.canonical().encodeToByteArray())
+}
+
+private fun JsonValue.identifier(): String = stringValue().also {
+    require(it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid project identifier: $it" }
+}
+private fun JsonValue.strings(): List<String> = arrayValue().map(JsonValue::stringValue)
+private fun JsonValue.identifiers(): List<String> = arrayValue().map { it.identifier() }
+private fun JsonValue.paths(): List<LogicalPath> = strings().map(::LogicalPath)
+private fun <T> List<T>.unique(label: String): List<T> = also {
+    require(distinct().size == size) { "Duplicate $label" }
+}
+
+/** Reject unsupported authoring features rather than silently dropping their dependencies. */
+fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
+    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyProfiles", "scripts"))
+    fields.requireVersion()
+    for (reserved in listOf("dependencyProfiles", "scripts")) {
+        require(fields[reserved]?.objectValue().isNullOrEmpty()) { "$reserved is reserved for the script adapter and is not implemented" }
+    }
+    val repositories = fields.getValue("repositories").arrayValue().map { value ->
+        val entry = value.fields(setOf("id", "url"))
+        Repository(entry.getValue("id").identifier(), entry.getValue("url").stringValue())
+    }
+    require(repositories.isNotEmpty()) { "At least one repository must be declared" }
+    repositories.map { it.id }.unique("repository id")
+    val modules = fields.getValue("modules").arrayValue().map(::parseModule)
+    modules.map { it.id }.unique("module id")
+    val project = ProjectSpec(fields.getValue("name").identifier(), repositories, modules)
+    val byId = modules.associateBy { it.id }
+    val dependencies = modules.associate { module ->
+        module.id to (module.sourceSets.flatMap { sourceSet -> sourceSet.dependencies.filterIsInstance<Dependency.Module>().map { it.module } } +
+            module.compilerPlugins.mapNotNull { it.module }).toSet()
+    }
+    validateGraph(dependencies)
+    for (module in modules) {
+        for (target in module.targets) {
+            val selected = sourceSetClosure(module, listOfNotNull(target.main, target.test))
+            for (dependency in selected.flatMap { it.dependencies }.filterIsInstance<Dependency.Module>()) {
+                require(byId.getValue(dependency.module).targets.any { it.name == target.name }) {
+                    "Module ${module.id}:${target.name} requires missing target ${dependency.module}:${target.name}"
+                }
+            }
+        }
+        for (plugin in module.compilerPlugins) {
+            require(plugin.targets.all { requested -> module.targets.any { it.name == requested } }) { "Compiler plugin selects an undeclared target in ${module.id}" }
+            plugin.module?.let { pluginModule ->
+                require(byId.getValue(pluginModule).targets.any { it.name == "jvm" }) { "Compiler plugin module $pluginModule requires a JVM target" }
+            }
+        }
+    }
+    return ProjectConfiguration(project, document as JsonValue.Object)
+}
+
+private fun parseModule(value: JsonValue): ModuleSpec {
+    val fields = value.fields(setOf("id", "sourceSets", "targets", "compilerPlugins"))
+    val id = fields.getValue("id").identifier()
+    val sourceSets = fields.getValue("sourceSets").arrayValue().map { source ->
+        val entry = source.fields(setOf("name", "directories", "resources", "dependsOn", "dependencies"))
+        SourceSet(entry.getValue("name").identifier(), entry.getValue("directories").paths().unique("source directory"),
+            entry.getValue("resources").paths().unique("resource directory"), entry.getValue("dependsOn").identifiers().unique("source-set edge"),
+            entry.getValue("dependencies").arrayValue().map(::parseDependency).unique("dependency"))
+    }
+    require(sourceSets.isNotEmpty()) { "Module $id requires source sets" }
+    sourceSets.map { it.name }.unique("source-set name in $id")
+    validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
+    val names = sourceSets.map { it.name }.toSet()
+    val targets = fields.getValue("targets").arrayValue().map { target ->
+        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"))
+        val name = entry.getValue("name").stringValue()
+        require(name in setOf("jvm", "macosArm64")) { "Unsupported target: $name" }
+        val main = entry.getValue("main").identifier()
+        val test = entry.getValue("test").let { if (it == JsonValue.Null) null else it.identifier() }
+        require(main in names && (test == null || test in names)) { "Unknown compilation source set in $id:$name" }
+        require(test != main) { "Main and test source sets must differ in $id:$name" }
+        TargetSpec(name, main, test, entry.getValue("compilerOptions").strings())
+    }
+    require(targets.isNotEmpty()) { "Module $id requires targets" }
+    targets.map { it.name }.unique("target in $id")
+    return ModuleSpec(id, sourceSets, targets, fields.getValue("compilerPlugins").arrayValue().map(::parseCompilerPlugin))
+}
+
+private fun parseDependency(value: JsonValue): Dependency {
+    val fields = value.fields(emptySet(), setOf("module", "coordinate"))
+    require(fields.size == 1) { "Dependency requires exactly one module or coordinate" }
+    return fields["module"]?.let { Dependency.Module(it.identifier()) }
+        ?: Dependency.External(Coordinate.parse(fields.getValue("coordinate").stringValue()))
+}
+
+private fun parseCompilerPlugin(value: JsonValue): CompilerPluginSpec {
+    val fields = value.fields(setOf("targets", "scopes", "options", "inputs"), setOf("module", "coordinate"))
+    val targets = fields.getValue("targets").strings().unique("plugin target")
+    require(targets.all { it in setOf("jvm", "macosArm64") }) { "Unsupported compiler-plugin target" }
+    return CompilerPluginSpec(fields["module"]?.identifier(), fields["coordinate"]?.stringValue()?.let(Coordinate::parse),
+        targets.toSet(), fields.getValue("scopes").strings().unique("plugin scope").toSet(),
+        fields.getValue("options").strings(), fields.getValue("inputs").paths().unique("plugin input"))
+}
+
+/** Dependency-first source sets, with shared ancestors included exactly once. */
+fun sourceSetClosure(module: ModuleSpec, roots: List<String>): List<SourceSet> {
+    val byName = module.sourceSets.associateBy { it.name }
+    val seen = mutableSetOf<String>()
+    val ordered = mutableListOf<SourceSet>()
+    fun visit(name: String) {
+        if (!seen.add(name)) return
+        val source = byName[name] ?: error("Unknown source set: ${module.id}:$name")
+        source.dependsOn.forEach(::visit)
+        ordered += source
+    }
+    roots.forEach(::visit)
+    return ordered
+}

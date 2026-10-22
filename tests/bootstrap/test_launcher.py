@@ -49,7 +49,10 @@ def main():
             work = Path(directory)
             first = work / "checkout-a"
             first.mkdir()
-            for name in ["bootstrap", "core", "cli", "plugins"]:
+            recipe = json.loads((ROOT / "bootstrap/composition.json").read_text())
+            directories = {"bootstrap", *(path.split("/")[0] for path in recipe["coreSources"]),
+                *(plugin["directory"].split("/")[0] for plugin in recipe["plugins"])}
+            for name in sorted(directories):
                 shutil.copytree(ROOT / name, first / name, ignore=shutil.ignore_patterns("__pycache__"))
             shutil.copy2(ROOT / "kvik", first / "kvik")
             cache = work / "cache"

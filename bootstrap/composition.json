@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "coreSources": ["core/src", "cli/src"],
+  "coreSources": ["core/src", "cache/src", "cli/src"],
   "plugins": [
     {"id": "kvik.kotlin", "directory": "plugins/kotlin", "sourceDirectories": ["src"], "implementation": "kvik.plugins.kotlin.KotlinBuildPlugin"}
   ],

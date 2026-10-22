@@ -199,6 +199,7 @@ def build(args, recipe, selected, lock, key, destination):
         registry = temporary / "sources/Registry.kt"
         implementations = ", ".join(p["implementation"] + "()" for p in recipe["plugins"])
         registry.write_text("package kvik.cli\n" + f'const val runtimeComposition: String = "{key["hash"]}"\n' +
+                            f'const val runtimeCompositionSize: Long = {key["sizeBytes"]}L\n' +
                             f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
         executable = temporary / "kvik.kexe"
         environment = {name: os.environ[name] for name in ("HOME", "TMPDIR") if name in os.environ}
