@@ -152,3 +152,15 @@ This additional tail was verified against the retained completed run, without
 repeating the consumer compilation. Python syntax passed. No raw-terminal or
 online foreground source acquisition case, application restart, full K14/K15
 completion, or continuous tool freshness is claimed by this bounded gate.
+
+## Independent retained-evidence audit
+
+Root independently rehashed the original frozen harness and its helper, all outer
+command logs, both complete runtime inventories, trusted bootstrap/source cache,
+eight project files and 13 dependency blobs. The 19 handoff events and 11 cancel
+events match their three session journals; resume bytes, all seven bootstrap
+commands, four fresh action identities, eight output blobs, exact JUnit identity,
+effect and completion bindings were checked. The separately restored final tools
+and current query remain bound to the successful consumer record. Report:
+`/private/tmp/kvik-handoff-independent-audit.json`; reproduction script:
+`/private/tmp/kvik-handoff-independent-audit.py`. No compiler rerun was needed.

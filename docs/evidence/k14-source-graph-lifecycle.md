@@ -135,3 +135,18 @@ execution environment denied `/bin/ps`. Its two just-started owners were cleaned
 up; no compiler stage was reached. That failed attempt remains retained. The
 successful fresh attempt used the granted process-observation permission; no
 harness source changed between attempts and no failed case was overwritten.
+
+## Independent retained-evidence audit
+
+A separate reviewer approved frozen `f1df6a4` and `d01f324` after rehashing all
+13 command logs, four complete runtime publications, 32 build commands and
+368 source-input records. The review checked exact Native/worker arguments and
+ordered libraries, JVM bundles, composition/source graph, corrupt quarantines,
+repairs and unchanged trusted/source-cache inventories. Actual retained compiler
+interruption observations, exit 130 and subsequent no-build refusal support the
+interruption result. Four lightweight harness tests passed again. Report:
+`/private/tmp/kvik-source-lifecycle-review-olzjoq6q/report.json`; script:
+`/private/tmp/kvik-source-lifecycle-independent-audit.py` (SHA-256
+`248b48e98cbf3a0dfdf06d70a550b15fe4dffb4269f5c3d7ee64988dfaa63ecb`).
+No compiler rerun was needed; sampled process observations and Native binary
+nondeterminism remain the documented limits.
