@@ -97,7 +97,15 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
             domains += pluginDomain
             selectedPlugins.forEach { plugin ->
                 plugin.coordinate?.let { requests += ResolutionRequest(it, jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST), pluginDomain) }
-                plugin.module?.let { visit(ResolutionDomain(it, "jvm", "main", "java-runtime")) }
+                plugin.module?.let { producer ->
+                    // Compilation uses its own target/API domain; loading uses the compiler host.
+                    visit(ResolutionDomain(producer, "jvm", "main", "java-api"))
+                    val runtimeClosure = dependencyClosure(snapshot.project, producer, "jvm", "main", DependencyUsage.RUNTIME)
+                    runtimeClosure.modules.forEach { visit(ResolutionDomain(it, "jvm", "main", "java-api")) }
+                    runtimeClosure.external.forEach {
+                        requests += ResolutionRequest(it, jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST), pluginDomain)
+                    }
+                }
             }
         }
     }

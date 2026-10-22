@@ -32,7 +32,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
             "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
-                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json())) }.json()) }.json()))
+                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()) }.json()))
 }
 private val base = module("base", listOf(external("g:stdlib:1")))
 private val app = module("app", listOf(Dependency.Module("base"), external("g:library:1")))
@@ -76,6 +76,62 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun workspacePluginHasHostRuntimeClosureAndContentSensitivePrerequisites() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main", "test"), listOf("value=first", "value=second"), listOf(LogicalPath("config.txt")),
+            "example.plugin", "2.4.20", listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val producer = module("producer", listOf(Dependency.Module("base"), Dependency.Module("runtime", DependencyScopeKind.RUNTIME), Dependency.External(Coordinate.parse("g:compiler-api:1"))))
+        val runtime = module("runtime", listOf(Dependency.External(Coordinate.parse("g:private-runtime:1"))))
+        val project = configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin)))
+        val extra = listOf("producer", "runtime").flatMap { id -> listOf("common/Common.kt", "jvm/Actual.kt", "resources/META-INF/services/Registrar").map { FileEntry(LogicalPath("$id/$it"), digest("$id/$it")) } }
+        val files = TreeManifest(snapshot().files + extra + FileEntry(LogicalPath("config.txt"), digest("config")))
+        val effective = effectiveConfiguration(project, scopes = listOf(DependencyScope("app", "jvm", "test", "java-api"), DependencyScope("app", "jvm", "test", "java-runtime")))
+        val host = effective.requests.filter { it.domain.purpose == "compiler-plugin" }
+        assertTrue(host.isNotEmpty())
+        assertEquals(setOf("25"), host.map { it.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE) }.toSet())
+        assertTrue(host.any { it.coordinate.name == "private-runtime" })
+        assertTrue(effective.requests.any { it.domain.module == "producer" && it.domain.usage == "java-api" })
+        val graph = projectActionGraph(effective, lock(effective), files, composition, tools, request(ProjectMode.TEST))
+        val before = resolved(graph)
+        val changed = resolved(graph, "producer:jvm:main")
+        val producerCompile = JvmCompilation.fromJson(before.getValue("producer:jvm:main").parameters)
+        assertFalse(producerCompile.classpath.any { "runtime" in it.value })
+        for (id in listOf("app:jvm:main", "app:jvm:test-compile")) {
+            val action = before.getValue(id)
+            val compile = JvmCompilation.fromJson(action.parameters)
+            val applied = compile.pluginApplications.single()
+            assertEquals(plugin.options, applied.options)
+            assertTrue(applied.classpath.any { "runtime/classes" in it.value })
+            assertTrue(applied.classpath.none { it in compile.classpath })
+            assertTrue(action.inputs.files.any { it.path.value == "plugin-inputs/example.plugin/config.txt" })
+            assertEquals(listOf(LogicalPath("classes"), LogicalPath("plugins/example.plugin/report")), action.outputs)
+            assertNotEquals(action.key(Sha256), changed.getValue(id).key(Sha256))
+            val node = graph.nodes.single { it.id == id }
+            assertTrue("producer:jvm:main" in node.dependencies && "runtime:jvm:main" in node.dependencies)
+        }
+        assertEquals(before.getValue("base:jvm:main"), changed.getValue("base:jvm:main"))
+        assertTrue(before.getValue("app:jvm:test").inputs.files.none { it.path.value.startsWith("plugins/") })
+        val resourceChange = TreeManifest(files.files.map { if (it.path.value.startsWith("producer/resources/")) it.copy(digest = digest("changed service resource")) else it })
+        val changedResources = resolved(projectActionGraph(effective, lock(effective), resourceChange, composition, tools, request(ProjectMode.TEST)))
+        assertNotEquals(before.getValue("app:jvm:main").key(Sha256), changedResources.getValue("app:jvm:main").key(Sha256))
+        val testOnly = configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin.copy(scopes = setOf("test")))))
+        val testPlan = graph(testOnly, files, request(ProjectMode.TEST))
+        assertEquals(resolved(testPlan).getValue("app:jvm:main"), resolved(testPlan, "producer:jvm:main").getValue("app:jvm:main"))
+        assertNotEquals(resolved(testPlan).getValue("app:jvm:test-compile").key(Sha256), resolved(testPlan, "producer:jvm:main").getValue("app:jvm:test-compile").key(Sha256))
+        assertFails { graph.nodes.single { it.id == "app:jvm:main" }.resolve(emptyMap()) }
+        assertFails { graph(project, files = TreeManifest(files.files.filter { it.path.value != "config.txt" }), request = request(ProjectMode.TEST)).let(::resolved) }
+    }
+
+    @Test fun workspacePluginCyclesAndTestOnlyScopeAreExplicit() {
+        val plugin = CompilerPluginSpec("base", null, setOf("jvm"), setOf("test"), emptyList(), emptyList(), "example.plugin", "2.4.20")
+        val config = configuration(base, app.copy(compilerPlugins = listOf(plugin)))
+        val actions = resolved(graph(config, request = request(ProjectMode.TEST)))
+        assertTrue(JvmCompilation.fromJson(actions.getValue("app:jvm:main").parameters).pluginApplications.isEmpty())
+        assertEquals(1, JvmCompilation.fromJson(actions.getValue("app:jvm:test-compile").parameters).pluginApplications.size)
+        assertFails { configuration(base.copy(compilerPlugins = listOf(plugin.copy(scopes = setOf("main")))), app) }
+        val back = base.copy(sourceSets = base.sourceSets.map { if (it.name == "commonMain") it.copy(dependencies = listOf(Dependency.Module("app"))) else it })
+        assertFails { configuration(back, app.copy(compilerPlugins = listOf(plugin))) }
+    }
+
     @Test fun explicitJdkReleaseFlowsThroughScopedVariantsInheritanceAndActionKeys() {
         fun configured(main: List<String>, test: List<String>? = null) = configuration(base,
             app.copy(targets = listOf(app.targets.first().copy(compilerOptions = main, testCompilerOptions = test))))
@@ -302,7 +358,7 @@ class ProjectGraphTest {
         }
         assertTrue(actions.getValue("app:jvm:test").inputs.files.none { it.path.value.startsWith("plugins/") })
         for (bad in listOf(plugin.copy(options = listOf("unsupported=true")), plugin.copy(inputs = listOf(LogicalPath("config.json"))),
-            plugin.copy(coordinate = Coordinate.parse("other:plugin:1")), plugin.copy(module = "base", coordinate = null))) {
+            plugin.copy(coordinate = Coordinate.parse("other:plugin:1")))) {
             assertFails { graph(configuration(base, app.copy(compilerPlugins = listOf(bad)))) }
         }
     }

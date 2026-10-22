@@ -72,8 +72,15 @@ class JvmActionExecutor(
             parent.split('/').forEach { path += "/$it"; mkdirJvm(path) }
         }
         fun staged(paths: List<LogicalPath>) = paths.map { "input/${it.value}" }
+        fun stagedPlugin(plugin: JvmPluginApplication): JvmPluginApplication {
+            fun input(path: LogicalPath) = LogicalPath("input/${path.value}")
+            fun output(path: LogicalPath) = LogicalPath("output/${path.value}")
+            return plugin.copy(classpath = plugin.classpath.map(::input), inputs = plugin.inputs.map(::input), outputs = plugin.outputs.map(::output),
+                pathOptions = plugin.pathOptions.map { it.copy(path = if (it.kind == PluginPathKind.INPUT_FILE) input(it.path) else output(it.path)) })
+        }
         val request = if (compilation != null) WorkerRequest(requestId, "jvm-compile", action.toolchains.getValue("jvm-compiler"),
-            staged(compilation.sources), staged(compilation.classpath), staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}").toJson()
+            staged(compilation.sources), staged(compilation.classpath), staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}",
+            compilation.pluginApplications.map(::stagedPlugin)).toJson()
         else obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json(),
             "classpath" to staged(selection!!.classpath).map { it.json() }.json(), "testClasses" to selection.classes.map { it.json() }.json(), "engines" to selection.engines.map { it.json() }.json())
         writeJvmFile("$directory/request.json", request.canonical().encodeToByteArray())
@@ -121,7 +128,8 @@ class JvmActionExecutor(
                                 if (worker.status == WorkerStatus.SUCCESS) {
                                     require(diagnostics.none { it.code == "KVIK_COMPILATION_ERROR" }) { "Successful worker reported a compiler error" }
                                     outputs = trees.capture("$directory/output")
-                                    require(outputs.files.isNotEmpty() && outputs.files.all { it.path.value.startsWith(compilation.output.value + "/") }) { "Compiler output inventory does not match declared directory" }
+                                    require(outputs.files.any { it.path.value.startsWith(compilation.output.value + "/") } &&
+                                        outputs.files.all { file -> action.outputs.any { file.path.value.startsWith(it.value + "/") } }) { "Compiler output inventory does not match declared directories" }
                                     status = ActionStatus.EXECUTED
                                 }
                             } else {

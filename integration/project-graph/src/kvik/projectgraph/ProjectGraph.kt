@@ -151,10 +151,12 @@ private class Builder(
         require(it.url.endsWith(if (target == "jvm" || plugin) ".jar" else ".klib")) { "Wrong artifact kind for $target: ${it.url}" }
         FileEntry(artifactPath(it, plugin), it.digest)
     }.distinct()
-    private fun plugins(module: String, target: String, scope: String): List<FileEntry> {
-        val selected = modules.getValue(module).compilerPlugins.filter { target in it.targets &&
+    private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
+        modules.getValue(module).compilerPlugins.filter { target in it.targets &&
             (scope in it.scopes || target == "macosArm64" && scope == "test" && "main" in it.scopes) }.distinct()
-        require(selected.all { it.module == null }) { "Workspace compiler plugins require K13" }
+            .also { require(it.size <= 1) { "Multiple compiler plugins per compilation are unsupported" } }
+    private fun plugins(module: String, target: String, scope: String): List<FileEntry> {
+        val selected = selectedPlugins(module, target, scope).filter { it.module == null }
         require(selected.all { it.options.isEmpty() && it.inputs.isEmpty() }) { "Serialization plugin options/extra inputs are unsupported" }
         val roots = selected.map { it.coordinate!! }.distinct()
         require(roots.size <= 1) { "Multiple compiler plugins are unsupported" }
@@ -164,6 +166,46 @@ private class Builder(
             require(artifacts.size == 1 && artifacts.single().coordinate == coordinate) { "Unsupported serialization plugin closure/pin" }
             artifactEntries(artifacts, "jvm", true)
         }
+    }
+    private fun pluginModules(module: String, target: String, scope: String): List<String> =
+        selectedPlugins(module, target, scope).flatMap { plugin -> plugin.module?.let {
+            listOf(it) + closure(it, "jvm", "main", true).modules
+        } ?: emptyList() }.distinct()
+
+    private data class WorkspacePlugin(val entries: List<FileEntry>, val applications: List<JvmPluginApplication>)
+    private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>): WorkspacePlugin {
+        val plugin = selectedPlugins(module, target, scope).singleOrNull()?.takeIf { it.module != null }
+            ?: return WorkspacePlugin(emptyList(), emptyList())
+        require(target == "jvm") { "Workspace plugins are supported only by the JVM adapter" }
+        val prefix = "plugins/${plugin.id!!}"
+        val entries = mutableListOf<FileEntry>()
+        val classpath = mutableListOf<LogicalPath>()
+        for (producer in pluginModules(module, target, scope)) {
+            val root = LogicalPath("$prefix/modules/$producer/classes")
+            classpath += root
+            val original = modulePath(producer, "jvm", "main").value
+            entries += remap(results, producer, "jvm", "main").map { it.copy(path = LogicalPath(root.value + it.path.value.removePrefix(original))) }
+            val resource = resources(producer, "jvm", "main")
+            if (resource.isNotEmpty()) {
+                val resourceRoot = LogicalPath("$prefix/modules/$producer/resources")
+                classpath += resourceRoot
+                entries += resource.map { it.copy(path = LogicalPath(resourceRoot.value + "/" + it.path.value.removePrefix("runtime/$producer/main/"))) }
+            }
+        }
+        val domain = ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")
+        val artifacts = closure(plugin.module!!, "jvm", "main", true).external.flatMap { locked(it, domain).artifacts }.distinctBy { artifactPath(it, true) }
+        require(artifacts.none { it.coordinate.group == "org.jetbrains.kotlin" && it.coordinate.name in setOf("kotlin-compiler", "kotlin-compiler-embeddable") &&
+            (it.coordinate.name != "kotlin-compiler-embeddable" || it.coordinate.version != plugin.compilerVersion) }) { "Workspace plugin compiler API differs from the pinned embeddable compiler" }
+        for (artifact in artifactEntries(artifacts, "jvm", true)) {
+            val entry = artifact.copy(path = LogicalPath("$prefix/deps/${artifact.path.value.substringAfterLast('/')}"))
+            entries += entry; classpath += entry.path
+        }
+        fun input(path: LogicalPath) = LogicalPath("plugin-inputs/${plugin.id}/${path.value}")
+        fun output(path: LogicalPath) = LogicalPath("plugins/${plugin.id}/${path.value}")
+        entries += plugin.inputs.map { path -> (files.singleOrNull { it.path == path } ?: error("Missing declared plugin input: ${path.value}")).copy(path = input(path)) }
+        val application = JvmPluginApplication(plugin.id, plugin.compilerVersion!!, classpath, plugin.options, plugin.inputs.map(::input),
+            plugin.pathOptions.map { it.copy(path = if (it.kind == PluginPathKind.INPUT_FILE) input(it.path) else output(it.path)) }, plugin.outputs.map(::output))
+        return WorkspacePlugin(entries, listOf(application))
     }
     private fun merge(vararg groups: List<FileEntry>): TreeManifest {
         val entries = linkedMapOf<LogicalPath, FileEntry>()
@@ -185,9 +227,11 @@ private class Builder(
         val prefix = modulePath(module, target, scope).value
         if (target == "macosArm64" && scope == "main") {
             require(result.outputs.files.size == 1 && result.outputs.files.single().path.value == output) { "Unexpected Native library output" }
-        } else require(result.outputs.files.all { it.path.value.startsWith("$output/") && target == "jvm" ||
+        } else require(result.outputs.files.all { (it.path.value.startsWith("$output/") || it.path.value.startsWith("plugins/")) && target == "jvm" ||
             target == "macosArm64" && (it.path.value == output || it.path.value.startsWith("$output.dSYM/")) }) { "Unexpected prerequisite output: $id" }
-        return result.outputs.files.map { it.copy(path = LogicalPath(prefix + it.path.value.removePrefix(output))) }
+        val selected = result.outputs.files.filter { target != "jvm" || it.path.value.startsWith("$output/") }
+        require(selected.isNotEmpty()) { "Missing compiled classes: $id" }
+        return selected.map { it.copy(path = LogicalPath(prefix + it.path.value.removePrefix(output))) }
     }
     private fun validateResults(results: Map<String, ActionResult>, dependencies: Set<String>) {
         require(results.keys == dependencies && results.all { (id, result) -> result.actionId == id && result.successful }) { "Prerequisite result set/status differs" }
@@ -202,6 +246,8 @@ private class Builder(
         val dependencies = closure(module, target, "main").modules
         if (target == "macosArm64") nativeVisibility(module, "main")
         dependencies.forEach { ensureMain(it, target) }
+        val pluginDependencies = pluginModules(module, target, "main")
+        pluginDependencies.forEach { ensureMain(it, "jvm") }
         val source = sources(module, target, "main")
         require(source.paths.isNotEmpty()) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
@@ -210,15 +256,16 @@ private class Builder(
         val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-api" else "kotlin-api"), target)
         val plugin = plugins(module, target, "main")
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
-        val edges = dependencies.map { mainId(it, target) }.toSet()
+        val edges = dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
-            val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles)
+            val workspace = workspacePlugin(module, target, "main", results)
+            val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries)
             val classpath = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path }
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
-                jdkRelease = options.jdkRelease), inputs, composition, tools.getValue(target))
+                jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors), inputs, composition, tools.getValue(target))
         }
@@ -236,7 +283,9 @@ private class Builder(
         }
         val resource = resources(module, target, "test") + resources(module, target, "main")
         val moduleIds = listOf(module) + dependencies
-        val compileEdges = moduleIds.map { mainId(it, target) }.toSet()
+        val pluginDependencies = pluginModules(module, target, "test")
+        pluginDependencies.forEach { ensureMain(it, "jvm") }
+        val compileEdges = moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
         val hasTestCompile = target == "macosArm64" || source.paths.isNotEmpty()
         if (hasTestCompile) {
             val options = options(module, target, "test", source)
@@ -251,15 +300,16 @@ private class Builder(
                 validateResults(results, compileEdges)
                 val linkedModules = if (target == "jvm") moduleIds else dependencies
                 val dependencyFiles = linkedModules.flatMap { remap(results, it, target, "main") }
-                val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles)
+                val workspace = workspacePlugin(module, target, "test", results)
+                val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries)
                 val classpath = linkedModules.map { modulePath(it, target, "main") } + artifacts.map { it.path }
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,
-                    explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease), inputs, composition, tools.getValue(target))
+                    explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
                 else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.kexe"), NativeOutput.TEST,
                     options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors), inputs, composition, tools.getValue(target))
             }
-        } else require(plugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
+        } else require(selectedPlugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
         val id = "$module:$target:test"
         val runtimeIds = listOf(module) + runtimeDependencies
         val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(compileId(module, target)) else emptySet()

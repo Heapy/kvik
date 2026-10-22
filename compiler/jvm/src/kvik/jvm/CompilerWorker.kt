@@ -110,8 +110,13 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
     val destination = workspace.path(request.outputDirectory, false)
     if (Files.exists(destination)) reject("KVIK_OUTPUT_EXISTS", "Output directory must be new")
     val staging = Files.createTempDirectory(destination.parent, ".kvik-compile-")
+    val bundle = if (request.pluginApplications.isEmpty()) null else Files.createTempDirectory(workspace.root, ".kvik-plugin-outputs-")
     val diagnostics = Collections.synchronizedList(mutableListOf<Diagnostic>())
     try {
+        val outputRoots = if (bundle == null) emptyMap() else prepareOutputRoots(bundle,
+            listOf(LogicalPath(request.outputDirectory)) + request.pluginApplications.flatMap { it.outputs })
+        for (output in request.pluginApplications.flatMap { it.outputs }) if (Files.exists(workspace.path(output.value, false)))
+            reject("KVIK_OUTPUT_EXISTS", "Plugin output already exists: ${output.value}")
         val toolchains = KotlinToolchains.loadImplementation(distribution.classpath)
         if (toolchains.getCompilerVersion() != "2.4.20") reject("KVIK_COMPILER_IDENTITY", "Loaded compiler version does not match manifest")
         val jvm = toolchains.getToolchain(JvmPlatformToolchain::class.java)
@@ -122,6 +127,8 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
         builder.compilerArguments[JvmCompilerArguments.CLASSPATH] = classpath
         if (plugins.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
             listOf(CompilerPlugin(SERIALIZATION_ID, plugins, emptyList(), emptySet()))
+        if (request.pluginApplications.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
+            workspacePlugins(request, workspace, outputRoots, toolchains.javaClass.classLoader, distribution.classpath)
         builder[BaseCompilationOperation.COMPILER_MESSAGE_RENDERER] = object : CompilerMessageRenderer {
             override fun render(severity: CompilerMessageRenderer.Severity, message: String, location: CompilerMessageRenderer.SourceLocation?): String {
                 if (severity == CompilerMessageRenderer.Severity.ERROR || severity == CompilerMessageRenderer.Severity.WARNING) {
@@ -146,13 +153,28 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
             session.executeOperation(builder.build(), toolchains.createInProcessExecutionPolicy(), logger)
         }
         if (result == CompilationResult.COMPILATION_SUCCESS) {
+            if (bundle != null) Files.walk(bundle).use { paths ->
+                val declared = request.pluginApplications.flatMap { it.outputs }.map(outputRoots::getValue)
+                if (paths.anyMatch { path -> Files.isSymbolicLink(path) || !Files.isDirectory(path) &&
+                    (!Files.isRegularFile(path) || declared.none { path.startsWith(it) }) })
+                    reject("KVIK_PLUGIN_OUTPUT", "Plugin wrote an undeclared output, symlink or special file")
+            }
+            for (output in request.pluginApplications.flatMap { it.outputs }) {
+                val target = workspace.path(output.value, false)
+                Files.walk(outputRoots.getValue(output)).use { paths ->
+                    if (paths.noneMatch { Files.isRegularFile(it) }) reject("KVIK_PLUGIN_OUTPUT", "Plugin produced no files under ${output.value}")
+                }
+                if (Files.exists(target)) reject("KVIK_OUTPUT_EXISTS", "Plugin output already exists: ${output.value}")
+                Files.createDirectories(target.parent)
+                Files.move(outputRoots.getValue(output), target, ATOMIC_MOVE)
+            }
             Files.move(staging, destination, ATOMIC_MOVE)
             return WorkerResult(request.requestId, WorkerStatus.SUCCESS, 0, diagnostics.toList())
         }
         val status = if (result == CompilationResult.COMPILATION_ERROR) WorkerStatus.COMPILATION_ERROR else WorkerStatus.INFRASTRUCTURE_ERROR
         if (diagnostics.isEmpty()) diagnostics += Diagnostic("KVIK_COMPILER_FAILURE", DiagnosticCategory.INFRASTRUCTURE, "BTA returned $result")
         return WorkerResult(request.requestId, status, 1, diagnostics.toList())
-    } finally { workspace.removeTree(staging) }
+    } finally { workspace.removeTree(staging); bundle?.let(workspace::removeTree) }
 }
 
 /** One process, one request, one in-process BTA session. The native process host owns cancellation. */
