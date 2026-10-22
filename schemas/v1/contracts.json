@@ -662,8 +662,7 @@
           "items": {
             "enum": [
               "main",
-              "test",
-              "script"
+              "test"
             ]
           },
           "minItems": 1,
@@ -844,56 +843,407 @@
       ],
       "additionalProperties": false
     },
+    "scriptCompilerPlugin": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "const": "jvm"
+          },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "const": "script"
+          },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "not": {
+              "pattern": "\u0000"
+            }
+          },
+          "maxItems": 256
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              {
+                "maxLength": 1024,
+                "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+              }
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "compilerVersion": {
+          "const": "2.4.20"
+        },
+        "pathOptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pluginPathOption"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              {
+                "maxLength": 1024,
+                "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+              }
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "targets",
+        "scopes",
+        "options",
+        "inputs"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "module",
+            "id",
+            "compilerVersion"
+          ],
+          "not": {
+            "required": [
+              "coordinate"
+            ]
+          },
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "const": "jvm"
+              },
+              "minItems": 1,
+              "maxItems": 1
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "const": "script"
+              },
+              "minItems": 1,
+              "maxItems": 1
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*="
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "coordinate"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "module"
+                ]
+              },
+              {
+                "required": [
+                  "id"
+                ]
+              },
+              {
+                "required": [
+                  "compilerVersion"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "pathOptions": {
+              "maxItems": 0
+            },
+            "outputs": {
+              "maxItems": 0
+            }
+          }
+        }
+      ]
+    },
+    "scriptDependency": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "coordinate": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])"
+            },
+            "scope": {
+              "enum": [
+                "compile",
+                "runtime"
+              ]
+            }
+          },
+          "required": [
+            "coordinate"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "catalog": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            },
+            "scope": {
+              "enum": [
+                "compile",
+                "runtime"
+              ]
+            }
+          },
+          "required": [
+            "catalog"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "module": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            },
+            "scope": {
+              "enum": [
+                "compile",
+                "runtime"
+              ]
+            }
+          },
+          "required": [
+            "module"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scriptDependencyProfile": {
+      "type": "object",
+      "properties": {
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scriptDependency"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000-\\u001f]+(?![\\s\\S])"
+          },
+          "maxItems": 256
+        },
+        "compilerPlugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scriptCompilerPlugin"
+          },
+          "maxItems": 16
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "description": "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
+    },
     "script": {
       "type": "object",
       "properties": {
         "sources": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            "allOf": [
+              {
+                "allOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  {
+                    "maxLength": 1024,
+                    "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "pattern": "\\.[kK][tT][sS]$(?![\\s\\S])"
+                }
+              }
+            ]
           },
-          "minItems": 1
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
         },
-        "mainClass": {
-          "type": "string"
-        },
-        "dependencies": {
+        "resources": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/dependency"
-          }
+            "allOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              {
+                "maxLength": 1024,
+                "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "mainClass": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\\s\\S])"
         },
         "profiles": {
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
-          }
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scriptDependency"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
         },
         "compilerOptions": {
           "type": "array",
           "items": {
-            "type": "string"
-          }
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000-\\u001f]+(?![\\s\\S])"
+          },
+          "maxItems": 256
         },
         "compilerPlugins": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/compilerPlugin"
+            "$ref": "#/$defs/scriptCompilerPlugin"
+          },
+          "maxItems": 16
+        },
+        "timeoutMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096,
+            "not": {
+              "pattern": "\u0000"
+            }
+          },
+          "maxProperties": 128,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^(?!KVIK_)[A-Za-z_][A-Za-z0-9_]*(?![\\s\\S])",
+            "not": {
+              "enum": [
+                "PATH",
+                "JAVA_HOME",
+                "JAVACMD",
+                "JAVA_OPTS",
+                "JAVA_TOOL_OPTIONS",
+                "JDK_JAVA_OPTIONS",
+                "_JAVA_OPTIONS",
+                "CLASSPATH",
+                "LD_PRELOAD",
+                "LD_LIBRARY_PATH",
+                "DYLD_INSERT_LIBRARIES",
+                "DYLD_LIBRARY_PATH",
+                "DYLD_FRAMEWORK_PATH"
+              ]
+            }
           }
         }
       },
       "required": [
-        "sources",
-        "mainClass",
-        "dependencies",
-        "profiles",
-        "compilerOptions",
-        "compilerPlugins"
+        "sources"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
     },
     "project": {
       "type": "object",
@@ -918,19 +1268,41 @@
             "$ref": "#/$defs/module"
           }
         },
+        "dependencyCatalog": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])"
+          },
+          "maxProperties": 1024,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          }
+        },
         "dependencyProfiles": {
           "type": "object",
           "additionalProperties": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/dependency"
-            }
+            "$ref": "#/$defs/scriptDependencyProfile"
+          },
+          "maxProperties": 256,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
           }
         },
         "scripts": {
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/script"
+          },
+          "maxProperties": 256,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
           }
         }
       },
@@ -941,6 +1313,62 @@
         "modules"
       ],
       "additionalProperties": false
+    },
+    "standaloneScript": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repository"
+          },
+          "minItems": 1
+        },
+        "dependencyCatalog": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])"
+          },
+          "maxProperties": 1024,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          }
+        },
+        "dependencyProfiles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/scriptDependencyProfile"
+          },
+          "maxProperties": 256,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          }
+        },
+        "script": {
+          "$ref": "#/$defs/script"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "name",
+        "repositories",
+        "script"
+      ],
+      "additionalProperties": false,
+      "description": "The companion for <stem>.kt is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins, and the CLI must bind the selected .kt to an explicit source file."
     },
     "action": {
       "type": "object",

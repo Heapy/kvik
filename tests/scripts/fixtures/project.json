@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "name": "maintenance",
+  "repositories": [
+    {
+      "id": "central",
+      "url": "https://repo.maven.apache.org/maven2"
+    }
+  ],
+  "modules": [
+    {
+      "id": "index-model",
+      "sourceSets": [
+        {
+          "name": "main",
+          "directories": [
+            "index-model/src"
+          ],
+          "resources": [],
+          "dependsOn": [],
+          "dependencies": []
+        }
+      ],
+      "targets": [
+        {
+          "name": "jvm",
+          "main": "main",
+          "test": null,
+          "compilerOptions": []
+        }
+      ],
+      "compilerPlugins": []
+    }
+  ],
+  "dependencyCatalog": {
+    "json": "org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1"
+  },
+  "dependencyProfiles": {
+    "maintenance": {
+      "dependencies": [
+        {
+          "catalog": "json"
+        }
+      ],
+      "compilerOptions": [
+        "-jvm-target=17"
+      ],
+      "compilerPlugins": [
+        {
+          "coordinate": "org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20",
+          "targets": [
+            "jvm"
+          ],
+          "scopes": [
+            "script"
+          ],
+          "options": [],
+          "inputs": []
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "update-index": {
+      "sources": [
+        "scripts/update-index.kt",
+        "scripts/helpers"
+      ],
+      "resources": [
+        "scripts/resources"
+      ],
+      "profiles": [
+        "maintenance"
+      ],
+      "dependencies": [
+        {
+          "module": "index-model"
+        }
+      ],
+      "mainClass": "maintenance.UpdateIndexKt",
+      "timeoutMillis": 60000,
+      "environment": {
+        "MODE": "update"
+      }
+    }
+  }
+}

@@ -40,7 +40,8 @@ class CompilerPluginsTest {
         val workspace = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main", "test"), emptyList(), emptyList(), "example.plugin", "2.4.20")
         assertFails { workspace.copy(id = null) }
         assertFails { workspace.copy(targets = setOf("macosArm64")) }
-        assertFails { workspace.copy(scopes = setOf("script")) }
+        assertEquals(setOf("script"), workspace.copy(scopes = setOf("script")).scopes)
+        assertFails { workspace.copy(scopes = setOf("main", "script")) }
         assertFails { legacy.copy(id = "example.plugin") }
     }
 }

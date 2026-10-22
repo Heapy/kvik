@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate the checked-in v1 JSON Schemas from shared definitions (stdlib only)."""
 import json
+from copy import deepcopy
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,8 +112,55 @@ DEFS["compilerPlugin"]["oneOf"] = [
      "properties": {"pathOptions": {"maxItems": 0}, "outputs": {"maxItems": 0}}}]
 DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1), "compilerPlugins": array(ref("compilerPlugin"))})
 DEFS["repository"] = object_({"id": ID, "url": {"type": "string", "pattern": "^https://"}})
-DEFS["script"] = object_({"sources": array(PATH, minItems=1), "mainClass": STRING, "dependencies": array(ref("dependency")), "profiles": array(ID), "compilerOptions": array(STRING), "compilerPlugins": array(ref("compilerPlugin"))})
-DEFS["project"] = versioned({"name": ID, "repositories": array(ref("repository"), minItems=1), "modules": array(ref("module")), "dependencyProfiles": mapping(array(ref("dependency"))), "scripts": mapping(ref("script"))}, optional=("dependencyProfiles", "scripts"))
+# Script declarations are distinct from module compilation selections. Older nonempty profile
+# arrays were schema-only and rejected by Native; v1 now gives profiles an explicit object shape.
+SCRIPT_ID = {"type": "string", "maxLength": 128, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"}
+SCRIPT_COORDINATE = {**COORDINATE, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
+SCRIPT_PATH = {"allOf": [PATH, {"maxLength": 1024, "pattern": r"^[^\u0000-\u001f]*(?![\s\S])"}]}
+SCRIPT_OPTION = {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": r"^[^\u0000-\u001f]+(?![\s\S])"}
+DEFS["compilerPlugin"]["properties"]["scopes"] = array(enum("main", "test"), minItems=1, uniqueItems=True)
+DEFS["scriptCompilerPlugin"] = deepcopy(DEFS["compilerPlugin"])
+DEFS["scriptCompilerPlugin"]["properties"].update({
+    "module": SCRIPT_ID, "coordinate": SCRIPT_COORDINATE, "id": SCRIPT_ID,
+    "targets": array({"const": "jvm"}, minItems=1, maxItems=1),
+    "scopes": array({"const": "script"}, minItems=1, maxItems=1),
+    "options": array({"type": "string", "maxLength": 4096, "not": {"pattern": "\u0000"}}, maxItems=256),
+    "inputs": array(SCRIPT_PATH, uniqueItems=True, maxItems=256),
+    "outputs": array(SCRIPT_PATH, uniqueItems=True, maxItems=256),
+    "pathOptions": array(ref("pluginPathOption"), uniqueItems=True, maxItems=256),
+})
+DEFS["scriptCompilerPlugin"]["oneOf"][0]["properties"]["scopes"] = array({"const": "script"}, minItems=1, maxItems=1)
+DEFS["scriptDependency"] = {"oneOf": [object_({key: value, "scope": enum("compile", "runtime")}, optional=("scope",))
+    for key, value in [("coordinate", SCRIPT_COORDINATE), ("catalog", SCRIPT_ID), ("module", SCRIPT_ID)]]}
+SCRIPT_COMPILATION = {
+    "dependencies": array(ref("scriptDependency"), uniqueItems=True, maxItems=256),
+    "compilerOptions": array(SCRIPT_OPTION, maxItems=256),
+    "compilerPlugins": array(ref("scriptCompilerPlugin"), maxItems=16),
+}
+DEFS["scriptDependencyProfile"] = object_(SCRIPT_COMPILATION, optional=tuple(SCRIPT_COMPILATION))
+SCRIPT_ENV_RESERVED = ["PATH", "JAVA_HOME", "JAVACMD", "JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"]
+DEFS["script"] = object_({
+    "sources": array({"allOf": [SCRIPT_PATH, {"not": {"pattern": r"\.[kK][tT][sS]$(?![\s\S])"}}]}, minItems=1, maxItems=256, uniqueItems=True),
+    "resources": array(SCRIPT_PATH, maxItems=256, uniqueItems=True),
+    "mainClass": APPLICATION_ENTRY,
+    "profiles": array(SCRIPT_ID, maxItems=32, uniqueItems=True),
+    **SCRIPT_COMPILATION,
+    "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000},
+    "environment": {**mapping(APPLICATION_TEXT), "maxProperties": 128,
+        "propertyNames": {"type": "string", "maxLength": 128,
+            "pattern": r"^(?!KVIK_)[A-Za-z_][A-Za-z0-9_]*(?![\s\S])", "not": {"enum": SCRIPT_ENV_RESERVED}}},
+}, optional=("resources", "mainClass", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "timeoutMillis", "environment"))
+for name in ("script", "scriptDependencyProfile"):
+    DEFS[name]["description"] = "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
+def script_mapping(value, maximum):
+    return {**mapping(value), "maxProperties": maximum, "propertyNames": SCRIPT_ID}
+SCRIPT_COLLECTIONS = {"dependencyCatalog": script_mapping(SCRIPT_COORDINATE, 1024),
+    "dependencyProfiles": script_mapping(ref("scriptDependencyProfile"), 256)}
+DEFS["project"] = versioned({"name": ID, "repositories": array(ref("repository"), minItems=1), "modules": array(ref("module")),
+    **SCRIPT_COLLECTIONS, "scripts": script_mapping(ref("script"), 256)}, optional=("dependencyCatalog", "dependencyProfiles", "scripts"))
+DEFS["standaloneScript"] = versioned({"name": SCRIPT_ID, "repositories": array(ref("repository"), minItems=1),
+    **SCRIPT_COLLECTIONS, "script": ref("script")}, optional=("dependencyCatalog", "dependencyProfiles"))
+DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins, and the CLI must bind the selected .kt to an explicit source file."
 DEFS["action"] = versioned({
     "implementation": STRING, "composition": ref("digest"), "kind": enum("compile", "generate", "link", "package", "test", "script", "publish", "benchmark", "server"),
     "platform": mapping(STRING), "target": STRING, "toolchains": mapping(ref("digest")), "inputs": ref("tree"), "outputs": array(PATH, uniqueItems=True),
@@ -266,6 +314,9 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://kvik.dev/schemas/v1/contracts.json", "$defs": DEFS}
     (directory / "contracts.json").write_text(json.dumps(schema, indent=2) + "\n")
+    standalone = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/script.json",
+        "$ref": "contracts.json#/$defs/standaloneScript"}
+    (directory / "script.json").write_text(json.dumps(standalone, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -17,11 +17,8 @@ private fun <T> List<T>.unique(label: String): List<T> = also {
 
 /** Reject unsupported authoring features rather than silently dropping their dependencies. */
 fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
-    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyProfiles", "scripts"))
+    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyCatalog", "dependencyProfiles", "scripts"))
     fields.requireVersion()
-    for (reserved in listOf("dependencyProfiles", "scripts")) {
-        require(fields[reserved]?.objectValue().isNullOrEmpty()) { "$reserved is reserved for the script adapter and is not implemented" }
-    }
     val repositories = fields.getValue("repositories").arrayValue().map { value ->
         val entry = value.fields(setOf("id", "url"))
         Repository(entry.getValue("id").identifier(), entry.getValue("url").stringValue())
@@ -30,7 +27,9 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
     repositories.map { it.id }.unique("repository id")
     val modules = fields.getValue("modules").arrayValue().map(::parseModule)
     modules.map { it.id }.unique("module id")
-    val project = ProjectSpec(fields.getValue("name").identifier(), repositories, modules)
+    val project = ProjectSpec(fields.getValue("name").identifier(), repositories, modules,
+        parseScriptCatalog(fields["dependencyCatalog"]), parseScriptProfiles(fields["dependencyProfiles"]),
+        parseNamedScripts(fields["scripts"]))
     val byId = modules.associateBy { it.id }
     val dependencies = modules.associate { module ->
         module.id to (module.sourceSets.flatMap { sourceSet -> sourceSet.dependencies.filterIsInstance<Dependency.Module>().map { it.module } } +
@@ -47,6 +46,7 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
             }
         }
         for (plugin in module.compilerPlugins) {
+            require("script" !in plugin.scopes) { "Script compiler plugins must be declared on a script or script profile" }
             require(plugin.targets.all { requested -> module.targets.any { it.name == requested } }) { "Compiler plugin selects an undeclared target in ${module.id}" }
             plugin.module?.let { pluginModule ->
                 require(byId.getValue(pluginModule).targets.any { it.name == "jvm" }) { "Compiler plugin module $pluginModule requires a JVM target" }
@@ -54,6 +54,7 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
             }
         }
     }
+    validateProjectScripts(project)
     return ProjectConfiguration(project, document as JsonValue.Object)
 }
 
@@ -112,7 +113,7 @@ private fun parseDependency(value: JsonValue): Dependency {
         ?: Dependency.External(Coordinate.parse(fields.getValue("coordinate").stringValue()), scope, exported)
 }
 
-private fun parseCompilerPlugin(value: JsonValue): CompilerPluginSpec {
+internal fun parseCompilerPlugin(value: JsonValue): CompilerPluginSpec {
     val fields = value.fields(setOf("targets", "scopes", "options", "inputs"), setOf("module", "coordinate", "id", "compilerVersion", "pathOptions", "outputs"))
     val targets = fields.getValue("targets").strings().unique("plugin target")
     require(targets.all { it in setOf("jvm", "macosArm64") }) { "Unsupported compiler-plugin target" }

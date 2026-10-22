@@ -107,13 +107,16 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         require(targets.isNotEmpty() && scopes.isNotEmpty() && scopes.all { it in setOf("main", "test", "script") })
         if (module != null) {
             require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilerVersion == "2.4.20") { "Workspace plugin requires an id and compilerVersion=2.4.20" }
-            require(targets == setOf("jvm") && scopes.all { it in setOf("main", "test") }) { "Workspace compiler plugins currently support JVM main/test only" }
+            require(targets == setOf("jvm") && (scopes == setOf("script") || scopes.all { it in setOf("main", "test") })) { "Workspace compiler plugins require JVM main/test or a separate script declaration" }
             validatePluginOptions(options, inputs, pathOptions, outputs)
         } else require(id == null && compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions are not supported" }
     }
 }
 data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targets: List<TargetSpec>, val compilerPlugins: List<CompilerPluginSpec>)
-data class ProjectSpec(val name: String, val repositories: List<Repository>, val modules: List<ModuleSpec>)
+data class ProjectSpec(val name: String, val repositories: List<Repository>, val modules: List<ModuleSpec>,
+                       val dependencyCatalog: Map<String, Coordinate> = emptyMap(),
+                       val dependencyProfiles: Map<String, ScriptDependencyProfile> = emptyMap(),
+                       val scripts: Map<String, ScriptSpec> = emptyMap())
 
 data class VariantRequest(val platform: String, val usage: String, val attributes: Map<String, String>) {
     init { require(platform in setOf("jvm", "macosArm64", "common") && usage.isNotBlank()) }
