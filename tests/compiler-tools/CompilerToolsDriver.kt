@@ -35,7 +35,9 @@ fun main() {
                     val layout = checkNotNull(provider).verified(request.getValue("identities").objectValue().mapValues { Digest.fromJson(it.value) })
                     if (request.getValue("op").stringValue() == "compile") compile(layout, request)
                     obj("identities" to JsonValue.Object(layout.identities.mapValues { it.value.toJson() }), "java" to layout.javaExecutable.json(),
-                        "classes" to layout.workerClasses.json(), "artifacts" to layout.compilerArtifacts.json())
+                        "classes" to layout.workerClasses.json(), "artifacts" to layout.compilerArtifacts.json(),
+                        "jacocoAgent" to checkNotNull(layout.jacocoAgent).json(), "jacocoCli" to checkNotNull(layout.jacocoCli).json(),
+                        "jacocoAgentIdentity" to checkNotNull(layout.jacocoAgentIdentity).toJson(), "jacocoCliIdentity" to checkNotNull(layout.jacocoCliIdentity).toJson())
                 }
                 else -> error("Unknown operation")
             }

@@ -107,5 +107,22 @@
     "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-serialization-compiler-plugin-embeddable/2.4.20/kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar",
     "sha256": "2221ec78c4f8d7367df9a9bd4310c916c5ef70150fb49eeacf238f074f368b52",
     "size": 452378
+  },
+  "jacocoVersion": "0.8.14",
+  "jacocoAgent": {
+    "coordinate": "org.jacoco:org.jacoco.agent:0.8.14",
+    "classifier": "runtime",
+    "filename": "org.jacoco.agent-0.8.14-runtime.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/jacoco/org.jacoco.agent/0.8.14/org.jacoco.agent-0.8.14-runtime.jar",
+    "sha256": "3fb76eea65f81bd9415202bab34b6571728841dff1ab8e6bbe81adc2e299face",
+    "size": 306809
+  },
+  "jacocoCli": {
+    "coordinate": "org.jacoco:org.jacoco.cli:0.8.14",
+    "classifier": "nodeps",
+    "filename": "org.jacoco.cli-0.8.14-nodeps.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/jacoco/org.jacoco.cli/0.8.14/org.jacoco.cli-0.8.14-nodeps.jar",
+    "sha256": "811c7f8c6b358c5d68a8973cfa867f6892be7a671b697a4b13c4b447e6daf75c",
+    "size": 607951
   }
 }

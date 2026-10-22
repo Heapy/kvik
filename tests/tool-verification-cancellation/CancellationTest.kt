@@ -115,7 +115,7 @@ class CancellationTest {
         val bundle = "$root/bundle"
         val classDigest = put("$bundle/classes/Fake.class", "fake class".encodeToByteArray())
         val classes = TreeManifest(listOf(FileEntry(LogicalPath("Fake.class"), classDigest)))
-        val entries = listOf("api", "stdlib", "junit").associateWith { role ->
+        val entries = listOf("api", "stdlib", "junit", "jacocoAgent", "jacocoCli").associateWith { role ->
             FileEntry(LogicalPath("lib/$role.jar"), put("$bundle/lib/$role.jar", "$role jar".encodeToByteArray()))
         }
         val compiler = obj("schemaVersion" to 1.json(), "version" to "2.4.20".json(), "artifacts" to listOf(
@@ -124,10 +124,12 @@ class CancellationTest {
         val compilerDigest = put("$bundle/compiler-manifest.json", compiler.canonical().encodeToByteArray())
         val worker = Sha256.digest(obj("schemaVersion" to 1.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
             "workerTree" to Sha256.digest(classes.toJson()).toJson(), "api" to entries.getValue("api").digest.toJson(),
-            "stdlib" to entries.getValue("stdlib").digest.toJson(), "junit" to entries.getValue("junit").digest.toJson()))
+            "stdlib" to entries.getValue("stdlib").digest.toJson(), "junit" to entries.getValue("junit").digest.toJson(),
+            "jacocoVersion" to "0.8.14".json(), "jacocoAgent" to entries.getValue("jacocoAgent").digest.toJson(),
+            "jacocoCli" to entries.getValue("jacocoCli").digest.toJson()))
         val manifest = JsonValue.Object(entries.mapValues { it.value.toJson() } + mapOf("schemaVersion" to 1.json(),
             "classes" to classes.toJson(), "compilerManifest" to FileEntry(LogicalPath("compiler-manifest.json"), compilerDigest).toJson(),
-            "worker" to worker.toJson()))
+            "worker" to worker.toJson(), "jacocoVersion" to "0.8.14".json()))
         val expectedManifest = put("$bundle/manifest.json", manifest.canonical().encodeToByteArray())
         cancelAtRepresentativeBoundaries { checkpoint -> verifyJvmWorkerBundle(bundle, expectedManifest, checkpoint) }
         val identities = mapOf("jdk" to inventory(roots.getValue(ToolComponent.JDK)).digest, "jvm-compiler" to compilerDigest,

@@ -37,7 +37,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             item = {"filename": "small.jar", "sha256": digest(b"one")["hash"], "size": 3, "url": "https://invalid.local/small.jar"}
-            lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item}
+            lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item, "jacocoAgent": item, "jacocoCli": item}
             for opening in (True, False):
                 started = time.monotonic()
                 with patch.object(jvm_worker.urllib.request, "build_opener", return_value=SlowOpener(opening)), \
@@ -54,7 +54,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             item = {"filename": "small.jar", "sha256": digest(b"one")["hash"], "size": 3}
-            lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item}
+            lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item, "jacocoAgent": item, "jacocoCli": item}
             with self.assertRaisesRegex(ValueError, "offline mode"):
                 jvm_worker.acquire(lock, root, True)
             path = root / "small.jar"
@@ -75,6 +75,11 @@ class ArtifactBoundaryTest(unittest.TestCase):
     def test_artifact_lock_rejects_ambiguous_and_unlocked_sources(self):
         valid = jvm_worker.read_lock(ROOT)
         for change in [lambda x: x.update(schemaVersion=True),
+                       lambda x: x.update(jacocoVersion="0.8.13"),
+                       lambda x: x["jacocoAgent"].update(classifier="nodeps"),
+                       lambda x: x["jacocoCli"].update(classifier="../escape"),
+                       lambda x: x["jacocoAgent"].pop("classifier"),
+                       lambda x: x["compilerArtifacts"][0].update(classifier="runtime"),
                        lambda x: x["compilerArtifacts"][0].update(url="http://example.org/compiler.jar"),
                        lambda x: x["compilerArtifacts"][0].update(filename="../compiler.jar"),
                        lambda x: x["compilerArtifacts"][0].update(size=True),
@@ -92,7 +97,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             item = {"filename": "small.jar", "sha256": digest(b"one")["hash"], "size": 3, "url": "https://invalid.local/small.jar"}
-            lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item}
+            lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item, "jacocoAgent": item, "jacocoCli": item}
             for content in [b"", b"on", b"two", b"one!"]:
                 with patch.object(jvm_worker.urllib.request, "build_opener", return_value=Opener(content)), self.assertRaises(ValueError):
                     jvm_worker.acquire(lock, root, False)
@@ -101,6 +106,51 @@ class ArtifactBoundaryTest(unittest.TestCase):
             with patch.object(jvm_worker.urllib.request, "build_opener", return_value=Opener(b"one")):
                 jvm_worker.acquire(lock, root, False)
             self.assertEqual(b"one", (root / "small.jar").read_bytes())
+
+    def test_jacoco_bundle_roles_are_verified_and_only_cli_enters_compilation_classpath(self):
+        lock = copy.deepcopy(jvm_worker.read_lock(ROOT))
+        libraries = jvm_worker.libraries(lock)
+        self.assertEqual(["jvm-runtime:runtime", "jvm-runtime:nodeps"], [a["variant"] for a in libraries[-2:]])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "artifacts"; cache.mkdir()
+            artifacts = {}
+            for item in jvm_worker.all_artifacts(lock):
+                data = item["filename"].encode()
+                item.update(sha256=digest(data)["hash"], size=len(data))
+                path = cache / item["filename"]; path.write_bytes(data); artifacts[path.name] = path
+            source = root / "TestWorker.kt"; source.write_text("// explicit fixture source")
+            commands = []
+            def compile_fixture(argv, environment, log):
+                commands.append(argv)
+                classes = Path(argv[argv.index("-d") + 1])
+                (classes / "Fake.class").write_bytes(b"fixture compiler output")
+            runtime = root / "runtime"; runtime.mkdir()
+            expected = jvm_worker.build_bundle(runtime, root, "unused", lock, artifacts, "/pinned/java", {}, None,
+                compile_fixture, source_files=[source])
+            bundle = jvm_worker.verify_bundle(runtime, expected)
+            self.assertEqual("0.8.14", bundle["jacocoVersion"])
+            for role in ("jacocoAgent", "jacocoCli"):
+                self.assertEqual(jvm_worker.artifact_digest(lock[role]), bundle[role]["digest"])
+                self.assertNotIn(str(artifacts[lock[role]["filename"]]), commands[0][commands[0].index("-cp") + 1])
+                compile_classpath = commands[0][commands[0].index("-classpath") + 1].split(os.pathsep)
+                self.assertEqual(role == "jacocoCli", str(artifacts[lock[role]["filename"]]) in compile_classpath)
+                path = runtime / "jvm" / bundle[role]["path"]
+                original = path.read_bytes(); before = path.stat()
+                path.write_bytes(b"!" + original[1:]); os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+                with self.assertRaisesRegex(ValueError, "differs from runtime"):
+                    jvm_worker.verify_bundle(runtime, expected)
+                path.write_bytes(original)
+            old = jvm_worker.worker_identity(bundle["classes"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")])
+            self.assertNotEqual(old, bundle["worker"])
+            changed = jvm_worker.worker_identity(bundle["classes"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")],
+                digest(b"changed agent"), bundle["jacocoCli"]["digest"], "0.8.14")
+            self.assertNotEqual(changed, bundle["worker"])
+            for mutate in (lambda m: m.update(jacocoVersion="0.8.13"), lambda m: m.pop("jacocoAgent"),
+                           lambda m: m.update(jacocoCli=m["jacocoAgent"])):
+                invalid = copy.deepcopy(bundle); mutate(invalid)
+                encoded = canonical(invalid); (runtime / "jvm/manifest.json").write_bytes(encoded)
+                with self.assertRaises(ValueError): jvm_worker.verify_bundle(runtime, digest(encoded))
 
 
 def main():
@@ -134,7 +184,8 @@ def main():
         passed("relocated-direct-native-bundle")
         targets = [relocated / "jvm/classes" / bundle["classes"]["files"][0]["path"],
                    relocated / "jvm" / bundle["api"]["path"], relocated / "jvm/compiler-manifest.json",
-                   relocated / "jvm/manifest.json"]
+                   relocated / "jvm/manifest.json", relocated / "jvm" / bundle["jacocoAgent"]["path"],
+                   relocated / "jvm" / bundle["jacocoCli"]["path"]]
         for index, path in enumerate(targets):
             content = path.read_bytes()
             before = path.stat()

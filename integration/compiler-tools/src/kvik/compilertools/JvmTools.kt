@@ -60,6 +60,7 @@ class InstalledJvmToolchainProvider(
         require(NativeFiles.regular(javaInfo) && javaInfo.mode and 73 != 0) { "Verified JDK java must be a regular executable" }
         checkpoint()
         return JvmToolchainLayout(requested, java, bundle.classes, bundle.api, bundle.stdlib, bundle.junit,
-            compilerArtifactsRoot, bundle.compilerManifest)
+            compilerArtifactsRoot, bundle.compilerManifest, jacocoAgent = bundle.jacocoAgent, jacocoCli = bundle.jacocoCli,
+            jacocoAgentIdentity = bundle.jacocoAgentIdentity, jacocoCliIdentity = bundle.jacocoCliIdentity)
     }
 }

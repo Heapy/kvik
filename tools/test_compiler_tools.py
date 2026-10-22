@@ -65,8 +65,8 @@ def main():
             bundle = fixture / 'bundle'; (bundle / 'classes/a').mkdir(parents=True); (bundle / 'lib').mkdir()
             class_file = bundle / 'classes/a/Fake.class'; class_file.write_bytes(b'fake class')
             tree = inventory(bundle / 'classes'); tree['files'].sort(key=lambda x: x['path'].encode('utf-16-be'))
-            manifest = {'schemaVersion': 1, 'classes': tree}
-            for name in ('api', 'stdlib', 'junit'):
+            manifest = {'schemaVersion': 1, 'classes': tree, 'jacocoVersion': '0.8.14'}
+            for name in ('api', 'stdlib', 'junit', 'jacocoAgent', 'jacocoCli'):
                 data = (name + ' jar').encode(); (bundle / 'lib' / (name + '.jar')).write_bytes(data)
                 manifest[name] = {'path': 'lib/' + name + '.jar', 'digest': digest(data), 'executable': False}
             artifacts = fixture / 'artifacts'; artifacts.mkdir()
@@ -77,7 +77,8 @@ def main():
             distribution_bytes = canonical(distribution); (bundle / 'compiler-manifest.json').write_bytes(distribution_bytes)
             manifest['compilerManifest'] = {'path': 'compiler-manifest.json', 'digest': digest(distribution_bytes), 'executable': False}
             manifest['worker'] = digest(canonical({'schemaVersion': 1, 'implementation': 'kvik-jvm-worker-bundle-v1',
-                'workerTree': digest(canonical(tree)), **{name: manifest[name]['digest'] for name in ('api', 'stdlib', 'junit')}}))
+                'workerTree': digest(canonical(tree)), 'jacocoVersion': '0.8.14',
+                **{name: manifest[name]['digest'] for name in ('api', 'stdlib', 'junit', 'jacocoAgent', 'jacocoCli')}}))
             manifest_bytes = canonical(manifest); (bundle / 'manifest.json').write_bytes(manifest_bytes)
             expected_bundle = digest(manifest_bytes)
             setup = {'op': 'setup', 'toolLock': lock, 'roots': {k: str(v) for k, v in roots.items()}, 'bundle': str(bundle),
@@ -87,7 +88,11 @@ def main():
             verify = {'op': 'verify', 'identities': identities}
             ask(setup); result = ask(verify)
             assert result['value']['identities'] == identities and result['value']['java'] == str(java)
-            passed('JVM provider verifies complete JDK inventory, bundle and streamed compiler/plugin jars')
+            assert result['value']['jacocoAgent'] == str(bundle / 'lib/jacocoAgent.jar')
+            assert result['value']['jacocoCli'] == str(bundle / 'lib/jacocoCli.jar')
+            assert result['value']['jacocoAgentIdentity'] == manifest['jacocoAgent']['digest']
+            assert result['value']['jacocoCliIdentity'] == manifest['jacocoCli']['digest']
+            passed('JVM provider verifies complete JDK inventory, bundle, JaCoCo tools and streamed compiler/plugin jars')
 
             for name in identities:
                 changed = copy.deepcopy(identities); changed[name]['hash'] = '0' * 64
@@ -97,6 +102,7 @@ def main():
             passed('All four requested identities and exact key set enforced')
 
             for path in (class_file, bundle / 'lib/api.jar', bundle / 'lib/stdlib.jar', bundle / 'lib/junit.jar',
+                         bundle / 'lib/jacocoAgent.jar', bundle / 'lib/jacocoCli.jar',
                          bundle / 'compiler-manifest.json', compiler, plugin, java):
                 before = path.stat(); data = path.read_bytes()
                 path.write_bytes(bytes([data[0] ^ 1]) + data[1:]); os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
@@ -128,6 +134,14 @@ def main():
             ask(dict(setup, bundle=str(alias))); ask(verify, ok=False); ask(setup)
             ask(dict(setup, expectedBundle=digest(b'wrong manifest'))); ask(verify, ok=False); ask(setup)
             passed('Missing files, linked/FIFO jars, bundle extras, executable changes, linked roots and wrong compiled manifest fail closed')
+
+            for mutate in (lambda m: m.update(jacocoVersion='0.8.13'), lambda m: m.pop('jacocoAgent'),
+                           lambda m: m.update(jacocoCli=m['jacocoAgent'])):
+                invalid = copy.deepcopy(manifest); mutate(invalid)
+                encoded = canonical(invalid); (bundle / 'manifest.json').write_bytes(encoded)
+                ask(dict(setup, expectedBundle=digest(encoded))); ask(verify, ok=False)
+            (bundle / 'manifest.json').write_bytes(manifest_bytes); ask(setup); ask(verify)
+            passed('Pinned coverage version, complete roles and distinct artifact paths enforced')
 
             for mutate in (lambda d: d.update(version='other'), lambda d: d.update(extra=True),
                            lambda d: d['artifacts'][0].update(path='../external.jar'),
