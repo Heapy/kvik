@@ -57,6 +57,55 @@ class BootstrapLaunchTest {
         assertFails { BootstrapLaunch.parse(changed("extra", true.json())) }
     }
 
+    @Test fun sourceGraphProducerPreservesBothPathsAndOptionalCache() {
+        val launch = BootstrapLaunch.parse(sourceGraphProducerDescriptor)
+        val graphFields = parseJson(sourceGraphProducerDescriptor.decodeToString()).objectValue()
+        val arguments = graphFields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
+        assertEquals(16, arguments.size)
+        assertEquals(listOf("--source-lock", "/source locks $(literal)/../selected.json",
+            "--source-cache", "/source cache $(literal)/../selected"), arguments.subList(10, 14))
+        assertEquals(listOf(launch.python, launch.launcher) + arguments + "--print-composition", launch.command(BootstrapQuery.COMPOSITION))
+        assertEquals(listOf(launch.python, launch.launcher) + arguments + "--print-launch", launch.command(BootstrapQuery.LAUNCH))
+        launch.requireCurrent(launch.composition, launch.runtime)
+        fun descriptor(values: List<String>) = JsonValue.Object(graphFields + ("bootstrapArguments" to values.map { it.json() }.json()))
+            .canonical().encodeToByteArray()
+        val lockOnly = arguments.filterIndexed { index, _ -> index !in 12..13 }
+        assertEquals(lockOnly, BootstrapLaunch.parse(descriptor(lockOnly)).command(BootstrapQuery.LAUNCH).drop(2).dropLast(1))
+        val legacy = arguments.filterIndexed { index, _ -> index !in 10..13 }
+        assertEquals(legacy, BootstrapLaunch.parse(descriptor(legacy)).command(BootstrapQuery.LAUNCH).drop(2).dropLast(1))
+        for (invalid in listOf(
+            arguments.filterIndexed { index, _ -> index !in 10..11 }, // Cache without lock.
+            arguments.take(11), // Lock has no value.
+            arguments.take(13), // Cache has no value.
+            arguments.take(10) + arguments.subList(12, 14) + arguments.subList(10, 12) + arguments.takeLast(2),
+            arguments.take(10) + arguments.subList(10, 12) + arguments.subList(10, 12),
+            arguments.take(14) + arguments.subList(12, 14),
+            arguments.toMutableList().also { it[11] = "relative/lock.json" },
+            arguments.toMutableList().also { it[13] = "relative/cache" },
+            arguments.toMutableList().also { it[11] = "/lock\u0000.json" },
+            arguments.toMutableList().also { it[13] = "/cache\u0000path" },
+            arguments + "--offline",
+        )) assertFails { BootstrapLaunch.parse(descriptor(invalid)) }
+    }
+
+    @Test fun replacementCannotChangeSourceLockOrCachePolicy() {
+        val current = BootstrapLaunch.parse(sourceGraphProducerDescriptor)
+        val graphFields = parseJson(sourceGraphProducerDescriptor.decodeToString()).objectValue()
+        val arguments = graphFields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
+        val next = Sha256.digest("new source graph".encodeToByteArray())
+        val replacement = graphFields + mapOf("composition" to next.toJson(),
+            "runtime" to current.runtime.replace(current.composition.hash, next.hash).json())
+        fun parse(values: List<String>) = BootstrapLaunch.parse(JsonValue.Object(replacement +
+            ("bootstrapArguments" to values.map { it.json() }.json())).canonical().encodeToByteArray())
+        parse(arguments).requireReplacement(current, next)
+        for (changed in listOf(
+            arguments.toMutableList().also { it[11] = "/another/source.lock.json" },
+            arguments.toMutableList().also { it[13] = "/another/source-cache" },
+            arguments.filterIndexed { index, _ -> index !in 12..13 },
+            arguments.filterIndexed { index, _ -> index !in 10..13 },
+        )) assertFails { parse(changed).requireReplacement(current, next) }
+    }
+
     @Test fun responsesAreBoundedStrictUtf8AndExactSchema() {
         val current = BootstrapLaunch.parse(producerDescriptor)
         val query = obj("schemaVersion" to 1.json(), "composition" to current.composition.toJson())
