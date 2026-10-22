@@ -1,0 +1,157 @@
+{
+  "artifacts": {
+    "com/github/ajalt/colormath/colormath-macosarm64/3.6.0/colormath-macosarm64-3.6.0.klib": {
+      "hash": "e53f6334bd3a14204b42561ab822e60f87dbfc19a38726f54429212ff6776cc8",
+      "sizeBytes": 342225
+    },
+    "com/github/ajalt/mordant/mordant-core-macosarm64/3.0.2/mordant-core-macosarm64-3.0.2.klib": {
+      "hash": "17b6544387ead72df9bcebd5f9dac5da5782296a986ac4c494ed24c81e55df60",
+      "sizeBytes": 712456
+    },
+    "com/github/ajalt/mordant/mordant-macosarm64/3.0.2/mordant-macosarm64-3.0.2.klib": {
+      "hash": "f8bcb2c0c5c386e705ec62e221b0820791456271951b5a96e9b0ba3e977a3c2e",
+      "sizeBytes": 3856
+    },
+    "com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib": {
+      "hash": "03eef65b5b017dd01251d45dbc47ccdf3cb66d8ac2741b7ba45e4c091f7edb52",
+      "sizeBytes": 504987
+    },
+    "io/github/pdvrieze/xmlutil/core-macosarm64/0.91.3/core-macosarm64-0.91.3.klib": {
+      "hash": "1cd4196dd703fd0412a32a40b6686fc8318388fa0c3602df9c68582c57373c2c",
+      "sizeBytes": 720727
+    },
+    "io/github/pdvrieze/xmlutil/serialization-macosarm64/0.91.3/serialization-macosarm64-0.91.3.klib": {
+      "hash": "8c76f871629425cfc501c9ab408eb933dcd37c965c390f22d0eeab4186d0e0e0",
+      "sizeBytes": 664374
+    },
+    "io/kotest/kotest-assertions-core-macosarm64/6.2.5/kotest-assertions-core-macosarm64-6.2.5.klib": {
+      "hash": "13251c8fbb90d63b41a671da85f84b630a3e2aa45fa67037f6f80ae2a3f25562",
+      "sizeBytes": 910091
+    },
+    "io/kotest/kotest-assertions-shared-macosarm64/6.2.5/kotest-assertions-shared-macosarm64-6.2.5.klib": {
+      "hash": "ca7284b3a4fae356ad94b48aab8065b945eac102b56221f69d640db0798e926f",
+      "sizeBytes": 61469
+    },
+    "io/kotest/kotest-common-macosarm64/6.2.5/kotest-common-macosarm64-6.2.5.klib": {
+      "hash": "a84cd4b763e5a3c28cd028127e57416683684ea88809932a1588b965123a5517",
+      "sizeBytes": 36337
+    },
+    "io/kotest/kotest-framework-engine-macosarm64/6.2.5/kotest-framework-engine-macosarm64-6.2.5.klib": {
+      "hash": "343237ad8a2d1d456116f1fb962676f922fad5ff361f3769f1135c6bea51e249",
+      "sizeBytes": 1145866
+    },
+    "it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib": {
+      "hash": "1eb13bf4ed44eb9154fde79699255efd3b69fa7969eeef24d838780c36ed5260",
+      "sizeBytes": 471557
+    },
+    "net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib": {
+      "hash": "ed10782cf3178f419653a0c7889c88386d8a48130c6fcc56910bdb013daa87c0",
+      "sizeBytes": 19243
+    },
+    "org/jetbrains/kotlin/kotlin-serialization-compiler-plugin-embeddable/2.4.20/kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar": {
+      "hash": "2221ec78c4f8d7367df9a9bd4310c916c5ef70150fb49eeacf238f074f368b52",
+      "sizeBytes": 452378
+    },
+    "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1-cinterop-interop.klib": {
+      "hash": "165c584c77f7c716cdc5a083093ef235c9bacfeabad6ed32ca9f7b928acbe292",
+      "sizeBytes": 3545
+    },
+    "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1.klib": {
+      "hash": "368865987bfa5da765e40b15b4df60fd12f257688ed65a96ca71ebf2cf1a5261",
+      "sizeBytes": 83073
+    },
+    "org/jetbrains/kotlinx/kotlinx-coroutines-core-macosarm64/1.11.0/kotlinx-coroutines-core-macosarm64-1.11.0.klib": {
+      "hash": "782a837c8593af70135378fb90b999cf0cb9880dc746619f64d6c5c224d014d0",
+      "sizeBytes": 1054676
+    },
+    "org/jetbrains/kotlinx/kotlinx-coroutines-test-macosarm64/1.11.0/kotlinx-coroutines-test-macosarm64-1.11.0.klib": {
+      "hash": "1e9602d5d7750e1bcde2480494c9ae65a3d1d19f966eb755731db9b359cc9039",
+      "sizeBytes": 86793
+    },
+    "org/jetbrains/kotlinx/kotlinx-io-bytestring-macosarm64/0.9.1/kotlinx-io-bytestring-macosarm64-0.9.1.klib": {
+      "hash": "b20ec12601f9bd20c346be668b5d0429fa960f22782b73955891273913c6db04",
+      "sizeBytes": 40404
+    },
+    "org/jetbrains/kotlinx/kotlinx-io-core-macosarm64/0.9.1/kotlinx-io-core-macosarm64-0.9.1.klib": {
+      "hash": "8af9ce3402b639aebcb029539cc7b71e2bada133e46c0f3be8793570223978bd",
+      "sizeBytes": 233905
+    },
+    "org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib": {
+      "hash": "551d11833d5611afe63dac02c05dd21611fe5f43d002e014cbe61b380551e3e4",
+      "sizeBytes": 394849
+    },
+    "org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.klib": {
+      "hash": "422eb1c46ccf299e35575cbca2227d23e8873d2da9ce86c5e968a7a3ddedcb2b",
+      "sizeBytes": 382253
+    }
+  },
+  "classpaths": {
+    "kotaml-json:main": [
+      "org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.klib",
+      "org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib",
+      "it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib",
+      "com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib",
+      "net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib"
+    ],
+    "kotaml-json:test": [
+      "org/jetbrains/kotlinx/kotlinx-serialization-json-macosarm64/1.11.0/kotlinx-serialization-json-macosarm64-1.11.0.klib",
+      "io/kotest/kotest-framework-engine-macosarm64/6.2.5/kotest-framework-engine-macosarm64-6.2.5.klib",
+      "io/kotest/kotest-assertions-core-macosarm64/6.2.5/kotest-assertions-core-macosarm64-6.2.5.klib",
+      "org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib",
+      "it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib",
+      "com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib",
+      "io/kotest/kotest-common-macosarm64/6.2.5/kotest-common-macosarm64-6.2.5.klib",
+      "org/jetbrains/kotlinx/kotlinx-coroutines-core-macosarm64/1.11.0/kotlinx-coroutines-core-macosarm64-1.11.0.klib",
+      "com/github/ajalt/mordant/mordant-macosarm64/3.0.2/mordant-macosarm64-3.0.2.klib",
+      "io/kotest/kotest-assertions-shared-macosarm64/6.2.5/kotest-assertions-shared-macosarm64-6.2.5.klib",
+      "org/jetbrains/kotlinx/kotlinx-coroutines-test-macosarm64/1.11.0/kotlinx-coroutines-test-macosarm64-1.11.0.klib",
+      "io/github/pdvrieze/xmlutil/serialization-macosarm64/0.91.3/serialization-macosarm64-0.91.3.klib",
+      "org/jetbrains/kotlinx/kotlinx-io-core-macosarm64/0.9.1/kotlinx-io-core-macosarm64-0.9.1.klib",
+      "net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib",
+      "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1.klib",
+      "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1-cinterop-interop.klib",
+      "com/github/ajalt/mordant/mordant-core-macosarm64/3.0.2/mordant-core-macosarm64-3.0.2.klib",
+      "io/github/pdvrieze/xmlutil/core-macosarm64/0.91.3/core-macosarm64-0.91.3.klib",
+      "org/jetbrains/kotlinx/kotlinx-io-bytestring-macosarm64/0.9.1/kotlinx-io-bytestring-macosarm64-0.9.1.klib",
+      "com/github/ajalt/colormath/colormath-macosarm64/3.6.0/colormath-macosarm64-3.6.0.klib"
+    ],
+    "kotaml:main": [
+      "org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib",
+      "it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib",
+      "com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib",
+      "net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib",
+      "org/jetbrains/kotlin/kotlin-serialization-compiler-plugin-embeddable/2.4.20/kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar"
+    ],
+    "kotaml:test": [
+      "org/jetbrains/kotlinx/kotlinx-serialization-core-macosarm64/1.11.0/kotlinx-serialization-core-macosarm64-1.11.0.klib",
+      "it/krzeminski/snakeyaml-engine-kmp-macosarm64/5.0.0/snakeyaml-engine-kmp-macosarm64-5.0.0.klib",
+      "com/squareup/okio/okio-macosarm64/3.18.2/okio-macosarm64-3.18.2.klib",
+      "io/kotest/kotest-framework-engine-macosarm64/6.2.5/kotest-framework-engine-macosarm64-6.2.5.klib",
+      "io/kotest/kotest-assertions-core-macosarm64/6.2.5/kotest-assertions-core-macosarm64-6.2.5.klib",
+      "net/thauvin/erik/urlencoder/urlencoder-lib-macosarm64/1.6.0/urlencoder-lib-macosarm64-1.6.0.klib",
+      "io/kotest/kotest-common-macosarm64/6.2.5/kotest-common-macosarm64-6.2.5.klib",
+      "org/jetbrains/kotlinx/kotlinx-coroutines-core-macosarm64/1.11.0/kotlinx-coroutines-core-macosarm64-1.11.0.klib",
+      "com/github/ajalt/mordant/mordant-macosarm64/3.0.2/mordant-macosarm64-3.0.2.klib",
+      "io/kotest/kotest-assertions-shared-macosarm64/6.2.5/kotest-assertions-shared-macosarm64-6.2.5.klib",
+      "org/jetbrains/kotlinx/kotlinx-coroutines-test-macosarm64/1.11.0/kotlinx-coroutines-test-macosarm64-1.11.0.klib",
+      "io/github/pdvrieze/xmlutil/serialization-macosarm64/0.91.3/serialization-macosarm64-0.91.3.klib",
+      "org/jetbrains/kotlinx/kotlinx-io-core-macosarm64/0.9.1/kotlinx-io-core-macosarm64-0.9.1.klib",
+      "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1.klib",
+      "org/jetbrains/kotlinx/atomicfu-macosarm64/0.32.1/atomicfu-macosarm64-0.32.1-cinterop-interop.klib",
+      "com/github/ajalt/mordant/mordant-core-macosarm64/3.0.2/mordant-core-macosarm64-3.0.2.klib",
+      "io/github/pdvrieze/xmlutil/core-macosarm64/0.91.3/core-macosarm64-0.91.3.klib",
+      "org/jetbrains/kotlinx/kotlinx-io-bytestring-macosarm64/0.9.1/kotlinx-io-bytestring-macosarm64-0.9.1.klib",
+      "com/github/ajalt/colormath/colormath-macosarm64/3.6.0/colormath-macosarm64-3.6.0.klib",
+      "org/jetbrains/kotlin/kotlin-serialization-compiler-plugin-embeddable/2.4.20/kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar"
+    ]
+  },
+  "fixtureCommit": "a5c94c77b220cfc7b6335668766e8f26930968c3",
+  "provenance": {
+    "extraction": "Ordered unique Maven-cache -library and -Xplugin paths from pinned KTC Native compile invocations. Own module klibs excluded and rebuilt by this fixture. Compiler options retained by explicit typed actions, not replayed shell commands.",
+    "referenceDebugLog": {
+      "hash": "bd6675d4edf9adb23e5e309c35311904ff7a472b864629a83219221a84e75adc",
+      "sizeBytes": 201974
+    }
+  },
+  "schemaVersion": 1
+}
