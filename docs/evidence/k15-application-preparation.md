@@ -60,9 +60,20 @@ Reproduce with `python3 -B tools/test_application_preparation.py` in this worktr
 The controlled compiler environment and source/tool/support receipts follow the
 bundle harness, with `--no-build` rejecting changed inputs/binary/log. Unhashed
 SDK and installation support files must remain stable during compilation and
-across reuse. The planned 13 Native groups use real CAS/filesystem materialization,
+across reuse. The 13 Native groups use real CAS/filesystem materialization,
 including a configured 65 MiB artifact, JVM/Native bundles, descriptor/record/key
 mismatches, invalid bundle shapes, corrupted/missing blobs and files, extra files
 and empty directories, links/FIFOs, executable changes, destination preservation
-and mutation of caller-owned record collections. Help and diff checks pass;
-matching Native execution is pending the coordinated compiler slot.
+and mutation of caller-owned record collections. Help and diff checks pass. The matching Native build/run completed with exit 0;
+all 13 groups passed in 2458 ms, including the 65 MiB artifact in 2210 ms.
+
+Source/test freeze: `8e5a160`. No source changed after the matching build.
+Retained case: `/private/tmp/kvik-k15-application-preparation/.kvik/tests/application-preparation/case-sii4bkyh`.
+
+- Native binary SHA-256: `d3b71de0ce79c17537764b1ec1f3dc935442faa7e94c0f6d6f12ecc14c553535` (2,567,480 bytes).
+- Build receipt SHA-256: `31d5b10f4e92cfc4012fa67f52781ceb7a6e3ab5210f154e133d359dd9a3b3a6`.
+- Summary SHA-256: `01c56e1788d4836289ec0739958f856ee2a165bc87da017ed336144be5fd23a0`.
+
+The case retains the exact source/compiler/support receipt, compiler log, binary,
+test stdout/stderr and all materialized/CAS trees. The independent reviewer can
+use `--no-build` to verify input/log/binary bindings and rerun with fresh case data.
