@@ -20,13 +20,16 @@ data class ScopedSelection(val domain: ResolutionDomain, val selection: LockedSe
 }
 
 /** Lock v2 has mandatory consumer domains. V1 must be explicitly resolved again. */
-data class DependencyLock(val configuration: Digest, val selections: List<ScopedSelection>) {
+data class DependencyLock(val configuration: Digest, val selections: List<ScopedSelection>, val metadataExclusions: List<ScopedMetadataExclusion> = emptyList()) {
+    init { require(metadataExclusions == canonicalExclusions(metadataExclusions)) { "Noncanonical metadata exclusions" } }
     fun toJson(): JsonValue = obj("schemaVersion" to 2.json(), "configuration" to configuration.toJson(),
         "selections" to selections.map { selection -> obj("domain" to selection.domain.toJson(), "requested" to selection.requested.toString().json(),
             "variant" to selection.variant.toLockJson(), "artifacts" to selection.artifacts.map { artifact -> obj(
                 "coordinate" to artifact.coordinate.toString().json(), "variant" to artifact.variant.json(),
                 "repository" to artifact.repository.json(), "url" to artifact.url.json(), "digest" to artifact.digest.toJson()) }.json(),
-            "metadata" to selection.metadata.map { obj("url" to it.url.json(), "digest" to it.digest.toJson()) }.json()) }.json())
+            "metadata" to selection.metadata.map { obj("url" to it.url.json(), "digest" to it.digest.toJson()) }.json()) }.json()).let { value ->
+            if (metadataExclusions.isEmpty()) value else JsonValue.Object(value.objectValue() + ("metadataExclusions" to metadataExclusions.map { it.toJson() }.json()))
+        }
 
     /** Caller publishes atomically only for an explicit resolve/update operation. */
     fun bytes(): ByteArray = toJson().canonical().encodeToByteArray().also { require(it.size <= MAX_LOCK_BYTES) { "Dependency lock too large" } }
@@ -42,7 +45,7 @@ private fun url(value: String): String = value.also {
 
 fun parseDependencyLock(bytes: ByteArray): DependencyLock {
     require(bytes.size <= MAX_LOCK_BYTES) { "Dependency lock too large" }
-    val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("schemaVersion", "configuration", "selections"))
+    val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("schemaVersion", "configuration", "selections"), setOf("metadataExclusions"))
     require(fields.getValue("schemaVersion").longValue() == 2L) { "Dependency lock v2 with resolution domains required; explicitly resolve/update legacy lock" }
     val selections = fields.getValue("selections").boundedArray().map { value ->
         val selection = value.fields(setOf("domain", "requested", "variant", "artifacts", "metadata"))
@@ -62,7 +65,8 @@ fun parseDependencyLock(bytes: ByteArray): DependencyLock {
         ScopedSelection(ResolutionDomain.fromJson(selection.getValue("domain")), LockedSelection(Coordinate.parse(selection.string("requested")), variant, artifacts, metadata))
     }
     require(selections.map { it.request() }.distinct().size == selections.size) { "Duplicate/conflicting lock selection" }
-    val lock = DependencyLock(Digest.fromJson(fields.getValue("configuration")), selections)
+    val exclusions = fields["metadataExclusions"]?.arrayValue()?.also { require(it.isNotEmpty() && it.size <= 32) }?.map(ScopedMetadataExclusion::fromJson).orEmpty()
+    val lock = DependencyLock(Digest.fromJson(fields.getValue("configuration")), selections, exclusions)
     identities(lock) // Reject URL identity conflicts before touching CAS.
     return lock
 }
@@ -106,13 +110,14 @@ class DependencyLocks(private val content: ContentStore, private val pomParser: 
                 return bytes
             }
         }
-        val lock = DependencyLock(configuration.digest, selections(configuration, storing))
+        val lock = DependencyLock(configuration.digest, selections(configuration, storing), canonicalExclusions(configuration.policy.metadataExclusions))
         // Same validation path as a later process: serialized schema, identity, CAS and metadata proof.
         return loadLocked(lock.bytes(), configuration)
     }
 
     fun loadLocked(bytes: ByteArray, configuration: EffectiveConfiguration): DependencyLock {
         val lock = parseDependencyLock(bytes)
+        require(lock.metadataExclusions == canonicalExclusions(configuration.policy.metadataExclusions)) { "Lock metadata exclusions differ from explicit policy" }
         require(lock.configuration == configuration.digest) { "Stale dependency lock: effective configuration differs; explicitly resolve/update" }
         require(lock.selections.map { it.request() } == configuration.requests) { "Lock roots/variants do not match requested scopes" }
         val urls = identities(lock)
@@ -139,8 +144,8 @@ class DependencyLocks(private val content: ContentStore, private val pomParser: 
         val policy = configuration.policy
         return configuration.requests.groupBy { it.domain }.flatMap { (domain, requests) ->
             require(requests.map { it.variant }.distinct().size == 1) { "Conflicting producer variants within resolution domain" }
-            val resolver = MavenResolver(transport, pomParser, policy.pinsFor(domain), policy.maxComponents, policy.maxRequests, resolutionArtifactByteLimit(domain))
-            resolver.resolveAll(requests.map { it.coordinate }, requests.first().variant, configuration.repositories).map { ScopedSelection(domain, it) }
+            val resolver = MavenResolver(transport, pomParser, policy.pinsFor(domain), policy.maxComponents, policy.maxRequests, resolutionArtifactByteLimit(domain), policy.exclusionsFor(domain))
+            resolver.resolveAll(requests.map { it.coordinate }, requests.first().variant, configuration.repositories, requireAllExclusions = true).map { ScopedSelection(domain, it) }
         }
     }
 }

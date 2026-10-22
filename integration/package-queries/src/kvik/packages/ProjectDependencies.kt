@@ -97,7 +97,7 @@ fun queryProjectDependencies(projectPath: String, lockPath: String, storePath: S
         if (selected.size > 256) { truncated = true; diagnostics += QueryDiagnostic("KVIK_QUERY_TRUNCATED", "Project query exceeds 256 domains; select module/target/compilation/usage") }
         for ((domain, requests) in selected.entries.take(256)) {
             val graph = MavenResolver(replay, parser, effective.policy.pinsFor(domain), effective.policy.maxComponents,
-                effective.policy.maxRequests, resolutionArtifactByteLimit(domain)).resolveGraph(requests.map { it.coordinate }, requests.first().variant, effective.repositories)
+                effective.policy.maxRequests, resolutionArtifactByteLimit(domain), effective.policy.exclusionsFor(domain)).resolveGraph(requests.map { it.coordinate }, requests.first().variant, effective.repositories, requireAllExclusions = true)
             require(graph.selections == lock.selections.filter { it.domain == domain }.map { it.selection }) { "Query graph disagrees with locked selections: $domain" }
             val json = graph.toJson()
             if (json.values.getValue("truncated").booleanValue()) truncated = true

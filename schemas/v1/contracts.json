@@ -1108,6 +1108,127 @@
       ],
       "additionalProperties": false
     },
+    "metadataEdgeExclusion": {
+      "type": "object",
+      "properties": {
+        "parent": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])",
+          "maxLength": 1024
+        },
+        "metadata": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "properties": {
+                "sizeBytes": {
+                  "minimum": 1,
+                  "maximum": 1048576
+                },
+                "hash": {
+                  "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                }
+              }
+            }
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f]*[^\\s\\u0000-\\u001f][^\\u0000-\\u001f]*$(?![\\s\\S])"
+        },
+        "dependency": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])",
+          "maxLength": 1024
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f]*[^\\s\\u0000-\\u001f][^\\u0000-\\u001f]*$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "parent",
+        "metadata",
+        "variant",
+        "dependency",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "scopedMetadataExclusion": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/resolutionDomain"
+            },
+            {
+              "properties": {
+                "module": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+                }
+              }
+            }
+          ]
+        },
+        "parent": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])",
+          "maxLength": 1024
+        },
+        "metadata": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "properties": {
+                "sizeBytes": {
+                  "minimum": 1,
+                  "maximum": 1048576
+                },
+                "hash": {
+                  "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                }
+              }
+            }
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f]*[^\\s\\u0000-\\u001f][^\\u0000-\\u001f]*$(?![\\s\\S])"
+        },
+        "dependency": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])",
+          "maxLength": 1024
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f]*[^\\s\\u0000-\\u001f][^\\u0000-\\u001f]*$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "domain",
+        "parent",
+        "metadata",
+        "variant",
+        "dependency",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "dependencyLock": {
       "type": "object",
       "properties": {
@@ -1122,6 +1243,15 @@
           "items": {
             "$ref": "#/$defs/scopedSelection"
           }
+        },
+        "metadataExclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scopedMetadataExclusion"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
         }
       },
       "required": [

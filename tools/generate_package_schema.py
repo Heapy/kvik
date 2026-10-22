@@ -23,9 +23,9 @@ defs={
  'domain':obj(module=text,target=enum('jvm','macosArm64'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor')),
  'diagnostic':obj(code=text,message=text,source=nullable(text)),
  'source':obj(repository=text,url=text,kind=enum('metadata','artifact'),digest=nullable(ref('digest')),observedAt=nullable(time),cache=enum('network','cache','locked','none'),status=enum('found','not-found','missing','corrupt','error'),freshness=freshness,latest=nullable(text),release=nullable(text),lastUpdated=nullable(text)),
- 'requirement':obj(coordinate=coordinate,semantics=enum('requires','pom-effective','redirect','constraint')),
+ 'requirement':obj(coordinate=coordinate,semantics=enum('requires','pom-effective','redirect','constraint','explicit-exclusion')),
  'node':obj(id=text,coordinate=coordinate,platform=boolean,expanded=boolean,variant=text,repository=text,metadata=arr(ref('metadata'),32),artifacts=arr(ref('artifact'),32)),
- 'edge':obj(source=text,target=nullable(text),kind=enum('dependency','redirect','constraint'),requirement=ref('requirement'),selected=nullable(coordinate),transitive=boolean),
+ 'edge':obj(source=text,target=nullable(text),kind=enum('dependency','redirect','constraint','excluded'),requirement=ref('requirement'),selected=nullable(coordinate),transitive=boolean),
  'root':obj(requested=coordinate,node=text),
  'path':obj(root=coordinate,node=text,nodes=arr(text,1024),edges=arr(nonnegative,1024)),
  'graph':obj(variant=ref('variant'),roots=arr(ref('root'),256),nodes=arr(ref('node'),1024),edges=arr(ref('edge'),8192),paths=arr(ref('path'),4096),pathPolicy=enum('shortest-per-root-node'),truncated=boolean,artifactVerification=enum('verified')),
@@ -36,6 +36,14 @@ defs={
  'packageQuery':obj(project=text,coordinate=coordinate,repositories=arr(ref('repository'),32),variant=ref('variant'),pins=arr(coordinate,256),mode=mode),
  'projectQuery':obj(project=text,lock=text,store=text,modules=arr(text,1024),targets=arr(enum('jvm','macosArm64'),2),compilation=nullable(enum('main','test')),usage=nullable(enum('java-api','java-runtime','kotlin-api','kotlin-runtime'))),
 }
+rule_text={'type':'string','minLength':1,'pattern':r'^[^\u0000-\u001f]*[^\s\u0000-\u001f][^\u0000-\u001f]*'+STRICT_END}
+defs['metadataExclusion'] = obj(parent=coordinate, metadata={'allOf':[ref('digest'),{'properties':{'sizeBytes':{'minimum':1,'maximum':1048576}}}]},
+    variant={**rule_text,'maxLength':256}, dependency=coordinate, reason={**rule_text,'maxLength':1024})
+defs['edge']['properties']['exclusion'] = obj(rule=ref('metadataExclusion'), digest=ref('digest'))
+defs['edge']['allOf'] = [{'if': {'properties': {'kind': {'const':'excluded'}}},
+    'then': {'required':['exclusion'], 'properties': {'target':{'type':'null'}, 'selected':{'type':'null'}, 'transitive':{'const':False},
+        'requirement': {'properties': {'semantics': {'const':'explicit-exclusion'}}}}},
+    'else': {'not': {'required':['exclusion']}, 'properties': {'requirement': {'properties': {'semantics':enum('requires','pom-effective','redirect','constraint')}}}}}]
 base=dict(schemaVersion={'const':1},status=enum('complete','incomplete','unsupported'),observedAt=time,freshness=freshness,freshnessBasis=enum('repository-observation','locked-inputs'),sources=arr(ref('source')),diagnostics=arr(ref('diagnostic'),1024),compatibility={'const':'not-assessed'},truncated=boolean)
 def result(kind,query,**payload):return obj(**base,kind={'const':kind},query=ref(query),**payload)
 defs['versions']=result('package-versions','versionQuery',versions=arr(ref('version'),200),order={'const':'lexical-ascending'},classification={'const':'numeric-known-qualifiers-v1'},page=obj(limit={'type':'integer','minimum':1,'maximum':200},nextCursor=nullable(text),snapshot=nullable(ref('digest')),total=nullable(nonnegative)))

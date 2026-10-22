@@ -28,9 +28,12 @@ class MavenResolver(
     private val maxComponents: Int = 256,
     private val maxRequests: Int = 1024,
     private val maxArtifactBytes: Int = 64 * 1024 * 1024,
+    metadataExclusions: List<MetadataEdgeExclusion> = emptyList(),
 ) : DependencyResolver {
+    private val metadataExclusions = metadataExclusions.sortedBy { it.toJson().canonical() }
     private val pins = pins.associateBy { it.key() }
     init {
+        require(metadataExclusions.size <= 32 && metadataExclusions.map { it.parent to it.dependency }.distinct().size == metadataExclusions.size) { "Duplicate/conflicting metadata exclusions" }
         require(this.pins.size == pins.size) { "Conflicting explicit pins" }
         require(maxComponents in 1..1024 && maxRequests in 1..8192)
         require(maxArtifactBytes in 1..128 * 1024 * 1024)
@@ -40,14 +43,15 @@ class MavenResolver(
         resolveAll(listOf(coordinate), variant, repositories).single()
 
     /** Resolve roots together to detect graph conflicts, retaining a closure per root in declaration order. */
-    fun resolveAll(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>): List<LockedSelection> =
-        traverse(roots, variant, repositories, trace = false).selections
+    fun resolveAll(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>, requireAllExclusions: Boolean = false): List<LockedSelection> =
+        traverse(roots, variant, repositories, trace = false, requireAllExclusions).selections
 
     /** Additive inspection evidence; shares selection, validation and byte verification with locks. */
-    fun resolveGraph(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>): ResolutionGraph =
-        traverse(roots, variant, repositories, trace = true)
+    fun resolveGraph(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>, requireAllExclusions: Boolean = false): ResolutionGraph =
+        traverse(roots, variant, repositories, trace = true, requireAllExclusions)
 
-    private fun traverse(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>, trace: Boolean): ResolutionGraph {
+    private fun traverse(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>, trace: Boolean, requireAllExclusions: Boolean): ResolutionGraph {
+        val appliedExclusions = mutableSetOf<MetadataEdgeExclusion>()
         require(roots.isNotEmpty() && roots.size <= maxComponents)
         require(variant.attributes.keys.all { variant.platform == "jvm" && it == JVM_TARGET_VERSION_ATTRIBUTE }) { "Unsupported consumer variant attributes" }
         variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]?.let(::supportedJvmTarget)
@@ -112,6 +116,8 @@ class MavenResolver(
                 }
             } ?: error("Missing metadata for $c")
             val used = mutableListOf(MetadataIdentity(found.url, Sha256.digest(found.bytes)))
+            val rules = metadataExclusions.filter { it.parent.key() == c.key() }
+            require(rules.all { it.parent == c && found.module && it.metadata == used.single().digest }) { "Stale metadata exclusion parent version/digest/format: $c" }
             val edges = mutableListOf<String>()
             val artifacts = mutableListOf<LockedArtifact>()
             var metadataOwner = c
@@ -149,6 +155,10 @@ class MavenResolver(
                 provided = capabilities(chosen, c)
                 val name = chosen.string("name")
                 selectedVariant = name
+                require(rules.all { it.variant == name }) { "Stale metadata exclusion variant: $c:$name" }
+                val declaredDependencies = if (transitive || rules.isNotEmpty()) chosen.items("dependencies").map { dependency(it) } else emptyList()
+                require(rules.all { rule -> declaredDependencies.count { it.first == rule.dependency && !it.second } == 1 } &&
+                    (rules.isEmpty() || !platform && chosen["available-at"] == null)) { "Stale or unsupported metadata exclusion edge: $c" }
                 val redirect = chosen["available-at"]
                 if (redirect != null) {
                     require(chosen.items("files").isEmpty() && chosen.items("dependencies").isEmpty() && chosen.items("dependencyConstraints").isEmpty()) { "Redirect with local contents" }
@@ -169,7 +179,17 @@ class MavenResolver(
                         require(Sha256.digest(fetch(url)) == expected) { "Artifact digest mismatch: $url" }
                         artifacts += LockedArtifact(c, name, found.repository.id, url, expected)
                     }
-                    if (transitive) chosen.items("dependencies").forEach { val (d, p) = dependency(it); edges += dependencyEdge(d, p) }
+                    if (transitive) declaredDependencies.forEach { (d, p) ->
+                        val exclusion = rules.singleOrNull { it.dependency == d }
+                        if (exclusion == null) edges += dependencyEdge(d, p)
+                        else {
+                            appliedExclusions += exclusion
+                            if (trace) {
+                                require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
+                                traceEdges += ResolutionEdge(key, null, "excluded", d, "explicit-exclusion", null, false, exclusion)
+                            }
+                        }
+                    }
                 }
             } else {
                 val pom = effectivePom(c, pomParser.parse(found.bytes)) { parent ->
@@ -214,6 +234,7 @@ class MavenResolver(
             return key
         }
         val rootKeys = roots.map { visit(it) }
+        require(!requireAllExclusions || appliedExclusions == metadataExclusions.toSet()) { "Metadata exclusion was not applied in its full resolution domain" }
         constraints.forEach { (key, versions) -> selected[key]?.let { c -> versions.forEach { require(atLeast(c.version, it)) { "Constraint $key:$it conflicts with $c" } } } }
         val selections = roots.zip(rootKeys).map { (root, key) ->
             val emitted = mutableSetOf<String>()

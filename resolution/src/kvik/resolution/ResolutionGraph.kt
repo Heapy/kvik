@@ -6,7 +6,13 @@ import kvik.core.*
 data class ResolutionNode(val id: String, val coordinate: Coordinate, val platform: Boolean, val expanded: Boolean,
                           val variant: String, val repository: String, val metadata: List<MetadataIdentity>, val artifacts: List<LockedArtifact>)
 data class ResolutionEdge(val source: String, val target: String?, val kind: String, val requirement: Coordinate,
-                          val semantics: String, val selected: Coordinate?, val transitive: Boolean)
+                          val semantics: String, val selected: Coordinate?, val transitive: Boolean, val exclusion: MetadataEdgeExclusion? = null) {
+    init {
+        if (exclusion != null) require(kind == "excluded" && target == null && selected == null && !transitive &&
+            semantics == "explicit-exclusion" && requirement == exclusion.dependency)
+        else require(kind != "excluded" && semantics != "explicit-exclusion")
+    }
+}
 data class ResolutionRoot(val requested: Coordinate, val node: String)
 data class ResolutionGraph(val variant: VariantRequest, val roots: List<ResolutionRoot>, val nodes: List<ResolutionNode>,
                            val edges: List<ResolutionEdge>, val selections: List<LockedSelection>) {
@@ -45,7 +51,9 @@ data class ResolutionGraph(val variant: VariantRequest, val roots: List<Resoluti
                     "repository" to it.repository.json(), "url" to it.url.json(), "digest" to it.digest.toJson()) }.json()) }.json(),
             "edges" to edges.map { edge -> obj("source" to edge.source.json(), "target" to (edge.target?.json() ?: JsonValue.Null),
                 "kind" to edge.kind.json(), "requirement" to obj("coordinate" to edge.requirement.toString().json(), "semantics" to edge.semantics.json()),
-                "selected" to (edge.selected?.toString()?.json() ?: JsonValue.Null), "transitive" to edge.transitive.json()) }.json(),
+                "selected" to (edge.selected?.toString()?.json() ?: JsonValue.Null), "transitive" to edge.transitive.json()).let { value ->
+                    if (edge.exclusion == null) value else JsonValue.Object(value.objectValue() + ("exclusion" to obj("rule" to edge.exclusion.toJson(), "digest" to edge.exclusion.digest.toJson())))
+                } }.json(),
             "paths" to paths.json(), "pathPolicy" to "shortest-per-root-node".json(), "truncated" to truncated.json(), "artifactVerification" to "verified".json())
     }
 }

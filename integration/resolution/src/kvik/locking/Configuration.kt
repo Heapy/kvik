@@ -22,19 +22,42 @@ data class ResolutionDomain(val module: String, val target: String, val compilat
 }
 data class ScopedPin(val domain: ResolutionDomain, val coordinate: Coordinate)
 
+/** Scope is consumer policy; the nested rule names immutable producer evidence. */
+data class ScopedMetadataExclusion(val domain: ResolutionDomain, val rule: MetadataEdgeExclusion) {
+    fun toJson(): JsonValue.Object = JsonValue.Object(rule.toJson().objectValue() + ("domain" to domain.toJson()))
+    fun argument(): String = toJson().canonical()
+    companion object {
+        fun fromJson(value: JsonValue): ScopedMetadataExclusion {
+            val d = value.fields(setOf("domain", "parent", "metadata", "variant", "dependency", "reason"))
+            return ScopedMetadataExclusion(ResolutionDomain.fromJson(d.getValue("domain")), MetadataEdgeExclusion.fromJson(JsonValue.Object(d - "domain")))
+        }
+    }
+}
+fun parseMetadataEdgeExclusion(text: String): ScopedMetadataExclusion {
+    require(text.encodeToByteArray().size <= 4096) { "Metadata exclusion exceeds 4 KiB" }
+    return ScopedMetadataExclusion.fromJson(parseJson(text))
+}
+internal fun canonicalExclusions(values: List<ScopedMetadataExclusion>): List<ScopedMetadataExclusion> {
+    require(values.size <= 32) { "Too many metadata exclusions" }
+    require(values.map { it.domain to (it.rule.parent to it.rule.dependency) }.distinct().size == values.size) { "Duplicate/conflicting metadata exclusions" }
+    return values.sortedBy { it.argument() }
+}
+
 /** Fixed reviewed transfer policy; larger KSP analysis jars do not enlarge ordinary dependency domains. */
 fun resolutionArtifactByteLimit(domain: ResolutionDomain): Int = (if (domain.purpose == "ksp-runtime") 128 else 64) * 1024 * 1024
 
 /** Explicit pins; scope overrides are recorded, never inferred from another compilation. */
 data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxComponents: Int = 256, val maxRequests: Int = 1024,
-                          val scopedPins: List<ScopedPin> = emptyList()) {
+                          val scopedPins: List<ScopedPin> = emptyList(), val metadataExclusions: List<ScopedMetadataExclusion> = emptyList()) {
     init {
+        canonicalExclusions(metadataExclusions)
         require(pins.map { "${it.group}:${it.name}" }.distinct().size == pins.size) { "Duplicate/conflicting resolver pins" }
         require(scopedPins.map { it.domain to "${it.coordinate.group}:${it.coordinate.name}" }.distinct().size == scopedPins.size) { "Duplicate/conflicting scoped pins" }
         require(maxComponents in 1..1024 && maxRequests in 1..8192)
     }
     fun pinsFor(domain: ResolutionDomain): List<Coordinate> = (pins.associateBy { "${it.group}:${it.name}" } +
         scopedPins.filter { it.domain == domain }.associate { "${it.coordinate.group}:${it.coordinate.name}" to it.coordinate }).values.sortedBy(Coordinate::toString)
+    fun exclusionsFor(domain: ResolutionDomain): List<MetadataEdgeExclusion> = canonicalExclusions(metadataExclusions).filter { it.domain == domain }.map { it.rule }
     internal fun toJson(kspRuntime: Boolean = false): JsonValue = obj("implementation" to "kvik-maven-v3".json(),
         "jvmCompatibility" to obj("defaultConsumerTarget" to DEFAULT_JVM_TARGET.json(), "compilerPluginHost" to COMPILER_PLUGIN_JVM_HOST.json(),
             "producerVersion" to "integer-lte-consumer-or-unspecified".json(), "ambiguity" to "reject".json()),
@@ -43,7 +66,9 @@ data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxCompo
             obj("domain" to it.domain.toJson(), "coordinate" to it.coordinate.toString().json()) }.json(),
         "maxComponents" to maxComponents.json(), "maxRequests" to maxRequests.json(),
         "maxMetadataBytes" to (1024 * 1024).json(), "maxArtifactBytes" to (64 * 1024 * 1024).json(), "maxAggregateBytes" to (256 * 1024 * 1024).json()).let {
-            if (!kspRuntime) it else JsonValue.Object(it.objectValue() + ("maxKspRuntimeArtifactBytes" to (128 * 1024 * 1024).json()))
+            val fields = it.objectValue() + (if (kspRuntime) mapOf("maxKspRuntimeArtifactBytes" to (128 * 1024 * 1024).json()) else emptyMap()) +
+                (if (metadataExclusions.isEmpty()) emptyMap() else mapOf("metadataExclusions" to canonicalExclusions(metadataExclusions).map { rule -> rule.toJson() }.json()))
+            JsonValue.Object(fields)
         }
 }
 
@@ -77,7 +102,7 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
                            scopes: List<DependencyScope> = defaultDependencyScopes(configuration)): EffectiveConfiguration {
     val snapshot = parseProjectConfiguration(parseJson(configuration.document.canonical()))
     require(snapshot.project == configuration.project) { "Configuration document and model disagree" }
-    val pinned = policy.copy(pins = policy.pins.toList(), scopedPins = policy.scopedPins.toList())
+    val pinned = policy.copy(pins = policy.pins.toList(), scopedPins = policy.scopedPins.toList(), metadataExclusions = canonicalExclusions(policy.metadataExclusions))
     require(scopes.distinct().size == scopes.size) { "Duplicate dependency scope" }
     val orderedScopes = scopes.sortedBy { it.toJson().canonical() }
     val modules = snapshot.project.modules.associateBy { it.id }
@@ -130,6 +155,7 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
         }
     }
     orderedScopes.forEach { visit(it.domain()) }
+    require(pinned.metadataExclusions.all { rule -> requests.any { it.domain == rule.domain } }) { "Metadata exclusion refers to an empty or unselected resolution domain" }
     require(pinned.scopedPins.all { it.domain in domains }) { "Scoped pin refers to an unselected resolution domain" }
     require(domains.size <= 8192 && requests.size <= 8192) { "Too many dependency domains/requests" }
     val orderedRequests = requests.sortedBy { it.domain.toJson().canonical() + it.variant.toLockJson().canonical() + ":" + it.coordinate }

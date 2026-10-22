@@ -95,7 +95,14 @@ DEFS["resolutionDomain"]["allOf"] = [
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"purpose": enum("ksp-runtime", "symbol-processor")}},
     "then": {"properties": {"target": {"const": "macosArm64"}, "compilation": {"const": "test"}}}})
 DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
-DEFS["dependencyLock"] = object_({"schemaVersion": {"const": 2}, "configuration": ref("digest"), "selections": array(ref("scopedSelection"))})
+EXCLUSION_COORDINATE = {**COORDINATE, "maxLength": 1024, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
+DEFS["metadataEdgeExclusion"] = object_({"parent": EXCLUSION_COORDINATE, "metadata": ref("digest"),
+    "variant": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": r"^[^\u0000-\u001f]*[^\s\u0000-\u001f][^\u0000-\u001f]*$(?![\s\S])"},
+    "dependency": EXCLUSION_COORDINATE,
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": r"^[^\u0000-\u001f]*[^\s\u0000-\u001f][^\u0000-\u001f]*$(?![\s\S])"}})
+DEFS["metadataEdgeExclusion"]["properties"]["metadata"] = {"allOf": [ref("digest"), {"properties": {"sizeBytes": {"minimum": 1, "maximum": 1048576}, "hash": {"pattern": r"^[0-9a-f]{64}$(?![\s\S])"}}}]}
+DEFS["scopedMetadataExclusion"] = object_({"domain": {"allOf": [ref("resolutionDomain"), {"properties": {"module": {"pattern": ID["pattern"] + r"(?![\s\S])"}}}]}, **DEFS["metadataEdgeExclusion"]["properties"]})
+DEFS["dependencyLock"] = object_({"schemaVersion": {"const": 2}, "configuration": ref("digest"), "selections": array(ref("scopedSelection")), "metadataExclusions": array(ref("scopedMetadataExclusion"), minItems=1, maxItems=32, uniqueItems=True)}, optional=("metadataExclusions",))
 DEFS["sourcePin"] = object_({"id": ID, "kind": enum("git", "archive", "local"), "origin": STRING, "revision": nullable(STRING), "tree": ref("digest"), "archiveDigest": ref("digest")}, optional=("archiveDigest",))
 DEFS["sourcePin"]["allOf"] = [
     {"if": {"properties": {"kind": {"const": "git"}}}, "then": {"properties": {"revision": {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}}}},
