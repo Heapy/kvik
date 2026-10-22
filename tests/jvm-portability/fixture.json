@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "description": "Pristine two-module common/actual JVM CLI snapshot, before freshness-test New.kt mutation; build only, no plugin/release/test compilation audit.",
+  "source": "tools/test_build_cli.py original cold-build snapshot",
+  "snapshotFiles": {
+    "inputs.json": {
+      "hash": "2cee7b43812090ca4339d85178d12c2e6efe8a24ebd7457420b531ec2535eadc",
+      "sizeBytes": 809
+    },
+    "configuration.json": {
+      "hash": "481696cb28b259f284b992a99e70821bb94cf2dfb0f800776ef902cf6b0e44fa",
+      "sizeBytes": 1112
+    },
+    "dependency-lock.json": {
+      "hash": "4ef3b85e04ea18ca609915445cc99aa7ab1cf751eb5345a5c08ef1c95ce250a7",
+      "sizeBytes": 13014
+    },
+    "tools.json": {
+      "hash": "80261b73e6172e0d81ff9fe4dfc5d859e1e84937d673794c7239125a808ee32e",
+      "sizeBytes": 1393
+    }
+  },
+  "runtimeExecutable": {
+    "hash": "1e3445daa801f2524fa43bf294efffae24da05d910d35b760525ccd0e1300d57",
+    "sizeBytes": 3931592
+  }
+}

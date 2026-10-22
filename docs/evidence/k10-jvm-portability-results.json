@@ -1,0 +1,193 @@
+{
+  "actionKeys": {
+    "consumer:jvm:main": {
+      "hash": "fac220e354054f79944d76b25304ff8f9078685fb4b32e654e0b05b3ab020ff5",
+      "sizeBytes": 2694
+    },
+    "library:jvm:main": {
+      "hash": "cb32fe7bbde831e5288ab1f287830152262b94e73b6a50c4317b43bcfa471f77",
+      "sizeBytes": 2238
+    }
+  },
+  "configurationDigest": {
+    "hash": "481696cb28b259f284b992a99e70821bb94cf2dfb0f800776ef902cf6b0e44fa",
+    "sizeBytes": 1112
+  },
+  "notes": [
+    "Same physical macOS arm64 host; fixed tool and runtime installation paths.",
+    "Observed exact manifests only; no REMOTE approval or cross-machine claim."
+  ],
+  "observedOutputs": {
+    "consumer:jvm:main": {
+      "files": [
+        {
+          "digest": {
+            "hash": "ec7119b36883aa86724a759b6d1bf9489c5911fa2717c5267944e7cb59e48f5d",
+            "sizeBytes": 47
+          },
+          "executable": false,
+          "path": "classes/META-INF/consumer.kotlin_module"
+        },
+        {
+          "digest": {
+            "hash": "a8df0284ab0c1740adb9cedd60995210e11727b57ca2940bad394082236f99c5",
+            "sizeBytes": 521
+          },
+          "executable": false,
+          "path": "classes/fixture/ConsumerKt.class"
+        }
+      ],
+      "schemaVersion": 1
+    },
+    "library:jvm:main": {
+      "files": [
+        {
+          "digest": {
+            "hash": "1d1c2c1630b510322f1c40d2a50fd4f763fc41041c61e56de0c5fb85e0e61105",
+            "sizeBytes": 57
+          },
+          "executable": false,
+          "path": "classes/META-INF/library.kotlin_module"
+        },
+        {
+          "digest": {
+            "hash": "d0c246bfb4bcc11b0ab2c72347a4e6973619e46a5515b6069025e3a209c72e3e",
+            "sizeBytes": 862
+          },
+          "executable": false,
+          "path": "classes/fixture/CommonKt.class"
+        },
+        {
+          "digest": {
+            "hash": "d82483da0fbed0ccd36b6f4b9c63d29f47006d1a41d9566d2ba81a586242f0e5",
+            "sizeBytes": 490
+          },
+          "executable": false,
+          "path": "classes/fixture/PlatformKt.class"
+        }
+      ],
+      "schemaVersion": 1
+    }
+  },
+  "schemaVersion": 1,
+  "seededDependencyBlobs": 13,
+  "summary": {
+    "comparisons": [
+      {
+        "actionId": "consumer:jvm:main",
+        "differences": [],
+        "equalAction": true,
+        "equalManifest": true,
+        "left": "A1",
+        "right": "A2"
+      },
+      {
+        "actionId": "library:jvm:main",
+        "differences": [],
+        "equalAction": true,
+        "equalManifest": true,
+        "left": "A1",
+        "right": "A2"
+      },
+      {
+        "actionId": "consumer:jvm:main",
+        "differences": [],
+        "equalAction": true,
+        "equalManifest": true,
+        "left": "A1",
+        "right": "B1"
+      },
+      {
+        "actionId": "library:jvm:main",
+        "differences": [],
+        "equalAction": true,
+        "equalManifest": true,
+        "left": "A1",
+        "right": "B1"
+      }
+    ],
+    "evidence": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd",
+    "rootPathMatches": [],
+    "runs": [
+      {
+        "label": "A1",
+        "project": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/A",
+        "run": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/A1/runs/kvik-run-d8t5xE",
+        "seconds": 85.25390045897802,
+        "store": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/A1/store",
+        "verificationDigest": {
+          "hash": "44d991688d91856c96d1e324b25adf2dd45936c4f7e4e504e2798b53787dd0da",
+          "sizeBytes": 3198
+        }
+      },
+      {
+        "label": "A2",
+        "project": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/A",
+        "run": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/A2/runs/kvik-run-biqDRZ",
+        "seconds": 87.81830641604029,
+        "store": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/A2/store",
+        "verificationDigest": {
+          "hash": "7caa338194c09fe38349027f970bebf922544fc349fdc00500f80f76937c4d40",
+          "sizeBytes": 3198
+        }
+      },
+      {
+        "label": "B1",
+        "project": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/relocated-project-with-a-deliberately-longer-absolute-path/B",
+        "run": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/B1/runs/kvik-run-gd06OV",
+        "seconds": 78.17261387500912,
+        "store": "/private/tmp/kvik-k10-jvm-portability/.kvik/tests/jvm-portability/case-xigzg6qd/B1/store",
+        "verificationDigest": {
+          "hash": "905be7de9bd59ca28cad63f1934b22b151435d985ef4b9166007903728e81c58",
+          "sizeBytes": 3375
+        }
+      }
+    ],
+    "runtime": "/Users/yoda/dev/pet/kvik/.kvik/runtime/executables/21e25288040f1c25dae89eab37312c77cf4604dd91f056ecf464b8b2dba22e48/kvik.kexe",
+    "runtimeDigest": {
+      "hash": "1e3445daa801f2524fa43bf294efffae24da05d910d35b760525ccd0e1300d57",
+      "sizeBytes": 3931592
+    },
+    "schemaVersion": 1,
+    "scope": "same-host A1/A2/B1; no remote eligibility",
+    "status": "passed"
+  },
+  "toolchains": {
+    "consumer:jvm:main": {
+      "jdk": {
+        "hash": "9f1731eddb9eed3e628bab1b673ac350c86aa29a0977876b37f9b717da103cc0",
+        "sizeBytes": 72848
+      },
+      "junit": {
+        "hash": "3fdfc37e29744a9a67dd5365e81467e26fbde0b7aa204e6f8bbe79eeaa7ae892",
+        "sizeBytes": 3159930
+      },
+      "jvm-compiler": {
+        "hash": "51344a28032e2bb019144f28b5a2e33a08145717cf50afc9961a1e796c5c260d",
+        "sizeBytes": 2088
+      },
+      "jvm-worker": {
+        "hash": "10639904d3efe5e340708d4e2ffc61ec947b9b85dfd1bc8dc7999bc00fa0f7aa",
+        "sizeBytes": 481
+      }
+    },
+    "library:jvm:main": {
+      "jdk": {
+        "hash": "9f1731eddb9eed3e628bab1b673ac350c86aa29a0977876b37f9b717da103cc0",
+        "sizeBytes": 72848
+      },
+      "junit": {
+        "hash": "3fdfc37e29744a9a67dd5365e81467e26fbde0b7aa204e6f8bbe79eeaa7ae892",
+        "sizeBytes": 3159930
+      },
+      "jvm-compiler": {
+        "hash": "51344a28032e2bb019144f28b5a2e33a08145717cf50afc9961a1e796c5c260d",
+        "sizeBytes": 2088
+      },
+      "jvm-worker": {
+        "hash": "10639904d3efe5e340708d4e2ffc61ec947b9b85dfd1bc8dc7999bc00fa0f7aa",
+        "sizeBytes": 481
+      }
+    }
+  }
+}
