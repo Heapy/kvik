@@ -68,7 +68,7 @@ fun nativeCompileAction(compilation: NativeCompilation, inputs: TreeManifest, co
     require(toolchains.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Complete Native toolchain identities required" }
     return ActionSpec("kvik-native-compiler-v1", composition, if (compilation.produce == NativeOutput.LIBRARY) ActionKind.COMPILE else ActionKind.LINK,
         mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(compilation.output) + if (compilation.produce == NativeOutput.LIBRARY) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM")), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
+        listOf(compilation.output) + if (compilation.produce == NativeOutput.LIBRARY) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM")), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
 fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, filter: String? = null, timeoutMillis: Long = 60_000): ActionSpec {
@@ -78,5 +78,5 @@ fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManife
     require(filter == null || filter.matches(Regex("[A-Za-z0-9_.*]+"))) { "Unsupported test filter" }
     return ActionSpec("kvik-native-tests-v1", composition, ActionKind.TEST, mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("test-results.json")), listOf("--ktest_logger=TEAMCITY") + listOfNotNull(filter?.let { "--ktest_filter=$it" }),
-        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)), timeoutMillis, CachePolicy.NEVER)
+        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)), timeoutMillis, CachePolicy.NEVER)
 }

@@ -38,6 +38,7 @@ class NativeUnitTest {
         for ((id, modified) in listOf(
             "removed" to action.copy(arguments = action.arguments - offline),
             "overridden" to action.copy(arguments = action.arguments + "-Xoverride-konan-properties=airplaneMode=false"),
+            "internal-server" to action.copy(environment = action.environment + ("KONAN_USE_INTERNAL_SERVER" to "1")),
             "developer" to action.copy(environment = action.environment + ("DEVELOPER_DIR" to "/unverified")),
             "sdk" to action.copy(environment = action.environment + ("SDKROOT" to "/unverified")))) {
             assertFailsWith<IllegalArgumentException> { executor.start("tools", id, modified) }
@@ -47,7 +48,7 @@ class NativeUnitTest {
         executor.start("tools", "valid", action).use { assertEquals(ActionStatus.FAILED, it.poll()!!.status) }
         val process = requests.single()
         assertEquals(1, process.arguments.count { it == offline })
-        assertEquals(mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "JAVA_HOME" to "/verified/jdk", "SDKROOT" to "/verified/sdk",
+        assertEquals(mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0", "JAVA_HOME" to "/verified/jdk", "SDKROOT" to "/verified/sdk",
             "KONAN_DATA_DIR" to "/verified/konan", "DEVELOPER_DIR" to "/verified/Xcode/Contents/Developer", "HOME" to "${process.workingDirectory}/home"), process.environment)
         val other = Sha256.digest(byteArrayOf(2))
         val original = nativeDependenciesIdentity(digest, digest, digest)
