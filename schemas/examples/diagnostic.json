@@ -1,0 +1,11 @@
+{
+  "code": "KVIK_COMPILATION_ERROR",
+  "category": "compilation",
+  "message": "Unresolved reference 'missing'",
+  "actionId": "hello:jvm:compile",
+  "module": "hello",
+  "target": "jvm",
+  "path": "src/Hello.kt",
+  "line": 1,
+  "column": 5
+}

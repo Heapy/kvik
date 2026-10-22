@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "runId": "example-run",
+  "sequence": 4,
+  "type": "run-finished",
+  "payload": {
+    "schemaVersion": 1,
+    "runId": "example-run",
+    "requestedChecks": [
+      "hello:jvm:build",
+      "hello:jvm:test"
+    ],
+    "completedChecks": [
+      "hello:jvm:build"
+    ],
+    "inputSnapshot": {
+      "hash": "8b09fce3d4d67d7f952bf327b0330bb879227a8328827bdf033b254ed989ba5d",
+      "sizeBytes": 171
+    },
+    "configuration": {
+      "hash": "b48c276533d8222e3be14de4c405eb03ffe456efdd046b4e626d105f12f11d40",
+      "sizeBytes": 594
+    },
+    "dependencyLock": {
+      "hash": "f01ed49e74b8a634094b1187050aaeb3fbba6d4fad4055cbb6f7bd36c2503cf8",
+      "sizeBytes": 143
+    },
+    "composition": {
+      "hash": "09f3812a9ccd9f99c16b3bd1227048d430d78bf6e0187fcc7b77bb667bfcd380",
+      "sizeBytes": 585
+    },
+    "toolchains": {
+      "compiler": {
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      }
+    },
+    "actions": [
+      {
+        "actionId": "hello:jvm:compile",
+        "key": {
+          "hash": "9c917f50d8db74a23e5398444b0575c6b2f2bd4605b7d45690a3c86c788049fc",
+          "sizeBytes": 675
+        },
+        "status": "local_hit",
+        "outputs": {
+          "schemaVersion": 1,
+          "files": []
+        },
+        "exitCode": 0,
+        "diagnostic": null
+      }
+    ],
+    "tests": [],
+    "testCounts": {
+      "discovered": 0,
+      "executed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "discoveryComplete": true
+    },
+    "status": "incomplete",
+    "freshnessAtCompletion": "current",
+    "reproduction": [
+      "kvik",
+      "test",
+      "--module",
+      "hello",
+      "--target",
+      "jvm"
+    ]
+  }
+}

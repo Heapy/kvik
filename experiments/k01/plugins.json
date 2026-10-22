@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {"source": "plugins/ProbePlugin.kt", "implementation": "kvik.spike.ProbePlugin"}
+  ]
+}

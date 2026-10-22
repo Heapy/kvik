@@ -1,0 +1,4 @@
+headers = platform.h
+package = kvik.spike.platform
+staticLibraries = libkvik-spike.a
+linkerOpts = -lcurl

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "requestId": "example-request",
+  "status": "compilation-error",
+  "exitCode": 1,
+  "diagnostics": [
+    {
+      "code": "KVIK_COMPILATION_ERROR",
+      "category": "compilation",
+      "message": "Unresolved reference 'missing'",
+      "actionId": "hello:jvm:compile",
+      "module": "hello",
+      "target": "jvm",
+      "path": "src/Hello.kt",
+      "line": 1,
+      "column": 5
+    }
+  ]
+}

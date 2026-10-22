@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "implementation": "kvik.jvm-compile.v1",
+  "composition": {
+    "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sizeBytes": 0
+  },
+  "kind": "compile",
+  "platform": {
+    "os": "macos",
+    "arch": "arm64"
+  },
+  "target": "jvm",
+  "toolchains": {
+    "compiler": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 0
+    }
+  },
+  "inputs": {
+    "schemaVersion": 1,
+    "files": [
+      {
+        "path": "src/Hello.kt",
+        "digest": {
+          "hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "sizeBytes": 5
+        },
+        "executable": false
+      }
+    ]
+  },
+  "outputs": [
+    "classes"
+  ],
+  "arguments": [
+    "-jvm-target",
+    "21"
+  ],
+  "environment": {
+    "LANG": "C"
+  },
+  "parameters": {},
+  "timeoutMillis": 120000,
+  "cachePolicy": "local"
+}

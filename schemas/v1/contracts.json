@@ -1,0 +1,1622 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvik.dev/schemas/v1/contracts.json",
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "hash",
+        "sizeBytes"
+      ],
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "executable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "digest",
+        "executable"
+      ],
+      "additionalProperties": false
+    },
+    "tree": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "dependency": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "coordinate": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+            }
+          },
+          "required": [
+            "coordinate"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            }
+          },
+          "required": [
+            "module"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "sourceSet": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "directories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          }
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          },
+          "uniqueItems": true
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependency"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "directories",
+        "resources",
+        "dependsOn",
+        "dependencies"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "main": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "test": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "main",
+        "test",
+        "compilerOptions"
+      ],
+      "additionalProperties": false
+    },
+    "compilerPlugin": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "main",
+              "test",
+              "script"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          }
+        }
+      },
+      "required": [
+        "targets",
+        "scopes",
+        "options",
+        "inputs"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "module"
+          ],
+          "not": {
+            "required": [
+              "coordinate"
+            ]
+          }
+        },
+        {
+          "required": [
+            "coordinate"
+          ],
+          "not": {
+            "required": [
+              "module"
+            ]
+          }
+        }
+      ]
+    },
+    "module": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "sourceSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourceSet"
+          },
+          "minItems": 1
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/target"
+          },
+          "minItems": 1
+        },
+        "compilerPlugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/compilerPlugin"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "sourceSets",
+        "targets",
+        "compilerPlugins"
+      ],
+      "additionalProperties": false
+    },
+    "repository": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        }
+      },
+      "required": [
+        "id",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "script": {
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "minItems": 1
+        },
+        "mainClass": {
+          "type": "string"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependency"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          }
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "compilerPlugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/compilerPlugin"
+          }
+        }
+      },
+      "required": [
+        "sources",
+        "mainClass",
+        "dependencies",
+        "profiles",
+        "compilerOptions",
+        "compilerPlugins"
+      ],
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repository"
+          },
+          "minItems": 1
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/module"
+          }
+        },
+        "dependencyProfiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/dependency"
+            }
+          }
+        },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/script"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "name",
+        "repositories",
+        "modules"
+      ],
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "implementation": {
+          "type": "string"
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "kind": {
+          "enum": [
+            "compile",
+            "generate",
+            "link",
+            "package",
+            "test",
+            "script",
+            "publish",
+            "benchmark",
+            "server"
+          ]
+        },
+        "platform": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "target": {
+          "type": "string"
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "inputs": {
+          "$ref": "#/$defs/tree"
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "uniqueItems": true
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "timeoutMillis": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cachePolicy": {
+          "enum": [
+            "never",
+            "local",
+            "remote"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "implementation",
+        "composition",
+        "kind",
+        "platform",
+        "target",
+        "toolchains",
+        "inputs",
+        "outputs",
+        "arguments",
+        "environment",
+        "parameters",
+        "timeoutMillis",
+        "cachePolicy"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "test",
+                  "script",
+                  "publish",
+                  "benchmark",
+                  "server"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cachePolicy": {
+                "const": "never"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "coordinate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+        },
+        "variant": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "coordinate",
+        "variant",
+        "repository",
+        "url",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "url",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "variant": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "enum": [
+            "common",
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "usage": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "platform",
+        "usage",
+        "attributes"
+      ],
+      "additionalProperties": false
+    },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "requested": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+        },
+        "variant": {
+          "$ref": "#/$defs/variant"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "metadata": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadata"
+          }
+        }
+      },
+      "required": [
+        "requested",
+        "variant",
+        "artifacts",
+        "metadata"
+      ],
+      "additionalProperties": false
+    },
+    "dependencyLock": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "selections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selection"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "configuration",
+        "selections"
+      ],
+      "additionalProperties": false
+    },
+    "sourcePin": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "kind": {
+          "enum": [
+            "git",
+            "archive",
+            "local"
+          ]
+        },
+        "origin": {
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tree": {
+          "$ref": "#/$defs/digest"
+        },
+        "archiveDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "origin",
+        "revision",
+        "tree"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "git"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "revision": {
+                "type": "string",
+                "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "archive"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "archiveDigest"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "local"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "origin": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  {
+                    "const": "."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runtimeLock": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourcePin"
+          },
+          "minItems": 1
+        },
+        "pluginApiVersion": {
+          "const": 1
+        },
+        "registry": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "libraries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "recipe": {
+          "$ref": "#/$defs/digest"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "platform": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sources",
+        "pluginApiVersion",
+        "registry",
+        "toolchains",
+        "libraries",
+        "recipe",
+        "arguments",
+        "environment",
+        "platform"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^KVIK_[A-Z0-9_]+$"
+        },
+        "category": {
+          "enum": [
+            "configuration",
+            "compilation",
+            "test",
+            "toolchain",
+            "cache",
+            "infrastructure",
+            "cancellation"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "actionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "category",
+        "message",
+        "actionId",
+        "module",
+        "target",
+        "path",
+        "line",
+        "column"
+      ],
+      "additionalProperties": false
+    },
+    "actionResult": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "executed",
+            "local_hit",
+            "remote_hit",
+            "failed",
+            "cancelled",
+            "blocked"
+          ]
+        },
+        "outputs": {
+          "$ref": "#/$defs/tree"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostic": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actionId",
+        "key",
+        "status",
+        "outputs",
+        "exitCode",
+        "diagnostic"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "executed",
+                  "local_hit",
+                  "remote_hit"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "key": {
+                "$ref": "#/$defs/digest"
+              },
+              "exitCode": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "testResult": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "skipped"
+          ]
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "module",
+        "target",
+        "status",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "testCounts": {
+      "type": "object",
+      "properties": {
+        "discovered": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "discoveryComplete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "discovered",
+        "executed",
+        "failed",
+        "skipped",
+        "discoveryComplete"
+      ],
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string"
+        },
+        "requestedChecks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "completedChecks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLock": {
+          "$ref": "#/$defs/digest"
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          }
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/testResult"
+          }
+        },
+        "testCounts": {
+          "$ref": "#/$defs/testCounts"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "freshnessAtCompletion": {
+          "enum": [
+            "current",
+            "stale",
+            "indeterminate"
+          ]
+        },
+        "reproduction": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "requestedChecks",
+        "completedChecks",
+        "inputSnapshot",
+        "configuration",
+        "dependencyLock",
+        "composition",
+        "toolchains",
+        "actions",
+        "tests",
+        "testCounts",
+        "status",
+        "freshnessAtCompletion",
+        "reproduction"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "type": {
+          "enum": [
+            "run-started",
+            "action-started",
+            "action-finished",
+            "diagnostic",
+            "test-result",
+            "run-finished",
+            "session-state"
+          ]
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "sequence",
+        "type",
+        "payload"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "run-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestedChecks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "inputSnapshot": {
+                    "$ref": "#/$defs/digest"
+                  }
+                },
+                "required": [
+                  "requestedChecks",
+                  "inputSnapshot"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "action-started"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "actionId": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "$ref": "#/$defs/digest"
+                  }
+                },
+                "required": [
+                  "actionId",
+                  "key"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "action-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/actionResult"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "diagnostic"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/diagnostic"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "test-result"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/testResult"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "run-finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/verification"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "session-state"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "idle",
+                      "building",
+                      "testing",
+                      "failed",
+                      "restarting",
+                      "stopping"
+                    ]
+                  },
+                  "runningSnapshot": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/digest"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "state",
+                  "runningSnapshot"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "workerRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "operation": {
+          "const": "jvm-compile"
+        },
+        "compiler": {
+          "$ref": "#/$defs/digest"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pluginClasspath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputDirectory": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "operation",
+        "compiler",
+        "sources",
+        "classpath",
+        "pluginClasspath",
+        "options",
+        "outputDirectory"
+      ],
+      "additionalProperties": false
+    },
+    "workerResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "success",
+            "compilation-error",
+            "infrastructure-error",
+            "cancelled"
+          ]
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "status",
+        "exitCode",
+        "diagnostics"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "success"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exitCode": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "exitCode": {
+                "not": {
+                  "const": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "inspection": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "modules": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                }
+              },
+              "sourceSets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                }
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "path",
+              "modules",
+              "sourceSets",
+              "targets"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "origins": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "pointer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "file",
+              "pointer"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "project",
+        "configuration",
+        "composition",
+        "files",
+        "origins",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

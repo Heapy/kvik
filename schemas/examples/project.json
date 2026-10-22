@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "name": "hello",
+  "repositories": [
+    {
+      "id": "central",
+      "url": "https://repo.maven.apache.org/maven2"
+    }
+  ],
+  "modules": [
+    {
+      "id": "hello",
+      "sourceSets": [
+        {
+          "name": "commonMain",
+          "directories": [
+            "src/commonMain"
+          ],
+          "resources": [],
+          "dependsOn": [],
+          "dependencies": []
+        },
+        {
+          "name": "jvmMain",
+          "directories": [
+            "src/jvmMain"
+          ],
+          "resources": [],
+          "dependsOn": [
+            "commonMain"
+          ],
+          "dependencies": []
+        },
+        {
+          "name": "jvmTest",
+          "directories": [
+            "src/jvmTest"
+          ],
+          "resources": [],
+          "dependsOn": [
+            "jvmMain"
+          ],
+          "dependencies": []
+        }
+      ],
+      "targets": [
+        {
+          "name": "jvm",
+          "main": "jvmMain",
+          "test": "jvmTest",
+          "compilerOptions": [
+            "-jvm-target",
+            "21"
+          ]
+        }
+      ],
+      "compilerPlugins": []
+    }
+  ]
+}

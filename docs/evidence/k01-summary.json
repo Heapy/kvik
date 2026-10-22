@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-22",
+  "runtime": "Kotlin/Native",
+  "composition": "d7d429a431f66e219861c70b5d07cc99c216ffd995ae0a5d75487bfdb999290b",
+  "hardware": {
+    "model": "Mac16,5",
+    "cpu": "Apple M4 Max",
+    "memoryBytes": 38654705664
+  },
+  "toolchains": {
+    "kotlinNative": {
+      "manifestSha256": "06a497b559d742a6016d805567a041f5a804c2a1e06d463a601bdc6275dbbf27",
+      "fileCount": 52359,
+      "version": "2.4.20"
+    },
+    "jdk": {
+      "manifestSha256": "bbcff328b145e35023c74c42fee7162a41fcac8f72aad8a7fcc5d939090499de",
+      "fileCount": 447,
+      "version": "25.0.4-librca"
+    },
+    "platform": {
+      "os": "27.0.1",
+      "architecture": "arm64",
+      "xcode": "Xcode 27.1\nBuild version 27A9275",
+      "sdkVersion": "27.0"
+    }
+  },
+  "timings": {
+    "workerCompileSeconds": 14.067,
+    "platformCompileSeconds": 0.237,
+    "interopSeconds": 3.545,
+    "nativeCompileSeconds": 18.162,
+    "runtimeCacheHit": false
+  },
+  "startup": {
+    "samplesMs": [
+      73.41925002401695,
+      9.47233400074765,
+      9.357583010569215,
+      7.9202919732779264,
+      8.0147500266321,
+      9.371416992507875,
+      8.54691700078547,
+      8.154875016771257,
+      8.63137497799471,
+      9.046042046975344
+    ],
+    "medianMs": 8.838708512485027
+  },
+  "peakRssBytes": 7077888,
+  "verification": [
+    {
+      "name": "mach-o-arm64",
+      "exitCode": 0,
+      "seconds": 0.0061
+    },
+    {
+      "name": "static-source-plugin",
+      "exitCode": 0,
+      "seconds": 0.0095
+    },
+    {
+      "name": "filesystem-watch-hash-https",
+      "exitCode": 0,
+      "seconds": 0.2764
+    },
+    {
+      "name": "jvm-bta-in-process",
+      "exitCode": 0,
+      "seconds": 1.9987
+    },
+    {
+      "name": "jvm-compiled-program",
+      "exitCode": 0,
+      "seconds": 0.0918
+    },
+    {
+      "name": "jvm-diagnostic-failure-propagation",
+      "exitCode": 1,
+      "seconds": 1.0489
+    },
+    {
+      "name": "child-exit-code",
+      "exitCode": 7,
+      "seconds": 0.0462
+    },
+    {
+      "name": "native-test-compilation",
+      "exitCode": 0,
+      "seconds": 39.1424
+    },
+    {
+      "name": "native-test-execution",
+      "exitCode": 0,
+      "seconds": 0.2272
+    }
+  ],
+  "reference": [
+    {
+      "target": "jvm",
+      "mode": "cold",
+      "command": [
+        "./kotlin",
+        "test",
+        "--platform",
+        "jvm",
+        "-m",
+        "kotaml",
+        "-m",
+        "kotaml-json"
+      ],
+      "exitCode": 0,
+      "seconds": 44.951
+    },
+    {
+      "target": "jvm",
+      "mode": "warm",
+      "command": [
+        "./kotlin",
+        "test",
+        "--platform",
+        "jvm",
+        "-m",
+        "kotaml",
+        "-m",
+        "kotaml-json"
+      ],
+      "exitCode": 0,
+      "seconds": 6.994
+    },
+    {
+      "target": "macosArm64",
+      "mode": "cold",
+      "command": [
+        "./kotlin",
+        "test",
+        "--platform",
+        "macosArm64",
+        "-m",
+        "kotaml",
+        "-m",
+        "kotaml-json"
+      ],
+      "exitCode": 0,
+      "seconds": 125.693
+    },
+    {
+      "target": "macosArm64",
+      "mode": "warm",
+      "command": [
+        "./kotlin",
+        "test",
+        "--platform",
+        "macosArm64",
+        "-m",
+        "kotaml",
+        "-m",
+        "kotaml-json"
+      ],
+      "exitCode": 0,
+      "seconds": 5.064
+    }
+  ],
+  "cache": {
+    "backend": "bazel-remote 2.6.4",
+    "binarySha256": "ebde44a9dd6fd645b1ee36b6bf5fe141c3e5aa193ae59f031b50cc390cd1a0a2",
+    "checks": [
+      "Capabilities-GetCapabilities",
+      "ContentAddressableStorage-BatchUpdateBlobs",
+      "ContentAddressableStorage-BatchReadBlobs",
+      "ActionCache-UpdateActionResult",
+      "ActionCache-GetActionResult"
+    ],
+    "sha256Supported": true,
+    "actionCacheWritable": true,
+    "maxBatchBytes": 0,
+    "blobSha256": "8d8d9b956ef2f8f9cb73a93806ba1622c4cc85892b815fb1ebff1eacb9cd50e8",
+    "serverReaped": true
+  },
+  "evidenceFiles": {
+    "builds/d7d429a431f66e219861c70b5d07cc99c216ffd995ae0a5d75487bfdb999290b/verification.json": "fc9bcad3651ac18a2a44f78706509bf19917d9b2ba622e1711034eb78f0cfcd2",
+    "builds/d7d429a431f66e219861c70b5d07cc99c216ffd995ae0a5d75487bfdb999290b/inputs.json": "8f6651e67b0b9266e3dc1662249eed8e6191fd5900b21fc87d87203605e4a597",
+    "builds/d7d429a431f66e219861c70b5d07cc99c216ffd995ae0a5d75487bfdb999290b/kvik-k01.kexe": "73968035d2d7361a9bf0a1f90a073764d7e13c39f3e5deb970d757e53f6cb4a5",
+    "reference/results.json": "2374e6b0e095941f75b1eddc73cedd85f49a0eb311f4de414b2d37d860f098a1",
+    "reference/jvm-cold.log": "efb0e8e0cf57e7dd93676e1644cba40520f9e427db15fb46d9b50475ce316863",
+    "reference/jvm-warm.log": "d7b64401a1484d234722b900ebda218a899fb5781d11f90845d3d4cb2b4778a2",
+    "reference/macosArm64-cold.log": "67460b6a470b0ab10f5b7c430c08acd74e6125eaf87e2cde7d97d542c22ae2ae",
+    "reference/macosArm64-warm.log": "3a4f5f7f319583765069bad9bfbac1804e71b3047c44235ef5bf6b5b466fc63b"
+  }
+}

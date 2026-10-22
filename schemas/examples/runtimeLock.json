@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "kvik",
+      "kind": "local",
+      "origin": ".",
+      "revision": null,
+      "tree": {
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      }
+    }
+  ],
+  "pluginApiVersion": 1,
+  "registry": [
+    "example.ProbePlugin"
+  ],
+  "toolchains": {
+    "kotlinNative": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sizeBytes": 0
+    }
+  },
+  "libraries": [],
+  "recipe": {
+    "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sizeBytes": 0
+  },
+  "arguments": [
+    "-target",
+    "macos_arm64"
+  ],
+  "environment": {},
+  "platform": {
+    "os": "macos",
+    "arch": "arm64",
+    "sdk": "27.0"
+  }
+}

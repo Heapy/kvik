@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "requestId": "example-request",
+  "operation": "jvm-compile",
+  "compiler": {
+    "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sizeBytes": 0
+  },
+  "sources": [
+    "/controlled/input/src/Hello.kt"
+  ],
+  "classpath": [],
+  "pluginClasspath": [],
+  "options": [
+    "-jvm-target",
+    "21"
+  ],
+  "outputDirectory": "/controlled/output/classes"
+}

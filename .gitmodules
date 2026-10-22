@@ -1,0 +1,12 @@
+[submodule "references/kotlin"]
+	path = references/kotlin
+	url = https://github.com/JetBrains/kotlin.git
+	shallow = true
+[submodule "references/gradle"]
+	path = references/gradle
+	url = https://github.com/gradle/gradle.git
+	shallow = true
+[submodule "references/kotlin-toolchain"]
+	path = references/kotlin-toolchain
+	url = https://github.com/JetBrains/kotlin-toolchain.git
+	shallow = true
