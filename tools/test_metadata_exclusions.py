@@ -4,7 +4,6 @@ import argparse
 import copy
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -26,17 +25,35 @@ def verify_build_stamp(stamp_path, inputs, binary):
         raise RuntimeError('Build inputs or executable differ from stamp; rerun without --skip-build')
 
 
+def compiler_environment(java_home, home, konan_data, developer_directory, temporary_directory):
+    # Construct the complete environment: inherited JVM, shell, dynamic-loader and
+    # developer overrides cannot select another Java or inject compiler options.
+    return dict(PATH='/usr/bin:/bin:/usr/sbin:/sbin', JAVA_HOME=str(java_home.resolve()),
+                HOME=str(home.resolve()), KONAN_DATA_DIR=str(konan_data.resolve()),
+                DEVELOPER_DIR=str(developer_directory.resolve()), TMPDIR=str(temporary_directory.resolve()),
+                LANG='C', LC_ALL='C', TZ='UTC', KONAN_USE_INTERNAL_SERVER='0')
+
+
+def launcher_inputs(konan_home, java_home):
+    return [konan_home / 'bin/cinterop', konan_home / 'bin/konanc', konan_home / 'bin/run_konan',
+            konan_home / 'tools/env_blacklist', java_home / 'bin/java',
+            *sorted((konan_home / 'konan/lib').glob('*.jar'))]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--skip-build', action='store_true')
     parser.add_argument('--ktc-cache', type=Path, required=True)
+    parser.add_argument('--konan-data', type=Path, default=Path.home() / '.konan')
+    parser.add_argument('--developer-directory', type=Path, default=Path('/Applications/Xcode.app/Contents/Developer'))
     args = parser.parse_args()
     output = ROOT / '.kvik/tests/metadata-exclusions'
     output.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
-    env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KVIK_METADATA_WORK=str(work),
+    compiler_env = compiler_environment(args.java_home, Path.home(), args.konan_data, args.developer_directory, Path(tempfile.gettempdir()))
+    env = dict(compiler_env, KVIK_METADATA_WORK=str(work),
                KVIK_RESOLUTION_ROOT=str(ROOT), KVIK_RESOLUTION_ONLINE='False',
                KVIK_LOCKING_ROOT=str(ROOT), KVIK_LOCKING_WORK=str(work / 'locking'),
                KVIK_QUERY_ROOT=str(ROOT), KVIK_QUERY_WORK=str(work / 'queries'), KVIK_KTC_CACHE=str(args.ktc_cache.resolve()))
@@ -53,11 +70,11 @@ def main():
             if not alias.exists():
                 alias.symlink_to(cached)
     commands = []
-    def run(command):
+    def run(command, environment=compiler_env):
         commands.append(list(map(str, command)))
         (work / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
-        subprocess.run(command, env=env, check=True)
-    sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
+        subprocess.run(command, env=environment, check=True)
+    sdk = subprocess.check_output(['/usr/bin/xcrun', '--show-sdk-path'], env=compiler_env, text=True).strip()
     sources = [str(p) for directory in ['core/src', 'cache/src', 'resolution/src', 'integration/resolution/src',
                                        'integration/package-queries/src', 'tests/metadata-exclusions', 'tests/resolution',
                                        'tests/locking', 'tests/package-queries/native']
@@ -68,11 +85,10 @@ def main():
     compile_command = [str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner',
                        '-library', str(output / 'resolution.klib'), '-o', str(output / 'unit.kexe'), *sources]
     tracked = [*map(Path, sources), *sorted((ROOT / 'resolution/native').glob('*')), Path(__file__),
-               ROOT / 'bootstrap/toolchains.lock.json', args.konan_home / 'bin/cinterop', args.konan_home / 'bin/konanc',
-               args.java_home / 'bin/java', *sorted((args.konan_home / 'konan/lib').glob('*.jar'))]
+               ROOT / 'bootstrap/toolchains.lock.json', *launcher_inputs(args.konan_home, args.java_home)]
     def current_inputs():
         return dict(commands=[interop, compile_command], sdk=sdk,
-                    environment={key: env.get(key) for key in ['JAVA_HOME', 'KONAN_DATA_DIR', 'JAVA_OPTS', 'KONAN_JVM_ARGS']},
+                    environment=compiler_env,
                     files={str(path.resolve()): file_identity(path) for path in tracked if path.is_file()})
     inputs = current_inputs()
     binary = output / 'unit.kexe'
@@ -88,7 +104,7 @@ def main():
         temporary.write_text(json.dumps(dict(schemaVersion=1, inputs=inputs, binary=file_identity(binary)), indent=2) + '\n')
         temporary.replace(stamp_path)
     (work / 'build-stamp.json').write_bytes(stamp_path.read_bytes())
-    run([str(output / 'unit.kexe')])
+    run([str(output / 'unit.kexe')], environment=env)
     graph_schema = json.loads((ROOT / 'schemas/v1/packages.json').read_text())
     graph_schema = {'$defs': graph_schema['$defs'], '$ref': '#/$defs/graph'}
     lock_schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
