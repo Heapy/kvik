@@ -14,7 +14,7 @@ PLAN.md remains the acceptance specification. A working spike does not mark the 
 | K09 | In progress | [Read-only native inspection](evidence/k09.md); build/test/run evidence integration remains |
 | K10–K11 | Pending | Adversarial validation and decision |
 | K12–K13 | Pending | Scripts and workspace compiler plugins |
-| K14 | In progress | [Local source composition and launcher](evidence/k14.md), Kotlin/Native executable reuse, ownership and invalidation checks; remote source provisioning/shared cache/helper integration remain |
+| K14 | In progress | [Local source composition and launcher](evidence/k14.md), verified native helper bundle, 16 launcher checks; remote source provisioning/shared executable cache integration remain |
 | K15 | Pending | Foreground continuous session |
 
 Automatic fixtures, test avoidance, an optional multiplatform test framework and `@Task` effect checking remain research directions. None is implemented or promised by the K01 spike.

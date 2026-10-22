@@ -99,5 +99,110 @@
         ]
       }
     ]
+  },
+  "bundledNativeHelper": {
+    "composition": "84242ff0c6e9bb6e00df48ea728e2140b2b7ceccc5633ad20217845da7f512d7",
+    "nativeBuildMillis": 29460,
+    "inspectionChecks": 6,
+    "launcherChecks": [
+      {
+        "name": "interrupted-native-bootstrap-no-publication",
+        "seconds": 49.22508270799881,
+        "details": null
+      },
+      {
+        "name": "concurrent-cold-launchers",
+        "seconds": 58.554626083001494,
+        "details": "84242ff0c6e9bb6e00df48ea728e2140b2b7ceccc5633ad20217845da7f512d7"
+      },
+      {
+        "name": "relocated-cached-runtime",
+        "seconds": 0.0623,
+        "details": null
+      },
+      {
+        "name": "invalidate-core-source",
+        "seconds": 0.0526,
+        "details": null
+      },
+      {
+        "name": "invalidate-native-options",
+        "seconds": 0.0527,
+        "details": null
+      },
+      {
+        "name": "invalidate-plugin-registry",
+        "seconds": 0.0528,
+        "details": null
+      },
+      {
+        "name": "invalidate-native-helper-source",
+        "seconds": 0.0515,
+        "details": null
+      },
+      {
+        "name": "invalidate-tool-lock",
+        "seconds": 0.0497,
+        "details": null
+      },
+      {
+        "name": "consumer-edit-and-no-compiler-needed",
+        "seconds": 0.0509,
+        "details": null
+      },
+      {
+        "name": "same-size-same-mtime-plugin-invalidation",
+        "seconds": 0.0497,
+        "details": null
+      },
+      {
+        "name": "source-plugin-recomposition",
+        "seconds": 71.2577,
+        "details": "76f590090dceaa38cb7b99439de5d3548b3346038703541db17976e588238a01"
+      },
+      {
+        "name": "corrupt-executable-rejected",
+        "seconds": 0.0479,
+        "details": null
+      },
+      {
+        "name": "corrupt-executable-rebuilt",
+        "seconds": 43.6802,
+        "details": null
+      },
+      {
+        "name": "corrupt-native-helper-rejected",
+        "seconds": 0.0688,
+        "details": null
+      },
+      {
+        "name": "failed-rebuild-no-stale-fallback",
+        "seconds": 32.3656,
+        "details": null
+      },
+      {
+        "name": "source-restore-reuses-original-composition",
+        "seconds": 0.086,
+        "details": null
+      }
+    ],
+    "cachedStartup": [
+      {
+        "name": "cached-offline-startup",
+        "seconds": 0.4499,
+        "details": [
+          0.0543,
+          0.0437,
+          0.046,
+          0.0431,
+          0.0446,
+          0.0429,
+          0.0433,
+          0.0448,
+          0.0438,
+          0.0434
+        ]
+      }
+    ]
   }
 }

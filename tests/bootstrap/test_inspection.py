@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 
@@ -83,6 +84,21 @@ class InspectionTest(unittest.TestCase):
     def test_unknown_configuration_is_not_ignored(self):
         self.document["surprise"] = True
         self.assertIn("Unknown fields", self.invoke(expected=2)["diagnostic"]["message"])
+
+    def test_relocated_native_bundle_checks_its_own_helper(self):
+        result = subprocess.run([str(ROOT / "kvik"), "--no-build", "--print-runtime"], capture_output=True, text=True, check=True)
+        executable = Path(result.stdout.strip())
+        shutil.copy2(executable, self.root / "kvik.kexe")
+        shutil.copy2(executable.parent / "guardian", self.root / "guardian")
+        command = [str(self.root / "kvik.kexe"), "runtime-info"]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        self.assertEqual("kotlin-native", json.loads(result.stdout)["backend"])
+        with (self.root / "guardian").open("ab") as helper:
+            helper.write(b"corrupt")
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(2, result.returncode)
+        self.assertIn("helper differs", json.loads(result.stdout)["diagnostic"]["message"])
+        self.assertEqual("toolchain", json.loads(result.stdout)["diagnostic"]["category"])
 
 
 if __name__ == "__main__":

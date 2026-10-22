@@ -8,6 +8,23 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <mach-o/dyld.h>
+
+char *kvik_executable_directory(void) {
+    uint32_t size = 0;
+    (void)_NSGetExecutablePath(NULL, &size);
+    if (!size) return NULL;
+    char *buffer = malloc(size);
+    if (!buffer) return NULL;
+    if (_NSGetExecutablePath(buffer, &size)) { free(buffer); return NULL; }
+    char *resolved = realpath(buffer, NULL);
+    free(buffer);
+    if (!resolved) return NULL;
+    char *separator = strrchr(resolved, '/');
+    if (!separator || separator == resolved) { free(resolved); errno = EINVAL; return NULL; }
+    *separator = '\0';
+    return resolved;
+}
 
 typedef struct {
     pid_t guardian;

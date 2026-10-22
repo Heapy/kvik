@@ -39,13 +39,19 @@ def relative(root, value):
 
 def composition():
     recipe = read_json(ROOT / "bootstrap/composition.json")
-    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "plugins", "compilerOptions"}:
+    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "nativePlatform", "plugins", "compilerOptions"}:
         raise ValueError("Unsupported composition schema")
     if not isinstance(recipe["coreSources"], list) or not recipe["coreSources"] or not isinstance(recipe["plugins"], list):
         raise ValueError("Invalid composition sources/options")
     validate_options(recipe["compilerOptions"])
     selected = []
     pins = []
+    native = relative(ROOT, recipe["nativePlatform"])
+    native_tree = inventory(native)
+    if {item["path"] for item in native_tree["files"]} != {"process.c", "process.h", "process.def", "guardian.c"}:
+        raise ValueError("Unsupported native platform source inventory")
+    pins.append({"id": "native-platform", "kind": "local", "origin": recipe["nativePlatform"], "revision": None, "tree": digest(canonical(native_tree))})
+    selected.extend((native / item["path"], recipe["nativePlatform"] + "/" + item["path"], item["digest"]) for item in native_tree["files"])
     for directory in recipe["coreSources"]:
         path = relative(ROOT, directory)
         tree = inventory(path)
@@ -122,11 +128,13 @@ def cached(directory, key):
     try:
         manifest = read_json(directory / "manifest.json")
         executable = directory / "kvik.kexe"
-        if not isinstance(manifest, dict) or directory.is_symlink() or executable.is_symlink():
+        guardian = directory / "guardian"
+        if not isinstance(manifest, dict) or directory.is_symlink() or executable.is_symlink() or guardian.is_symlink():
             return False
         return (manifest.get("schemaVersion") == 1 and manifest.get("composition") == key and
                 digest(canonical(read_json(directory / "runtime.lock.json"))) == key and
-                manifest.get("executable") == file_digest(executable) and os.access(executable, os.X_OK))
+                manifest.get("executable") == file_digest(executable) and os.access(executable, os.X_OK) and
+                manifest.get("guardian") == file_digest(guardian) and os.access(guardian, os.X_OK))
     except (OSError, ValueError, KeyError):
         return False
 
@@ -195,31 +203,53 @@ def build(args, recipe, selected, lock, key, destination):
             output = temporary / "sources" / logical
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(data)
-            source_files.append(output)
+            if logical.endswith(".kt"):
+                source_files.append(output)
         registry = temporary / "sources/Registry.kt"
         implementations = ", ".join(p["implementation"] + "()" for p in recipe["plugins"])
-        registry.write_text("package kvik.cli\n" + f'const val runtimeComposition: String = "{key["hash"]}"\n' +
-                            f'const val runtimeCompositionSize: Long = {key["sizeBytes"]}L\n' +
-                            f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
         executable = temporary / "kvik.kexe"
         environment = {name: os.environ[name] for name in ("HOME", "TMPDIR") if name in os.environ}
         environment.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "JAVA_HOME": str(roots["jdk"]), "KONAN_DATA_DIR": str(Path(args.konan_data).resolve()),
             "DEVELOPER_DIR": str(roots["xcodeToolchain"].parents[1]), "SDKROOT": str(roots["sdk"]), "LANG": "C", "LC_ALL": "C", "TZ": "UTC"})
-        command = [roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true", "-o", executable, *source_files, registry]
+        native = temporary / "sources" / recipe["nativePlatform"]
+        bridge = temporary / "bridge"
+        bridge.mkdir()
+        clang = roots["xcodeToolchain"] / "usr/bin/clang"
+        ar = roots["xcodeToolchain"] / "usr/bin/ar"
+        guardian = temporary / "guardian"
+        c_options = ["-std=c11", "-D_DARWIN_C_SOURCE", "-Wall", "-Wextra", "-Werror", "-isysroot", roots["sdk"]]
+        commands = [
+            [clang, *c_options, native / "guardian.c", "-o", guardian],
+            [clang, *c_options, "-c", native / "process.c", "-o", bridge / "process.o"],
+            [ar, "rcs", bridge / "libkvik-process.a", bridge / "process.o"],
+            [roots["kotlinNative"] / "bin/cinterop", "-def", native / "process.def", "-compiler-option", f"-I{native}",
+                "-libraryPath", bridge, "-target", "macos_arm64", "-Xoverride-konan-properties", "airplaneMode=true", "-o", bridge / "process"],
+        ]
         log_path = args.cache_dir / "logs" / (key["hash"] + ".log")
         log_path.parent.mkdir(exist_ok=True)
         with log_path.open("w") as log:
-            run_owned(command, environment, log)
+            for command in commands:
+                run_owned(command, environment, log)
+            guardian_digest = file_digest(guardian)
+            registry.write_text("package kvik.cli\n" + f'const val runtimeComposition: String = "{key["hash"]}"\n' +
+                f'const val runtimeCompositionSize: Long = {key["sizeBytes"]}L\n' +
+                f'const val runtimeGuardianHash: String = "{guardian_digest["hash"]}"\n' +
+                f'const val runtimeGuardianSize: Long = {guardian_digest["sizeBytes"]}L\n' +
+                f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
+            run_owned([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
+                "-library", bridge / "process.klib", "-o", executable, *source_files, registry], environment, log)
         if composition()[3] != key:
             raise ValueError("Runtime sources changed during compilation; refusing stale composition, retry")
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
-        manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "compileMillis": round((time.monotonic() - started) * 1000)}
+        manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
+            "compileMillis": round((time.monotonic() - started) * 1000)}
         (temporary / "manifest.json").write_bytes(canonical(manifest) + b"\n")
-        for path in (executable, temporary / "manifest.json", temporary / "runtime.lock.json"):
+        for path in (executable, guardian, temporary / "manifest.json", temporary / "runtime.lock.json"):
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())
         shutil.rmtree(temporary / "sources")
+        shutil.rmtree(bridge)
         descriptor = os.open(temporary, os.O_RDONLY)
         try:
             os.fsync(descriptor)

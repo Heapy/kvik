@@ -51,7 +51,7 @@ def main():
             first.mkdir()
             recipe = json.loads((ROOT / "bootstrap/composition.json").read_text())
             directories = {"bootstrap", *(path.split("/")[0] for path in recipe["coreSources"]),
-                *(plugin["directory"].split("/")[0] for plugin in recipe["plugins"])}
+                *(plugin["directory"].split("/")[0] for plugin in recipe["plugins"]), recipe["nativePlatform"].split("/")[0]}
             for name in sorted(directories):
                 shutil.copytree(ROOT / name, first / name, ignore=shutil.ignore_patterns("__pycache__"))
             shutil.copy2(ROOT / "kvik", first / "kvik")
@@ -106,6 +106,7 @@ def main():
                 ("core-source", second / "core/src/kvik/core/Json.kt", lambda data: data + b"\n"),
                 ("native-options", second / "bootstrap/composition.json", lambda data: data.replace(b'"-target"', b'"-opt", "-target"')),
                 ("plugin-registry", second / "bootstrap/composition.json", lambda data: data.replace(b"KotlinBuildPlugin", b"ChangedBuildPlugin")),
+                ("native-helper-source", second / "execution/platform/guardian.c", lambda data: data + b"\n"),
                 ("tool-lock", second / "bootstrap/toolchains.lock.json", lambda data: data.replace(b'"hash":"9', b'"hash":"0', 1)),
             ]
             for name, path, mutate in mutations:
@@ -145,6 +146,12 @@ def main():
             result, seconds = invoke(second, cache)
             assert json.loads(result.stdout)["composition"] == new_identity
             passed("corrupt-executable-rebuilt", seconds)
+            helper = binary.parent / "guardian"
+            original_helper = helper.read_bytes()
+            helper.write_bytes(original_helper + b"corrupt")
+            result, seconds = invoke(second, cache, ["--no-build"], expected=2)
+            passed("corrupt-native-helper-rejected", seconds)
+            helper.write_bytes(original_helper)
             plugin.write_bytes(changed + b"\nTHIS WILL NOT COMPILE\n")
             result, seconds = invoke(second, cache, expected=2)
             assert "Native compiler failed" in result.stderr

@@ -7,7 +7,9 @@ fun main(args: Array<String>) {
     try {
         command(args)
     } catch (failure: Exception) {
-        println(obj("schemaVersion" to CONTRACT_VERSION.json(), "diagnostic" to Diagnostic("KVIK_INVALID_PROJECT", DiagnosticCategory.CONFIGURATION,
+        val runtime = failure is RuntimeIntegrityFailure
+        println(obj("schemaVersion" to CONTRACT_VERSION.json(), "diagnostic" to Diagnostic(
+            if (runtime) "KVIK_RUNTIME_INTEGRITY" else "KVIK_INVALID_PROJECT", if (runtime) DiagnosticCategory.TOOLCHAIN else DiagnosticCategory.CONFIGURATION,
             failure.message ?: "Invalid project configuration").toJson()).canonical())
         exitProcess(ExitStatus.INVALID_CONFIGURATION.code)
     }
@@ -21,10 +23,14 @@ private fun command(args: Array<String>) {
             Consumer build commands are not yet integrated.
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
-        "runtime-info" -> println(obj(
+        "runtime-info" -> {
+            verifiedRuntimeGuardian()
+            println(obj(
             "schemaVersion" to CONTRACT_VERSION.json(), "backend" to "kotlin-native".json(),
             "composition" to runtimeComposition.json(), "plugins" to buildPlugins.map { obj("id" to it.id.json(), "apiVersion" to it.apiVersion.json(), "schema" to it.configurationSchema) }.json(),
-        ).canonical())
+            "guardian" to Digest(runtimeGuardianHash, runtimeGuardianSize).toJson(),
+            ).canonical())
+        }
         "inspect" -> {
             require(args.size == 1 || (args.size == 3 && args[1] == "--project")) { "Usage: inspect [--project PATH]" }
             println(inspectProject(if (args.size == 3) args[2] else "kvik.json").canonical())
