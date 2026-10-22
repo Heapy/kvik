@@ -91,7 +91,10 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
             }
             when (event.name) {
                 "testSuiteStarted" -> suites += name ?: error("Missing suite name")
-                "testSuiteFinished" -> { require(suites.lastOrNull() == name) { "Unbalanced suite finish" }; suites.removeAt(suites.lastIndex) }
+                "testSuiteFinished" -> {
+                    require(name != null && suites.isNotEmpty() && suites.last() == name) { "Missing name or unbalanced suite finish" }
+                    suites.removeAt(suites.lastIndex)
+                }
                 "testStarted" -> { val id = id(); require(id !in results && active.add(id)) { "Duplicate test start: $id" } }
                 "testFailed" -> { val id = id(); require(id in active && id !in failed); failed[id] = event.attributes["message"].orEmpty() + event.attributes["details"].orEmpty() }
                 "testFinished" -> {

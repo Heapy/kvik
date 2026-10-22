@@ -60,12 +60,16 @@ class NativeCompilerExecutor(
         return object : RunningAction {
             private var result: ActionResult? = null
             private var discovered = emptyList<String>()
+            private var cancellationRequested = false
             override fun poll(): ActionResult? {
                 result?.let { return it }
-                val exit = process.poll() ?: return null
+                val completed = process.poll() ?: return null
+                // Cancellation belongs to the whole action. The process may already have exited
+                // before cancel(), while discovery completion has not yet been consumed here.
+                val exit = if (cancellationRequested) ProcessResult(130, cancelled = true) else completed
                 val stdout = readNativeFile("$directory/$phase.stdout").decodeToString(throwOnInvalidSequence = true)
                 val stderr = readNativeFile("$directory/$phase.stderr").decodeToString(throwOnInvalidSequence = true)
-                if (phase == "discovery" && started.elapsedNow().inWholeMilliseconds >= action.timeoutMillis) {
+                if (phase == "discovery" && !exit.cancelled && started.elapsedNow().inWholeMilliseconds >= action.timeoutMillis) {
                     return finish(ProcessResult(124, timedOut = true), emptyList(), NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), VerificationStatus.INCOMPLETE, "Native discovery timed out"), stdout, stderr, "Native discovery timed out")
                 }
                 if (phase == "discovery" && exit.exitCode == 0 && !exit.timedOut && !exit.cancelled) {
@@ -108,7 +112,11 @@ class NativeCompilerExecutor(
                     result = it; observations[actionId] = NativeActionObservation(it, finalDiagnostics, report, stdout, stderr)
                 }
             }
-            override fun cancel() { process.cancel() }
+            override fun cancel() {
+                if (result != null) return
+                cancellationRequested = true
+                process.cancel()
+            }
             override fun close() { process.close() }
         }
     }
