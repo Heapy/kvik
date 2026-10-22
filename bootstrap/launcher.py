@@ -368,8 +368,6 @@ def build(args, recipe, selected, lock, key, destination):
                 f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
             run_build([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
                 *[part for library in libraries for part in ("-library", library)], "-o", executable, *source_files, registry], environment, log)
-        if desired_composition(args)[3] != key:
-            raise ValueError("Runtime sources changed during compilation; refusing stale composition, retry")
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
         manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
@@ -384,6 +382,8 @@ def build(args, recipe, selected, lock, key, destination):
         shutil.rmtree(bridge)
         jvm_worker.verify_bundle(temporary, worker_digest)
         jvm_worker.sync_tree(temporary)
+        if desired_composition(args)[3] != key:
+            raise ValueError("Runtime sources changed during compilation/publication; refusing stale composition, retry")
         if destination.exists():
             quarantine = destination.with_name(destination.name + "-corrupt-" + str(time.time_ns()))
             destination.rename(quarantine)

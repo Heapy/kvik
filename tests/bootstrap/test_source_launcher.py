@@ -179,7 +179,8 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
         roots = {name: self.directory / name for name in ('jdk', 'kotlinNative', 'xcodeToolchain', 'sdk')}
         plugin = next((self.project / 'plugins/kotlin/src').rglob('*.kt'))
         original = plugin.read_bytes()
-        for mutation in ('none', 'source', 'lock', 'compiler-failure'):
+        real_sync = launcher.jvm_worker.sync_tree
+        for mutation in ('none', 'source', 'lock', 'compiler-failure', 'source-during-sync', 'lock-during-sync'):
             with self.subTest(mutation=mutation):
                 plugin.write_bytes(original); self.write_lock()
                 recipe, observed, lock, key = self.composition()
@@ -205,6 +206,12 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
                     self.assertTrue(all(Path(p).is_file() for p in worker_inputs))
                     run([java, *source_files], env, log)
                     return digest(b'synthetic worker bundle')
+                def sync(directory):
+                    real_sync(directory)
+                    if mutation == 'source-during-sync': plugin.write_bytes(original + b'\n')
+                    if mutation == 'lock-during-sync':
+                        changed = copy.deepcopy(self.document); changed['compilerOptions'].append('-g')
+                        self.lock.write_bytes(canonical(changed))
                 with ExitStack() as stack:
                     for owner, name, replacement in (
                         (launcher, 'ROOT', self.project),
@@ -213,6 +220,7 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
                         (launcher.jvm_worker, 'acquire', lambda *a: {}),
                         (launcher.jvm_worker, 'build_bundle', worker),
                         (launcher.jvm_worker, 'verify_bundle', lambda *a: None),
+                        (launcher.jvm_worker, 'sync_tree', sync),
                         (launcher.native_libraries, 'build', lambda *a: []),
                     ): stack.enter_context(patch.object(owner, name, replacement))
                     if mutation == 'none':
