@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--application-actions', type=Path, default=ROOT / 'integration/application/src/kvik/application/ApplicationActions.kt')
     parser.add_argument('--no-build', action='store_true', help='Require the exact retained compiler/source/environment/binary receipt')
     parser.add_argument('--include-contracts', action='store_true', help='Run the core contracts in the same Native test binary')
+    parser.add_argument('--include-evidence', action='store_true', help='Run verification evidence tests in the same Native test binary')
     args = parser.parse_args()
     output = ROOT / '.kvik/tests/project-graph'
     output.mkdir(parents=True, exist_ok=True)
@@ -46,13 +47,17 @@ def main():
     sources += [args.application_actions.resolve(), ROOT / 'tests/native/NativeApplicationActionsTest.kt']
     if args.include_contracts:
         sources += sorted((ROOT / 'tests/contracts').rglob('*.kt'))
+    if args.include_evidence:
+        sources += [p for directory in ['integration/run-evidence/src', 'tests/run-evidence']
+                    for p in sorted((ROOT / directory).rglob('*.kt'))]
     executable = output / 'tests.kexe'
     command = [str(args.konan_home.resolve() / 'bin/konanc'), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-generate-test-runner', '-o', str(executable), *map(str, sources)]
     launchers = [args.konan_home.resolve() / 'bin/konanc', args.konan_home.resolve() / 'bin/run_konan',
         args.konan_home.resolve() / 'tools/env_blacklist', args.java_home.resolve() / 'bin/java', *sorted((args.konan_home.resolve() / 'konan/lib').glob('*.jar'))]
     def inputs():
         return {'command': command, 'environment': env, 'sources': {str(p): file_digest(p) for p in sources},
-                'launchers': {str(p): file_digest(p) for p in launchers}, 'fixture': file_digest(fixture)}
+                'launchers': {str(p): file_digest(p) for p in launchers}, 'fixture': file_digest(fixture),
+                'harness': {str(p): file_digest(p) for p in [Path(__file__), ROOT / 'bootstrap/identity.py']}}
     stamp = inputs()
     receipt = output / 'build.json'
     if args.no_build:

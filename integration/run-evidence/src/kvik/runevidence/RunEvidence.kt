@@ -6,7 +6,9 @@ import kvik.core.*
 data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus)
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
-internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)"))
+internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)")) ||
+    check.matches(Regex("script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)"))
+internal fun scriptExecutionCheck(check: String): Boolean = check.startsWith("script:") && check.endsWith(":run") && validCheck(check)
 
 /**
  * Aggregate one planned run without filesystem, process or journal effects. Missing evidence is
@@ -33,7 +35,7 @@ fun aggregateRunEvidence(
 ): RunEvidence {
     val checks = requestedChecks.sorted().toSet()
     require(checks.isNotEmpty() && checks.all(::validCheck)) {
-        "Requested checks must identify module:target:build, module:target:test or module:target:application"
+        "Requested checks must identify module:target:build|test|application or script:name:jvm:prepare|run"
     }
     val terminals = terminalActions.toMap()
     val graph = actionDependencies.mapValues { it.value.toSet() }
@@ -45,6 +47,12 @@ fun aggregateRunEvidence(
     require(results.map { it.actionId }.distinct().size == results.size) { "Duplicate scheduler action result" }
     require(results.all { it.actionId in graph }) { "Scheduler result is outside the planned graph" }
     val byId = results.associateBy { it.actionId }
+    for (check in checks.filter(::scriptExecutionCheck)) {
+        terminals[check]?.let { terminal ->
+            require(terminal == check) { "Script execution requires its distinct run terminal: $check" }
+            require(byId[terminal]?.status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) { "Script execution cannot be a cache hit: $check" }
+        }
+    }
     val testChecks = checks.filter { it.endsWith(":test") }
     val testTerminals = testChecks.mapNotNull { check -> terminals[check]?.let { it to check } }.toMap()
     val observations = testObservations.mapValues { (_, report) -> report.copy(tests = report.tests.toList()) }

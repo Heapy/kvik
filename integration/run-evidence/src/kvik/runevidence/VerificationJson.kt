@@ -10,7 +10,7 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
     fun checks(name: String): Set<String> {
         val values = fields.getValue(name).arrayValue().map { it.stringValue() }
         require(values.distinct().size == values.size) { "Duplicate $name in verification record" }
-        require(values.all(::validCheck)) { "Invalid $name: expected module:target:build, module:target:test or module:target:application" }
+        require(values.all(::validCheck)) { "Invalid $name: expected module:target:build|test|application or script:name:jvm:prepare|run" }
         return values.toSet()
     }
     return VerificationRecord(fields.getValue("runId").stringValue(), checks("requestedChecks"), checks("completedChecks"),
@@ -22,6 +22,11 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
         }, fields.getValue("tests").arrayValue().map(::testResultFromJson), testCountsFromJson(fields.getValue("testCounts")),
         fields.getValue("status").enumValue(), fields.getValue("freshnessAtCompletion").enumValue(),
         fields.getValue("reproduction").arrayValue().map { it.stringValue() }).also { record ->
+        for (check in record.requestedChecks.filter(::scriptExecutionCheck)) {
+            val terminal = record.actions.singleOrNull { it.actionId == check }
+            require(terminal?.status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) { "Persisted script execution cannot be a cache hit: $check" }
+            if (check in record.completedChecks) require(terminal?.status == ActionStatus.EXECUTED) { "Completed script check lacks its executed terminal: $check" }
+        }
         if (record.status == VerificationStatus.PASSED) {
             // Every requested test has a distinct non-cacheable terminal in the graph. This is
             // necessary evidence only: v1 does not persist the terminal mapping/action kinds.
