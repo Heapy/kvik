@@ -10,6 +10,7 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
     fun checks(name: String): Set<String> {
         val values = fields.getValue(name).arrayValue().map { it.stringValue() }
         require(values.distinct().size == values.size) { "Duplicate $name in verification record" }
+        require(values.all(::validCheck)) { "Invalid $name: expected module:target:build or module:target:test" }
         return values.toSet()
     }
     return VerificationRecord(fields.getValue("runId").stringValue(), checks("requestedChecks"), checks("completedChecks"),
@@ -20,7 +21,15 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
             require(actions.map { it.actionId }.distinct().size == actions.size) { "Duplicate action result in verification record" }
         }, fields.getValue("tests").arrayValue().map(::testResultFromJson), testCountsFromJson(fields.getValue("testCounts")),
         fields.getValue("status").enumValue(), fields.getValue("freshnessAtCompletion").enumValue(),
-        fields.getValue("reproduction").arrayValue().map { it.stringValue() })
+        fields.getValue("reproduction").arrayValue().map { it.stringValue() }).also { record ->
+        if (record.status == VerificationStatus.PASSED) {
+            // Every requested test has a distinct non-cacheable terminal in the graph. This is
+            // necessary evidence only: v1 does not persist the terminal mapping/action kinds.
+            require(record.actions.count { it.status == ActionStatus.EXECUTED } >= record.requestedChecks.count { it.endsWith(":test") }) {
+                "Passing test verification lacks distinct executed actions for its requested test checks"
+            }
+        }
+    }
 }
 
 private fun actionResultFromJson(value: JsonValue): ActionResult {

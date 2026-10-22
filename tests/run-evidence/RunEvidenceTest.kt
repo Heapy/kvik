@@ -128,6 +128,23 @@ class RunEvidenceTest {
         assertEquals(ExitStatus.CANCELLED, aggregate(actions = listOf(result("base"), result("main"), result("tests", ActionStatus.CANCELLED)), reports = mapOf("tests" to report)).exitStatus)
     }
 
+    @Test fun schedulerCancellationPreservesAlreadyObservedPassedAndFailedTests() {
+        for (leafStatus in listOf(TestStatus.PASSED, TestStatus.FAILED)) {
+            val observed = report(status = if (leafStatus == TestStatus.PASSED) VerificationStatus.PASSED else VerificationStatus.FAILED,
+                tests = listOf(TestResult("finished", "app", "jvm", leafStatus)))
+            val evidence = aggregate(actions = listOf(result("base"), result("main"), result("tests", ActionStatus.CANCELLED, 130)),
+                reports = mapOf("tests" to observed.copy(status = VerificationStatus.CANCELLED)))
+            assertEquals(ExitStatus.CANCELLED, evidence.exitStatus)
+            assertEquals(observed.tests, evidence.record.tests)
+            assertEquals(observed.counts, evidence.record.testCounts)
+            assertTrue(evidence.record.completedChecks.isEmpty())
+        }
+        val late = aggregate(cancelled = true)
+        assertEquals(ExitStatus.CANCELLED, late.exitStatus)
+        assertEquals(report().tests, late.record.tests)
+        assertEquals(report().counts, late.record.testCounts)
+    }
+
     @Test fun contradictoryStatusCountsAndForeignTestEvidenceAreRejected() {
         val invalid = listOf(
             report(status = VerificationStatus.PASSED, tests = emptyList()),

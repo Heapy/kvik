@@ -10,7 +10,7 @@ python3 tools/test_run_evidence.py \
   --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
 ```
 
-The Kotlin/Native suite contains thirteen tests:
+The Kotlin/Native suite contains fifteen tests:
 
 - Exact snapshot/configuration/lock/composition/toolchain/action identities and deterministic ordering.
 - Build-only complete zero counts and compilation cache hits.
@@ -20,7 +20,9 @@ The Kotlin/Native suite contains thirteen tests:
 - Stale and indeterminate snapshots never pass; cancellation has precedence over failures.
 - Contradictory report statuses/counts, foreign/duplicate IDs, cached tests, invalid graph/result evidence and omitted planned actions cannot prove success.
 - Canonical persisted-record roundtrips retain every field and status; unknown/missing/mistyped nested fields, invalid enums/digests/integers, duplicate evidence and contradictory passing records are refused.
+- Persisted malformed check names, all-cache-hit passing test records, and two passing test checks backed by only one executed action are refused; build-only cache hits remain valid.
+- Scheduler-authoritative cancellation preserves already observed passed/failed leaf tests and counts; late global cancellation also retains completed evidence.
 
 These tests use synthetic scheduler results and adapter-neutral reports to exercise the evidence boundary. They do not execute consumer compilers/tests or prove filesystem freshness, CAS content or persisted-record authenticity. The coordinator must bind those inputs to its actual run. The complete API and failure semantics are documented in `integration/run-evidence/README.md`.
 
-Observed: all thirteen Kotlin/Native tests passed. Python harness syntax and staged diff checks also passed.
+Observed: all fifteen Kotlin/Native tests passed, including the independent parser findings and cancellation normalization regressions. Python harness syntax and staged diff checks also passed.

@@ -6,6 +6,8 @@ import kvik.core.*
 data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus)
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
+internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test)"))
+
 /**
  * Aggregate one planned run without filesystem, process or journal effects. Missing evidence is
  * incomplete; contradictory evidence throws IllegalArgumentException rather than inventing results.
@@ -28,7 +30,7 @@ fun aggregateRunEvidence(
     cancelled: Boolean = false,
 ): RunEvidence {
     val checks = requestedChecks.sorted().toSet()
-    require(checks.isNotEmpty() && checks.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test)")) }) {
+    require(checks.isNotEmpty() && checks.all(::validCheck)) {
         "Requested checks must identify module:target:build or module:target:test"
     }
     val terminals = terminalActions.toMap()

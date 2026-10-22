@@ -62,4 +62,22 @@ class VerificationJsonTest {
         val overflow = TestCounts(Int.MAX_VALUE, Int.MAX_VALUE, 0, Int.MAX_VALUE, true).toJson()
         invalid(document.change("testCounts" to overflow))
     }
+
+    @Test fun checkGrammarAndNonCacheableTestExecutionAreRequired() {
+        val document = record().toJson()
+        for (check in listOf("", "garbage", "app:jvm", "app:wasm:test", "app:jvm:publish", "1app:jvm:test", "app:jvm:test\n")) {
+            invalid(document.change("requestedChecks" to listOf(check.json()).json(), "completedChecks" to listOf(check.json()).json()))
+        }
+        val action = document.objectValue().getValue("actions").arrayValue().single()
+        for (status in listOf("local_hit", "remote_hit")) invalid(document.change("actions" to listOf(action.change("status" to status.json())).json()))
+        val twoChecks = record().copy(requestedChecks = setOf("app:jvm:test", "other:macosArm64:test"),
+            completedChecks = setOf("app:jvm:test", "other:macosArm64:test"),
+            tests = record().tests + TestResult("other", "other", "macosArm64", TestStatus.PASSED), testCounts = TestCounts(2, 2, 0, 0, true))
+        invalid(twoChecks.toJson())
+        val executed = twoChecks.copy(actions = twoChecks.actions + ActionResult("other-test", digest, ActionStatus.EXECUTED, exitCode = 0))
+        assertEquals(executed, verificationRecordFromJson(executed.toJson()))
+        val build = record().copy(requestedChecks = setOf("app:jvm:build"), completedChecks = setOf("app:jvm:build"),
+            actions = listOf(ActionResult("compile", digest, ActionStatus.LOCAL_HIT, exitCode = 0)), tests = emptyList(), testCounts = TestCounts(0, 0, 0, 0, true))
+        assertEquals(build, verificationRecordFromJson(build.toJson()))
+    }
 }
