@@ -26,15 +26,19 @@ requires one declared executable file and no classpath. All referenced paths
 must exist in declared inputs. Settings are bounded to 64 KiB canonical UTF-8;
 launch metadata is bounded to 256 KiB. Unknown fields, malformed Unicode/NULs,
 invalid target/entry-point combinations and undeclared paths are errors.
+JSON Schema provides structural authoring validation; the Kotlin parser remains
+authoritative for UTF-16 field lengths, valid Unicode and total canonical UTF-8
+byte bounds. JSON Schema's code-point lengths alone cannot prove those limits.
 
 `applicationBundleAction(launch, inputs, composition, toolchains)` lives in
 `kvik.application`. It creates a PACKAGE action with declared output root
 `application`. The deterministic result contains `application/launch.json` plus
 all inputs under `application/input/`; metadata and input bytes are CAS verified.
 `ApplicationBundleExecutor(content)` handles this action without starting a
-process. It validates the exact action contract, never copies unrelated source
-or compiler-plugin artifacts into the runtime closure, and reports corruption
-as failure. Its outputs can be reused; application execution cannot.
+process. It validates the exact action contract, packages exactly the provided
+inputs, and reports corruption as failure. The graph selects the runtime closure
+and excludes unrelated source/compiler-plugin outputs. Packaged outputs can be
+reused; application execution cannot.
 
 ## Invocation and continuous-mode integration to implement
 

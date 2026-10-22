@@ -3,6 +3,25 @@ package kvik.core
 import kotlin.test.*
 
 class ProjectConfigurationTest {
+    @Test fun applicationsAreOptionalTargetSpecificAndKeepCompilerOptionsSeparate() {
+        assertNull(parse().project.modules.single().targets.single().application)
+        val settings = ApplicationSpec("sample.MainKt", listOf("--input", "literal path"), mapOf("MODE" to "dev"))
+        fun selected(value: String) = example.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"application\":$value")
+        val configuration = parse(selected(settings.toJson().canonical()))
+        val target = configuration.project.modules.single().targets.single()
+        assertEquals(settings, target.application)
+        assertTrue(target.compilerOptions.isEmpty())
+        assertEquals(configuration, parse(configuration.document.canonical()))
+        assertNotEquals(parse().digest, configuration.digest)
+        assertEquals(settings, parse(selected(settings.toJson().canonical()).replace("\"test\":\"jvmTest\"", "\"test\":null"))
+            .project.modules.single().targets.single().application)
+        for (invalid in listOf("null", "[]", "{}", """{"entryPoint":"MainKt","command":"sh"}""")) assertFails { parse(selected(invalid)) }
+        val nested = selected(ApplicationSpec("sample.Outer\$Nested").toJson().canonical())
+        parse(nested)
+        assertFails { parse(nested.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")) }
+        parse(selected(ApplicationSpec("sample.main").toJson().canonical()).replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\""))
+    }
+
     @Test fun nativeTimeoutsAreBoundedOptionalAndPreserveTheDocument() {
         val native = example.replace("\"name\":\"jvm\"", "\"name\":\"macosArm64\"")
         fun selected(value: String) = native.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"nativeTimeouts\":$value")

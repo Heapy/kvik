@@ -245,6 +245,157 @@
       "additionalProperties": false,
       "minProperties": 1
     },
+    "applicationSettings": {
+      "type": "object",
+      "properties": {
+        "entryPoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\\s\\S])"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "not": {
+              "pattern": "\u0000"
+            }
+          },
+          "maxItems": 256
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096,
+            "not": {
+              "pattern": "\u0000"
+            }
+          },
+          "maxProperties": 128,
+          "propertyNames": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$(?![\\s\\S])"
+          }
+        }
+      },
+      "required": [
+        "entryPoint"
+      ],
+      "additionalProperties": false,
+      "description": "Canonical UTF-8 settings must additionally fit 64 KiB; semantic validation is authoritative."
+    },
+    "applicationLaunch": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64"
+          ]
+        },
+        "application": {
+          "$ref": "#/$defs/applicationSettings"
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/file/properties/path"
+              },
+              {
+                "pattern": "^[^\\u0000-\\u001f]*$(?![\\s\\S])"
+              }
+            ]
+          },
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file/properties/path"
+                },
+                {
+                  "pattern": "^[^\\u0000-\\u001f]*$(?![\\s\\S])"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "module",
+        "target",
+        "application",
+        "classpath",
+        "executable"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "const": "jvm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "classpath": {
+                "minItems": 1
+              },
+              "executable": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "classpath": {
+                "maxItems": 0
+              },
+              "executable": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/file/properties/path"
+                  },
+                  {
+                    "pattern": "^[^\\u0000-\\u001f]*$(?![\\s\\S])"
+                  }
+                ]
+              },
+              "application": {
+                "properties": {
+                  "entryPoint": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$(?![\\s\\S])"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Canonical UTF-8 metadata must additionally fit 256 KiB; paths must bind to the declared input tree."
+    },
     "target": {
       "type": "object",
       "properties": {
@@ -289,6 +440,9 @@
         },
         "nativeTimeouts": {
           "$ref": "#/$defs/nativeTimeouts"
+        },
+        "application": {
+          "$ref": "#/$defs/applicationSettings"
         }
       },
       "required": [
@@ -360,6 +514,31 @@
             "properties": {
               "name": {
                 "const": "macosArm64"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "macosArm64"
+              }
+            },
+            "required": [
+              "name",
+              "application"
+            ]
+          },
+          "then": {
+            "properties": {
+              "application": {
+                "properties": {
+                  "entryPoint": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$(?![\\s\\S])"
+                  }
+                }
               }
             }
           }

@@ -58,11 +58,43 @@ DEFS["nativeTestSettings"] = object_({"engine": {"const": "kotest"}, "kspVersion
 DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maximum": 3600000}
     for name in ("compileMillis", "linkMillis")}, optional=("compileMillis", "linkMillis"))
 DEFS["nativeTimeouts"]["minProperties"] = 1
+APPLICATION_ENTRY = {"type": "string", "minLength": 1, "maxLength": 1024,
+    "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\s\S])"}
+NATIVE_APPLICATION_ENTRY = {"type": "string",
+    "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$(?![\s\S])"}
+APPLICATION_TEXT = {"type": "string", "maxLength": 4096, "not": {"pattern": "\u0000"}}
+DEFS["applicationSettings"] = object_({
+    "entryPoint": APPLICATION_ENTRY,
+    "arguments": array(APPLICATION_TEXT, maxItems=256),
+    "environment": {**mapping(APPLICATION_TEXT), "maxProperties": 128,
+        "propertyNames": {"maxLength": 128, "pattern": r"^[A-Za-z_][A-Za-z0-9_]*$(?![\s\S])"}},
+}, optional=("arguments", "environment"))
+DEFS["applicationSettings"]["description"] = "Canonical UTF-8 settings must additionally fit 64 KiB; semantic validation is authoritative."
+APPLICATION_PATH = {"allOf": [ref("file/properties/path"),
+    {"pattern": r"^[^\u0000-\u001f]*$(?![\s\S])"}]}
+DEFS["applicationLaunch"] = versioned({
+    "module": {**ID, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"},
+    "target": enum("jvm", "macosArm64"), "application": ref("applicationSettings"),
+    "classpath": array(APPLICATION_PATH, maxItems=1024, uniqueItems=True),
+    "executable": nullable(APPLICATION_PATH),
+})
+DEFS["applicationLaunch"]["allOf"] = [{
+    "if": {"properties": {"target": {"const": "jvm"}}},
+    "then": {"properties": {"classpath": {"minItems": 1}, "executable": {"type": "null"}}},
+    "else": {"properties": {"classpath": {"maxItems": 0}, "executable": APPLICATION_PATH,
+        "application": {"properties": {"entryPoint": NATIVE_APPLICATION_ENTRY}}}},
+}]
+DEFS["applicationLaunch"]["description"] = "Canonical UTF-8 metadata must additionally fit 256 KiB; paths must bind to the declared input tree."
 DEFS["target"] = object_({"name": enum("jvm", "macosArm64"), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING), "nativeTestSettings": ref("nativeTestSettings"), "nativeTimeouts": ref("nativeTimeouts")}, optional=("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
+DEFS["target"]["properties"]["application"] = ref("applicationSettings")
 DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"properties": {"name": {"const": "jvm"}, "test": ID}}}]
 DEFS["target"]["allOf"].append({"if": {"required": ["testCompilerOptions"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTestSettings"]}, "then": {"properties": {"name": {"const": "macosArm64"}, "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTimeouts"]}, "then": {"properties": {"name": {"const": "macosArm64"}}}})
+DEFS["target"]["allOf"].append({
+    "if": {"properties": {"name": {"const": "macosArm64"}}, "required": ["name", "application"]},
+    "then": {"properties": {"application": {"properties": {"entryPoint": NATIVE_APPLICATION_ENTRY}}}},
+})
 DEFS["pluginPathOption"] = object_({"name": ID, "kind": enum("input-file", "output-directory"), "path": PATH})
 DEFS["jvmPluginApplication"] = object_({"id": ID, "compilerVersion": {"const": "2.4.20"}, "classpath": array(PATH, minItems=1, uniqueItems=True),
     "options": array({"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*="}), "inputs": array(PATH, uniqueItems=True),
