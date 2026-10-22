@@ -1,0 +1,30 @@
+{
+  "org.apiguardian:apiguardian-api:1.1.2": {
+    "digest": {
+      "hash": "b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38",
+      "sizeBytes": 6806
+    },
+    "url": "https://repo.maven.apache.org/maven2/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar"
+  },
+  "org.junit.jupiter:junit-jupiter-api:5.13.4": {
+    "digest": {
+      "hash": "d1bb81abfd9e03418306b4e6a3390c8db52c58372e749c2980ac29f0c08278f1",
+      "sizeBytes": 240237
+    },
+    "url": "https://repo.maven.apache.org/maven2/org/junit/jupiter/junit-jupiter-api/5.13.4/junit-jupiter-api-5.13.4.jar"
+  },
+  "org.junit.platform:junit-platform-commons:1.13.4": {
+    "digest": {
+      "hash": "1c25ca641ebaae44ff3ad21ca1b2ef68d0dd84bfeb07c4805ba7840899b77408",
+      "sizeBytes": 158512
+    },
+    "url": "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-commons/1.13.4/junit-platform-commons-1.13.4.jar"
+  },
+  "org.opentest4j:opentest4j:1.3.0": {
+    "digest": {
+      "hash": "48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b",
+      "sizeBytes": 14304
+    },
+    "url": "https://repo.maven.apache.org/maven2/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar"
+  }
+}

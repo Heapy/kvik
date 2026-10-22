@@ -55,6 +55,62 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun actualJunitApiRuntimeAndBomMetadataResolveWithExplicitJvmTarget() {
+        val transport = FixtureTransport()
+        val resolver = MavenResolver(transport, NativePomParser())
+        val coordinate = Coordinate.parse("org.junit.jupiter:junit-jupiter-api:5.13.4")
+        val expected = parseJson(read("$root/tests/resolution/fixtures/junit-artifacts.json")!!.decodeToString()).objectValue()
+        for (usage in listOf("java-api", "java-runtime")) {
+            val request = jvmVariantRequest(usage, 11)
+            val selection = resolver.resolve(coordinate, request, listOf(repo))
+            val names = listOf("junit-jupiter-api", "opentest4j", "junit-platform-commons") + if (usage == "java-api") listOf("apiguardian-api") else emptyList()
+            assertEquals(names, selection.artifacts.map { it.coordinate.name })
+            assertEquals(names.size + 1, selection.metadata.size)
+            assertTrue(selection.metadata.any { it.url.endsWith("junit-bom-5.13.4.module") })
+            assertTrue(selection.metadata.all { it.url.endsWith(".module") })
+            assertEquals(request, selection.variant)
+            selection.artifacts.forEach { artifact ->
+                val recorded = expected.getValue(artifact.coordinate.toString()).objectValue()
+                assertEquals(recorded.getValue("url").stringValue(), artifact.url)
+                assertEquals(Digest.fromJson(recorded.getValue("digest")), artifact.digest)
+                assertEquals(if (usage == "java-api") "apiElements" else "runtimeElements", artifact.variant)
+            }
+            assertEquals(selection.artifacts.map { it.digest }, verifyLocked(selection) { transport.blobs[it] }.map(Sha256::digest))
+            assertEquals(selection, resolver.resolve(coordinate, request, listOf(repo)))
+        }
+        assertFails { resolver.resolve(coordinate, native, listOf(repo)) }
+        println("Verified JUnit 5.13.4 API/runtime closures and BOM metadata with explicit consumer JVM 11")
+    }
+
+    @Test fun jvmVersionCompatibilityIsTypedBoundedAndAmbiguityFails() {
+        fun metadata(version: String) = module(example, variant(attrs = ",\"org.gradle.jvm.version\":$version"))
+        for (version in listOf(8, 11)) assertEquals(jvmVariantRequest("java-runtime", 11), resolve(metadata(version.toString()), jvmVariantRequest("java-runtime", 11)).variant)
+        assertFails { resolve(metadata("17"), jvmVariantRequest("java-runtime", 11)) }
+        assertEquals(17, supportedJvmTarget(resolve(metadata("17"), jvmVariantRequest("java-runtime", 17)).variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE)))
+        for (invalid in listOf("\"8\"", "true", "0", "-1", "2147483648")) assertFails { resolve(metadata(invalid), jvmVariantRequest("java-runtime", 11)) }
+        assertFails { resolve(metadata("8")) } // Legacy unversioned request cannot prove version compatibility.
+        assertFails { resolve(module(example, variant(attrs = ",\"org.gradle.jvm.version\":8") + "," + variant(attrs = ",\"org.gradle.jvm.version\":11")), jvmVariantRequest("java-runtime", 17)) }
+        assertFails { resolve(metadata("8"), jvm.copy(attributes = mapOf("unreviewed" to "x"))) }
+        assertFails { resolve(metadata("8"), native.copy(attributes = mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11"))) }
+        assertFails { resolve(module(example, variant(attrs = ",\"org.gradle.jvm.version\":8,\"unreviewed\":true")), jvmVariantRequest("java-runtime", 11)) }
+    }
+
+    @Test fun explicitJavaVariantGuardsAndPomVersionPolicyDoNotInventNativeFallback() {
+        val java = variant(attrs = ",\"org.gradle.libraryelements\":\"jar\",\"org.gradle.jvm.version\":8")
+            .replace(",\"org.jetbrains.kotlin.platform.type\":\"jvm\"", "")
+        assertTrue(resolve(module(example, java), jvmVariantRequest("java-runtime", 11)).artifacts.isEmpty())
+        assertFails { resolve(module(example, java), native) }
+        assertFails { resolve(module(example, java.replace(",\"org.gradle.libraryelements\":\"jar\"", "")), jvmVariantRequest("java-runtime", 11)) }
+        assertFails { resolve(module(example, java.replace("\"jar\"", "\"classes\"")), jvmVariantRequest("java-runtime", 11)) }
+        assertFails { resolve(module(example, java.replace("\"org.gradle.jvm.version\":8", "\"org.gradle.jvm.version\":8,\"org.jetbrains.kotlin.native.target\":\"macos_arm64\"")), jvmVariantRequest("java-runtime", 11)) }
+        val pom = "<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version></project>".encodeToByteArray()
+        val base = "${repo.url}/example/a/1.0/a-1.0"
+        val resolver = MavenResolver(MemoryTransport(mapOf("$base.pom" to pom, "$base.jar" to byteArrayOf(1))), NativePomParser())
+        assertEquals("maven-jar-java-runtime", resolver.resolve(example, jvmVariantRequest("java-runtime", 11), listOf(repo)).artifacts.single().variant)
+        assertFails { resolver.resolve(example, jvm.copy(attributes = mapOf("unknown" to "x")), listOf(repo)) }
+        assertFails { resolver.resolve(example, native, listOf(repo)) }
+    }
+
     @Test fun actualPinnedFixtureClosuresAndOfflineReplay() {
         val transport = FixtureTransport()
         val resolver = MavenResolver(transport, NativePomParser(), listOf(Coordinate.parse("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")))

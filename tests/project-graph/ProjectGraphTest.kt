@@ -76,6 +76,26 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun jvmTargetVariantsFollowConsumerAndModuleCompilationSeparately() {
+        fun at(module: ModuleSpec, version: Int) = module.copy(targets = module.targets.map { if (it.name == "jvm") it.copy(compilerOptions = listOf("-jvm-target=$version")) else it })
+        val plugin = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"), setOf("jvm"), setOf("main"), emptyList(), emptyList())
+        val project = configuration(at(base, 17), at(app.copy(compilerPlugins = listOf(plugin)), 21))
+        val effective = effectiveConfiguration(project, scopes = listOf(DependencyScope("app", "jvm", "main", "java-api")))
+        val stdlib = effective.requests.filter { it.coordinate.name == "stdlib" }
+        assertEquals(setOf("17", "21"), stdlib.map { it.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE) }.toSet())
+        assertEquals("25", effective.requests.single { it.coordinate == plugin.coordinate }.variant.attributes.getValue(JVM_TARGET_VERSION_ATTRIBUTE))
+        val locked = lock(effective).let { value -> value.copy(selections = value.selections.map { s -> s.copy(artifacts = s.artifacts.map {
+            it.copy(url = it.url.removeSuffix(".jar") + "-${s.variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]}.jar",
+                digest = digest(it.coordinate.toString() + s.variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]))
+        }) }) }
+        val actions = resolved(projectActionGraph(effective, locked, snapshot(), composition, tools, request()))
+        assertEquals(17, JvmCompilation.fromJson(actions.getValue("base:jvm:main").parameters).jvmTarget)
+        assertEquals(21, JvmCompilation.fromJson(actions.getValue("app:jvm:main").parameters).jvmTarget)
+        assertTrue(actions.getValue("base:jvm:main").inputs.files.any { it.digest == digest("g:stdlib:117") })
+        assertTrue(actions.getValue("app:jvm:main").inputs.files.any { it.digest == digest("g:stdlib:121") })
+        assertFalse(actions.getValue("app:jvm:main").inputs.files.any { it.digest == digest("g:stdlib:117") })
+        assertFails { effectiveConfiguration(configuration(at(base, 21), at(app, 17))) }
+    }
     @Test fun transitiveModulesAndResourcesEnterConsumerInputsWithoutTargetLeakage() {
         val leaf = module("leaf", listOf(external("g:leaf-api:1")))
         val intermediate = base.copy(sourceSets = base.sourceSets.map { if(it.name == "commonMain") it.copy(dependencies = it.dependencies + Dependency.Module("leaf")) else it })

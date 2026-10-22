@@ -1,5 +1,7 @@
 package kvik.projectgraph
 
+import kvik.core.*
+
 internal data class CompilerOptions(
     val jvmTarget: Int,
     val nativeModuleName: String,
@@ -11,7 +13,7 @@ internal data class CompilerOptions(
 
 /** Parse only settings represented by the typed compiler adapters. No arbitrary flag forwarding. */
 internal fun compilerOptions(module: String, target: String, arguments: List<String>): CompilerOptions {
-    var jvmTarget = 11
+    val jvmTarget = if (target == "jvm") jvmTargetFromOptions(arguments) else DEFAULT_JVM_TARGET
     var nativeModuleName = module
     var explicitApi = false
     var warningsAsErrors = false
@@ -28,8 +30,7 @@ internal fun compilerOptions(module: String, target: String, arguments: List<Str
         when (name) {
             "-jvm-target" -> {
                 require(target == "jvm") { "JVM option on $target" }
-                jvmTarget = value().toIntOrNull() ?: error("Invalid JVM target")
-                require(jvmTarget in setOf(11, 17, 21, 25)) { "Unsupported JVM target: $jvmTarget" }
+                require(supportedJvmTarget(value()) == jvmTarget)
             }
             "-module-name" -> {
                 require(target == "macosArm64") { "Custom JVM module names are not represented by the adapter" }

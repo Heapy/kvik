@@ -131,11 +131,14 @@ private class Builder(
     }
     private fun external(module: String, target: String, scope: String, usage: String): List<LockedArtifact> {
         val all = listOf(module to scope) + moduleClosure(module, target, scope).map { it to "main" }
+        val consumer = if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null
+        if (consumer != null) require(all.all { (id, _) -> jvmTargetFromOptions(target(id, target).compilerOptions) <= consumer }) { "Dependency module bytecode target exceeds JVM consumer $module:$consumer" }
         val roots = all.flatMap { (id, selectedScope) -> sourceSets(id, target, selectedScope).flatMap { it.dependencies }.filterIsInstance<Dependency.External>().map { it.coordinate } }.distinct()
-        return roots.flatMap { locked(it, target, usage).artifacts }.distinctBy { artifactPath(it, false) }
+        return roots.flatMap { locked(it, target, usage, consumer).artifacts }.distinctBy { artifactPath(it, false) }
     }
-    private fun locked(coordinate: Coordinate, target: String, usage: String): LockedSelection =
-        selections[ResolutionRequest(coordinate, VariantRequest(target, usage, emptyMap()))] ?: error("Missing locked dependency: $coordinate:$target:$usage")
+    private fun locked(coordinate: Coordinate, target: String, usage: String, consumerJvm: Int? = null): LockedSelection =
+        selections[ResolutionRequest(coordinate, if (target == "jvm") jvmVariantRequest(usage, consumerJvm ?: error("Missing JVM consumer version")) else VariantRequest(target, usage, emptyMap()))]
+            ?: error("Missing locked dependency: $coordinate:$target:$usage:$consumerJvm")
     private fun artifactPath(artifact: LockedArtifact, plugin: Boolean): LogicalPath {
         val extension = artifact.url.substringAfterLast('.', "")
         require(extension in setOf("jar", "klib")) { "Unsupported locked artifact: ${artifact.url}" }
@@ -154,7 +157,7 @@ private class Builder(
         require(roots.size <= 1) { "Multiple compiler plugins are unsupported" }
         return roots.flatMap { coordinate ->
             require(coordinate == Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")) { "Only pinned serialization compiler plugin 2.4.20 is supported" }
-            val artifacts = locked(coordinate, "jvm", "java-runtime").artifacts
+            val artifacts = locked(coordinate, "jvm", "java-runtime", COMPILER_PLUGIN_JVM_HOST).artifacts
             require(artifacts.size == 1 && artifacts.single().coordinate == coordinate) { "Unsupported serialization plugin closure/pin" }
             artifactEntries(artifacts, "jvm", true)
         }

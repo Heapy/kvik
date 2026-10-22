@@ -50,6 +50,56 @@ private fun component(coordinate: String, dependencies: List<String> = emptyList
 private val smallEntries get() = component("example:root:1.0", listOf("example:leaf:1.0")) + component("example:leaf:1.0")
 
 class DependencyLocksTest {
+    @Test fun actualJunitTargetPolicyLockReplaysApiRuntimeAndBomFromCas() {
+        val configuration = effectiveConfiguration(config(listOf("org.junit.jupiter:junit-jupiter-api:5.13.4")))
+        val manifest = parseJson(read("$root/tests/resolution/fixtures/manifest.json").decodeToString()).objectValue()
+        val expected = parseJson(read("$root/tests/resolution/fixtures/junit-artifacts.json").decodeToString()).objectValue()
+        var fetches = 0
+        val transport = object : ArtifactTransport {
+            override fun fetch(url: String): ByteArray {
+                fetches++
+                val metadata = manifest[url]?.objectValue()
+                return if (metadata != null) read("$root/tests/resolution/fixtures/${metadata.getValue("file").stringValue()}").also {
+                    assertEquals(Digest(metadata.getValue("hash").stringValue(), metadata.getValue("sizeBytes").longValue()), Sha256.digest(it))
+                } else if (url.endsWith(".module") || url.endsWith(".pom")) throw MissingResource(url)
+                else read("$ktc/${url.substringAfter("/maven2/")}")
+            }
+        }
+        val service = DependencyLocks(store(), NativePomParser())
+        val locked = service.resolve(configuration, transport)
+        assertEquals(2, locked.selections.size)
+        for (selection in locked.selections) {
+            assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11"), selection.variant.attributes)
+            assertTrue(selection.metadata.any { it.url.endsWith("junit-bom-5.13.4.module") })
+            selection.artifacts.forEach { assertEquals(Digest.fromJson(expected.getValue(it.coordinate.toString()).objectValue().getValue("digest")), it.digest) }
+            assertEquals(if (selection.variant.usage == "java-api") 4 else 3, selection.artifacts.size)
+        }
+        val before = fetches
+        assertEquals(locked, service.loadLocked(locked.bytes(), configuration))
+        assertEquals(before, fetches)
+        publish("$work/junit-lock.json", locked.bytes())
+    }
+    @Test fun consumerTargetPolicyIsExplicitAndStaleVersionSelectionsAreRejected() {
+        val project = config(listOf("example:root:1.0"))
+        val original = effective(project)
+        assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11"), original.requests.single().variant.attributes)
+        val newer = effective(parseProjectConfiguration(parseJson(project.document.canonical().replace("\"compilerOptions\":[]", "\"compilerOptions\":[\"-jvm-target=17\"]"))))
+        assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "17"), newer.requests.single().variant.attributes)
+        assertNotEquals(original.digest, newer.digest)
+        val policy = original.document.objectValue().getValue("resolver").objectValue()
+        assertEquals("kvik-maven-v2", policy.getValue("implementation").stringValue())
+        assertEquals(25, policy.getValue("jvmCompatibility").objectValue().getValue("compilerPluginHost").longValue().toInt())
+        val service = DependencyLocks(store(), NativePomParser())
+        val lock = service.resolve(original, MemoryTransport(smallEntries))
+        assertFails { service.loadLocked(lock.bytes(), newer) }
+        val changed = lock.selections.single().let { it.copy(variant = it.variant.copy(attributes = emptyMap())) }
+        assertFails { service.loadLocked(lock.copy(selections = listOf(changed)).bytes(), original) }
+        assertEquals(lock, service.loadLocked(lock.bytes(), original))
+        for (bad in listOf(listOf("-jvm-target"), listOf("-jvm-target=8"), listOf("-jvm-target=26"), listOf("-jvm-target=+11"), listOf("-jvm-target=11", "-jvm-target", "17")))
+            assertFails { jvmTargetFromOptions(bad) }
+        assertEquals(21, jvmTargetFromOptions(listOf("-jvm-target", "21")))
+        assertEquals(25, jvmTargetFromOptions(listOf("-jvm-target=25")))
+    }
     @Test fun effectiveIdentityCoversPolicyScopesAndProject() {
         val project = config(listOf("example:root:1.0"), listOf("example:test:1.0"))
         val main = effective(project)
@@ -167,6 +217,9 @@ class DependencyLocksTest {
         val project = parseProjectConfiguration(JsonValue.Object(a + ("modules" to listOf(consumer, dependency).json())))
         assertEquals(setOf("root"), effective(project).requests.map { it.coordinate.name }.toSet())
         assertEquals(setOf("root", "plugin"), effective(project, scopes = listOf(scope(name = "test"))).requests.map { it.coordinate.name }.toSet())
+        val selections = effective(project, scopes = listOf(scope(name = "test"))).requests
+        assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "25"), selections.single { it.coordinate.name == "plugin" }.variant.attributes)
+        assertEquals(mapOf(JVM_TARGET_VERSION_ATTRIBUTE to "11"), selections.single { it.coordinate.name == "root" }.variant.attributes)
         val mainPlugin = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"scopes\":[\"test\"]", "\"scopes\":[\"main\"]")))
         assertEquals(setOf("root", "plugin"), effective(mainPlugin, scopes = listOf(scope(name = "test"))).requests.map { it.coordinate.name }.toSet())
     }

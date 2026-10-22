@@ -40,6 +40,8 @@ class MavenResolver(
     /** Resolve roots together to detect graph conflicts, retaining a closure per root in declaration order. */
     fun resolveAll(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>): List<LockedSelection> {
         require(roots.isNotEmpty() && roots.size <= maxComponents)
+        require(variant.attributes.keys.all { variant.platform == "jvm" && it == JVM_TARGET_VERSION_ATTRIBUTE }) { "Unsupported consumer variant attributes" }
+        variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]?.let(::supportedJvmTarget)
         require(repositories.size in 1..32 && repositories.map { it.id }.distinct().size == repositories.size)
         repositories.forEach { validateHttpsUrl(it.url.trimEnd('/') + "/") }
         val selected = linkedMapOf<String, Coordinate>()
@@ -141,7 +143,9 @@ class MavenResolver(
                 require(management == null || management.children.all { it.name == "dependencies" })
                 pomDependencies(management?.child("dependencies"), variant, management = true).forEach(::constrain)
                 if (!platform) {
-                    require(variant.platform == "jvm" && variant.usage in setOf("java-api", "java-runtime") && variant.attributes.isEmpty()) { "POM has no matching Kotlin Native or attributed variant" }
+                    // A POM has no producer bytecode version. The known consumer target policy is
+                    // retained in the lock, but does not establish a bytecode guarantee for POM jars.
+                    require(variant.platform == "jvm" && variant.usage in setOf("java-api", "java-runtime")) { "POM has no matching Kotlin Native variant" }
                     val url = found.url.removeSuffix(".pom") + ".jar"
                     val bytes = fetch(url)
                     require(bytes.size <= 64 * 1024 * 1024)
@@ -202,20 +206,33 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
     fun attribute(key: String) = a[key]?.stringValue()
     if (attribute("org.gradle.category") != if (platform) "platform" else "library") return false
     val type = when (request.platform) { "macosArm64" -> "native"; else -> request.platform }
-    if (!platform && attribute("org.jetbrains.kotlin.platform.type") != type) return false
     if (attribute("org.gradle.usage") != request.usage) return false
+    if (!platform && attribute("org.jetbrains.kotlin.platform.type") != type) {
+        // Java publications need not carry Kotlin's platform attribute. Require the explicit Java
+        // usage and jar shape; this rule never turns a Native request into a JVM selection.
+        if (type != "jvm" || attribute("org.jetbrains.kotlin.platform.type") != null ||
+            request.usage !in setOf("java-api", "java-runtime") || attribute("org.gradle.libraryelements") != "jar") return false
+    }
     if (request.platform == "macosArm64" && attribute("org.jetbrains.kotlin.native.target") !in setOf(null, "macos_arm64")) return false
     if (request.platform == "macosArm64" && attribute("org.jetbrains.kotlin.native.target") == null) {
         require(v.items("files").isEmpty() && v.items("dependencies").isEmpty() && v["available-at"] == null) { "Native binary variant lacks target" }
     }
-    if (request.attributes.any { (key, value) -> attribute(key) != value }) return false
-    val supported = setOf("artifactType", "org.gradle.category", "org.gradle.usage", "org.gradle.jvm.environment", "org.gradle.libraryelements", "org.gradle.dependency.bundling", "org.jetbrains.kotlin.platform.type", "org.jetbrains.kotlin.native.target", "org.jetbrains.kotlin.klib.packaging") + request.attributes.keys
+    val supported = setOf("artifactType", "org.gradle.category", "org.gradle.usage", "org.gradle.jvm.environment", "org.gradle.libraryelements", "org.gradle.dependency.bundling", "org.jetbrains.kotlin.platform.type", "org.jetbrains.kotlin.native.target", "org.jetbrains.kotlin.klib.packaging") +
+        if (type == "jvm") setOf(JVM_TARGET_VERSION_ATTRIBUTE) else emptySet()
     require(a.keys.all { it in supported }) { "Unsupported variant attributes: ${a.keys - supported}" }
     require(attribute("org.gradle.jvm.environment") in setOf(null, if (type == "jvm") "standard-jvm" else "non-jvm")) { "Unsupported JVM environment" }
     require(attribute("org.gradle.libraryelements") in setOf(null, if (type == "jvm") "jar" else "klib")) { "Unsupported library elements" }
     require(attribute("org.jetbrains.kotlin.klib.packaging") in setOf(null, "packed")) { "Unsupported klib packaging" }
     require(attribute("artifactType") in setOf(null, if (type == "native") "org.jetbrains.kotlin.klib" else "jar")) { "Unsupported artifact type" }
     require(attribute("org.gradle.dependency.bundling") in setOf(null, "external")) { "Unsupported bundling" }
+    if (type == "jvm") require(attribute("org.jetbrains.kotlin.native.target") == null && attribute("org.jetbrains.kotlin.klib.packaging") == null) { "Native-only attributes on a JVM variant" }
+    a[JVM_TARGET_VERSION_ATTRIBUTE]?.let { value ->
+        val producer = value.longValue()
+        require(producer in 1..Int.MAX_VALUE.toLong()) { "Invalid producer JVM version" }
+        val consumer = request.attributes[JVM_TARGET_VERSION_ATTRIBUTE]?.let(::supportedJvmTarget)
+            ?: error("Versioned JVM metadata requires an explicit consumer target")
+        if (producer > consumer) return false
+    }
     return true
 }
 

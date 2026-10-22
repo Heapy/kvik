@@ -8,7 +8,9 @@ data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxCompo
         require(pins.map { "${it.group}:${it.name}" }.distinct().size == pins.size) { "Duplicate/conflicting resolver pins" }
         require(maxComponents in 1..1024 && maxRequests in 1..8192)
     }
-    internal fun toJson(): JsonValue = obj("implementation" to "kvik-maven-v1".json(),
+    internal fun toJson(): JsonValue = obj("implementation" to "kvik-maven-v2".json(),
+        "jvmCompatibility" to obj("defaultConsumerTarget" to DEFAULT_JVM_TARGET.json(), "compilerPluginHost" to COMPILER_PLUGIN_JVM_HOST.json(),
+            "producerVersion" to "integer-lte-consumer-or-unspecified".json(), "ambiguity" to "reject".json()),
         "pins" to pins.sortedBy(Coordinate::toString).map { it.toString().json() }.json(),
         "maxComponents" to maxComponents.json(), "maxRequests" to maxRequests.json(),
         "maxMetadataBytes" to (1024 * 1024).json(), "maxArtifactBytes" to (64 * 1024 * 1024).json(),
@@ -55,26 +57,37 @@ fun effectiveConfiguration(
     val orderedScopes = scopes.sortedBy { it.toJson().canonical() }
     val modules = snapshot.project.modules.associateBy { it.id }
     val requests = linkedSetOf<ResolutionRequest>()
-    fun visit(moduleId: String, targetName: String, scope: String, usage: String, seen: MutableSet<String>) {
+    fun visit(moduleId: String, targetName: String, scope: String, usage: String, consumerJvm: Int?, seen: MutableSet<String>) {
         val module = modules[moduleId] ?: error("Unknown dependency scope module: $moduleId")
         val target = module.targets.singleOrNull { it.name == targetName } ?: error("Unknown dependency scope target: $moduleId:$targetName")
         require(scope in setOf("main", "test")) { "Unsupported dependency scope: $scope" }
         require(usage in if (targetName == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api")) { "Unsupported dependency usage: $targetName:$usage" }
         val source = if (scope == "main") target.main else target.test ?: error("No test source set: $moduleId:$targetName")
-        if (!seen.add("$moduleId:$targetName:$scope:$usage")) return
-        val variant = VariantRequest(targetName, usage, emptyMap())
+        if (!seen.add("$moduleId:$targetName:$scope:$usage:$consumerJvm")) return
+        if (targetName == "jvm") {
+            val ownTarget = jvmTargetFromOptions(target.compilerOptions)
+            require(ownTarget <= consumerJvm!!) { "Module $moduleId bytecode target exceeds its JVM consumer target $consumerJvm" }
+            // The dependency module is compiled at its own target, while this consuming closure
+            // may select variants for a newer JVM. Both requests must be present in a scoped lock.
+            if (ownTarget != consumerJvm) visit(moduleId, targetName, "main", "java-api", ownTarget, seen)
+        }
+        val variant = if (targetName == "jvm") jvmVariantRequest(usage, consumerJvm!!) else VariantRequest(targetName, usage, emptyMap())
         // Tests also consume main dependencies, even when their source set does not explicitly dependsOn main.
         val sources = sourceSetClosure(module, listOf(target.main, source))
         for (dependency in sources.flatMap { it.dependencies }) when (dependency) {
             is Dependency.External -> requests += ResolutionRequest(dependency.coordinate, variant)
-            is Dependency.Module -> visit(dependency.module, targetName, "main", usage, seen)
+            is Dependency.Module -> visit(dependency.module, targetName, "main", usage, consumerJvm, seen)
         }
         for (plugin in module.compilerPlugins.filter { targetName in it.targets && it.scopes.any { selected -> selected == "main" || selected == scope } }) {
-            plugin.coordinate?.let { requests += ResolutionRequest(it, VariantRequest("jvm", "java-runtime", emptyMap())) }
-            plugin.module?.let { visit(it, "jvm", "main", "java-runtime", seen) }
+            plugin.coordinate?.let { requests += ResolutionRequest(it, jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)) }
+            plugin.module?.let { visit(it, "jvm", "main", "java-runtime", COMPILER_PLUGIN_JVM_HOST, seen) }
         }
     }
-    orderedScopes.forEach { visit(it.module, it.target, it.scope, it.usage, mutableSetOf()) }
+    orderedScopes.forEach { scope ->
+        val target = modules[scope.module]?.targets?.singleOrNull { it.name == scope.target }
+        val consumer = if (scope.target == "jvm") jvmTargetFromOptions(target?.compilerOptions ?: emptyList()) else null
+        visit(scope.module, scope.target, scope.scope, scope.usage, consumer, mutableSetOf())
+    }
     require(orderedScopes.size <= 8192 && requests.size <= 8192) { "Too many dependency scopes/requests" }
     val orderedRequests = requests.sortedBy { it.variant.toLockJson().canonical() + ":" + it.coordinate }
     val document = obj("schemaVersion" to CONTRACT_VERSION.json(), "project" to snapshot.document,
