@@ -26,6 +26,7 @@ fun main(args: Array<String>) {
         "ksp" -> kspNativeAction(KspNativeCompilation.fromJson(parameters), inputs, composition, identities, timeout)
         "compile" -> nativeCompileAction(NativeCompilation.fromJson(parameters), inputs, composition, identities, timeout)
         "test" -> parameters.objectValue().let { kotestNativeTestAction(it.getValue("module").stringValue(), LogicalPath(it.getValue("executable").stringValue()), inputs, composition, identities, timeout) }
+        "native-test" -> parameters.objectValue().let { nativeTestAction(it.getValue("module").stringValue(), LogicalPath(it.getValue("executable").stringValue()), inputs, composition, identities, timeoutMillis = timeout) }
         else -> error("Unknown fixture mode")
     }
     NativeProcessHost(string("guardian")).use { host ->
@@ -36,7 +37,7 @@ fun main(args: Array<String>) {
         val ksp = KspNativeExecutor(run.runId, run.path, host, content, provider)
         val compiler = NativeCompilerExecutor(run.runId, run.path, host, content, provider)
         val tests = KotestNativeExecutor(run.runId, run.path, host, content, provider)
-        val delegate: ActionExecutor = when (string("mode")) { "ksp" -> ksp; "compile" -> compiler; else -> tests }
+        val delegate: ActionExecutor = when (string("mode")) { "ksp" -> ksp; "compile", "native-test" -> compiler; else -> tests }
         val cacheDiagnostics = mutableListOf<String>()
         val executor = LocalCachingActionExecutor(delegate, NativeActionCache(string("cache"), content), content) { cacheDiagnostics += it.code + ": " + it.message }
         val started = kotlin.time.TimeSource.Monotonic.markNow()

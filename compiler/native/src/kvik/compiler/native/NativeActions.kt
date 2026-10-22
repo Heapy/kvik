@@ -22,18 +22,24 @@ data class NativeCompilation(
     val explicitApi: Boolean = false,
     val warningsAsErrors: Boolean = false,
     val kotestLauncher: LogicalPath? = null,
+    val includedLibrary: LogicalPath? = null,
 ) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(moduleName.matches(Regex("[A-Za-z0-9_.:-]+")))
-        require(sources.isNotEmpty() && sources.distinct().size == sources.size && sources.all { it.value.endsWith(".kt") })
-        require((sources + libraries + plugins).none { "," in it.value }) { "Comma-separated compiler path syntax unsupported" }
+        require(sources.distinct().size == sources.size && sources.all { it.value.endsWith(".kt") })
+        require((sources + libraries + plugins + listOfNotNull(includedLibrary)).none { "," in it.value }) { "Comma-separated compiler path syntax unsupported" }
+        if (includedLibrary == null) require(sources.isNotEmpty()) else {
+            require(sources.isEmpty() && produce != NativeOutput.LIBRARY && includedLibrary.value.endsWith(".klib") && includedLibrary !in libraries) { "Included klib requires a distinct source-free link input" }
+            require(commonSources.isEmpty() && plugins.isEmpty() && optIns.isEmpty() && !explicitApi && kotestLauncher == null) { "Source compilation options are invalid for source-free linking" }
+        }
         require(commonSources.distinct().size == commonSources.size && commonSources.all { it in sources })
         require(libraries.distinct().size == libraries.size && libraries.all { it.value.endsWith(".klib") })
         require(plugins.distinct().size == plugins.size && plugins.all { it.value.endsWith(".jar") })
         require(optIns.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")) })
         require(output.value.endsWith(if (produce == NativeOutput.LIBRARY) ".klib" else ".kexe"))
-        require((produce == NativeOutput.KOTEST_TEST) == (kotestLauncher != null)) { "Kotest output requires its generated launcher" }
+        require(kotestLauncher == null || produce in setOf(NativeOutput.LIBRARY, NativeOutput.KOTEST_TEST)) { "Kotest launcher requires library or Kotest compilation" }
+        require(produce != NativeOutput.KOTEST_TEST || kotestLauncher != null || includedLibrary != null) { "Kotest output requires its generated launcher or compiled klib" }
         require(kotestLauncher == null || kotestLauncher in sources) { "Kotest launcher must be a declared source" }
         require(kotestLauncher !in commonSources) { "Kotest launcher is Native-specific" }
     }
@@ -50,29 +56,33 @@ data class NativeCompilation(
         if (warningsAsErrors) add("-Werror")
         optIns.forEach { add("-opt-in=$it") }
         libraries.forEach { addAll(listOf("-library", "input/${it.value}")) }
+        includedLibrary?.let {
+            add("-Xinclude=input/${it.value}")
+            add("-Xpartial-linkage-loglevel=error")
+        }
         plugins.forEach { add("-Xplugin=input/${it.value}") }
         sources.forEach { add(if (it == kotestLauncher) "prepared/kotest.kt" else "input/${it.value}") }
-        if (produce == NativeOutput.KOTEST_TEST) add("prepared/KvikKotestRuntime.kt")
+        if (kotestLauncher != null) add("prepared/KvikKotestRuntime.kt")
     }
     fun toJson(): JsonValue.Object = obj(
         "module" to module.json(), "sources" to sources.map { it.value.json() }.json(),
         "commonSources" to commonSources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
         "plugins" to plugins.map { it.value.json() }.json(), "output" to output.value.json(), "produce" to produce.name.json(),
         "moduleName" to moduleName.json(), "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
-            if (kotestLauncher == null) it else JsonValue.Object(it.objectValue() + ("kotestLauncher" to kotestLauncher.value.json()))
+            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }).toMap())
         }
     companion object {
         fun fromJson(value: JsonValue): NativeCompilation {
-            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher"))
+            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary"))
             fun paths(name: String) = d.getValue(name).arrayValue().map { LogicalPath(it.stringValue()) }
-            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath))
+            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath))
         }
     }
 }
 
 fun nativeCompileAction(compilation: NativeCompilation, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 180_000): ActionSpec {
     val declared = inputs.files.map { it.path }.toSet()
-    require((compilation.sources + compilation.libraries + compilation.plugins).all { it in declared }) { "Undeclared compiler input" }
+    require((compilation.sources + compilation.libraries + compilation.plugins + listOfNotNull(compilation.includedLibrary)).all { it in declared }) { "Undeclared compiler input" }
     require(toolchains.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Complete Native toolchain identities required" }
     return ActionSpec("kvik-native-compiler-v1", composition, if (compilation.produce == NativeOutput.LIBRARY) ActionKind.COMPILE else ActionKind.LINK,
         mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),

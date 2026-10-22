@@ -7,6 +7,33 @@ import kvik.cache.NativeContentStore
 import kvik.execution.NativeRunDirectory
 
 class NativeUnitTest {
+    @Test fun sourceFreeLinkIncludesDeclaredKlibWithoutExposingRuntimeLibrariesToCompilation() {
+        val included = LogicalPath("modules/test.klib")
+        val runtime = LogicalPath("runtime/private.klib")
+        val bytes = Sha256.digest(byteArrayOf(1))
+        val inputs = TreeManifest(listOf(FileEntry(included, bytes), FileEntry(runtime, bytes)))
+        val tools = listOf("native", "jdk", "sdk", "native-dependencies").associateWith { bytes }
+        val link = NativeCompilation("module", emptyList(), libraries = listOf(runtime), output = LogicalPath("tests.kexe"), produce = NativeOutput.TEST, includedLibrary = included)
+        assertEquals(link, NativeCompilation.fromJson(link.toJson()))
+        val action = nativeCompileAction(link, inputs, bytes, tools)
+        assertTrue("-Xinclude=input/modules/test.klib" in action.arguments)
+        assertTrue("-Xpartial-linkage-loglevel=error" in action.arguments)
+        assertTrue("-generate-test-runner" in action.arguments)
+        assertEquals(ActionKind.LINK, action.kind)
+        assertTrue("-Werror" in link.copy(warningsAsErrors = true).arguments())
+        assertFails { link.copy(sources = listOf(LogicalPath("Main.kt"))) }
+        assertFails { link.copy(libraries = listOf(included)) }
+        assertFails { link.copy(plugins = listOf(LogicalPath("plugin.jar"))) }
+        assertFails { link.copy(explicitApi = true) }
+        assertFails { link.copy(produce = NativeOutput.LIBRARY, output = LogicalPath("output.klib")) }
+        assertFails { nativeCompileAction(link, TreeManifest(listOf(FileEntry(runtime, bytes))), bytes, tools) }
+        val changed = TreeManifest(inputs.files.map { if (it.path == runtime) it.copy(digest = Sha256.digest(byteArrayOf(2))) else it })
+        assertNotEquals(action.key(Sha256), nativeCompileAction(link, changed, bytes, tools).key(Sha256))
+        val old = NativeCompilation("module", listOf(LogicalPath("Main.kt")), output = LogicalPath("main.klib"))
+        assertFalse("includedLibrary" in old.toJson().objectValue())
+        assertFalse(old.arguments().any { it.startsWith("-Xpartial-linkage") })
+        assertEquals(old, NativeCompilation.fromJson(old.toJson()))
+    }
     @Test fun verifiedToolEnvironmentAndOfflinePolicyCannotBeOverridden() {
         val root = NativeRunDirectory("/private/tmp").path
         val store = NativeContentStore("$root/store")
@@ -50,6 +77,13 @@ class NativeUnitTest {
         assertEquals(1, process.arguments.count { it == offline })
         assertEquals(mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0", "JAVA_HOME" to "/verified/jdk", "SDKROOT" to "/verified/sdk",
             "KONAN_DATA_DIR" to "/verified/konan", "DEVELOPER_DIR" to "/verified/Xcode/Contents/Developer", "HOME" to "${process.workingDirectory}/home"), process.environment)
+        val included = LogicalPath("compiled.klib")
+        val link = nativeCompileAction(NativeCompilation("example", emptyList(), output = LogicalPath("tests.kexe"), produce = NativeOutput.TEST, includedLibrary = included),
+            TreeManifest(listOf(FileEntry(included, digest))), digest, identities)
+        executor.start("tools", "link", link).use { assertEquals(ActionStatus.FAILED, it.poll()!!.status) }
+        val bound = requests.last()
+        assertTrue("-Xinclude=${bound.workingDirectory}/input/compiled.klib" in bound.arguments)
+        assertTrue("-Xinclude=input/compiled.klib" in link.arguments)
         val other = Sha256.digest(byteArrayOf(2))
         val original = nativeDependenciesIdentity(digest, digest, digest)
         for (changed in listOf(nativeDependenciesIdentity(other, digest, digest), nativeDependenciesIdentity(digest, other, digest), nativeDependenciesIdentity(digest, digest, other))) assertNotEquals(original, changed)

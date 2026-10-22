@@ -67,7 +67,13 @@ class NativeCompilerExecutor(
         val started = kotlin.time.TimeSource.Monotonic.markNow()
         var phase = if (compile == null) "discovery" else "compile"
         fun launch(arguments: List<String>, phase: String): OwnedProcess = host.start(ProcessRequest(arguments, directory, environment, "$directory/$phase.stdout", "$directory/$phase.stderr", maxOf(1L, action.timeoutMillis - started.elapsedNow().inWholeMilliseconds)))
-        var process = if (compile != null) launch(listOf(layout.compiler) + action.arguments, phase)
+        // The pinned compiler compares -Xinclude paths with absolute resolved klib paths.
+        // Keep the action recipe portable; bind only this already validated typed input.
+        val compilerArguments = action.arguments.map { argument ->
+            if (compile?.includedLibrary != null && argument == "-Xinclude=input/${compile.includedLibrary.value}")
+                "-Xinclude=$directory/input/${compile.includedLibrary.value}" else argument
+        }
+        var process = if (compile != null) launch(listOf(layout.compiler) + compilerArguments, phase)
                       else launch(listOf("$directory/input/${executable!!.value}", "--ktest_list_tests") + listOfNotNull(filter?.let { "--ktest_filter=$it" }), phase)
         return object : RunningAction {
             private var result: ActionResult? = null

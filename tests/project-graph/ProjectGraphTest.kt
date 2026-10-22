@@ -64,7 +64,7 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
     "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) listOf(FileEntry(LogicalPath("tests.kexe"), digest(salt), true), FileEntry(LogicalPath("tests.kexe.dSYM/Contents/Info.plist"), digest("symbols")))
-        else listOf(FileEntry(LogicalPath("module.klib"), digest(salt)))
+        else listOf(FileEntry(NativeCompilation.fromJson(action.parameters).output, digest(salt)))
     else -> listOf(FileEntry(LogicalPath("test-results.json"), digest("report")))
 })
 private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<String, ActionSpec> {
@@ -78,6 +78,28 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
 }
 
 class ProjectGraphTest {
+    @Test fun nativeRuntimeSelectionChangesOnlyLinkInputsAndRejectsMalformedCompiledOutput() {
+        val effective = effectiveConfiguration(project, policy = ResolverPolicy(scopedPins = listOf(
+            ScopedPin(ResolutionDomain("app", "macosArm64", "test", "kotlin-runtime"), Coordinate.parse("g:library:2")))))
+        val original = lock(effective)
+        val scoped = original.copy(selections = original.selections.map { selected ->
+            if (selected.domain == ResolutionDomain("app", "macosArm64", "test", "kotlin-runtime") && selected.selection.requested.name == "library")
+                selected.copy(selection = selected.selection.copy(artifacts = listOf(artifact("g:library:2", "macosArm64", "kotlin-api")))) else selected
+        })
+        val plan = projectActionGraph(effective, scoped, snapshot(), composition, tools, request(ProjectMode.TEST, "macosArm64"))
+        val actions = resolved(plan)
+        val api = artifact("g:library:1", "macosArm64", "kotlin-api").digest
+        val runtime = artifact("g:library:2", "macosArm64", "kotlin-api").digest
+        assertTrue(actions.getValue("app:macosArm64:test-compile").inputs.files.any { it.digest == api })
+        assertFalse(actions.getValue("app:macosArm64:test-compile").inputs.files.any { it.digest == runtime })
+        assertFalse(actions.getValue("app:macosArm64:test-link").inputs.files.any { it.digest == api })
+        assertTrue(actions.getValue("app:macosArm64:test-link").inputs.files.any { it.digest == runtime })
+        val link = plan.nodes.single { it.id == "app:macosArm64:test-link" }
+        val results = link.dependencies.associateWith { id -> ActionResult(id, digest("key"), ActionStatus.EXECUTED,
+            if (id.endsWith("test-compile")) TreeManifest(listOf(FileEntry(LogicalPath("wrong.klib"), digest("wrong")))) else outputs(actions.getValue(id), id), 0) }
+        assertFails { link.resolve(results) }
+        assertFails { link.resolve(results.mapValues { (_, result) -> result.copy(status = ActionStatus.FAILED) }) }
+    }
     @Test fun nativeKotestGenerationPrecedesLinkAndSingleExecutionWithContentSensitiveEdges() {
         val configured = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"name\":\"macosArm64\"",
             """"name":"macosArm64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")
@@ -93,10 +115,15 @@ class ProjectGraphTest {
         assertTrue(ksp.libraries.contains(LogicalPath("modules/app/macosArm64/main.klib")))
         val link = actions.getValue("app:macosArm64:test-compile")
         val compilation = NativeCompilation.fromJson(link.parameters)
-        assertEquals(NativeOutput.KOTEST_TEST, compilation.produce)
+        assertEquals(NativeOutput.LIBRARY, compilation.produce)
         assertEquals(kotestGeneratedLauncher, compilation.kotestLauncher)
         assertFalse("-generate-test-runner" in link.arguments)
-        assertTrue(link.arguments.containsAll(listOf("-entry", "kvik.kotest.runtime.main", "prepared/kotest.kt", "prepared/KvikKotestRuntime.kt")))
+        assertTrue(link.arguments.containsAll(listOf("prepared/kotest.kt", "prepared/KvikKotestRuntime.kt")))
+        val executable = NativeCompilation.fromJson(actions.getValue("app:macosArm64:test-link").parameters)
+        assertTrue(executable.sources.isEmpty() && executable.plugins.isEmpty())
+        assertEquals(NativeOutput.KOTEST_TEST, executable.produce)
+        assertEquals(LogicalPath("modules/app/macosArm64/test.klib"), executable.includedLibrary)
+        assertTrue(actions.getValue("app:macosArm64:test-link").arguments.containsAll(listOf("-entry", "kvik.kotest.runtime.main")))
         val test = actions.getValue("app:macosArm64:test")
         assertEquals("kvik-kotest-native-tests-v1", test.implementation)
         assertEquals(CachePolicy.NEVER, test.cachePolicy)
@@ -223,8 +250,18 @@ class ProjectGraphTest {
         val changed = resolved(plan, "hidden:jvm:main")
         assertEquals(actions.getValue("app:jvm:test-compile").key(Sha256), changed.getValue("app:jvm:test-compile").key(Sha256))
         assertNotEquals(actions.getValue("app:jvm:test").key(Sha256), changed.getValue("app:jvm:test").key(Sha256))
-        val failure = assertFails { graph(config, files, request(ProjectMode.TEST, "macosArm64")) }
-        assertTrue(failure.message!!.contains("Native hidden link dependencies"))
+        val nativePlan = graph(config, files, request(ProjectMode.TEST, "macosArm64"))
+        val native = resolved(nativePlan)
+        for (name in listOf("private", "runtime", "leaf-private", "hidden-private")) {
+            val bytes = digest("g:$name:1:macosArm64")
+            assertFalse(native.getValue("app:macosArm64:test-compile").inputs.files.any { it.digest == bytes }, name)
+            assertTrue(native.getValue("app:macosArm64:test-link").inputs.files.any { it.digest == bytes }, name)
+        }
+        assertFalse("hidden:macosArm64:main" in nativePlan.nodes.single { it.id == "app:macosArm64:test-compile" }.dependencies)
+        assertTrue("hidden:macosArm64:main" in nativePlan.nodes.single { it.id == "app:macosArm64:test-link" }.dependencies)
+        val changedNative = resolved(nativePlan, "hidden:macosArm64:main")
+        assertEquals(native.getValue("app:macosArm64:test-compile").key(Sha256), changedNative.getValue("app:macosArm64:test-compile").key(Sha256))
+        assertNotEquals(native.getValue("app:macosArm64:test-link").key(Sha256), changedNative.getValue("app:macosArm64:test-link").key(Sha256))
     }
 
     @Test fun testCompilerOptionsAndDomainMutationsCannotLeakIntoProduction() {
@@ -254,8 +291,11 @@ class ProjectGraphTest {
             if (entry.domain == ResolutionDomain("app", "macosArm64", "test", "kotlin-runtime")) entry.copy(selection = entry.selection.copy(
                 artifacts = entry.artifacts.map { it.copy(digest = digest("runtime ${it.coordinate}")) })) else entry
         }) }
-        assertTrue(assertFails { projectActionGraph(nativeEffective, differentLink, snapshot(), composition, tools, request(ProjectMode.TEST, "macosArm64")) }
-            .message!!.contains("distinct compile/link"))
+        val nativeBefore = resolved(projectActionGraph(nativeEffective, lock(nativeEffective), snapshot(), composition, tools, request(ProjectMode.TEST, "macosArm64")))
+        val nativeAfter = resolved(projectActionGraph(nativeEffective, differentLink, snapshot(), composition, tools, request(ProjectMode.TEST, "macosArm64")))
+        for (id in listOf("base:macosArm64:main", "app:macosArm64:main", "app:macosArm64:test-compile"))
+            assertEquals(nativeBefore.getValue(id).key(Sha256), nativeAfter.getValue(id).key(Sha256))
+        assertNotEquals(nativeBefore.getValue("app:macosArm64:test-link").key(Sha256), nativeAfter.getValue("app:macosArm64:test-link").key(Sha256))
     }
     @Test fun jvmTargetVariantsFollowConsumerAndModuleCompilationSeparately() {
         fun at(module: ModuleSpec, version: Int) = module.copy(targets = module.targets.map { if (it.name == "jvm") it.copy(compilerOptions = listOf("-jvm-target=$version")) else it })
@@ -344,19 +384,24 @@ class ProjectGraphTest {
         val plan = graph(configuration(base, app.copy(compilerPlugins = listOf(plugin))), request = request(ProjectMode.TEST, "macosArm64"))
         val actions = resolved(plan)
         val link = NativeCompilation.fromJson(actions.getValue("app:macosArm64:test-compile").parameters)
-        assertEquals(NativeOutput.TEST, link.produce)
+        assertEquals(NativeOutput.LIBRARY, link.produce)
         assertTrue(link.sources.any { it.value == "src/app/common/Common.kt" } && link.sources.any { it.value == "src/app/commonTest/Tests.kt" })
         assertEquals(listOf(LogicalPath("modules/base/macosArm64/main.klib")), link.libraries.filter { it.value.startsWith("modules/") })
         assertTrue(link.plugins.single().value.startsWith("plugins/"))
         assertTrue(link.plugins.none { it in link.libraries })
-        assertTrue("-generate-test-runner" in actions.getValue("app:macosArm64:test-compile").arguments)
+        assertFalse("-generate-test-runner" in actions.getValue("app:macosArm64:test-compile").arguments)
+        assertTrue("-generate-test-runner" in actions.getValue("app:macosArm64:test-link").arguments)
+        assertTrue(NativeCompilation.fromJson(actions.getValue("app:macosArm64:test-link").parameters).plugins.isEmpty())
         val run = actions.getValue("app:macosArm64:test")
         assertTrue(run.inputs.files.any { it.path.value == "modules/app/macosArm64/test/tests.kexe" && it.executable })
         assertTrue(run.inputs.files.any { it.path.value == "runtime/base/main/config.txt" })
         assertEquals(CachePolicy.NEVER, run.cachePolicy)
         val zero = graph(files = TreeManifest(snapshot().files.filterNot { it.path.value.contains("Test/") }), request = request(ProjectMode.TEST, "macosArm64"))
         assertTrue(zero.nodes.any { it.id == "app:macosArm64:test-compile" })
-        assertEquals(NativeOutput.TEST, NativeCompilation.fromJson(resolved(zero).getValue("app:macosArm64:test-compile").parameters).produce)
+        val zeroActions = resolved(zero)
+        assertEquals(NativeOutput.LIBRARY, NativeCompilation.fromJson(zeroActions.getValue("app:macosArm64:test-compile").parameters).produce)
+        assertEquals(NativeOutput.TEST, NativeCompilation.fromJson(zeroActions.getValue("app:macosArm64:test-link").parameters).produce)
+        assertEquals(CachePolicy.NEVER, zeroActions.getValue("app:macosArm64:test").cachePolicy)
     }
 
     @Test fun compilerOptionsAndSingleTargetCommonConventionAreExplicit() {
