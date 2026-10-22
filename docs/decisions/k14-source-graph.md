@@ -1,6 +1,6 @@
 # K14 source-graph input lock v1 (proposal)
 
-Status: contract proposal for review. No loader, provisioner or launcher changes are implemented by this document. The example is `examples/k14-source-graph.lock.json`.
+Status: approved source-graph contract. The first production slice implements strict parsing and read-only local observation in `bootstrap/source_graph.py`; acquisition, snapshotting and launcher integration remain pending. The example is `examples/k14-source-graph.lock.json`.
 
 ## Goal and trust boundary
 
@@ -78,12 +78,14 @@ The generated runtime lock retains all existing source/tool/recipe/environment/w
 
 ## Python boundary API
 
-Names and return values are proposed for root review:
+The parser/observation boundary is implemented with frozen dataclasses backed by canonical bytes; exposed document, digest, inventory and local-root maps are defensive copies. Source ordering chooses the lexical minimum currently ready node at each dependency-first step. The provisioner/snapshot boundary remains proposed for the next slice:
 
 ```python
 # bootstrap/source_graph.py: pure strict parsing and declared/local observation
 parse_source_lock(data: bytes) -> SourceGraph
-observe_graph(graph: SourceGraph, lock_directory: Path) -> ObservedGraph
+observe_graph(graph: SourceGraph, lock_directory: Path, *,
+              lock_path: Path) -> ObservedGraph
+# SourceGraph: document_bytes, source_order, document (defensive parsed copy).
 # ObservedGraph: graph, input_lock_digest, graph_digest, observed_document,
 #               local_roots, local_inventories; no acquired remote paths.
 
@@ -98,9 +100,11 @@ snapshot_graph(verified: VerifiedGraph, destination: Path) -> CompositionInputs
 #                    ordered verified KLIBs, registry; each has role + logical path + digest.
 
 revalidate_observation(observed: ObservedGraph, lock_bytes: bytes,
-                       lock_directory: Path) -> None
+                       lock_directory: Path, *, lock_path: Path) -> None
 # Fail if current canonical lock/local tree observations differ before publication.
 ```
+
+`lock_path` is required to identify self-inclusion; it names a nonsymlink file directly in `lock_directory` (the file may be absent when observing an already parsed declaration). All local origins and selected ancestors are opened through directory handles without following symlinks. Observation hashes file content in 1 MiB chunks and checks descriptor size/mtime/ctime after reading; it does not provide a transaction over concurrent edits. Callers must retain stable local roots through snapshotting and re-observe before publication. Inventory records are retained in memory, bounded by 100,000 selected files across the graph, 100,000 visited entries per node, the path/depth limits and 16 MiB per canonical manifest. Each source has at least one Kotlin root in this initial version. Physical root maps are caller-local handles and never enter `observed_document`.
 
 `OwnedRunner` is injected by the trusted launcher, with explicit argv/environment, deadline, bounded diagnostics and process-group cleanup; source modules cannot construct detached subprocesses. Archive HTTPS acquisition uses streaming digest/size verification and a whole-transfer deadline. Git transport uses the explicitly selected trusted host Git executable (never package content or an inherited PATH search), with its resolved path/version recorded in acquisition evidence, through an owned, sanitized process with system/global/repository overrides and hooks/filters disabled, explicit HTTPS protocol policy and no interactive credentials. Git's deadline and post-fetch object/tree publication limits must be distinguished from a hard network-byte quota: stock Git does not make the latter promise. An implementation must document and test this boundary rather than claim a nonexistent strict transfer cap. Verified commit/tree bytes remain authoritative regardless of acquisition-tool version; this does not claim a newly verified full Git installation. No remote execution service/daemon is involved.
 
@@ -123,3 +127,7 @@ After contract approval, cache-agent ownership is `bootstrap/source_graph.py`, `
 - Reject incomplete/cyclic/unreachable graphs, wrong IDs/trees/commits, wrong-target KLIBs, undeclared KLIB dependencies, conflicting unique names, corrupt metadata, archive traversal/collisions/special entries and excess bounds. Test interrupted transfers/producers, concurrent same-key launchers and corrupt-cache repair without overwriting valid publication.
 - Prove queries create no files or acquisition processes; descriptor replay preserves source/cache/offline/no-build options; source-lock/local-source changes during build cannot publish stale results. Failed compilation cannot launch an older composition.
 - Keep action-dispatch integration, arbitrary new C interop recipes, remote executable reuse and foreground recomposition completion as separate explicit gates. This source-distribution slice does not claim them merely because the static registry loads.
+
+## Parser/observation slice verification
+
+Reproduce with `python3 -B tests/bootstrap/test_source_graph.py` (22 tests). These cover the approved example, malformed fields/JSON/pins, source and artifact closure, library order and bounds, local file and directory selections, native recipe coverage, read-only missing-remote observation, actual selected Kvik inputs, relocation, unsafe local entries, and publication revalidation. Same-size edits with restored mtimes change the observed key; mtime-only edits and unselected local state do not. A deterministic mutation during hashing is rejected. The actual Kvik observation is a source inventory check; no remote transport, KLIB manifest verification, runtime compilation or full K14 acceptance is claimed by this slice.
