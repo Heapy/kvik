@@ -22,11 +22,13 @@ python3 tools/test_contracts.py --konan-home /Users/yoda/.konan/kotlin-native-pr
 
 29 Native contract tests, 5 schema tests, and 12 Native lock tests passed. The new real-CAS fixture resolves and replays different KSP API versions in the two host domains, rejects a target-platform producer in a host domain, and refuses replay against the old configuration. Existing production dependency identity tests also passed. Lock evidence: `.kvik/tests/locking/case-dacihxff`.
 
-The focused project-graph regression has been added; execution is deferred while other owned compiler gates finish, at the coordinator's request. Its command is:
+The focused project-graph suite subsequently passed all 15 Native tests, including rejection of the new selection before adapter integration and preservation of ordinary Native builds. Its command on the frozen contract source is:
 
 ```sh
 python3 tools/test_project_graph.py --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
 ```
+
+The retained run used `git show 49bde13:compiler/native/src/kvik/compiler/native/NativeActions.kt` as `.kvik/tests/project-graph/frozen-NativeActions.kt` in that command, because dependent adapter source work had already begun. All other compiled sources were unchanged from the frozen contract commits. This verified the contract slice without silently including the later Native output modes.
 
 ## Investigation supporting the dependent adapter
 
