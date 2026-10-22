@@ -25,10 +25,17 @@ data class JvmToolchainLayout(
     val junitJar: String,
     val compilerArtifacts: String,
     val compilerManifest: String,
+    val jacocoAgent: String? = null,
+    val jacocoCli: String? = null,
+    val jacocoAgentIdentity: Digest? = null,
+    val jacocoCliIdentity: Digest? = null,
 ) {
     init {
         require(identities.keys == jvmIdentities)
-        require(listOf(javaExecutable, workerClasses, btaApiJar, stdlibJar, junitJar, compilerArtifacts, compilerManifest).all {
+        require(listOf(jacocoAgent, jacocoCli, jacocoAgentIdentity, jacocoCliIdentity).all { it == null } ||
+            jacocoAgent != null && jacocoCli != null && jacocoAgentIdentity != null && jacocoCliIdentity != null) { "JaCoCo layout must supply both verified artifacts and identities" }
+        require(jacocoAgent == null || '=' !in jacocoAgent) { "JaCoCo agent path cannot contain the agent option separator" }
+        require((listOf(javaExecutable, workerClasses, btaApiJar, stdlibJar, junitJar, compilerArtifacts, compilerManifest) + listOfNotNull(jacocoAgent, jacocoCli)).all {
             it.startsWith('/') && it.split('/').drop(1).none { part -> part.isEmpty() || part == "." || part == ".." } && it.none { char -> char.isISOControl() || char == ':' }
         }) { "Tool paths must be absolute physical paths without classpath separators" }
     }

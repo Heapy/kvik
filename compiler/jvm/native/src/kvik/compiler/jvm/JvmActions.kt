@@ -4,9 +4,15 @@ import kvik.core.*
 
 internal val jvmIdentities = setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
 /** Bundle identity shared with K14; workerTree is SHA-256 of canonical core TreeManifest JSON. */
-fun jvmWorkerIdentity(workerTree: Digest, api: Digest, stdlib: Digest, junit: Digest): Digest = Sha256.digest(obj(
-    "schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
-    "workerTree" to workerTree.toJson(), "api" to api.toJson(), "stdlib" to stdlib.toJson(), "junit" to junit.toJson()))
+fun jvmWorkerIdentity(workerTree: Digest, api: Digest, stdlib: Digest, junit: Digest,
+    jacocoAgent: Digest? = null, jacocoCli: Digest? = null, jacocoVersion: String? = null): Digest {
+    require(listOf(jacocoAgent, jacocoCli, jacocoVersion).all { it == null } ||
+        jacocoAgent != null && jacocoCli != null && jacocoVersion == "0.8.14") { "JaCoCo identity requires the pinned version and both artifacts" }
+    val identity = obj("schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
+        "workerTree" to workerTree.toJson(), "api" to api.toJson(), "stdlib" to stdlib.toJson(), "junit" to junit.toJson())
+    return Sha256.digest(if (jacocoAgent == null) identity else JsonValue.Object(identity.values + mapOf(
+        "jacocoAgent" to jacocoAgent.toJson(), "jacocoCli" to jacocoCli!!.toJson(), "jacocoVersion" to jacocoVersion!!.json())))
+}
 private val hostPlatform = mapOf("os" to "macos", "arch" to "arm64")
 private val workerEnvironment = mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin")
 
