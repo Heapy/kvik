@@ -22,6 +22,9 @@ data class ResolutionDomain(val module: String, val target: String, val compilat
 }
 data class ScopedPin(val domain: ResolutionDomain, val coordinate: Coordinate)
 
+/** Fixed reviewed transfer policy; larger KSP analysis jars do not enlarge ordinary dependency domains. */
+fun resolutionArtifactByteLimit(domain: ResolutionDomain): Int = (if (domain.purpose == "ksp-runtime") 128 else 64) * 1024 * 1024
+
 /** Explicit pins; scope overrides are recorded, never inferred from another compilation. */
 data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxComponents: Int = 256, val maxRequests: Int = 1024,
                           val scopedPins: List<ScopedPin> = emptyList()) {
@@ -32,14 +35,16 @@ data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxCompo
     }
     fun pinsFor(domain: ResolutionDomain): List<Coordinate> = (pins.associateBy { "${it.group}:${it.name}" } +
         scopedPins.filter { it.domain == domain }.associate { "${it.coordinate.group}:${it.coordinate.name}" to it.coordinate }).values.sortedBy(Coordinate::toString)
-    internal fun toJson(): JsonValue = obj("implementation" to "kvik-maven-v3".json(),
+    internal fun toJson(kspRuntime: Boolean = false): JsonValue = obj("implementation" to "kvik-maven-v3".json(),
         "jvmCompatibility" to obj("defaultConsumerTarget" to DEFAULT_JVM_TARGET.json(), "compilerPluginHost" to COMPILER_PLUGIN_JVM_HOST.json(),
             "producerVersion" to "integer-lte-consumer-or-unspecified".json(), "ambiguity" to "reject".json()),
         "pins" to pins.sortedBy(Coordinate::toString).map { it.toString().json() }.json(),
         "scopedPins" to scopedPins.sortedBy { it.domain.toJson().canonical() + it.coordinate }.map {
             obj("domain" to it.domain.toJson(), "coordinate" to it.coordinate.toString().json()) }.json(),
         "maxComponents" to maxComponents.json(), "maxRequests" to maxRequests.json(),
-        "maxMetadataBytes" to (1024 * 1024).json(), "maxArtifactBytes" to (64 * 1024 * 1024).json(), "maxAggregateBytes" to (256 * 1024 * 1024).json())
+        "maxMetadataBytes" to (1024 * 1024).json(), "maxArtifactBytes" to (64 * 1024 * 1024).json(), "maxAggregateBytes" to (256 * 1024 * 1024).json()).let {
+            if (!kspRuntime) it else JsonValue.Object(it.objectValue() + ("maxKspRuntimeArtifactBytes" to (128 * 1024 * 1024).json()))
+        }
 }
 
 data class DependencyScope(val module: String, val target: String, val scope: String, val usage: String) {
@@ -55,6 +60,8 @@ class EffectiveConfiguration internal constructor(
     val policy: ResolverPolicy,
 ) {
     val digest: Digest = Sha256.digest(document.canonical().encodeToByteArray())
+    /** Configure bounded transport/CAS readers; individual domains still enforce their smaller cap. */
+    val maxArtifactBytes: Int get() = requests.maxOfOrNull { resolutionArtifactByteLimit(it.domain) } ?: 64 * 1024 * 1024
 }
 
 fun defaultDependencyScopes(configuration: ProjectConfiguration): List<DependencyScope> = configuration.project.modules.flatMap { module ->
@@ -127,7 +134,7 @@ fun effectiveConfiguration(configuration: ProjectConfiguration, policy: Resolver
     require(domains.size <= 8192 && requests.size <= 8192) { "Too many dependency domains/requests" }
     val orderedRequests = requests.sortedBy { it.domain.toJson().canonical() + it.variant.toLockJson().canonical() + ":" + it.coordinate }
     val document = obj("schemaVersion" to CONTRACT_VERSION.json(), "project" to snapshot.document,
-        "resolver" to pinned.toJson(), "scopes" to orderedScopes.map { it.toJson() }.json(),
+        "resolver" to pinned.toJson(domains.any { it.purpose == "ksp-runtime" }), "scopes" to orderedScopes.map { it.toJson() }.json(),
         "domains" to domains.sortedBy { it.toJson().canonical() }.map { it.toJson() }.json())
     return EffectiveConfiguration(document, orderedRequests, snapshot.project.repositories.toList(), pinned)
 }

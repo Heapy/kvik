@@ -71,16 +71,16 @@ private fun identities(lock: DependencyLock): Map<String, Digest> {
     val result = linkedMapOf<String, Digest>()
     val artifacts = mutableMapOf<String, LockedArtifact>()
     val kinds = mutableMapOf<String, String>()
-    fun add(url: String, digest: Digest, kind: String) {
+    fun add(url: String, digest: Digest, kind: String, maxBytes: Int) {
         require(result[url] == null || result[url] == digest) { "Conflicting locked URL digest: $url" }
         require(kinds[url] == null || kinds[url] == kind) { "URL used as artifact and metadata: $url" }
-        require(digest.sizeBytes <= if (kind == "metadata") 1024 * 1024 else 64 * 1024 * 1024) { "Locked blob exceeds bound" }
+        require(digest.sizeBytes <= maxBytes) { "Locked blob exceeds bound" }
         result[url] = digest; kinds[url] = kind
     }
     lock.selections.forEach { selection ->
-        selection.metadata.forEach { add(it.url, it.digest, "metadata") }
+        selection.metadata.forEach { add(it.url, it.digest, "metadata", 1024 * 1024) }
         selection.artifacts.forEach {
-            add(it.url, it.digest, "artifact")
+            add(it.url, it.digest, "artifact", resolutionArtifactByteLimit(selection.domain))
             // API/runtime may name different variants of the same artifact; the remaining identity must agree.
             val previous = artifacts[it.url]
             require(previous == null || previous.copy(variant = it.variant) == it) { "Conflicting artifact identity: ${it.url}" }
@@ -139,7 +139,7 @@ class DependencyLocks(private val content: ContentStore, private val pomParser: 
         val policy = configuration.policy
         return configuration.requests.groupBy { it.domain }.flatMap { (domain, requests) ->
             require(requests.map { it.variant }.distinct().size == 1) { "Conflicting producer variants within resolution domain" }
-            val resolver = MavenResolver(transport, pomParser, policy.pinsFor(domain), policy.maxComponents, policy.maxRequests)
+            val resolver = MavenResolver(transport, pomParser, policy.pinsFor(domain), policy.maxComponents, policy.maxRequests, resolutionArtifactByteLimit(domain))
             resolver.resolveAll(requests.map { it.coordinate }, requests.first().variant, configuration.repositories).map { ScopedSelection(domain, it) }
         }
     }

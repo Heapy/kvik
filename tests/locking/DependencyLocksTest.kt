@@ -50,6 +50,59 @@ private fun component(coordinate: String, dependencies: List<String> = emptyList
 private val smallEntries get() = component("example:root:1.0", listOf("example:leaf:1.0")) + component("example:leaf:1.0")
 
 class DependencyLocksTest {
+    @Test fun onlyKspRuntimeAcceptsThePinnedLargeAnalysisJarAndAggregateBoundsRemain() {
+        val coordinate = Coordinate.parse("com.google.devtools.ksp:symbol-processing-aa-embeddable:2.3.12")
+        val bytes = NativeFiles.read("$ktc/com/google/devtools/ksp/symbol-processing-aa-embeddable/2.3.12/symbol-processing-aa-embeddable-2.3.12.jar", 128 * 1024 * 1024)
+        val identity = Digest("862f0042fc2467cdcf7752e15880f97396a29e2469741dc6453f37584f1b4c69", 80_992_357)
+        assertEquals(identity, Sha256.digest(bytes))
+        fun large(value: Coordinate, expected: Digest = identity): Map<String, ByteArray> = component(value.toString()).mapValues { (url, original) ->
+            if (url.endsWith(".jar")) bytes else {
+                val document = parseJson(original.decodeToString()).objectValue()
+                JsonValue.Object(document + ("variants" to document.getValue("variants").arrayValue().map { variant ->
+                    val fields = variant.objectValue()
+                    JsonValue.Object(fields + ("files" to fields.getValue("files").arrayValue().map { file ->
+                        JsonValue.Object(file.objectValue() + mapOf("sha256" to expected.hash.json(), "size" to expected.sizeBytes.json()))
+                    }.json()))
+                }.json())).canonical().encodeToByteArray()
+            }
+        }
+        val legacy = config(emptyList(), native = true)
+        val settings = """"nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"},"""
+        val project = parseProjectConfiguration(parseJson(legacy.document.canonical().replace("\"name\":\"macosArm64\"", settings + "\"name\":\"macosArm64\"")))
+        val configuration = effectiveConfiguration(project)
+        assertEquals(128 * 1024 * 1024, configuration.maxArtifactBytes)
+        assertEquals(64 * 1024 * 1024, effectiveConfiguration(legacy).maxArtifactBytes)
+        assertNull(effectiveConfiguration(legacy).document.objectValue().getValue("resolver").objectValue()["maxKspRuntimeArtifactBytes"])
+        assertEquals((128 * 1024 * 1024).json(), configuration.document.objectValue().getValue("resolver").objectValue()["maxKspRuntimeArtifactBytes"])
+        val entries = configuration.requests.flatMap { component(it.coordinate.toString()).entries }.associate { it.toPair() } + large(coordinate)
+        val service = DependencyLocks(NativeContentStore("$work/large-ksp-store", configuration.maxArtifactBytes), NativePomParser())
+        val transport = MemoryTransport(entries)
+        val lock = service.resolve(configuration, transport)
+        assertTrue(lock.selections.single { it.requested == coordinate }.artifacts.any { it.digest == identity })
+        val calls = transport.calls.toList()
+        assertEquals(lock, service.loadLocked(lock.bytes(), configuration))
+        assertEquals(calls, transport.calls)
+        val largeSelection = lock.selections.single { it.requested == coordinate }
+        for (domain in listOf(ResolutionDomain("sample", "jvm", "test", "java-runtime"),
+            ResolutionDomain("sample", "macosArm64", "test", "java-runtime", "symbol-processor"))) {
+            assertEquals(64 * 1024 * 1024, resolutionArtifactByteLimit(domain))
+            val ordinary = largeSelection.copy(domain = domain)
+            for (selections in listOf(lock.selections + ordinary, listOf(ordinary) + lock.selections)) {
+                assertFails { parseDependencyLock(lock.copy(selections = selections).bytes()) }
+            }
+        }
+        val variant = jvmVariantRequest("java-runtime", 25)
+        assertFails { MavenResolver(MemoryTransport(large(coordinate)), NativePomParser()).resolve(coordinate, variant, configuration.repositories) }
+        val oversize = MemoryTransport(large(coordinate, identity.copy(sizeBytes = 128L * 1024 * 1024 + 1)))
+        assertFails { MavenResolver(oversize, NativePomParser(), maxArtifactBytes = configuration.maxArtifactBytes).resolve(coordinate, variant, configuration.repositories) }
+        assertFalse(oversize.calls.any { it.endsWith(".jar") })
+        val roots = (1..4).map { Coordinate("bounds", "artifact$it", "1") }
+        val aggregate = MemoryTransport(roots.flatMap { large(it).entries }.associate { it.toPair() })
+        val failure = assertFails { MavenResolver(aggregate, NativePomParser(), maxArtifactBytes = configuration.maxArtifactBytes).resolveAll(roots, variant, configuration.repositories) }
+        assertTrue(failure.message.orEmpty().contains("aggregate byte bound"))
+        assertEquals(4, aggregate.calls.count { it.endsWith(".jar") })
+        publish("$work/large-ksp-lock.json", lock.bytes())
+    }
     @Test fun nativeKspAndProcessorsHaveSeparateHostDomainsAndOfflineReplay() {
         val legacy = config(emptyList(), native = true)
         val settings = """"nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"},"""

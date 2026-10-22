@@ -27,11 +27,13 @@ class MavenResolver(
     pins: List<Coordinate> = emptyList(),
     private val maxComponents: Int = 256,
     private val maxRequests: Int = 1024,
+    private val maxArtifactBytes: Int = 64 * 1024 * 1024,
 ) : DependencyResolver {
     private val pins = pins.associateBy { it.key() }
     init {
         require(this.pins.size == pins.size) { "Conflicting explicit pins" }
         require(maxComponents in 1..1024 && maxRequests in 1..8192)
+        require(maxArtifactBytes in 1..128 * 1024 * 1024)
     }
 
     override fun resolve(coordinate: Coordinate, variant: VariantRequest, repositories: List<Repository>): LockedSelection =
@@ -136,7 +138,7 @@ class MavenResolver(
                         require(path.matches(Regex("[A-Za-z0-9_.-]+")) && path !in setOf(".", "..")) { "Unsupported artifact URL" }
                         val url = found.url.substringBeforeLast('/') + "/" + path
                         val expected = Digest(file.string("sha256"), file.getValue("size").longValue())
-                        require(expected.sizeBytes <= 64 * 1024 * 1024) { "Artifact exceeds byte bound" }
+                        require(expected.sizeBytes <= maxArtifactBytes) { "Artifact exceeds byte bound" }
                         require(Sha256.digest(fetch(url)) == expected) { "Artifact digest mismatch: $url" }
                         artifacts += LockedArtifact(c, name, found.repository.id, url, expected)
                     }
@@ -162,7 +164,7 @@ class MavenResolver(
                     require(variant.platform == "jvm" && variant.usage in setOf("java-api", "java-runtime")) { "POM has no matching Kotlin Native variant" }
                     val url = found.url.removeSuffix(".pom") + ".jar"
                     val bytes = fetch(url)
-                    require(bytes.size <= 64 * 1024 * 1024)
+                    require(bytes.size <= maxArtifactBytes) { "Artifact exceeds byte bound" }
                     artifacts += LockedArtifact(c, "maven-$packaging-${variant.usage}", found.repository.id, url, Sha256.digest(bytes))
                 }
                 if (transitive) pom.dependencyEdges(variant).forEach { edges += visit(it.coordinate, transitive = it.transitive) }
