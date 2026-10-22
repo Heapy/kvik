@@ -74,7 +74,8 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
     require(discovered.distinct().size == discovered.size)
     val expected = discovered.toSet()
     val active = mutableSetOf<String>()
-    val failed = mutableMapOf<String, String>()
+    val failed = mutableMapOf<String, Pair<String?, String?>>()
+    val names = mutableMapOf<String, Pair<String?, String?>>()
     val results = linkedMapOf<String, TestResult>()
     val suites = mutableListOf<String>()
     var protocolError: String? = null
@@ -95,13 +96,39 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
                     require(name != null && suites.isNotEmpty() && suites.last() == name) { "Missing name or unbalanced suite finish" }
                     suites.removeAt(suites.lastIndex)
                 }
-                "testStarted" -> { val id = id(); require(id !in results && active.add(id)) { "Duplicate test start: $id" } }
-                "testFailed" -> { val id = id(); require(id in active && id !in failed); failed[id] = event.attributes["message"].orEmpty() + event.attributes["details"].orEmpty() }
+                "testStarted" -> {
+                    val id = id(); require(id !in results && active.add(id)) { "Duplicate test start: $id" }
+                    names[id] = suites.lastOrNull()?.boundedTestText(TEST_TEXT_LIMIT) to name?.boundedTestText(TEST_TEXT_LIMIT)
+                }
+                "testFailed" -> {
+                    val id = id(); require(id in active && id !in failed)
+                    failed[id] = event.attributes["message"] to event.attributes["details"]
+                }
                 "testFinished" -> {
                     val id = id(); require(active.remove(id) && id !in results) { "Test finish without start: $id" }
-                    results[id] = TestResult(id, module, "macosArm64", if (id in failed) TestStatus.FAILED else TestStatus.PASSED, failed[id])
+                    val failure = failed[id]
+                    val status = if (failure != null) TestStatus.FAILED else TestStatus.PASSED
+                    val duration = event.attributes["duration"]?.let { raw ->
+                        require(raw.isNotEmpty() && raw.all { it in '0'..'9' }) { "Invalid Native test duration" }
+                        val millis = raw.toLongOrNull() ?: error("Native test duration overflow")
+                        require(millis <= Long.MAX_VALUE / 1_000_000) { "Native test duration overflow" }
+                        millis * 1_000_000
+                    }
+                    val observedName = checkNotNull(names[id])
+                    // TeamCity supplies message and stack text, but no typed throwable/category.
+                    val detail = failure?.let { TestFailure(TestFailureKind.UNKNOWN,
+                        message = it.first?.boundedTestText(TEST_TEXT_LIMIT), stackTrace = it.second?.boundedTestText(TEST_STACK_TRACE_LIMIT)) }
+                    results[id] = TestResult(id, module, "macosArm64", status,
+                        failure?.let { it.first.orEmpty() + it.second.orEmpty() },
+                        TestDetails(observedName.first, observedName.second, listOf(TestAttempt(1, status, duration, failure = detail))))
                 }
-                "testIgnored" -> { val id = id(); require(id !in active && id !in results); results[id] = TestResult(id, module, "macosArm64", TestStatus.SKIPPED, event.attributes["message"]) }
+                "testIgnored" -> {
+                    val id = id(); require(id !in active && id !in results)
+                    val reason = event.attributes["message"]
+                    results[id] = TestResult(id, module, "macosArm64", TestStatus.SKIPPED, reason,
+                        TestDetails(suites.lastOrNull()?.boundedTestText(TEST_TEXT_LIMIT), name?.boundedTestText(TEST_TEXT_LIMIT),
+                            listOf(TestAttempt(1, TestStatus.SKIPPED, skipReason = reason?.boundedTestText(TEST_TEXT_LIMIT)))))
+                }
                 "testCount", "testStdOut", "testStdErr" -> Unit
                 else -> error("Unsupported test service message: ${event.name}")
             }
@@ -120,4 +147,11 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
         else -> VerificationStatus.PASSED
     }
     return NativeTestReport(tests, counts, status, protocolError ?: if (counts.executed == 0 && !process.cancelled && !process.timedOut) "No Native tests executed (discovered=${counts.discovered}, skipped=${counts.skipped})" else if (process.timedOut) "Native tests timed out" else if (process.exitCode != 0 && counts.failed == 0) "Native runner exited ${process.exitCode}" else null)
+}
+
+/** Truncate optional report text without producing an unpaired surrogate. Identity is never truncated. */
+internal fun String.boundedTestText(limit: Int): String {
+    if (length <= limit) return this
+    val end = if (limit > 0 && this[limit - 1].isHighSurrogate() && this[limit].isLowSurrogate()) limit - 1 else limit
+    return substring(0, end)
 }

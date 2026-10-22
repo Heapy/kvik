@@ -7,8 +7,8 @@ class KotestReportTest {
     private val token = "a".repeat(64)
     private val spec = "sample.Suite"
     private fun event(name: String, vararg fields: Pair<String, JsonValue>): JsonValue.Object = obj("event" to name.json(), *fields)
-    private fun journal(events: List<JsonValue.Object>): String = events.mapIndexed { index, value ->
-        JsonValue.Object(value.objectValue() + mapOf("version" to 1.json(), "request" to token.json(), "sequence" to index.json())).canonical()
+    private fun journal(events: List<JsonValue.Object>, version: Int = 1): String = events.mapIndexed { index, value ->
+        JsonValue.Object(value.objectValue() + mapOf("version" to version.json(), "request" to token.json(), "sequence" to index.json())).canonical()
     }.joinToString("\n", postfix = "\n")
     private fun begin() = listOf(event("inventory", "specs" to listOf(spec.json()).json()), event("engine-start"), event("engine-initialized"), event("spec-start", "spec" to spec.json()))
     private fun test(name: String, id: String = "$spec.leaf", type: String = "leaf", status: String? = null) = event(name,
@@ -95,4 +95,46 @@ class KotestReportTest {
         }
         assertEquals(VerificationStatus.INCOMPLETE, report(begin() + listOf(test("test-start"), test("test-start")) + end()).status)
     }
+    private fun enriched(value: JsonValue.Object, vararg fields: Pair<String, JsonValue>): JsonValue.Object =
+        JsonValue.Object(value.objectValue() + mapOf("displayName" to "leaf display 😀".json()) + fields)
+
+    @Test fun versionTwoRetainsMeasuredDurationTypedFailuresAndSkippedReason() {
+        for ((status, kind) in listOf("Failure" to TestFailureKind.ASSERTION, "Error" to TestFailureKind.EXCEPTION)) {
+            val failure = TestFailure(kind, "sample.ActualException", "message\n😀", "frame1\nframe2")
+            val events = begin() + listOf(enriched(test("test-start")),
+                enriched(test("test-finish", status = status), "durationNanos" to 1234567.json(), "skipReason" to JsonValue.Null, "failure" to failure.toJson()),
+                enriched(test("test-ignored", "$spec.skipped"))) + end()
+            val result = kotestNativeReport("module", token, journal(events, 2), ProcessResult(0))
+            assertEquals(VerificationStatus.FAILED, result.status)
+            val details = result.tests.first().details!!
+            assertEquals(spec, details.suite)
+            assertEquals("leaf display 😀", details.name)
+            assertEquals(TestAttempt(1, TestStatus.FAILED, 1234567, failure = failure), details.attempts.single())
+            assertEquals(TestAttempt(1, TestStatus.SKIPPED, skipReason = "detail"), result.tests.last().details!!.attempts.single())
+            val interrupted = kotestNativeReport("module", token, journal(events.dropLast(4), 2) + "{", ProcessResult(17))
+            assertEquals(VerificationStatus.FAILED, interrupted.status)
+            assertEquals(failure, interrupted.tests.first().details!!.attempts.single().failure)
+            assertFalse(interrupted.counts.discoveryComplete)
+        }
+    }
+
+    @Test fun legacyMetadataIsUnknownAndMixedVersionsOrInvalidDetailsCannotPass() {
+        val legacy = report(begin() + listOf(test("test-start"), test("test-finish", status = "Failure")) + end()).tests.single().details!!
+        assertNull(legacy.name)
+        assertNull(legacy.attempts.single().durationNanos)
+        assertEquals(TestFailureKind.UNKNOWN, legacy.attempts.single().failure!!.kind)
+        val finish = enriched(test("test-finish", status = "Success"), "durationNanos" to 1.json(), "skipReason" to JsonValue.Null, "failure" to JsonValue.Null)
+        val valid = begin() + listOf(enriched(test("test-start")), finish) + end()
+        val texts = mutableListOf(journal(valid, 2).replaceFirst("\"version\":2", "\"version\":1"))
+        for (change in listOf("durationNanos" to (-1).json(), "skipReason" to "unexpected".json(),
+            "displayName" to "different".json(), "failure" to TestFailure(TestFailureKind.UNKNOWN).toJson())) {
+            texts += journal(begin() + listOf(enriched(test("test-start")), JsonValue.Object(finish.objectValue() + change)) + end(), 2)
+        }
+        for (text in texts) assertEquals(VerificationStatus.INCOMPLETE, kotestNativeReport("module", token, text, ProcessResult(0)).status)
+        val retry = begin() + listOf(enriched(test("test-start")), finish, enriched(test("test-start")), finish) + end()
+        val result = kotestNativeReport("module", token, journal(retry, 2), ProcessResult(0))
+        assertEquals(VerificationStatus.INCOMPLETE, result.status)
+        assertEquals(1, result.tests.single().details!!.attempts.size)
+    }
+
 }

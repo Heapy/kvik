@@ -37,6 +37,8 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
     var engineFailure: String? = null
     var protocolError: String? = null
     var sequence = 0L
+    var version: Long? = null
+    val displayNames = mutableMapOf<String, String?>()
     try {
         require(request.matches(Regex("[0-9a-f]{64}")))
         require(text.length <= 16 * 1024 * 1024) { "Oversized Kotest journal" }
@@ -49,7 +51,16 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
             fun string(name: String) = raw.getValue(name).stringValue()
             fun message() = string("message").also { require(it.length <= 8192) }
             fun keys(vararg names: String) { require(raw.keys == setOf("version", "request", "sequence", "event") + names) { "Unexpected Kotest event fields" } }
-            require(raw.getValue("version").longValue() == 1L && string("request") == request && raw.getValue("sequence").longValue() == sequence++) { "Kotest journal identity/order differs" }
+            val recordVersion = raw.getValue("version").longValue()
+            require(recordVersion in 1L..2L && (version == null || recordVersion == version) &&
+                string("request") == request && raw.getValue("sequence").longValue() == sequence++) { "Kotest journal identity/order differs" }
+            version = recordVersion
+            val enriched = recordVersion == 2L
+            fun testKeys(vararg names: String) = keys(*(names.toList() + if (enriched) listOf("displayName") else emptyList()).toTypedArray())
+            fun displayName(): String? = if (enriched) string("displayName").also { require(it.length <= TEST_TEXT_LIMIT) } else null
+            fun nullableText(value: JsonValue, limit: Int): String? = if (value == JsonValue.Null) null else
+                value.stringValue().also { require(it.length <= limit) }
+            fun failure(): TestFailure? = raw.getValue("failure").let { if (it == JsonValue.Null) null else TestFailure.fromJson(it) }
             val event = string("event")
             fun spec(): String = string("spec").also { require(it in checkNotNull(inventory)) { "Unknown Kotest spec" } }
             fun test(): Pair<String, Pair<String, String>> {
@@ -77,24 +88,43 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
                     val id = spec(); require(id !in activeSpecs && doneSpecs.add(id)); message(); unknownLeaves = true
                 }
                 "test-start" -> {
-                    keys("spec", "id", "type"); val (id, value) = test()
+                    testKeys("spec", "id", "type"); val (id, value) = test()
                     require(id !in knownTests && activeTests.put(id, value) == null) { "Duplicate test start" }; knownTests[id] = value
+                    displayNames[id] = displayName()
                 }
                 "test-ignored" -> {
-                    keys("spec", "id", "type", "message"); val (id, value) = test()
+                    testKeys("spec", "id", "type", "message"); val (id, value) = test()
                     require(id !in knownTests) { "Duplicate ignored test" }; knownTests[id] = value
                     val reason = message()
-                    if (value.second == "leaf") results[id] = TestResult(id, module, "macosArm64", TestStatus.SKIPPED, reason)
+                    val name = displayName()
+                    if (value.second == "leaf") results[id] = TestResult(id, module, "macosArm64", TestStatus.SKIPPED, reason,
+                        TestDetails(value.first.boundedTestText(TEST_TEXT_LIMIT), name,
+                            listOf(TestAttempt(1, TestStatus.SKIPPED, skipReason = reason))))
                     else unknownLeaves = true
                 }
                 "test-finish" -> {
-                    keys("spec", "id", "type", "status", "message"); val (id, value) = test()
+                    testKeys(*(listOf("spec", "id", "type", "status", "message") +
+                        if (enriched) listOf("durationNanos", "skipReason", "failure") else emptyList()).toTypedArray())
+                    val (id, value) = test()
                     require(activeTests.remove(id) == value) { "Test finish without matching start" }
+                    require(displayNames[id] == displayName()) { "Kotest display name changed during execution" }
                     val status = string("status"); require(status in setOf("Success", "Failure", "Error", "Ignored"))
                     val detail = message()
-                    if (value.second == "leaf") results[id] = TestResult(id, module, "macosArm64", when (status) {
-                        "Success" -> TestStatus.PASSED; "Ignored" -> TestStatus.SKIPPED; else -> TestStatus.FAILED
-                    }, detail.takeIf { it.isNotEmpty() })
+                    val duration = if (enriched) raw.getValue("durationNanos").let { if (it == JsonValue.Null) null else
+                        it.longValue().also { nanos -> require(nanos >= 0) } } else null
+                    val reason = if (enriched) nullableText(raw.getValue("skipReason"), TEST_TEXT_LIMIT) else detail.takeIf { status == "Ignored" && it.isNotEmpty() }
+                    val failure = if (enriched) failure() else if (status in setOf("Failure", "Error"))
+                        TestFailure(TestFailureKind.UNKNOWN, message = detail.takeIf { it.isNotEmpty() }) else null
+                    require(status in setOf("Failure", "Error") || failure == null) { "Non-failing Kotest result contains failure details" }
+                    require(status == "Ignored" || reason == null) { "Non-skipped Kotest result contains skip reason" }
+                    if (value.second == "leaf") {
+                        val testStatus = when (status) {
+                            "Success" -> TestStatus.PASSED; "Ignored" -> TestStatus.SKIPPED; else -> TestStatus.FAILED
+                        }
+                        results[id] = TestResult(id, module, "macosArm64", testStatus, detail.takeIf { it.isNotEmpty() },
+                            TestDetails(value.first.boundedTestText(TEST_TEXT_LIMIT), displayNames[id],
+                                listOf(TestAttempt(1, testStatus, duration, reason, failure ?: if (testStatus == TestStatus.FAILED) TestFailure(TestFailureKind.UNKNOWN) else null))))
+                    }
                     else if (status != "Success") { unknownLeaves = true; if (status != "Ignored") engineFailure = detail.ifEmpty { "Kotest container failed" } }
                 }
                 "spec-finish" -> {
