@@ -65,6 +65,7 @@ def main():
         selected = next(r for r in record['actions'] if r['key'] is not None)
         action_path = run / 'actions' / (hashlib.sha256(selected['actionId'].encode()).hexdigest() + '.json')
         original_action = action_path.read_bytes()
+        action_path.chmod(0o600)  # Mutate only our private copy of immutable retained metadata.
         changed = json.loads(original_action); changed['action']['arguments'].append('tampered')
         action_path.write_text(json.dumps(changed))
         changed_inventory = inventory(run)
@@ -75,6 +76,7 @@ def main():
         invoke(selected['actionId'], 3, 'KVIK_EXPLAIN_EVIDENCE_INVALID')
         action_path.write_bytes(original_action)
         journal = run / 'events.jsonl'; original_journal = journal.read_bytes()
+        journal.chmod(0o600)
         journal.write_bytes(original_journal + b'\n')
         changed_inventory = inventory(run)
         invoke(selected['actionId'], 3, 'KVIK_EXPLAIN_EVIDENCE_INVALID')
