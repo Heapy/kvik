@@ -89,8 +89,8 @@ def configuration(manifest):
             source('commonTest', [prefix+'test'], common_tests, ['commonMain'], [prefix+'testResources']),
             source('jvmTest', [prefix+'test@jvm'], jvm_tests, ['commonTest', 'jvmMain'], [prefix+'testResources@jvm']),
         ], targets=[dict(name='jvm', main='jvmMain', test='jvmTest',
-                         compilerOptions=['-jvm-target', '11', '-Xexplicit-api=strict'],
-                         testCompilerOptions=['-jvm-target', '11'],
+                         compilerOptions=['-jvm-target', '11', '-Xjdk-release=11', '-Xexplicit-api=strict'],
+                         testCompilerOptions=['-jvm-target', '11', '-Xjdk-release=11'],
                          testSettings=dict(classes=manifest['testClasses'][name], engines=['kotest']))],
             compilerPlugins=([dict(coordinate='org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20',
                                    targets=['jvm'], scopes=['main', 'test'], options=[], inputs=[])] if name == 'kotaml' else [])))
@@ -188,7 +188,7 @@ def compare_action_classpaths(run, reference, manifest):
                 assert parameters['engines'] == ['kotest'] and action['cachePolicy'] == 'never'
             else:
                 assert parameters['explicitApi'] == (phase == 'main')
-                assert parameters['jvmTarget'] == 11 and parameters['module'] == module
+                assert parameters['jvmTarget'] == parameters['jdkRelease'] == 11 and parameters['module'] == module
                 assert parameters['friendPaths'] == ([own_main] if phase == 'test-compile' else [])
                 plugins = parameters['plugins']
                 assert len(plugins) == (1 if name == 'kotaml' else 0)
@@ -255,8 +255,8 @@ def main():
             module = next(module for module in document['modules'] if module['id'] == module_id)
             target = module['targets'][0]
             assert target['testSettings'] == dict(classes=manifest['testClasses'][name], engines=['kotest'])
-            assert target['compilerOptions'] == ['-jvm-target', '11', '-Xexplicit-api=strict']
-            assert target['testCompilerOptions'] == ['-jvm-target', '11']
+            assert target['compilerOptions'] == ['-jvm-target', '11', '-Xjdk-release=11', '-Xexplicit-api=strict']
+            assert target['testCompilerOptions'] == ['-jvm-target', '11', '-Xjdk-release=11']
         policy = pins(reference)
         assert not any(pin.startswith('org.jetbrains:annotations:') for pin in policy), 'Scope-specific annotations versions must not be globally aligned'
         write('kvik.json', document)
@@ -274,6 +274,7 @@ def main():
         requirements = [
             dict(feature='dependency-scope', requirement='Runtime-only dependencies must be absent from compile classpaths.', draft='dependency.scope=runtime'),
             dict(feature='compiler-scope', requirement='Main uses explicit API strict; tests do not.', draft='target.testCompilerOptions overrides main compilerOptions'),
+            dict(feature='jdk-api-release', requirement='Main and tests restrict both bytecode target and available JDK APIs to release 11.', draft='-Xjdk-release=11'),
             dict(feature='dependency-visibility', requirement='Only exported kotaml serialization-core reaches kotaml-json compile classpath; private SnakeYAML/Okio remain runtime dependencies.', draft='dependency.exported=true; omitted means private'),
             dict(feature='scope-aware-lock', requirement='Preserve production annotations13.0 and test annotations23.0.0. Resolve roots/conflicts per compilation scope, not all project roots together.', draft=None),
         ]

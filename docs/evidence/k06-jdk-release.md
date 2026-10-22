@@ -83,8 +83,9 @@ consumer tests. Evidence is retained under `.kvik/tests/jvm/evidence.json`,
 `.kvik/tests/jvm/fixture/*release*.result.json`, and
 `.kvik/tests/jvm-native/report.json`, with requests, diagnostics, and tool identities.
 
-The complete kotaml public CLI run was not repeated in this slice. The root
-harness must explicitly select release11 in both main and test options before
-claiming that API restriction for that fixture. This validation covers the pinned
+The integrated [complete kotaml public CLI run](k09-kotaml-cli.md) was repeated
+with explicit release11 in both main and test options. All 2,038 exact test
+identities passed, and all four compilation actions recorded `jdkRelease: 11`.
+This validation covers the pinned
 compiler/JDK distribution and Kotlin sources; it does not claim arbitrary JDK
 distribution support, Java-source compilation, or runtime behavior on JDK 11.

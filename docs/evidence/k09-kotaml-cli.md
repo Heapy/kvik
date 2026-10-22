@@ -9,8 +9,8 @@ The harness used public `resolve`, `test` and `verification` commands, without
 nested KTC/Gradle builds or direct compiler/worker execution.
 
 Runtime composition:
-`1f28d55e15685648fca978bf145ec42e964f1bc185625ce63d0268f733c3d3b1`.
-Native construction reported 34,520 ms. The run used the explicit installed tools
+`0a8be660e3509fe80541e33e8fd6e78ed2756587c65537beddb2386223bb330f`.
+Native construction reported 33,781 ms. The run used the explicit installed tools
 described in [the CLI evidence](k09-build-cli.md).
 
 ## Reproduction and retained results
@@ -24,10 +24,10 @@ described in [the CLI evidence](k09-build-cli.md).
   --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20
 ```
 
-The retained fixture is `.kvik/tests/kotaml-cli/case-wztnvhb2`, with run
-`.kvik/runs/kvik-run-bw0HNM`. It includes exact commands, output, timing,
+The retained release11 fixture is `.kvik/tests/kotaml-cli/case-dwwnj6df`, with run
+`.kvik/runs/kvik-run-ocHc6g`. It includes exact commands, output, timing,
 configuration, global/scoped pins, tool configuration and the dependency lock.
-Resolution took 47.991 seconds and the cold compilation/test command 200.223
+Resolution took 41.352 seconds and the cold compilation/test command 189.361
 seconds. Timings include tool verification and concurrent development work;
 they are observations, not performance acceptance results.
 
@@ -48,7 +48,9 @@ manifests are retained separately from Kvik's declarative translation.
   directories. Private dependencies are not promoted into downstream compilation.
   The serialization plugin's exact bytes are separate from consumer classpaths.
 - Main compilation uses strict explicit API; test compilation does not. Both use
-  JVM target 11 and the preserved module names; tests use their own main outputs
+  JVM target 11 with explicit `-Xjdk-release=11` and the preserved module names;
+  all four compilation action records contain `jdkRelease: 11`.
+  Tests use their own main outputs
   as friends. Global/scoped pins are retained exactly in reproduction arguments.
 - Both test actions have `never` cache policy and report `executed`. Exact sorted
   test identities match `tests/jvm/kotaml-test-identities.json`, not only counts.
@@ -58,7 +60,9 @@ manifests are retained separately from Kvik's declarative translation.
 - A separate post-exit verification query reports current/0. Original and copied
   fixture inputs remain unchanged.
 
-Ten dependency CLI regressions also passed on this runtime in 8.345 seconds.
+Ten dependency CLI regressions passed on the preceding runtime `1f28d55e…`
+in 8.345 seconds. Its earlier full run remains in
+`.kvik/tests/kotaml-cli/case-wztnvhb2/.kvik/runs/kvik-run-bw0HNM`.
 The small JVM fixture separately proves repeated compilation hits with freshly
 executed tests; see [dependency-scope evidence](k09-dependency-scopes.md).
 
@@ -66,9 +70,10 @@ executed tests; see [dependency-scope evidence](k09-dependency-scopes.md).
 
 Artifact sets and bytes match; classpath order differs from the reference in all
 eight resolution domains and all six action comparisons. This is not ordered
-classpath equivalence or a general compatibility result. The harness checks the
-implemented compiler options; it does not establish equivalence of the JDK API
-surface selected by the reference build's release setting.
+classpath equivalence or a general compatibility result. The explicit release
+setting now restricts JDK APIs through the pinned compiler; separate
+[actual compiler probes](k06-jdk-release.md) verify rejection of newer APIs.
+Tests ran on JDK 25; this does not prove runtime behavior on JDK 11.
 
 This fixture has no resource files. Nonempty resource loading is demonstrated by
 the separate small JVM CLI fixture, not this run. Explicit JVM test selectors
@@ -81,10 +86,16 @@ its own evidence to exact captured inputs; it does not retroactively seal those
 reference invocations. Native upstream Kotest/KSP tests, compiler portability,
 remote compiler reuse and full K15 lifecycle gates remain separate work.
 
-Independent retained-run review recomputed all six action keys, checked every
+Independent review of the preceding `case-wztnvhb2` run recomputed all six action keys, checked every
 materialized input/output digest and prerequisite module namespace, and compared
 worker request classpaths/sources/plugins with the action records. All 67 source
 files also matched the pinned Git commit. Test IDs were independently re-extracted
 from the reference XML and prior worker records before comparison with this run.
 All eight coordinate/digest sets, policy/options, test counts, journal mutation
 results and the current post-exit query passed that review.
+
+Independent review of the release11 run repeated those bindings and verified
+all four worker requests carry exactly one `-Xjdk-release=11`, with target11.
+All 1,666 generated classfiles have major version 55. The read-only audit script
+and report are retained as `retained-audit.py` and `retained-audit.json` in
+`case-dwwnj6df`; this audit did not rerun the compiler or tests.
