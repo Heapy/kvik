@@ -371,8 +371,20 @@ def _observe_local(root, source, required_directories, lock_path, totals, *, ope
     records, aliases = [], {}
     node_bytes, entry_count = 0, 0
     selections = source['contentPaths']
-    if lock_path.is_relative_to(root) and _covered(lock_path.relative_to(root).as_posix(), selections):
-        _fail('Selected local content includes source input lock')
+    # macOS can open differently cased/normalized names as the same file.
+    # Conservatively forbid those aliases even on a case-sensitive host and
+    # even before the lock exists, so its bytes can never enter their own key.
+    folded_root = tuple(unicodedata.normalize('NFC', part).casefold() for part in root.parts)
+    folded_lock = tuple(unicodedata.normalize('NFC', part).casefold() for part in lock_path.parts)
+    if folded_lock[:len(folded_root)] == folded_root:
+        relative_lock = '/'.join(folded_lock[len(folded_root):])
+        if _covered(relative_lock, [path.casefold() for path in selections]):
+            _fail('Selected local content includes source input lock')
+    try:
+        lock_info = lock_path.lstat()
+        lock_identity = (lock_info.st_dev, lock_info.st_ino)
+    except FileNotFoundError:
+        lock_identity = None
 
     def register(relative):
         _path(relative)
@@ -410,6 +422,8 @@ def _observe_local(root, source, required_directories, lock_path, totals, *, ope
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
             try:
                 opened = os.fstat(fd)
+                if (opened.st_dev, opened.st_ino) == lock_identity:
+                    _fail('Selected local content includes source input lock')
                 if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
                     _fail('Selected file changed type or is hardlinked')
                 if opened.st_size > FILE_LIMIT:

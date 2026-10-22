@@ -228,6 +228,31 @@ class ObservationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'input lock'):
             sg._observe_local(self.root, self.doc['sources'][0], [], nested, [0, 0])
 
+    def test_lock_case_alias_cannot_enter_its_own_inventory(self):
+        alias = self.root / 'SOURCE.LOCK.JSON'
+        if not alias.exists() or not os.path.samefile(alias, self.lock):
+            self.skipTest('Filesystem does not expose case-insensitive physical aliases')
+        doc = copy.deepcopy(self.doc)
+        doc['sources'][0]['contentPaths'].append(alias.name)
+        doc['sources'][0]['contentPaths'].sort()
+        graph = sg.parse_source_lock(canonical(doc))
+        with self.assertRaisesRegex(ValueError, 'input lock'):
+            self.observe(graph)
+        # Check an aliased ancestor selection as well as the final filename.
+        nested = self.root / 'core/src/nested.lock'
+        nested.write_bytes(b'lock bytes')
+        bad = copy.deepcopy(self.doc['sources'][0]); bad['contentPaths'] = ['CORE/SRC']
+        with self.assertRaisesRegex(ValueError, 'input lock'):
+            sg._observe_local(self.root, bad, [], nested, [0, 0])
+
+    def test_absent_lock_case_alias_is_rejected_before_traversal(self):
+        self.lock.unlink()
+        doc = copy.deepcopy(self.doc)
+        doc['sources'][0]['contentPaths'].append('SOURCE.LOCK.JSON')
+        doc['sources'][0]['contentPaths'].sort()
+        with self.assertRaisesRegex(ValueError, 'input lock'):
+            self.observe(sg.parse_source_lock(canonical(doc)))
+
     def test_symlink_hardlink_fifo_and_directory_alias_rejection(self):
         for kind in ['symlink', 'hardlink', 'fifo']:
             path = self.root / 'core/src/unsafe'
