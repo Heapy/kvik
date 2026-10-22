@@ -79,7 +79,7 @@ session directory as though it were a new gate. Each preparation/continuation
 retains its own attempt directory and command receipts. Process inspection needs
 normal local `ps` permission for owned-tree cleanup assertions.
 
-## Actual preparation result; live session pending
+## Actual preparation result
 
 The final preparation handle 2985 completed with exit 0. Retained evidence:
 `.kvik/tests/source-graph-handoff/case-qlubc43l/attempt-q0_qozct/`.
@@ -98,5 +98,57 @@ Python syntax checks also passed.
 - Session observer helper SHA-256:
   `33a8998939e40e23f90bd3ab922b34fea03b46943aca71af0168be9ce4b504d8`.
 
-The live handoff, fresh consumer and cancellation cases remain pending. The
-preparation is not reported as completion of those gates or of K14/K15.
+## Actual live handoff and consumer result
+
+The frozen harness `351fefd` completed with exit 0 (handle 58561) on the prepared
+case. Retained full attempt:
+`.kvik/tests/source-graph-handoff/case-qlubc43l/attempt-d91n9cct/`.
+Its original `summary.json` remains unchanged with SHA-256
+`2bb6d106cace920cf86ab0d5415b612f8fd5e7e3729525d74d9e72bb4524ef39`.
+
+- Controller PID 58916 remained unchanged across the actual v1-to-v2 exec.
+  The 19 observed events span two linked sessions; both retained journals match
+  their portions of stdout byte for byte. Session stream SHA-256:
+  `fe6b426339aa83806c511601ecf7a2acd6470005398b016a9318365c2ed1a1e7`.
+- Resume v1 retains the queued test, exact partial status bytes, all private
+  source-lock/source-cache paths, and offline/no-build flags. The completed frame
+  produces the original `carried` request ID after exec. Handoff SHA-256:
+  `72d0d743fb3f9ee3b70e453faa154c199b6cfa2ed953cbf5c584f02768f628f4`.
+- All four actual JVM actions executed: both main compiles, test compilation and
+  the never-cached test. The exact JUnit identity above passed; counts are one
+  discovered/executed, zero failed/skipped, discovery complete. The run retains
+  a fresh `effects.txt` containing `executed\n`, passed/current verification,
+  full journal/completion binding, recomputed action keys and rehashed outputs.
+- Consumer evidence is under
+  `case-qlubc43l/project/.kvik/sessions/kvik-run-12J4LX/kvik-run-OY5IsK/runs/kvik-run-JRX59t`.
+  The separate verification query was current. Quit completed and all tracked
+  owned processes disappeared in 0.157 seconds.
+- The cancellation session observed an actual launcher Python child and its
+  guardian while the private v2 publication lock was held. That lock prevented
+  successful replacement acquisition. Status controls remained responsive and
+  no session-restarting event occurred. SIGTERM returned 130 with all tracked
+  owned processes gone in 0.349 seconds. All 11 events agree with its retained
+  journal; stream SHA-256:
+  `19f89c00ae1e41a36b179f58733a4db351ee159d205346e43775061280a3256e`.
+- Seven retained bootstrap query/acquisition commands preserved the exact launch
+  policy. Both runtime bundle inventories, trusted bootstrap and source cache
+  remained byte-identical to preparation. No Native runtime was recompiled;
+  reuse is deliberately distinct from the full source rebuild gate.
+
+The initial invalid-tools children were expected setup failures and are not
+counted as consumer successes. The cancellation case also intentionally replaced
+the private tools document with `{}` after the successful run. A narrow follow-up
+restored it byte-exactly from `valid-tools.json` and repeated the production
+verification query after all sessions closed; that query returned current/exit 0.
+The original full-attempt receipt was not rewritten. Supplementary evidence is
+`final-restoration.json` (SHA-256
+`65e00844b830a6482c3f20d797d871a85915d88377fc83b0e3058ae44584cc98`),
+`final-current-verification.stdout`, and `.stderr` in the same attempt. The
+reproduction script is `/private/tmp/kvik-handoff-final-verification.py` and its
+hash is retained in that receipt.
+
+The harness now performs the same restoration and final query automatically.
+This additional tail was verified against the retained completed run, without
+repeating the consumer compilation. Python syntax passed. No raw-terminal or
+online foreground source acquisition case, application restart, full K14/K15
+completion, or continuous tool freshness is claimed by this bounded gate.

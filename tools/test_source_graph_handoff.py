@@ -257,6 +257,12 @@ def main():
             cancel_cleanup=cancel.finish('signal')
             assert not any(e['type']=='session-restarting' for e in cancel.events)
             summary['cancellation']={'blockedProcesses':blocked,'cleanup':cancel_cleanup,'bootstrapCommand':command}
+        # The cancellation fixture temporarily invalidates tools; restore the successful
+        # consumer's inputs and verify current evidence again after every session closes.
+        atomic_bytes(project/'tools.json',(case/'valid-tools.json').read_bytes())
+        final_query=invoke('final-current-verification',[descriptors['v2']['runtime'],'verification','--run',str(run)],timeout=120)
+        validate(final_query,'verificationQuery');assert final_query['freshness']=='current'
+        summary['finalQuery']=final_query
         # Every retained bootstrap observation/rebuild keeps the exact source path and offline policy.
         checked=[]
         for session_value in sessions:
