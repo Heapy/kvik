@@ -21,10 +21,22 @@ Run the focused suite after acquiring the shared compiler/process slot:
 
 The harness compiles one real Kotlin/JVM target-11 fixture, the actual Native ownership guardian/bridge and one Native test executable. It records source/support/tool identities, complete commands/environments/logs, class outputs, binary hashes, exact requests/observations, stream/effect files and immediate post-terminal child checks. There are now 14 fake-host/real-CAS groups and six real-Java groups (ten invocations); the additional group checks host setup failure retention. The fixture provider freshly hashes the consumed Java launcher and stdlib for every call; it does not claim to replace complete installed-JDK or worker-bundle verification. Those are tested by the production provider gate. SDK, JDK support and Native dependency trees must remain stable during compilation; the receipt does not claim their complete inventory.
 
-Validation: source `ac77e1a`, reviewed stdlib dependency `fc7558d` (parent `bfa5769`), and harness correction `4ed1ae2` passed all 19 Native groups, including ten actual Java invocations, on 2026-10-22. The runner reported 7,787 ms; the Native compile command took 23.063 seconds. No production or test source changed after that run; this final update records evidence only.
+Validation: source `ac77e1a`, reviewed stdlib dependency `fc7558d` (parent `bfa5769`), and harness correction `4ed1ae2` passed all 19 Native groups, including ten actual Java invocations, on 2026-10-22. The runner reported 7,787 ms; the Native compile command took 23.063 seconds. That receipt describes the original executor before the Unicode and structured setup-result integration below.
 
 Retained case: `/private/tmp/kvik-k12-script-executor/.kvik/tests/script-executor/case-zdamckhq`. Its receipt binds 52 source/support inputs, 22 tool files, seven commands/environments/logs, generated JVM classes, binary outputs and all scenario evidence. Receipt SHA-256: `af00020898f36be8c321187ddf8e34ee9561a5c089e47b27d7592f1f32b3f8b7` (74,161 bytes). Native runner SHA-256: `4e3b940dc20268418563dc2f4ef27d4cfa7ee49dbf709b89bf6faffadb90b146` (2,686,920 bytes). Test-log SHA-256: `95696b06cfc287413981f79d71afe38a4d59cd24e45000cdaefd541c9cdd3731`.
 
 The actual cases retain separate effects/streams, unchanged keys with fresh repeat directories, ordinary exits 17/125/130/255, cancellation 130 with `cancelled=true`, and timeout 124 with `timedOut=true`. Leader-exit, cancellation and timeout cases check both captured child and grandchild PIDs immediately after terminal poll and before closing the host; all returned ESRCH. They exercise the production ownership boundary but do not independently inventory arbitrary uncaptured processes. The general recursive ownership and guardian/group guarantees remain covered by their dedicated process suites.
 
 The first attempt, `case-sflt43u3`, is retained as failed: the JVM fixture compiled, then direct Xcode clang lacked its explicit SDK sysroot and could not find `sys/types.h`. The harness correction binds the selected SDK in C/interop argv and the receipt; it did not change the executor. The passing compiler emitted one harmless unnecessary-non-null-assertion warning in the timeout test. No full CLI/script graph, standalone lock, production tool-provider or setup-failure annotation claim is made by this focused gate.
+
+
+Integration validation at `af9b37f` passed all **20 Native groups**, including ten real
+Java invocations, with the six-int setup diagnostic protocol and terminal-only `waitid`
+classification. The new group distinguishes host setup failure from ordinary 125/127;
+actual Java streams preserve BMP and supplementary Unicode under the fixed C locale.
+Retained case: `/private/tmp/kvik-k12-script-cli/.kvik/tests/script-executor/case-trewcpd6`.
+Receipt SHA-256: `03718e72b5dd02aa2758cf19d8e49ea2ff307fdc11b7c3b3c488084b9e694b0c`.
+Runner SHA-256: `afbd7c465cc2dc0107eb98ff63a956e8b11c1436c16c6859507f46de68658ab1`
+(2,728,168 bytes). The test runner reported 7,111 ms. This does not replace the public
+CLI or foreground integration gates, or resolve the separately observed transient parent
+process-group error.

@@ -64,3 +64,14 @@ groups and ten real Java invocations at
 `/private/tmp/kvik-k12-script-cli/.kvik/tests/script-executor/case-9ml_dj6t`.
 The corrected full CLI still requires a rebuilt-runtime replay; the wider public
 workspace-module/plugin, invalidation and failure/lifecycle gate remains pending.
+
+
+After composing the reviewed foreground recovery and structured process-result changes,
+`af9b37f` passed 20 Native executor groups and ten actual Java invocations in
+`case-trewcpd6` (receipt `03718e72b5dd02aa2758cf19d8e49ea2ff307fdc11b7c3b3c488084b9e694b0c`).
+Script observations retain nullable `processResult.setupFailure` with bounded stage/errno.
+Cancellation and timeout retain their status priority. Otherwise a host setup failure
+returns CLI exit 1 with `KVIK_SCRIPT_LAUNCH_FAILED`, while an ordinary script choosing
+125 or 127 returns that exact value with no setup failure. Source review found no issue;
+the new Native group verifies setup retention and cleanup, and the earlier exact exit
+cases remain passing. Full public failure-path evidence remains a separate gate.
