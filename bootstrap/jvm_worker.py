@@ -165,13 +165,15 @@ def worker_identity(tree, api, stdlib, junit):
         "workerTree": digest(canonical(tree)), "api": api, "stdlib": stdlib, "junit": junit}))
 
 
-def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned):
+def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned, *, source_files=None):
     bundle = directory / "jvm"
     classes = bundle / "classes"
     classes.mkdir(parents=True)
     compiler_jars = [artifacts[a["filename"]] for a in lock["compilerArtifacts"]]
     junit = artifacts[lock["testPlatform"]["filename"]]
-    sources = sorted((source_root / "core/src").rglob("*.kt")) + sorted((source_root / worker_sources).rglob("*.kt"))
+    sources = (sorted((source_root / "core/src").rglob("*.kt")) + sorted((source_root / worker_sources).rglob("*.kt"))) if source_files is None else list(source_files)
+    if not sources or len(sources) != len(set(sources)):
+        raise ValueError("JVM worker compilation requires unique explicit sources")
     run_owned([java, "-cp", os.pathsep.join(map(str, compiler_jars)), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
         "-no-stdlib", "-no-reflect", "-jvm-target", "21", "-classpath", os.pathsep.join(map(str, [*compiler_jars, junit])),
         "-d", classes, *sources], environment, log)

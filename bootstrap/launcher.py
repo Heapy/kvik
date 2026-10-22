@@ -12,9 +12,9 @@ import sys
 import tempfile
 import time
 
-from bootstrap.identity import canonical, digest, file_digest, inventory, read_json
+from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
 from bootstrap.pin_tools import host_identity, tool_roots
-from bootstrap import jvm_worker, native_libraries
+from bootstrap import jvm_worker, native_libraries, source_graph
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,6 +90,11 @@ def composition():
                     selected.append((source_root / item["path"], logical, item["digest"]))
     if not selected or len({entry[1] for entry in selected}) != len(selected):
         raise ValueError("Empty or overlapping source composition")
+    lock = runtime_lock(pins, [p["implementation"] for p in recipe["plugins"]], recipe["compilerOptions"])
+    return recipe, selected, lock, digest(canonical(lock))
+
+
+def runtime_lock(pins, registry, arguments):
     bootstrap_files = [ROOT / "kvik", *sorted((ROOT / "bootstrap").glob("*.py")), ROOT / "bootstrap/composition.json", ROOT / "bootstrap/jvm-artifacts.lock.json"]
     bootstrap_identity = [{"path": str(p.relative_to(ROOT)), "digest": file_digest(p)} for p in bootstrap_files]
     tools = read_json(ROOT / "bootstrap/toolchains.lock.json")
@@ -104,11 +109,48 @@ def composition():
                 not isinstance(component["hash"], str) or not re.fullmatch(r"[a-f0-9]{64}", component["hash"]) or
                 type(component["sizeBytes"]) is not int or component["sizeBytes"] < 0):
             raise ValueError("Invalid toolchain component digest")
-    lock = {"schemaVersion": 1, "sources": pins, "pluginApiVersion": 1, "registry": [p["implementation"] for p in recipe["plugins"]],
+    return {"schemaVersion": 1, "sources": pins, "pluginApiVersion": 1, "registry": registry,
             "toolchains": tools["components"], "libraries": jvm_worker.libraries(jvm_worker.read_lock(ROOT)), "recipe": digest(canonical(bootstrap_identity)),
-            "arguments": recipe["compilerOptions"], "environment": {"LANG": "C", "LC_ALL": "C", "TZ": "UTC", "nativeDependencies": "offline",
+            "arguments": arguments, "environment": {"LANG": "C", "LC_ALL": "C", "TZ": "UTC", "nativeDependencies": "offline",
                 "DEVELOPER_DIR": "$TOOL:xcodeToolchain/../..", "SDKROOT": "$TOOL:sdk"}, "platform": host}
-    return recipe, selected, lock, digest(canonical(lock))
+
+
+def graph_composition(lock_path):
+    """Desired identity only: no acquisition, cache access or local source writes."""
+    graph = source_graph.parse_source_lock(read_regular(lock_path, source_graph.LOCK_LIMIT))
+    observed = source_graph.observe_graph(graph, lock_path.parent, lock_path=lock_path)
+    document = observed.observed_document
+    runtime = document["runtime"]
+    recipe = {**runtime, "plugins": document["plugins"], "compilerOptions": document["compilerOptions"]}
+    lock = runtime_lock([], [p["implementation"] for p in recipe["plugins"]], recipe["compilerOptions"])
+    del lock["sources"]
+    lock.update(schemaVersion=2, sourceGraph={"schemaVersion": 1, "inputLock": observed.input_lock_digest,
+        "identity": observed.graph_digest, "document": document})
+    return recipe, observed, lock, digest(canonical(lock))
+
+
+def desired_composition(args):
+    return graph_composition(args.source_lock) if getattr(args, "source_lock", None) is not None else composition()
+
+
+def validate_graph_outputs(args, observed):
+    """Reject destructive overlap before even cache/lock directory creation."""
+    import unicodedata
+    def parts(path):
+        return tuple(unicodedata.normalize("NFC", p).casefold() for p in Path(path).resolve().parts)
+    def overlaps(left, right):
+        a, b = parts(left), parts(right)
+        return a[:len(b)] == b or b[:len(a)] == a
+    protected = [args.source_lock]
+    roots = observed.local_roots
+    protected += [roots[s["id"]] / p for s in observed.graph.document["sources"]
+                  if s["pin"]["kind"] == "local" for p in s["contentPaths"]]
+    outputs = [args.cache_dir, args.artifact_cache, args.source_cache]
+    for path in outputs:
+        if path.is_symlink() or any(overlaps(path, input_path) for input_path in protected):
+            raise ValueError("Bootstrap cache overlaps source lock or selected local content")
+    if any(overlaps(args.source_cache, path) for path in outputs[:2]):
+        raise ValueError("Source cache must be separate from runtime and JVM artifact caches")
 
 
 def validate_options(options):
@@ -143,8 +185,16 @@ def cached(directory, key):
         if not isinstance(manifest, dict) or directory.is_symlink() or executable.is_symlink() or guardian.is_symlink():
             return False
         jvm_worker.verify_bundle(directory, manifest.get("jvmWorkerBundle"))
+        runtime = read_json(directory / "runtime.lock.json")
+        if not isinstance(runtime, dict):
+            return False
+        if runtime.get("schemaVersion") == 2:
+            for field, name in (("sourceAcquisition", "source-acquisition.json"), ("sourceInputs", "source-inputs.json"),
+                                ("sourceCommands", "source-commands.jsonl")):
+                if manifest.get(field) != file_digest(directory / name):
+                    return False
         return (manifest.get("schemaVersion") == 1 and manifest.get("composition") == key and
-                digest(canonical(read_json(directory / "runtime.lock.json"))) == key and
+                digest(canonical(runtime)) == key and
                 manifest.get("executable") == file_digest(executable) and os.access(executable, os.X_OK) and
                 manifest.get("guardian") == file_digest(guardian) and os.access(guardian, os.X_OK))
     except (OSError, ValueError, KeyError, TypeError):
@@ -167,7 +217,8 @@ def launch_descriptor(args, key, executable):
     arguments = []
     for flag, value in (("--java-home", args.java_home), ("--konan-home", args.konan_home),
                         ("--konan-data", args.konan_data), ("--cache-dir", args.cache_dir),
-                        ("--artifact-cache", args.artifact_cache)):
+                        ("--artifact-cache", args.artifact_cache), ("--source-lock", getattr(args, "source_lock", None)),
+                        ("--source-cache", getattr(args, "source_cache", None))):
         if value is not None:
             arguments.extend((flag, str(Path(value).absolute())))
     for flag, enabled in (("--offline", args.offline), ("--no-build", args.no_build)):
@@ -224,28 +275,60 @@ def run_owned(command, environment, log, timeout=300):
 
 def build(args, recipe, selected, lock, key, destination):
     roots = validate_tools(args, lock["toolchains"])
+    graph_mode = isinstance(selected, source_graph.ObservedGraph)
+    verified = None
+    if graph_mode:
+        from bootstrap.source_store import provision_graph, snapshot_graph, VerifiedNativeDistribution
+        from bootstrap.source_process import run_owned as acquire_owned
+        from bootstrap.source_process import OwnedProcessCancelled
+        try:
+            verified = provision_graph(selected, args.source_cache, args.offline, acquire_owned,
+                lock_path=args.source_lock,
+                native_distribution=VerifiedNativeDistribution(roots["kotlinNative"], canonical(lock["toolchains"]["kotlinNative"])),
+                git_executable=Path("/usr/bin/git"))
+        except OwnedProcessCancelled as failure:
+            raise BootstrapInterrupted(str(failure)) from failure
     jvm_lock = jvm_worker.read_lock(ROOT)
     artifacts = jvm_worker.acquire(jvm_lock, args.artifact_cache, args.offline)
     temporary = Path(tempfile.mkdtemp(prefix=key["hash"] + "-", dir=destination.parent))
     started = time.monotonic()
     try:
-        source_files = []
-        for source, logical, expected in selected:
-            data = source.read_bytes()
-            if digest(data) != expected:
-                raise ValueError(f"Source changed during snapshot: {logical}; retry")
-            output = temporary / "sources" / logical
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_bytes(data)
-            if logical.endswith(".kt") and not logical.startswith(recipe["jvmWorkerSources"] + "/"):
-                source_files.append(output)
+        worker_files = None
+        extra_libraries = []
+        if graph_mode:
+            inputs = snapshot_graph(verified, temporary / "sources")
+            source_root = inputs.runtime_source_root
+            source_files = [file.path for file in inputs.native_kotlin_files]
+            worker_files = [file.path for file in inputs.jvm_worker_files]
+            extra_libraries = [file.path for file in inputs.native_libraries]
+            if not source_files or not worker_files:
+                raise ValueError("Source graph has no Native runtime or JVM worker compilation sources")
+            (temporary / "source-acquisition.json").write_bytes(verified.acquisition_evidence_bytes + b"\n")
+            receipt = {"schemaVersion": 1, "sourceGraph": selected.graph_digest,
+                "files": [{"path": item.file.logical_path, "digest": item.file.digest,
+                    "executable": item.file.executable, "roles": sorted(item.roles)} for item in inputs.files]}
+            (temporary / "source-inputs.json").write_bytes(canonical(receipt) + b"\n")
+        else:
+            source_root = temporary / "sources"
+            source_files = []
+            for source, logical, expected in selected:
+                data = source.read_bytes()
+                if digest(data) != expected:
+                    raise ValueError(f"Source changed during snapshot: {logical}; retry")
+                output = source_root / logical
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(data)
+                if logical.endswith(".kt") and not logical.startswith(recipe["jvmWorkerSources"] + "/"):
+                    source_files.append(output)
         registry = temporary / "sources/Registry.kt"
-        implementations = ", ".join(p["implementation"] + "()" for p in recipe["plugins"])
+        implementations = ", ".join(p["implementation"] + "()" +
+            ('.also { require(it.id == "' + p["id"] + '" && it.apiVersion == 1) { "Source plugin identity/API mismatch: ' + p["id"] + '" } }' if graph_mode else "")
+            for p in recipe["plugins"])
         executable = temporary / "kvik.kexe"
         environment = {name: os.environ[name] for name in ("HOME", "TMPDIR") if name in os.environ}
         environment.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "JAVA_HOME": str(roots["jdk"]), "KONAN_DATA_DIR": str(Path(args.konan_data).resolve()),
             "DEVELOPER_DIR": str(roots["xcodeToolchain"].parents[1]), "SDKROOT": str(roots["sdk"]), "LANG": "C", "LC_ALL": "C", "TZ": "UTC"})
-        native = temporary / "sources" / recipe["nativePlatform"]
+        native = source_root / recipe["nativePlatform"]
         bridge = temporary / "bridge"
         bridge.mkdir()
         clang = roots["xcodeToolchain"] / "usr/bin/clang"
@@ -261,14 +344,21 @@ def build(args, recipe, selected, lock, key, destination):
         ]
         log_path = args.cache_dir / "logs" / (key["hash"] + ".log")
         log_path.parent.mkdir(exist_ok=True)
+        def run_build(command, environment, log, timeout=300):
+            if graph_mode:
+                # Physical paths are execution evidence, not composition identity.
+                with (temporary / "source-commands.jsonl").open("ab") as receipt:
+                    receipt.write(canonical({"schemaVersion": 1, "command": list(map(str, command)),
+                        "environment": environment, "timeoutSeconds": timeout}) + b"\n")
+            run_owned(command, environment, log, timeout)
         with log_path.open("w") as log:
             for command in commands:
-                run_owned(command, environment, log)
-            libraries = [bridge / "process.klib"] + native_libraries.build(recipe["nativeLibraries"], temporary / "sources",
-                bridge, roots, environment, log, run_owned)
+                run_build(command, environment, log)
+            libraries = [bridge / "process.klib"] + native_libraries.build(recipe["nativeLibraries"], source_root,
+                bridge, roots, environment, log, run_build) + extra_libraries
             guardian_digest = file_digest(guardian)
-            worker_digest = jvm_worker.build_bundle(temporary, temporary / "sources", recipe["jvmWorkerSources"], jvm_lock,
-                artifacts, roots["jdk"] / "bin/java", environment, log, run_owned)
+            worker_digest = jvm_worker.build_bundle(temporary, source_root, recipe["jvmWorkerSources"], jvm_lock,
+                artifacts, roots["jdk"] / "bin/java", environment, log, run_build, source_files=worker_files)
             registry.write_text("package kvik.cli\n" + f'const val runtimeComposition: String = "{key["hash"]}"\n' +
                 f'const val runtimeCompositionSize: Long = {key["sizeBytes"]}L\n' +
                 f'const val runtimeGuardianHash: String = "{guardian_digest["hash"]}"\n' +
@@ -276,15 +366,19 @@ def build(args, recipe, selected, lock, key, destination):
                 f'const val runtimeJvmWorkerHash: String = "{worker_digest["hash"]}"\n' +
                 f'const val runtimeJvmWorkerSize: Long = {worker_digest["sizeBytes"]}L\n' +
                 f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
-            run_owned([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
+            run_build([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
                 *[part for library in libraries for part in ("-library", library)], "-o", executable, *source_files, registry], environment, log)
-        if composition()[3] != key:
+        if desired_composition(args)[3] != key:
             raise ValueError("Runtime sources changed during compilation; refusing stale composition, retry")
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
         manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
             "jvmWorkerBundle": worker_digest,
             "compileMillis": round((time.monotonic() - started) * 1000)}
+        if graph_mode:
+            manifest["sourceAcquisition"] = file_digest(temporary / "source-acquisition.json")
+            manifest["sourceInputs"] = file_digest(temporary / "source-inputs.json")
+            manifest["sourceCommands"] = file_digest(temporary / "source-commands.jsonl")
         (temporary / "manifest.json").write_bytes(canonical(manifest) + b"\n")
         shutil.rmtree(temporary / "sources")
         shutil.rmtree(bridge)
@@ -312,6 +406,8 @@ def main():
     parser.add_argument("--konan-data", default=str(Path.home() / ".konan"))
     parser.add_argument("--cache-dir", type=Path, default=ROOT / ".kvik/runtime")
     parser.add_argument("--artifact-cache", type=Path, default=ROOT / ".kvik/tool-artifacts")
+    parser.add_argument("--source-lock", type=Path)
+    parser.add_argument("--source-cache", type=Path)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-build", action="store_true")
     query = parser.add_mutually_exclusive_group()
@@ -324,9 +420,18 @@ def main():
     try:
         if (args.print_composition or args.print_launch) and command:
             raise ValueError("Bootstrap queries cannot include a runtime command")
+        if args.source_cache is not None and args.source_lock is None:
+            raise ValueError("--source-cache requires --source-lock")
+        if args.source_lock is not None:
+            # Preserve the final component so a symlink lock is still rejected.
+            args.source_lock = args.source_lock.absolute()
+            args.source_lock = args.source_lock.parent.resolve(strict=True) / args.source_lock.name
+            args.source_cache = (args.source_cache or ROOT / ".kvik/source-cache").absolute()
         args.cache_dir = args.cache_dir.resolve()
         args.artifact_cache = args.artifact_cache.absolute()
-        recipe, selected, lock, key = composition()
+        recipe, selected, lock, key = desired_composition(args)
+        if args.source_lock is not None:
+            validate_graph_outputs(args, selected)
         if args.print_composition:
             print(canonical({"schemaVersion": 1, "composition": key}).decode("utf-8"))
             return

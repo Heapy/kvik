@@ -170,6 +170,15 @@ for suffix in ("Input", "Observed"):
         "UTF-8 byte and aggregate limits, compiler option pairs, and immutable URL consistency. "
         "The input parser also rejects duplicate JSON keys and noninteger numeric tokens. "
         "A valid document is not evidence that source/artifact bytes have been acquired or verified.")
+# Legacy local compositions keep their exact v1 lock. Graph compositions use
+# an explicit v2 shape; all source and Native-library bindings live in the full
+# observed document, while libraries retains the JVM worker artifact contract.
+DEFS["runtimeLockV1"] = DEFS["runtimeLock"]
+_graph_runtime = {key: value for key, value in DEFS["runtimeLockV1"]["properties"].items() if key != "sources"}
+_graph_runtime.update(schemaVersion={"const": 2}, sourceGraph=versioned({"inputLock": ref("digest"),
+    "identity": ref("digest"), "document": ref("sourceGraphObserved")}))
+DEFS["runtimeLockV2"] = object_(_graph_runtime)
+DEFS["runtimeLock"] = {"oneOf": [ref("runtimeLockV1"), ref("runtimeLockV2")]}
 TOOL_COMPONENTS = ("jdk", "kotlinNative", "llvm", "libffi", "sdk", "xcodeToolchain")
 DEFS["installedToolLock"] = versioned({"kotlinVersion": {"const": "2.4.20"},
     "host": object_({"os": {"const": "Darwin"}, "architecture": {"const": "arm64"}, "release": NONEMPTY, "sdk": NONEMPTY}),

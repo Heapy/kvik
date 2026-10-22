@@ -53,6 +53,8 @@ For a known incorrect published dependency edge, project commands accept repeata
 
 The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes and three runtime libraries alongside the native executable. Their 15 compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked Maven URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
 
+Select an explicit source composition with `--source-lock /absolute/source.lock.json` and optionally `--source-cache /absolute/source-cache` (default `.kvik/source-cache`). The [source graph contract](docs/decisions/k14-source-graph.md) covers pinned Git/archive packages, local source packages, source plugin dependencies and exact Native library closures. `--print-composition` validates declarations and observes local inputs without downloading or creating caches. An allowed build acquires verified inputs and compiles the composition; `--offline` requires cached remote inputs, and `--no-build` requires an already verified executable. Without `--source-lock`, the existing local composition remains the default. Full remote composition acceptance is still being verified.
+
 ## Current checks
 
 On macOS ARM64, supply a Kotlin/Native 2.4.20 installation and Liberica JDK 25.0.4:

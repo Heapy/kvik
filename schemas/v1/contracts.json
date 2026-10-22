@@ -1398,74 +1398,14 @@
       ]
     },
     "runtimeLock": {
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "const": 1
+      "oneOf": [
+        {
+          "$ref": "#/$defs/runtimeLockV1"
         },
-        "sources": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/sourcePin"
-          },
-          "minItems": 1
-        },
-        "pluginApiVersion": {
-          "const": 1
-        },
-        "registry": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "toolchains": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/digest"
-          }
-        },
-        "libraries": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/artifact"
-          }
-        },
-        "recipe": {
-          "$ref": "#/$defs/digest"
-        },
-        "arguments": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "environment": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "platform": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+        {
+          "$ref": "#/$defs/runtimeLockV2"
         }
-      },
-      "required": [
-        "schemaVersion",
-        "sources",
-        "pluginApiVersion",
-        "registry",
-        "toolchains",
-        "libraries",
-        "recipe",
-        "arguments",
-        "environment",
-        "platform"
-      ],
-      "additionalProperties": false
+      ]
     },
     "sourceGraphTreeDigest": {
       "type": "object",
@@ -2207,6 +2147,163 @@
       ],
       "additionalProperties": false,
       "description": "Structural source graph contract. Semantic validation must additionally check sorted unique IDs/lists, acyclic reachable dependency closures, exact library order, directory coverage, normalized nonoverlapping paths, UTF-8 byte and aggregate limits, compiler option pairs, and immutable URL consistency. The input parser also rejects duplicate JSON keys and noninteger numeric tokens. A valid document is not evidence that source/artifact bytes have been acquired or verified."
+    },
+    "runtimeLockV1": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sourcePin"
+          },
+          "minItems": 1
+        },
+        "pluginApiVersion": {
+          "const": 1
+        },
+        "registry": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "libraries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "recipe": {
+          "$ref": "#/$defs/digest"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "platform": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sources",
+        "pluginApiVersion",
+        "registry",
+        "toolchains",
+        "libraries",
+        "recipe",
+        "arguments",
+        "environment",
+        "platform"
+      ],
+      "additionalProperties": false
+    },
+    "runtimeLockV2": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 2
+        },
+        "pluginApiVersion": {
+          "const": 1
+        },
+        "registry": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toolchains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "libraries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "recipe": {
+          "$ref": "#/$defs/digest"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "platform": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "sourceGraph": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "inputLock": {
+              "$ref": "#/$defs/digest"
+            },
+            "identity": {
+              "$ref": "#/$defs/digest"
+            },
+            "document": {
+              "$ref": "#/$defs/sourceGraphObserved"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "inputLock",
+            "identity",
+            "document"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "pluginApiVersion",
+        "registry",
+        "toolchains",
+        "libraries",
+        "recipe",
+        "arguments",
+        "environment",
+        "platform",
+        "sourceGraph"
+      ],
+      "additionalProperties": false
     },
     "installedToolLock": {
       "type": "object",

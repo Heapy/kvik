@@ -1,6 +1,6 @@
-# K14 source-graph input lock v1 (proposal)
+# K14 source-graph input lock v1
 
-Status: approved source-graph contract. The first production slice implements strict parsing and read-only local observation in `bootstrap/source_graph.py`; acquisition, snapshotting and launcher integration remain pending. The example is `examples/k14-source-graph.lock.json`.
+Status: approved source-graph contract. Strict parsing, local observation, acquisition, private snapshots and launcher integration are implemented. Full composed-runtime acceptance remains a separate gate; see the acceptance list below. The example is `examples/k14-source-graph.lock.json` and contains illustrative, non-provisionable source pins.
 
 ## Goal and trust boundary
 
@@ -74,11 +74,11 @@ Observation does **not** fetch, create caches, write bytecode, verify a cached e
 
 Provisioning returns verified physical roots only after every remote transport/tree and Native artifact/metadata blob has passed its declared identities. Before compiler/plugin code execution, copy selected source/support bytes into private staging while checking their observed identities. Re-read the input lock and re-observe local source trees before atomic runtime publication; changed inputs discard that attempt. Verified immutable remote cache entries must be revalidated on use; paths alone are not proof. Per-key producers publish only complete manifests/trees, repair corrupt entries under coordination, and never expose partial files.
 
-The generated runtime lock retains all existing source/tool/recipe/environment/worker bindings and adds a versioned source-graph field containing `inputLock`, `sourceGraph`, the full observed graph and exact Native artifact order. Root owns deciding the additive runtime-lock schema/version migration; simply hashing an opaque input-lock path is insufficient. No runtime-lock schema change is made by this proposal.
+Legacy local compositions retain runtime lock schema version 1. Source-graph compositions use runtime lock schema version 2: the old flat `sources` field is replaced by `sourceGraph: {schemaVersion: 1, inputLock, identity, document}`. Here `identity` is the observed graph digest and `document` is the complete observed graph, including Native artifact order, metadata pins and provided-library bindings. Existing tool, recipe, environment, platform, registry and JVM worker library fields retain their meanings. The complete canonical runtime lock determines the executable key; no physical source-lock or cache path enters that identity. The generated `runtimeLock` schema accepts these two explicit alternatives.
 
 ## Python boundary API
 
-The parser/observation boundary is implemented with frozen dataclasses backed by canonical bytes; exposed document, digest, inventory and local-root maps are defensive copies. Source ordering chooses the lexical minimum currently ready node at each dependency-first step. The provisioner/snapshot boundary remains proposed for the next slice:
+The parser/observation boundary uses frozen dataclasses backed by canonical bytes; exposed document, digest, inventory and local-root maps are defensive copies. Source ordering chooses the lexical minimum currently ready node at each dependency-first step. The provisioner/snapshot boundary is documented with its acquisition guarantees in [source store evidence](../evidence/k14-source-store.md):
 
 ```python
 # bootstrap/source_graph.py: pure strict parsing and declared/local observation
@@ -91,7 +91,8 @@ observe_graph(graph: SourceGraph, lock_directory: Path, *,
 
 # bootstrap/source_store.py: explicit effects, no package code execution
 provision_graph(observed: ObservedGraph, cache: Path, offline: bool,
-                owned_runner: OwnedRunner) -> VerifiedGraph
+                owned_runner: OwnedRunner, *, lock_path: Path,
+                native_distribution=None, git_executable=None) -> VerifiedGraph
 # VerifiedGraph: observed identity, verified source roots/manifests,
 #                verified artifact and metadata files; never unchecked paths.
 
@@ -113,6 +114,8 @@ Proposed initial limits: input lock 1 MiB; 64 source nodes/256 edges; 128 Native
 ## Launcher integration and ownership
 
 Root owns additive `--source-lock <path>` and `--source-cache <path>`, launcher/core/schema integration and generated runtime-lock compatibility. With no source lock, preserve the local default. A source cache without a source lock is rejected to avoid an ineffective option. Resolve physical lock/cache paths once; capture both as absolute arguments in the bounded foreground launch descriptor along with existing offline/no-build/tool options. Preserve canonical source-lock policy on restart; never replace it with a fetched package's launcher or Python module.
+
+The source cache defaults to `.kvik/source-cache` beneath the invoking launcher. It must be separate from runtime and JVM artifact caches. The launcher verifies the complete installed Native distribution before supplying a `VerifiedNativeDistribution` assertion to provisioning. Compilation consumes explicit role-tagged snapshot files, not a recursive scan of arbitrary fetched package content. The generated registry checks each instantiated plugin's declared ID and API version. A graph runtime retains `source-acquisition.json`, `source-inputs.json` and `source-commands.jsonl`; their digests are verified with the executable manifest on cache hits. These record current acquisition/cache-verification facts, logical file digests and roles, and the exact compiler argv/environment/budgets. Physical command paths are evidence only and do not enter the portable composition identity.
 
 `--print-composition` stays read-only and never provisions. `--no-build` never acquires sources to rescue a missing runtime: a verified compatible executable may be reused from the declared key, otherwise fail. Ordinary allowed builds provision the complete graph; `--offline` requires all needed remote bytes already verified in cache. Failure has no stale-composition fallback. Source cache entries must be physically disjoint from selected local content, the input lock and private build output; reject either direction of ancestor overlap before writing. An unselected cache directory beneath a local package root is permitted, so an explicit selection can coexist with `.kvik/source-cache`. No traversal through symlinks is allowed to evade this check. Selection never authorizes build outputs to modify observed inputs.
 
