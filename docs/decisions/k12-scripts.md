@@ -161,6 +161,16 @@ only required prerequisite actions. Exact command wiring remains a downstream re
 
 ## Verification boundary
 
+Independent integration review verified the tested `b5b8e01` source against the
+retained Native receipt: 20 source files, 19 harness/support files, five compiler
+launch inputs, the binary and raw logs, with all 50 exact Native test identities
+including the 15 script tests. The 27 Python schema tests also passed independently.
+Report: `/private/tmp/kvik-script-model-review-hlci3885/report.json`, SHA-256
+`d4596a74383c4b51d31b659a0c209c7d21f8f6a06fa32b8a7b79c4a8acec9f23`.
+This was a read-only Native receipt audit, not a compiler rerun or complete
+installed-toolchain inventory. No script runtime capability follows from this
+model/schema approval.
+
 This slice supplies focused Native model tests and Python structural schema tests. The fixtures in
 `tests/scripts/fixtures` are declarations, not claims of successful compilation or downloaded locks.
 Python tests cover old empty fields, new shapes, strict string endings, bounds, context-specific
