@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from test_jvm import acquire, canonical, digest
+from test_jvm import acquire, acquire_jacoco_cli, canonical, digest
 from test_jvm_native import inventory, json_digest
 from audit_workspace_plugins import audit
 
@@ -45,9 +45,10 @@ def main():
     plugin = jar('kotlin-serialization-compiler-plugin-embeddable', extras)
     worker = output / 'worker'
     if not args.skip_build:
+        jacoco_cli = acquire_jacoco_cli(output / 'artifacts', args.jvm_artifacts, args.offline)
         shutil.rmtree(worker, ignore_errors=True)
         sources = [p for base in ['core/src', 'compiler/jvm/src'] for p in sorted((ROOT / base).rglob('*.kt'))]
-        command([java, '-cp', os.pathsep.join(map(str, jars.values())), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str, [*jars.values(), junit])), '-d', worker, *sources])
+        command([java, '-cp', os.pathsep.join(map(str, jars.values())), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli])), '-d', worker, *sources])
         platform = ROOT / 'execution/platform'
         command(['clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', platform / 'guardian.c', '-o', output / 'guardian'])
         command(['clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-c', platform / 'process.c', '-o', output / 'process.o'])

@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from test_jvm import acquire, canonical, digest
+from test_jvm import acquire, acquire_jacoco_cli, canonical, digest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,11 +61,12 @@ def main():
     junit = jar("junit-platform-console-standalone", extras)
     plugin = jar("kotlin-serialization-compiler-plugin-embeddable", extras)
     serialization = [jar(name, extras) for name in ("kotlinx-serialization-core-jvm", "kotlinx-serialization-json-jvm")]
+    jacoco_cli = acquire_jacoco_cli(output / "artifacts", args.jvm_artifacts, args.offline)
     worker = output / "worker"
     shutil.rmtree(worker, ignore_errors=True)
     worker_sources = sorted((ROOT / "core/src").rglob("*.kt")) + sorted((ROOT / "compiler/jvm/src").rglob("*.kt"))
     command([java, "-cp", os.pathsep.join(map(str, jars.values())), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler", "-no-stdlib", "-no-reflect", "-jvm-target", "21",
-             "-classpath", os.pathsep.join(map(str, [*jars.values(), junit])), "-d", worker, *worker_sources])
+             "-classpath", os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli])), "-d", worker, *worker_sources])
     compiler = {"schemaVersion": 1, "version": "2.4.20", "artifacts": [{"path": p.name, "digest": digest(p)} for p in jars.values()], "serializationPlugin": digest(plugin)}
     manifest = output / "compiler-manifest.json"
     manifest.write_bytes(canonical(compiler))
