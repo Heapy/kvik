@@ -121,3 +121,30 @@ The full workspace-plugin consumer gate was not rerun in this slice. This Native
 composition gate covers the artifact foundation before the subsequent
 application-verification grammar extension; it is not evidence for application
 execution or later source compositions.
+
+## Preparation verification records
+
+The subsequent `07c2ec7` slice extends the shared strict check-name grammar in
+aggregation and persisted-record parsing to accept `module:target:application`.
+Successful or cached complete prerequisite closure can prove preparation with
+zero tests; this does not claim the application ran. Mixed runs retain the test
+observation and freshly executed test-action requirements. Missing, failed and
+cancelled prerequisites still prevent successful preparation, and stale evidence
+keeps its existing precedence.
+
+From `/private/tmp/kvik-k15-application-evidence`, the following command passed
+all 20 Native tests across three cases, including five new application groups:
+
+```sh
+python3 -B tools/test_run_evidence.py \
+  --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 \
+  --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
+```
+
+Case `.kvik/tests/run-evidence/case-22fbuo36` retains the 15-source build receipt,
+compiler launch identities/environment, executable and logs. Receipt SHA-256 is
+`85dcb0195b750fd3c0d7a121226d6d26688f563286c0792539aa96d3d34a04f3`;
+executable SHA-256 is
+`499ac300d6231279fbcdc18d19622d50104cbfeddb5447ae978830e4da323db4`.
+Independent committed-byte/receipt audit and 20-test replay are retained at
+`/private/tmp/kvik-application-evidence-review-c1wihxa9/audit.json`.
