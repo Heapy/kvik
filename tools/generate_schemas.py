@@ -300,6 +300,25 @@ DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1)})
+REPORT_STATUS = enum("passed", "failed", "incomplete", "cancelled")
+DEFS["testAttemptCounts"] = object_({name: INT for name in ("known", "passed", "failed", "skipped", "testsWithUnknownAttempts")})
+DEFS["testReportNotice"] = object_({"code": NONEMPTY, "message": STRING, "check": nullable(ref("requestedCheck"))})
+DEFS["testReportScope"] = object_({"check": ref("requestedCheck"), "module": ID, "target": NONEMPTY, "completed": BOOL,
+    "status": REPORT_STATUS, "tests": array(ref("testResult")), "uniqueCounts": ref("testCounts"), "attempts": ref("testAttemptCounts"),
+    "diagnostics": array(ref("diagnostic")), "actionDiagnostics": array(ref("actionResult"))})
+DEFS["testReport"] = versioned({"runId": NONEMPTY, "sourceVerification": ref("digest"), "sourceStatus": REPORT_STATUS,
+    "freshnessAtCompletion": enum("current", "stale", "indeterminate"),
+    "provenance": object_({"inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"),
+        "composition": ref("digest"), "toolchains": mapping(ref("digest")), "reproduction": array(STRING, minItems=1)}),
+    "expectedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "selectedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
+    "scopes": array(ref("testReportScope"), minItems=1), "uniqueCounts": ref("testCounts"), "attempts": ref("testAttemptCounts"),
+    "status": REPORT_STATUS, "diagnostics": array(ref("diagnostic")), "actionDiagnostics": array(ref("actionResult")),
+    "conversionLosses": array(ref("testReportNotice"))})
+DEFS["testReportExport"] = versioned({"runId": NONEMPTY, "outputDirectory": NONEMPTY, "format": enum("json", "junit-xml"),
+    "artifacts": ref("tree"), "sourceRunStatus": REPORT_STATUS, "reportStatus": REPORT_STATUS})
+DEFS["testReportGraph"] = versioned({"sourceRun": NONEMPTY, "sourceDirectory": NONEMPTY,
+    "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
+    "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
 APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({

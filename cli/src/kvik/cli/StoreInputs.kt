@@ -28,6 +28,16 @@ internal fun requireDisjointInputPath(root: String, configurationPath: String, p
     }
 }
 
+/** Includes existing filesystem aliases and conservative case/Unicode comparisons for missing leaves. */
+internal fun pathsPhysicallyOverlap(first: String, second: String): Boolean {
+    val ancestry = physicalAncestry(first)
+    return physicalAncestry(second).any { (identity, tail) -> ancestry[identity]?.let { other ->
+        tail.take(minOf(tail.size, other.size)).zip(other).all { (a, b) ->
+            NSString.create(string = a).compare(b, NSCaseInsensitiveSearch).toLong() == 0L
+        }
+    } == true }
+}
+
 /** Resolve existing ancestors without creating a store; catches aliases even for missing leaves. */
 private fun potentialPhysicalPath(path: String): String {
     var ancestor = path

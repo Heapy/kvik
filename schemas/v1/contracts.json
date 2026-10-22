@@ -3777,6 +3777,399 @@
       ],
       "additionalProperties": false
     },
+    "testAttemptCounts": {
+      "type": "object",
+      "properties": {
+        "known": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "testsWithUnknownAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "known",
+        "passed",
+        "failed",
+        "skipped",
+        "testsWithUnknownAttempts"
+      ],
+      "additionalProperties": false
+    },
+    "testReportNotice": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "message": {
+          "type": "string"
+        },
+        "check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/requestedCheck"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "check"
+      ],
+      "additionalProperties": false
+    },
+    "testReportScope": {
+      "type": "object",
+      "properties": {
+        "check": {
+          "$ref": "#/$defs/requestedCheck"
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/testResult"
+          }
+        },
+        "uniqueCounts": {
+          "$ref": "#/$defs/testCounts"
+        },
+        "attempts": {
+          "$ref": "#/$defs/testAttemptCounts"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "actionDiagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          }
+        }
+      },
+      "required": [
+        "check",
+        "module",
+        "target",
+        "completed",
+        "status",
+        "tests",
+        "uniqueCounts",
+        "attempts",
+        "diagnostics",
+        "actionDiagnostics"
+      ],
+      "additionalProperties": false
+    },
+    "testReport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sourceVerification": {
+          "$ref": "#/$defs/digest"
+        },
+        "sourceStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "freshnessAtCompletion": {
+          "enum": [
+            "current",
+            "stale",
+            "indeterminate"
+          ]
+        },
+        "provenance": {
+          "type": "object",
+          "properties": {
+            "inputSnapshot": {
+              "$ref": "#/$defs/digest"
+            },
+            "configuration": {
+              "$ref": "#/$defs/digest"
+            },
+            "dependencyLock": {
+              "$ref": "#/$defs/digest"
+            },
+            "composition": {
+              "$ref": "#/$defs/digest"
+            },
+            "toolchains": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "reproduction": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "inputSnapshot",
+            "configuration",
+            "dependencyLock",
+            "composition",
+            "toolchains",
+            "reproduction"
+          ],
+          "additionalProperties": false
+        },
+        "expectedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "selectedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/testReportScope"
+          },
+          "minItems": 1
+        },
+        "uniqueCounts": {
+          "$ref": "#/$defs/testCounts"
+        },
+        "attempts": {
+          "$ref": "#/$defs/testAttemptCounts"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "actionDiagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          }
+        },
+        "conversionLosses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/testReportNotice"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "sourceVerification",
+        "sourceStatus",
+        "freshnessAtCompletion",
+        "provenance",
+        "expectedChecks",
+        "selectedChecks",
+        "scopes",
+        "uniqueCounts",
+        "attempts",
+        "status",
+        "diagnostics",
+        "actionDiagnostics",
+        "conversionLosses"
+      ],
+      "additionalProperties": false
+    },
+    "testReportExport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "outputDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "format": {
+          "enum": [
+            "json",
+            "junit-xml"
+          ]
+        },
+        "artifacts": {
+          "$ref": "#/$defs/tree"
+        },
+        "sourceRunStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "reportStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "outputDirectory",
+        "format",
+        "artifacts",
+        "sourceRunStatus",
+        "reportStatus"
+      ],
+      "additionalProperties": false
+    },
+    "testReportGraph": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sourceRun": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sourceDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "action": {
+                "$ref": "#/$defs/action"
+              }
+            },
+            "required": [
+              "actionId",
+              "dependencies",
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionResult"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sourceRun",
+        "sourceDirectory",
+        "actions",
+        "results",
+        "events"
+      ],
+      "additionalProperties": false
+    },
     "verificationQuery": {
       "type": "object",
       "properties": {

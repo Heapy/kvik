@@ -203,6 +203,24 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             obj("schemaVersion" to CONTRACT_VERSION.json(), "actionId" to id.json(), "observation" to value).canonical().encodeToByteArray())
                         NativeFiles.syncDirectory("${run.path}/observations")
                     }
+                    fun retainedTests(id: String, tests: List<TestResult>, stdout: String, stderr: String): List<TestResult> {
+                        if (tests.none { it.details != null }) return tests
+                        val logs = listOf(TestLogStream.STDOUT to stdout, TestLogStream.STDERR to stderr).mapNotNull { (stream, path) ->
+                            try {
+                                require(path.startsWith("${run.path}/")) { "Test log is outside retained run" }
+                                NativeFiles.info(path) ?: return@mapNotNull null
+                                TestLogReference(stream, LogicalPath(path.removePrefix("${run.path}/")),
+                                    Sha256.digest(NativeFiles.read(path, 64 * 1024 * 1024)))
+                            } catch (failure: Exception) {
+                                journal.diagnostic(Diagnostic("KVIK_TEST_LOG_UNAVAILABLE", DiagnosticCategory.INFRASTRUCTURE,
+                                    failure.message ?: "Cannot reference retained test log", actionId = id))
+                                null
+                            }
+                        }
+                        return tests.map { test -> test.details?.let { details ->
+                            test.copy(details = details.copy(attempts = details.attempts.map { it.copy(logs = logs) }))
+                        } ?: test }
+                    }
                     fun observations() {
                         for ((id, observation) in scripts.observations) if (seen.add(id)) {
                             retain(id, observation.toJson())
@@ -214,8 +232,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             retain(id, observation.toJson())
                             observation.diagnostics.forEach { journal.diagnostic(it.copy(actionId = id, module = it.module ?: id.substringBefore(':'), target = "jvm")) }
                             observation.tests?.let { report ->
-                                reports[id] = TestObservation(report.tests, report.counts, report.status)
-                                report.tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
+                                val tests = retainedTests(id, report.tests, observation.stdoutFile, observation.stderrFile)
+                                reports[id] = TestObservation(tests, report.counts, report.status)
+                                tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
                             }
                         }
                         for ((id, observation) in ksp.observations) if (seen.add(id)) {
@@ -231,8 +250,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                                     .map { "${observation.directory}/$it".json() }.json()))
                             observation.diagnostics.forEach(journal::diagnostic)
                             observation.tests?.let { report ->
-                                reports[id] = TestObservation(report.tests, report.counts, report.status)
-                                report.tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
+                                val tests = retainedTests(id, report.tests, "${observation.directory}/test.stdout", "${observation.directory}/test.stderr")
+                                reports[id] = TestObservation(tests, report.counts, report.status)
+                                tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
                             }
                         }
                     }
