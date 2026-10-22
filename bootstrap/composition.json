@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "coreSources": ["core/src", "cache/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/action-cache/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/native/src", "cli/src", "integration/foreground/src"],
+  "coreSources": ["core/src", "cache/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/package-queries/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/action-cache/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/native/src", "cli/src", "integration/foreground/src"],
   "nativePlatform": "execution/platform",
   "nativeLibraries": ["resolution", "toolchains"],
   "jvmWorkerSources": "compiler/jvm/src",

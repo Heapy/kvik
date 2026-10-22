@@ -119,3 +119,46 @@ was accepted by end-anchored coordinate/hash patterns despite runtime rejection.
 The generator now uses an absolute-end assertion for package, coordinate and
 digest patterns, with newline/CR/CRLF regression cases. All retained positive
 query outputs still validate. Runtime query sources and binaries are unchanged.
+
+## Public composed CLI gate
+
+The root composition now includes `integration/package-queries/src`. All three
+commands passed through the actual Kotlin/Native executable, including the
+root-owned read-only store cap and explicit transport-limit diagnostic.
+`tools/test_package_queries_cli.py` ran 15 public commands, covering four scoped
+project domains, filtering and policy/missing-lock errors, missing offline
+version metadata, live version refresh, offline pagination/stable filtering,
+the pinned JUnit dependency graph and exact offline replay. A separate real KSP
+project resolved its nine host-tool artifacts, then the project query verified
+the 80,992,357-byte jar without writes; runtime API 2.3.12 and processor API 2.3.9
+remained distinct JVM host domains for the Native test target.
+
+The copied scoped-project fixture and its original were verified unchanged.
+Retained before/after inventories prove that project and offline queries preserve
+file content, sizes, modes and mtimes. Online queries preserve configuration and
+lock bytes. Every query response passed the public JSON schema with date-time
+format checking. A separate independent review approved the service/CLI changes,
+including seven cached CLI challenges and the schema newline regression fix.
+
+Reproduction (the fixture is produced by the focused suite above):
+
+```sh
+.kvik/schema-tools/bin/python tools/test_package_queries_cli.py \
+  --runtime /absolute/path/to/kvik.kexe \
+  --fixture /absolute/path/to/package-queries/case/project
+```
+
+Observed composition: `ac08390f57482e03f8a9dab7b8cc85366b10eb5a76d27e911d97cf3d26c32109`.
+Executable SHA-256: `323872c8efff06e61e6adc418be6b41a184754ee17a7a88fe646ebddb664a525`,
+4,475,016 bytes. Retained evidence is
+`/Users/yoda/dev/pet/kvik/.kvik/tests/package-queries-cli/case-3rxvggco/`,
+including commands, stdout/stderr, inventories, queried lock/CAS and runtime info.
+The build and public gate both exited 0. The compile phase took 41,971 ms;
+this is a single observation, not a benchmark. This gate does not claim compiler
+execution, upgrade compatibility or semantics beyond the bounded query contract.
+
+Independent audit of this public gate passed: all 15 commands, 12 query-schema
+documents, executable/composition identities, exact offline graph equality,
+three before/after inventory pairs, current fixture bytes and the large KSP jar
+were checked. The reviewer also verified the two distinct KSP API selections.
+Retained audit: `/private/tmp/kvik-k16-public-audit.py` and its `.json` report.

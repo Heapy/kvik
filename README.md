@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work will use an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands are `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test` and `verification`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `dev`, `verification`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache and retained run evidence. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -18,6 +18,26 @@ With tools matching the explicitly provisioned host lock:
 ```
 
 `resolve` explicitly publishes `kvik.lock.json` and fills `.kvik/cache` relative to the project. `--store` selects a shared content store, `--lock` selects a lockfile, and repeated `--pin group:artifact:version` options declare resolver policy. Supply the same pins to inspection and lock checks. `check-lock` verifies the lock and cached artifacts without downloading or repairing anything. `resolve --offline` also performs only that check; the launcher's `--offline` propagates to dependency commands. Publication uses a persistent `.kvik-dependency-publication.lock` in the destination directory and rejects configuration/lock changes observed during resolution. See [CLI dependency evidence](docs/evidence/k09-dependency-cli.md).
+
+Package queries return versioned JSON for agents:
+
+```sh
+./kvik --no-build -- packages versions org.jetbrains.kotlin:kotlin-stdlib \
+  --project /absolute/project/kvik.json --json
+./kvik --no-build -- packages dependencies org.junit.jupiter:junit-jupiter-api:5.13.4 \
+  --project /absolute/project/kvik.json --target jvm --usage java-runtime --json
+./kvik --offline --no-build -- dependencies --project /absolute/project/kvik.json --json
+```
+
+`packages versions` supports `--channel all|stable|prerelease`, bounded pages and
+cursors. Repository queries support `--refresh` and `--offline`, report their
+sources and freshness, and use a separate query cache. `dependencies` verifies
+the existing project lock and cached bytes without writes or network access;
+supply the same pins and store used for resolution. Queries keep available
+versions, original requirements and locked selections distinct. They do not
+execute package code or change configuration/locks, and availability does not
+establish compatibility. See the [query contract](integration/package-queries/CONTRACT.md)
+and [composed CLI evidence](docs/evidence/k16-package-queries.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools.
 
