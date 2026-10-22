@@ -127,7 +127,7 @@ class ScriptGraphTest {
 
     @Test fun standaloneCompanionHasNoImplicitWorkspaceOrSyntheticModule() {
         val configuration = parseStandaloneScriptConfiguration(obj("schemaVersion" to 1.json(), "name" to "task".json(),
-            "repositories" to emptyList<JsonValue>().json(), "script" to scriptSpec.toJson()))
+            "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(), "script" to scriptSpec.toJson()))
         val effective = effectiveConfiguration(configuration)
         val graph = scriptActionGraph(effective, scriptLock(effective), scriptFiles("task.kt"), scriptDigest("runtime"), scriptTools, ScriptGraphRequest("task"))
         assertEquals(listOf(scriptCompile, scriptRun), graph.nodes.map { it.id })
