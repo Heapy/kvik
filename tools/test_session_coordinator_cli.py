@@ -74,7 +74,7 @@ def main():
 
     class Session:
         def __init__(self, label):
-            self.events = queue.Queue(); self.all_events = []; self.tracked = set(); self.groups = set()
+            self.events = queue.Queue(); self.all_events = []; self.tracked = set(); self.groups = set(); self.effects = set()
             self.out = (case / f'{label}.jsonl').open('w'); self.err = (case / f'{label}.stderr').open('w')
             command = [str(runtime), 'dev', '--control', 'jsonl', '--watch-ms', '1000', '--initial', 'test',
                 '--project', str(project / 'kvik.json'), '--lock', str(project / 'kvik.lock.json'), '--store', str(store),
@@ -117,6 +117,12 @@ def main():
                 assert record['testCounts']['executed'] == 1 and record['testCounts']['failed'] == 0
                 test = [a for a in record['actions'] if a['actionId'] == 'consumer:jvm:test']
                 assert len(test) == 1 and test[0]['status'] == 'executed', test
+                assert [(test['id'], test['status']) for test in record['tests']] == [
+                    ('[engine:junit-jupiter]/[class:fixture.PassingTests]/[method:dependencyAndResource()]', 'passed')]
+                effects = list(runs[0].parent.glob('*/effects.txt'))
+                assert len(effects) == 1 and effects[0].read_text() == 'executed\n', effects
+                assert effects[0] not in self.effects
+                self.effects.add(effects[0])
             self.capture()
             return result
         def quit(self):
@@ -135,7 +141,7 @@ def main():
         edited = session.operation('build', reused=False); assert not edited['modelReused']
         with (project / 'kvik.lock.json').open('a') as file: file.write('\n')
         session.operation('build', reused=False)
-        source = next((project / 'consumer').rglob('*.kt'))
+        source = project / 'consumer/main/Consumer.kt'
         with source.open('a') as file: file.write('\n// coordinator source invalidation\n')
         session.operation('build', reused=False)
         session.control('t'); session.operation('test', reused=False)
