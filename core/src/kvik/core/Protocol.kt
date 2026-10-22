@@ -48,10 +48,23 @@ data class RunEvent(val runId: String, val sequence: Long, val type: String, val
 }
 
 enum class TestStatus { PASSED, FAILED, SKIPPED }
-data class TestResult(val id: String, val module: String, val target: String, val status: TestStatus, val message: String? = null) {
-    init { require(id.isNotBlank() && module.isNotBlank() && target.isNotBlank()) { "Test identity and scope must be nonempty" } }
+data class TestResult(val id: String, val module: String, val target: String, val status: TestStatus, val message: String? = null,
+    val details: TestDetails? = null) {
+    init {
+        require(id.isNotBlank() && module.isNotBlank() && target.isNotBlank()) { "Test identity and scope must be nonempty" }
+        require(details == null || details.attempts.last().status == status) { "Final test status must match its last attempt" }
+    }
+    val hasFailedAttempt: Boolean get() = status == TestStatus.FAILED || details?.attempts?.any { it.status == TestStatus.FAILED } == true
     fun toJson(): JsonValue = obj("id" to id.json(), "module" to module.json(), "target" to target.json(),
-        "status" to status.name.lowercase().json(), "message" to message.jsonOrNull())
+        "status" to status.name.lowercase().json(), "message" to message.jsonOrNull()).let {
+            if (details == null) it else JsonValue.Object(it.values + ("details" to details.toJson()))
+        }
+    companion object {
+        fun fromJson(value: JsonValue): TestResult = value.fields(setOf("id", "module", "target", "status", "message"), setOf("details")).let {
+            TestResult(it.getValue("id").stringValue(), it.getValue("module").stringValue(), it.getValue("target").stringValue(),
+                testEnum(it.getValue("status")), it.getValue("message").nullableString(), it["details"]?.let(TestDetails::fromJson))
+        }
+    }
 }
 data class TestCounts(val discovered: Int?, val executed: Int, val failed: Int, val skipped: Int, val discoveryComplete: Boolean) {
     init {
@@ -93,7 +106,7 @@ data class VerificationRecord(
         if (status == VerificationStatus.PASSED) {
             require(requestedChecks == completedChecks && freshnessAtCompletion == Freshness.CURRENT)
             require(actions.isNotEmpty() && actions.all { it.successful })
-            require(tests.none { it.status == TestStatus.FAILED })
+            require(tests.none { it.hasFailedAttempt })
             if (requestedChecks.any { it.endsWith(":test") }) {
                 require(testCounts.satisfiesExecution) { "Passing verification requires executed tests" }
                 for (check in requestedChecks.filter { it.endsWith(":test") }) {

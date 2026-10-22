@@ -120,8 +120,8 @@ private fun validateReport(action: String, check: String, report: TestObservatio
         counts.skipped == report.tests.count { it.status == TestStatus.SKIPPED }) { "Test counts do not match recorded identities in $action" }
     require(counts.discovered == null || counts.discovered.toLong() >= counts.executed.toLong() + counts.skipped) { "Discovered test count is smaller than recorded identities in $action" }
     when (report.status) {
-        VerificationStatus.PASSED -> require(counts.satisfiesExecution) { "Passing test observation lacks complete positive execution in $action" }
-        VerificationStatus.INCOMPLETE -> require(counts.failed == 0) { "Incomplete observation contains failed tests in $action" }
+        VerificationStatus.PASSED -> require(counts.satisfiesExecution && report.tests.none { it.hasFailedAttempt }) { "Passing test observation lacks complete successful execution in $action" }
+        VerificationStatus.INCOMPLETE -> require(report.tests.none { it.hasFailedAttempt }) { "Incomplete observation contains failed tests in $action" }
         VerificationStatus.FAILED, VerificationStatus.CANCELLED -> Unit // Container failure/cancellation can have no failed leaf test.
     }
 }

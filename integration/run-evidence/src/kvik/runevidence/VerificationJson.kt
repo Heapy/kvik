@@ -19,7 +19,7 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
         fields.getValue("toolchains").objectValue().mapValues { Digest.fromJson(it.value) },
         fields.getValue("actions").arrayValue().map(::actionResultFromJson).also { actions ->
             require(actions.map { it.actionId }.distinct().size == actions.size) { "Duplicate action result in verification record" }
-        }, fields.getValue("tests").arrayValue().map(::testResultFromJson), testCountsFromJson(fields.getValue("testCounts")),
+        }, fields.getValue("tests").arrayValue().map(TestResult::fromJson), testCountsFromJson(fields.getValue("testCounts")),
         fields.getValue("status").enumValue(), fields.getValue("freshnessAtCompletion").enumValue(),
         fields.getValue("reproduction").arrayValue().map { it.stringValue() }).also { record ->
         for (check in record.requestedChecks.filter(::scriptExecutionCheck)) {
@@ -44,12 +44,6 @@ private fun actionResultFromJson(value: JsonValue): ActionResult {
     return ActionResult(id, fields.getValue("key").let { if (it == JsonValue.Null) null else Digest.fromJson(it) },
         fields.getValue("status").enumValue(), TreeManifest.fromJson(fields.getValue("outputs")),
         fields.getValue("exitCode").let { if (it == JsonValue.Null) null else it.intValue() }, fields.getValue("diagnostic").nullableString())
-}
-
-private fun testResultFromJson(value: JsonValue): TestResult {
-    val fields = value.fields(setOf("id", "module", "target", "status", "message"))
-    return TestResult(fields.getValue("id").stringValue(), fields.getValue("module").stringValue(), fields.getValue("target").stringValue(),
-        fields.getValue("status").enumValue(), fields.getValue("message").nullableString())
 }
 
 private fun testCountsFromJson(value: JsonValue): TestCounts {

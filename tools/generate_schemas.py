@@ -278,7 +278,22 @@ DEFS["toolInstallation"] = versioned({"toolLock": ref("installedToolLock"),
 DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1})})
 DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest")), "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"), "outputs": ref("tree"), "exitCode": nullable({"type": "integer"}), "diagnostic": nullable(STRING)})
 DEFS["actionResult"]["allOf"] = [{"if": {"properties": {"status": enum("executed", "local_hit", "remote_hit")}}, "then": {"properties": {"key": ref("digest"), "exitCode": {"const": 0}}}}]
-DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, "status": enum("passed", "failed", "skipped"), "message": nullable(STRING)})
+TEST_TEXT = {"type": "string", "maxLength": 8192}
+DEFS["testFailure"] = object_({"kind": enum("assertion", "exception", "unknown"), "type": nullable(TEST_TEXT),
+    "message": nullable(TEST_TEXT), "stackTrace": nullable({"type": "string", "maxLength": 32768})})
+DEFS["testLogReference"] = object_({"stream": enum("stdout", "stderr"), "path": PATH, "digest": ref("digest")})
+DEFS["testAttempt"] = object_({"number": {"type": "integer", "minimum": 1, "maximum": 1000},
+    "status": enum("passed", "failed", "skipped"), "durationNanos": nullable(INT), "skipReason": nullable(TEST_TEXT),
+    "failure": nullable(ref("testFailure")), "logs": array(ref("testLogReference"), maxItems=2)})
+DEFS["testAttempt"]["allOf"] = [
+    {"if": {"properties": {"status": {"const": "failed"}}}, "then": {"properties": {"failure": ref("testFailure")}},
+     "else": {"properties": {"failure": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"enum": ["passed", "failed"]}}}, "then": {"properties": {"skipReason": {"type": "null"}}}},
+]
+DEFS["testDetails"] = object_({"suite": nullable(TEST_TEXT), "name": nullable(TEST_TEXT),
+    "attempts": array(ref("testAttempt"), minItems=1, maxItems=1000)})
+DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, "status": enum("passed", "failed", "skipped"),
+    "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
 DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)$(?![\s\S])"},
