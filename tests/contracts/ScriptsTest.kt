@@ -36,7 +36,7 @@ class ScriptsTest {
         assertEquals(ScriptOrigin("/dependencyProfiles/first/dependencies/0", "/scripts/run/profiles/1", "/dependencyCatalog/json"), expanded.dependencies[1].origin)
         assertEquals(ScriptOrigin("/scripts/run/dependencies/0"), expanded.dependencies[2].origin)
         assertEquals(ScriptOrigin("/dependencyProfiles/second/compilerPlugins/0", "/scripts/run/profiles/0"), expanded.compilerPlugins.single().origin)
-        assertEquals(expanded, expandScript(configuration.copy(dependencyProfiles = configuration.dependencyProfiles.toSortedMap()), "run"))
+        assertEquals(expanded, expandScript(configuration.copy(dependencyProfiles = configuration.dependencyProfiles.entries.reversed().associate { it.toPair() }), "run"))
         assertEquals(listOf(plugin), expanded.compilerPlugins.map { it.value })
         // Module private dependencies are not flattened by declaration expansion.
         assertFalse(expanded.dependencies.any { (it.value as? Dependency.External)?.coordinate?.name == "private" })
