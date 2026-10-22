@@ -36,17 +36,51 @@ If validation fails after the old program was stopped, there is an observable
 availability gap; the protocol does not promise zero downtime. Library v1/v2
 continuations retain their existing serialized representation and behavior.
 
-## Validation status
+## Focused validation
 
-Source/test preparation is not a completed acceptance gate. Native unit tests and
-actual owned-process protocol fixtures are prepared in
-`tools/test_foreground_applications.py`. The fixture worker explicitly simulates
-readiness; it is not a compiler or a replacement for public JVM and Native gates.
-The harness binds source files, compiler launcher/JAR inputs, a controlled
-compiler environment, commands and produced binaries in its receipt. Its SDK and
-JDK tracking is a focused test-build receipt, not a complete installed-toolchain
-inventory or a portable binary reproducibility claim.
+Frozen controller/test source `02e65f0` passed the following command (with read-only
+process inventory permission) in actual job `96687`, terminal exit 0:
 
-Focused Python schema checks pass. Native controller compilation, real protocol
-lifecycle results, and full public JVM/Native foreground acceptance remain
-pending. No application foreground completion claim is made at this point.
+```sh
+/Users/yoda/dev/pet/kvik/.kvik/schema-tools/bin/python -B tools/test_foreground_applications.py \
+  --konan-home /Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20 \
+  --java-home /Users/yoda/.sdkman/candidates/java/25.0.4-librca
+```
+
+The 25 Native tests comprise 17 application tests plus eight retained library
+protocol, continuation and key capability tests. Nine actual owned-process
+scenarios cover reload/test intent retention, delayed and failed preparation,
+watch repair, crash recovery, quit/EOF/INT/TERM/owner SIGKILL, two independent
+owners, and a failed then successful same-PID source handoff. The fixture worker
+explicitly simulates readiness and verification. Its child is in the same
+ownership group; it does not exercise nested real application supervisors.
+
+Retained evidence under `/private/tmp/kvik-k15-foreground-applications`:
+
+- `.kvik/tests/foreground-applications/case-grw9dmto/summary.json`: nine scenarios,
+  recorded tracked PIDs/groups and harness-observed cleanup times 0.345–0.593 s.
+- `case-grw9dmto/unit.log`: 25 RUN/OK results, 83 ms, SHA-256
+  `ad26b846e43f6db00443ebba14b14611d9a7ad7e0aeb436df9eeb78909e9da1d`.
+- `.kvik/tests/foreground-applications/receipt.json`: 21,033 bytes, SHA-256
+  `8c016119ba2e9c1d15d9cef6ba4f82ebd7e17e1262acca0fdfd82bd3423ce348`;
+  source, compiler launcher/JAR inputs, controlled environment, commands and
+  binary digests. SDK/JDK tracking is a focused test-build receipt, not a complete
+  installed-toolchain inventory or portable binary reproducibility claim.
+- Independent retained-evidence audit:
+  `/private/tmp/kvik-foreground-focused-review-29xzrryc/report.json`, SHA-256
+  `5d002898a48a347c646abf2cf11a89292f89db1467a613a0f1e2d65dc1b9b9f4`.
+  It verified 35 committed source/harness inputs, tool bytes/binaries, exact test
+  results and all nine retained event/effect sequences. Cleanup timing remains
+  the producer harness observation.
+
+Two strict Python schema groups also passed. The public JVM/Native foreground
+harness is prepared separately in `tools/test_foreground_applications_cli.py`;
+its schema-only fixture preparation invoked no runtime, resolver or compiler.
+The actual public nested gates are **unexecuted**. An independent process-boundary
+probe confirmed that the previous nested guardian implementation could report
+outer completion before a delayed inner guardian finished cleanup. The retained
+reproduction is `/private/tmp/kvik-nested-guardian-review-cdiws6j9/report.json`,
+SHA-256 `8a5b3f65641e8c18f2562cc6436b66839683f50d52386f2a178549d52e76296a`.
+The process-boundary correction and public gates are prerequisites to a nested
+application no-overlap claim. Later protocol-error cleanup regressions require
+new source/test receipts; the 25-test receipt does not claim to cover them.
