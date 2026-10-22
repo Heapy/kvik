@@ -211,7 +211,13 @@ def main():
         bundle = specs[terminal]['action']
         assert bundle['implementation'] == 'kvik-application-bundle-v1' and bundle['kind'] == 'package'
         if target == 'jvm':
-            assert launch['classpath'][:5] == ['modules/app/jvm/main', 'runtime/app/main', 'modules/library/jvm/main', 'modules/support/jvm/main', 'runtime/support/main']
+            expected_coordinates = [PINS[0], PINS[1], 'org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0']
+            by_coordinate = {a['coordinate']: a for a in runtime_artifacts.values()}
+            assert set(by_coordinate) == set(expected_coordinates)
+            ordered_jars = ['deps/'+a['digest']['hash']+'-'+str(a['digest']['sizeBytes'])+'.jar'
+                            for coordinate in expected_coordinates for a in [by_coordinate[coordinate]]]
+            assert launch['classpath'] == ['modules/app/jvm/main', 'runtime/app/main', 'modules/library/jvm/main',
+                'modules/support/jvm/main', 'runtime/support/main', *ordered_jars]
             assert {e['digest']['hash'] for e in bundle['inputs']['files'] if e['path'].startswith('deps/')} == set(runtime_artifacts)
             assert set(specs[terminal]['dependencies']) == {f'{m}:jvm:main' for m in ('app', 'library', 'support')}
             for module in ('app', 'library', 'support'):
@@ -378,9 +384,23 @@ def main():
 
 def lifecycle_checks(runtime, project, case, environment, prepared_runs, replay_args, audit_execution, summaries):
     """Signal actual public owner processes only; never kill broad name/path matches."""
+    def process_table():
+        result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,pgid=,stat=,command='], capture_output=True, text=True, check=True)
+        table = {}
+        for line in result.stdout.splitlines():
+            pid, parent, group, state, command = line.split(None, 4)
+            table[int(pid)] = dict(pid=int(pid), ppid=int(parent), pgid=int(group), state=state, command=command)
+        return table
+    def alive(row):
+        return row is not None and not row['state'].startswith('Z')
     def live(pid):
-        result = subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'stat='], capture_output=True, text=True)
-        return result.returncode == 0 and not result.stdout.strip().startswith('Z')
+        return alive(process_table().get(pid))
+    def owned_tree(table, owner):
+        result = {owner}
+        while True:
+            expanded = result | {pid for pid, row in table.items() if row['ppid'] in result}
+            if expanded == result: return {pid: table[pid] for pid in result if pid in table}
+            result = expanded
     def wait(predicate, label, timeout=120):
         deadline = time.monotonic()+timeout
         while time.monotonic() < deadline:
@@ -402,14 +422,29 @@ def lifecycle_checks(runtime, project, case, environment, prepared_runs, replay_
         wait(lambda: all(p.exists() and p.read_text().strip() for p in paths) or process.poll() is not None, tag+' descendant startup')
         assert process.poll() is None, (tag, process.returncode)
         item['pids'] = [int(p.read_text()) for p in paths]
-        assert all(live(pid) for pid in item['pids'])
+        table = process_table()
+        item['owned'] = owned_tree(table, process.pid)
+        assert all(pid in item['owned'] and alive(table[pid]) for pid in item['pids'])
+        guardians = [pid for pid, row in item['owned'].items() if row['command'].startswith(str(runtime.parent/'guardian')+' ')]
+        assert len(guardians) == 1 and table[item['pids'][0]]['ppid'] == guardians[0], item['owned']
+        item['guardians'] = guardians
+        item['pgid'] = table[item['pids'][0]]['pgid']
+        assert item['pgid'] == item['pids'][0] and all(table[pid]['pgid'] == item['pgid'] for pid in item['pids'])
+        write_json(case/(tag+'.owned-before.json'), item['owned'])
         (project/f'mode-{target}.txt').unlink()
         return item
     def stop(item, sig):
         started = time.monotonic()
         process = item['process']; process.send_signal(sig)
         code = process.wait(timeout=15)
-        wait(lambda: not any(live(pid) for pid in item['pids']), item['tag']+' owned descendant cleanup', timeout=10)
+        def cleaned():
+            table = process_table()
+            return not any(alive(table.get(pid)) for pid in item['owned']) and not any(
+                alive(row) and row['pgid'] == item['pgid'] for row in table.values())
+        wait(cleaned, item['tag']+' guardian/owned process-group cleanup', timeout=10)
+        table = process_table()
+        write_json(case/(item['tag']+'.owned-after.json'), {pid: row for pid, row in table.items()
+            if pid in item['owned'] or row['pgid'] == item['pgid']})
         item['output'].close(); item['errors'].close()
         values = [json.loads(line) for line in (case/(item['tag']+'.stdout.jsonl')).read_bytes().splitlines()]
         if sig == signal.SIGKILL:
@@ -417,7 +452,8 @@ def lifecycle_checks(runtime, project, case, environment, prepared_runs, replay_
         else:
             assert code == 130
             audit_execution(values, prepared_runs[item['target']], cancelled=True)
-        evidence.append(dict(tag=item['tag'], target=item['target'], ownerPid=process.pid, childPids=item['pids'], signal=int(sig),
+        evidence.append(dict(tag=item['tag'], target=item['target'], ownerPid=process.pid, childPids=item['pids'],
+                             guardians=item['guardians'], ownedPgid=item['pgid'], capturedPids=sorted(item['owned']), signal=int(sig),
                              exitCode=code, cleanupSeconds=time.monotonic()-started))
     try:
         for target in TARGETS:
@@ -425,7 +461,7 @@ def lifecycle_checks(runtime, project, case, environment, prepared_runs, replay_
                 stop(start(target, target+'-'+str(int(sig))), sig)
         first, second = start('jvm', 'independent-jvm'), start('macosArm64', 'independent-native')
         stop(first, signal.SIGINT)
-        assert second['process'].poll() is None and all(live(pid) for pid in second['pids']), 'Independent owner was cancelled'
+        assert second['process'].poll() is None and all(live(pid) for pid in second['owned']), 'Independent owner/guardian was cancelled'
         stop(second, signal.SIGTERM)
     finally:
         # Cleanup only exact processes created by this harness, including on failed assertions.
@@ -435,7 +471,7 @@ def lifecycle_checks(runtime, project, case, environment, prepared_runs, replay_
                 process.send_signal(signal.SIGTERM)
                 try: process.wait(timeout=10)
                 except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=10)
-            for pid in item.get('pids', []):
+            for pid in item.get('owned', item.get('pids', [])):
                 if live(pid): os.kill(pid, signal.SIGKILL)
             item['output'].close(); item['errors'].close()
     return evidence
