@@ -89,7 +89,7 @@ def main():
     shutil.copy2(receipt, case/'build.json'); shutil.copy2(log_path, case/'compile.log')
     summary = dict(passed=False, build=digest(case/'build.json'), cases=[])
     write(case/'summary.json', summary)
-    ordinary = [('normal',0,0,0),('exit125',125,0,0),('exit127',127,0,0),
+    ordinary = [('normal',0,0,0),('exit125',125,0,0),('exit127',127,0,0),('pause',0,0,0),('signal',143,0,0),
                 ('cwd',125,17,errno.ENOENT),('exec',127,24,errno.ENOENT),
                 ('stdout',125,19,errno.EEXIST),('stderr',125,20,errno.EEXIST)]
     injected = [('fork',125,13,errno.EAGAIN),('parent-group',125,14,errno.EPERM),('child-group',125,15,errno.EPERM),

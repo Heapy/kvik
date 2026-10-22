@@ -228,7 +228,8 @@ static int process_main(int argc, char **argv) {
     if (setup_failed) { setup_error(&setup, KVIK_SETUP_PARENT_GROUP); kill(child, SIGKILL); }
     while (!setup_failed) {
         siginfo_t info = {0};
-        if (waitid(P_PID, child, &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == child) {
+        if (waitid(P_PID, child, &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == child &&
+            (info.si_code == CLD_EXITED || info.si_code == CLD_KILLED || info.si_code == CLD_DUMPED)) {
             code = info.si_code == CLD_EXITED ? info.si_status : 128 + info.si_status; break;
         }
         if (owner_gone()) { cancelled = 1; code = 130; break; }
