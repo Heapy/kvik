@@ -319,6 +319,56 @@ DEFS["testReportExport"] = versioned({"runId": NONEMPTY, "outputDirectory": NONE
 DEFS["testReportGraph"] = versioned({"sourceRun": NONEMPTY, "sourceDirectory": NONEMPTY,
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+TEST_AGGREGATE_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):test(?![\s\S])"}
+DEFS["testAggregationScope"] = object_({
+    **{name: ref("digest") for name in ("inputSnapshot", "configuration", "dependencyLock", "composition")},
+    "expectedChecks": array(TEST_AGGREGATE_CHECK, minItems=1, maxItems=1000, uniqueItems=True)})
+DEFS["testReportContribution"] = object_({"digest": ref("digest"), "report": ref("testReport")})
+TEST_AGGREGATE_ENTRY = object_({"runId": nullable(NONEMPTY), "report": nullable(ref("digest")),
+    "scope": {"allOf": [ref("testReportScope"), {"properties": {"check": TEST_AGGREGATE_CHECK}}]}})
+TEST_AGGREGATE_ENTRY["allOf"] = [
+    {"if": {"properties": {"runId": {"type": "null"}}}, "then": {"properties": {
+        "report": {"type": "null"}, "scope": {"properties": {
+            "completed": {"const": False}, "status": {"const": "incomplete"}, "tests": {"maxItems": 0},
+            "uniqueCounts": {"const": {"discovered": None, "executed": 0, "failed": 0, "skipped": 0, "discoveryComplete": False}},
+            "attempts": {"const": {name: 0 for name in ("known", "passed", "failed", "skipped", "testsWithUnknownAttempts")}},
+            "diagnostics": {"maxItems": 0}, "actionDiagnostics": {"maxItems": 0}}}}},
+     "else": {"properties": {"report": ref("digest")}}},
+]
+DEFS["testAggregate"] = versioned({"kind": {"const": "test-aggregate"}, "scope": ref("testAggregationScope"),
+    "contributors": array(ref("testReportContribution"), maxItems=100, uniqueItems=True),
+    "actualChecks": array(TEST_AGGREGATE_CHECK, maxItems=1000, uniqueItems=True),
+    "missingChecks": array(TEST_AGGREGATE_CHECK, maxItems=1000, uniqueItems=True),
+    "checks": array(TEST_AGGREGATE_ENTRY, minItems=1, maxItems=1000, uniqueItems=True),
+    "uniqueCounts": ref("testCounts"), "attempts": ref("testAttemptCounts"), "complete": BOOL,
+    "status": REPORT_STATUS, "conversionLosses": array(ref("testReportNotice"))})
+DEFS["testAggregate"]["$comment"] = ("Core aggregation verifies contributor report digests, compatible input/tool identities, "
+    "unique run/check ownership, expected-check partitioning, derived counts/status and provenance bindings. JSON Schema cannot "
+    "compare check sets, match per-entry report digests or count unique test identities/attempts.")
+DEFS["testAggregate"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": True}}}, "then": {"properties": {
+        "missingChecks": {"maxItems": 0}, "actualChecks": {"minItems": 1}, "checks": {"items": {
+            "properties": {"runId": NONEMPTY, "report": ref("digest"), "scope": {"properties": {"completed": {"const": True}}}}}}}},
+     "else": {"properties": {"status": {"not": {"const": "passed"}}}}},
+]
+TEST_AGGREGATE_STATUS = {"properties": {"status": {"const": "passed"}}}
+for status in ("incomplete", "failed", "cancelled"):
+    conditions = [
+        {"properties": {"contributors": {"contains": {"properties": {"report": {"properties": {"status": {"const": status}}}}}}}},
+        {"properties": {"checks": {"contains": {"properties": {"scope": {"properties": {"status": {"const": status}}}}}}}},
+    ]
+    if status == "incomplete":
+        conditions.append({"properties": {"complete": {"const": False}}})
+    TEST_AGGREGATE_STATUS = {"if": {"anyOf": conditions}, "then": {"properties": {"status": {"const": status}}}, "else": TEST_AGGREGATE_STATUS}
+DEFS["testAggregate"]["allOf"].append(TEST_AGGREGATE_STATUS)
+DEFS["testAggregateExport"] = versioned({"outputDirectory": NONEMPTY, "format": enum("json", "junit-xml"),
+    "aggregate": ref("digest"), "status": REPORT_STATUS, "complete": BOOL, "artifacts": ref("tree")})
+DEFS["testAggregateExport"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": False}}}, "then": {"properties": {"status": {"not": {"const": "passed"}}}}}]
+DEFS["testAggregateGraph"] = versioned({"scope": ref("testAggregationScope"),
+    "runs": array(object_({"runId": NONEMPTY, "verification": ref("digest")}), minItems=1, maxItems=100, uniqueItems=True),
+    "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
+    "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
 # Coverage schemas describe the bounded wire format; Kotlin parsers additionally validate
 # cross-field source/class ownership, consecutive lines, manifest paths and derived totals/status.
 COVERAGE_ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"}

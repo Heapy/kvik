@@ -21,4 +21,28 @@ JUnit XML uses a separate case for each known attempt so an earlier failure rema
 
 The initial XML consumer contract is [GitLab unit test reports](https://docs.gitlab.com/ci/testing/unit_test_reports/). Publication is separate: this command creates local files and requires no service credentials.
 
-This increment covers test results from one retained run. [JVM line coverage](coverage.md) is captured separately with `test --coverage`. Use `coverage-check` to evaluate a retained coverage report against a line threshold. Use `coverage-aggregate` for compatible coverage reports with an explicit expected-check matrix. Service publication remains separate work in PLAN.md.
+[JVM line coverage](coverage.md) is captured separately with `test --coverage`. Use `coverage-check` to evaluate a retained coverage report against a line threshold. Use `coverage-aggregate` for compatible coverage reports with an explicit expected-check matrix. Service publication remains separate work in PLAN.md.
+
+## Aggregate retained test runs
+
+Combine compatible runs against an explicit expected-check matrix:
+
+```sh
+kvik test-aggregate --run /path/to/run-a --run /path/to/run-b \
+  --expect library:jvm:test --expect library:macosArm64:test \
+  --output /path/to/new-test-aggregate
+```
+
+A single run defaults to its requested test checks. Multiple runs require repeatable `--expect MODULE:TARGET:test`; available results never define the expected matrix. Up to 100 runs and 1,000 expected checks are supported; expected targets are `jvm` or `macosArm64`. Repeat `--module ID` and `--target ID` to filter the matrix. Unmatched selectors are errors.
+
+All contributors must agree on the input snapshot, configuration, dependency lock and runtime composition. Toolchain identities shared by multiple runs must agree. Each selected check can have only one contributor; duplicate checks or contributors are rejected. Repeated runs are not interpreted as retries. A contributor's failed, incomplete or cancelled status is retained even when selection narrows its tests.
+
+The aggregate contains one entry for each expected check. A missing check has no source run or report, no observed tests, and an incomplete scope. Unique tests are counted by module, target and test ID; observed attempts are counted separately. `complete` means every selected check completed, while discovery counts and verification status remain separate. Unknown discovery stays explicit: full-run selections may use the run's known totals, while partial selections use per-scope counts only when available.
+
+The default format is `junit-xml`; use `--format json` for a JSON export. The output directory must be new and outside every source run. It contains `aggregate.json`, `junit.xml` or `export.json`, `scope.json`, and `graph.json`. Supplied run records are retained under `runs/<runId>/` as `verification.json`, `completion.json` and `events.jsonl`. The aggregate embeds each contributor's normalized report and digest. Original action logs are not copied; log references remain relative to the originating run.
+
+JUnit XML preserves observed attempts and includes infrastructure errors for missing checks or negative verification, so a set of passing leaf cases cannot hide an incomplete aggregate. Keep `aggregate.json` for provenance, discovery completeness, unique/attempt counts and conversion notices that XML cannot fully represent.
+
+Aggregation reads retained run data locally without loading projects, starting a JDK or rerunning tests. It does not verify today's source state or publish results. Valid negative results are saved. Exit codes follow aggregate status: 0 passed, 1 failed, 3 incomplete and 130 cancelled; invalid command arguments use 2. Invalid or incompatible retained inputs return 3 without publishing an output directory.
+
+JSON definitions in `schemas/v1/contracts.json` are `testAggregationScope`, `testReportContribution`, `testAggregate`, `testAggregateExport` (stdout), and `testAggregateGraph` (`graph.json`).
