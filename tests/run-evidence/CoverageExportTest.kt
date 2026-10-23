@@ -169,7 +169,10 @@ class CoverageExportTest {
 
     @Test fun xmlOutputIsBoundedDuringConstruction() {
         // Reuse line objects so the test exercises the real 64 MiB output bound without a huge input fixture.
-        val lines = List(600_000) { CoverageLine(it + 1, hit) }
+        val lineCount = 750_000
+        val smallestLineBytes = "    <lineToCover lineNumber=\"1\" covered=\"true\"/>\n".encodeToByteArray().size
+        assertTrue(2L * lineCount * smallestLineBytes > 64L * 1024 * 1024)
+        val lines = List(lineCount) { CoverageLine(it + 1, hit) }
         val first = SourceCoverage(CoverageSource("a", "main", LogicalPath("A.kt"), baseline), lines.size, lines, true)
         val second = first.copy(source = first.source.copy(path = LogicalPath("B.kt")))
         val result = export(report("a", first, second), "a")
