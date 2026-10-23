@@ -6,7 +6,7 @@ import kvik.core.*
 data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus)
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
-internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)")) ||
+internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application|package)")) ||
     check.matches(Regex("script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)"))
 internal fun scriptExecutionCheck(check: String): Boolean = check.startsWith("script:") && check.endsWith(":run") && validCheck(check)
 
@@ -35,7 +35,7 @@ fun aggregateRunEvidence(
 ): RunEvidence {
     val checks = requestedChecks.sorted().toSet()
     require(checks.isNotEmpty() && checks.all(::validCheck)) {
-        "Requested checks must identify module:target:build|test|application or script:name:jvm:prepare|run"
+        "Requested checks must identify module:target:build|test|application|package or script:name:jvm:prepare|run"
     }
     val terminals = terminalActions.toMap()
     val graph = actionDependencies.mapValues { it.value.toSet() }

@@ -6,8 +6,9 @@ import kvik.compiler.jvm.*
 import kvik.compiler.native.*
 import kvik.compiler.ksp.*
 import kvik.application.applicationBundleAction
+import kvik.library.*
 
-enum class ProjectMode { BUILD, TEST, APPLICATION }
+enum class ProjectMode { BUILD, TEST, APPLICATION, PACKAGE }
 data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
         "excludes" to excludes.map { it.json() }.json())
@@ -39,7 +40,7 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
         }
     }
     for (module in request.modules) for (target in request.targets) {
-        visit(module, target, "main", request.mode == ProjectMode.APPLICATION)
+        visit(module, target, "main", request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE))
         if (request.mode == ProjectMode.TEST) visit(module, target, "test", true)
     }
     return targets.toSet()
@@ -63,6 +64,7 @@ private class Builder(
     toolchains: Map<String, Map<String, Digest>>,
     request: ProjectGraphRequest,
 ) {
+    private val policy = effective.policy
     private val project = parseProjectConfiguration(effective.document.objectValue().getValue("project")).project
     private val modules = project.modules.associateBy { it.id }
     private val files = TreeManifest(snapshot.files.toList()).files.sortedBy { it.path.value }
@@ -73,6 +75,7 @@ private class Builder(
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
+    private val nativeMainNames = mutableMapOf<String, String>()
 
     init {
         require(lock.configuration == effective.digest) { "Stale dependency lock" }
@@ -88,7 +91,7 @@ private class Builder(
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
-            val runtime = scope == "test" || this.request.mode == ProjectMode.APPLICATION
+            val runtime = scope == "test" || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE)
             val usages = if (target == "jvm") if (runtime) listOf("java-api", "java-runtime") else listOf("java-api") else if (runtime) listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
         }
@@ -103,6 +106,7 @@ private class Builder(
                 ProjectMode.BUILD -> mainId(module, target)
                 ProjectMode.TEST -> ensureTest(module, target)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
+                ProjectMode.PACKAGE -> ensurePackage(module, target)
             }
         }
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
@@ -274,7 +278,9 @@ private class Builder(
     private fun validateResults(results: Map<String, ActionResult>, dependencies: Set<String>) {
         require(results.keys == dependencies && results.all { (id, result) -> result.actionId == id && result.successful }) { "Prerequisite result set/status differs" }
     }
-    private fun options(module: String, target: String, scope: String, sources: Sources): CompilerOptions = compilerOptions(module, target, target(module, target).optionsFor(scope)).also {
+    private fun compilerModuleName(module: String, target: String): String =
+        if (target == "macosArm64") modules.getValue(module).publication?.coordinate?.let { "${it.group}:${it.name}" } ?: module else module
+    private fun options(module: String, target: String, scope: String, sources: Sources): CompilerOptions = compilerOptions(compilerModuleName(module, target), target, target(module, target).optionsFor(scope)).also {
         require(!it.multiplatform || sources.common.isNotEmpty()) { "Explicit multiplatform option requires common fragments" }
     }
 
@@ -289,6 +295,13 @@ private class Builder(
         require(source.paths.isNotEmpty()) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
         val options = options(module, target, "main", source)
+        if (target == "macosArm64") {
+            val prior = nativeMainNames[options.nativeModuleName]
+            require(prior == null || prior == module || modules.getValue(prior).publication == null && modules.getValue(module).publication == null) {
+                "Published Native libraries have conflicting module names: $prior and $module use ${options.nativeModuleName}"
+            }
+            nativeMainNames[options.nativeModuleName] = module
+        }
         val resource = resources(module, target, "main")
         val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-api" else "kotlin-api"), target)
         val plugin = plugins(module, target, "main")
@@ -308,6 +321,71 @@ private class Builder(
                 pluginApplications = workspace.applications), inputs, composition, nativeTools(workspace.applications),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
+    }
+
+    private fun publicationDependencies(module: String, target: String): List<LibraryDependency> {
+        val declared = sourceSets(module, target, "main").flatMap { it.dependencies }
+        require(target != "macosArm64" || declared.none { it.scope == DependencyScopeKind.RUNTIME }) {
+            "Native library publication cannot represent runtime-only dependencies for Kotlin/Native consumers: $module; declare a compile dependency or remove the runtime-only dependency before packaging"
+        }
+        val usages = if (target == "jvm") listOf("java-api", "java-runtime") else listOf("kotlin-api", "kotlin-runtime")
+        for (usage in usages) {
+            val domain = ResolutionDomain(module, target, "main", usage)
+            require(domain in authorized) { "Packaging requires locked main API and runtime domains: $domain" }
+            require(policy.exclusionsFor(domain).isEmpty()) { "Library publication cannot encode metadata exclusions: $domain" }
+            val roots = closure(module, target, "main", usage.endsWith("runtime")).external
+            val consumer = if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null
+            val artifacts = roots.flatMap { locked(it, domain, consumer).artifacts }
+            for (pin in policy.pinsFor(domain)) {
+                fun sameComponent(value: Coordinate) = value.group == pin.group && value.name == pin.name
+                val matchingRoots = roots.filter(::sameComponent)
+                val matchingArtifacts = artifacts.filter { sameComponent(it.coordinate) }
+                if (matchingRoots.isEmpty() && matchingArtifacts.isEmpty()) continue
+                require(matchingRoots.isNotEmpty() && matchingRoots.all { it.version == pin.version } &&
+                    matchingArtifacts.all { it.coordinate.version == pin.version }) {
+                    "Library publication cannot encode a version override or prove a transitive-only pin is unchanged: $pin in $domain"
+                }
+            }
+        }
+        val dependencies = declared.map { dependency ->
+            val coordinate = when (dependency) {
+                is Dependency.External -> dependency.coordinate
+                is Dependency.Module -> (modules.getValue(dependency.module).publication
+                    ?: error("Workspace library dependency requires publication: ${dependency.module}")).coordinateFor(target)
+            }
+            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (target == "macosArm64" || dependency.exported))
+        }
+        return dependencies.groupBy { it.coordinate.group to it.coordinate.name }.values.map { group ->
+            require(group.map { it.coordinate.version }.distinct().size == 1) { "Library publication has conflicting direct dependency versions" }
+            LibraryDependency(group.first().coordinate, group.any { it.api })
+        }.sortedBy { it.coordinate.toString() }
+    }
+
+    private fun ensurePackage(module: String, target: String): String {
+        val id = "$module:$target:package"
+        if (id in nodes) return id
+        val publication = modules.getValue(module).publication ?: error("Library module requires publication: $module")
+        ensureMain(module, target)
+        val dependencies = publicationDependencies(module, target)
+        val resource = resources(module, target, "main")
+        require(target == "jvm" || resource.isEmpty()) { "Native library publication does not yet support resources: $module" }
+        val directModules = sourceSets(module, target, "main").flatMap { it.dependencies }.filterIsInstance<Dependency.Module>().map { it.module }.distinct()
+        val packaged = directModules.map { ensurePackage(it, target) }.toSet()
+        val edges = packaged + mainId(module, target)
+        val selection = LibraryPackage(module, target, publication.coordinateFor(target), dependencies,
+            if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null)
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            val own = remap(results, module, target, "main")
+            val prefix = modulePath(module, target, "main").value
+            val compiled = own.map { it.copy(path = LogicalPath(if (target == "jvm") "classes" + it.path.value.removePrefix(prefix) else "module.klib")) }
+            val resources = resource.map { it.copy(path = LogicalPath("classes/" + it.path.value.removePrefix("runtime/$module/main/"))) }
+            require(compiled.map { it.path }.toSet().intersect(resources.map { it.path }.toSet()).isEmpty()) {
+                "Library resource collides with compiled output: $module"
+            }
+            libraryPackageAction(selection, merge(compiled, resources), composition)
+        }
+        return id
     }
 
     private fun ensureApplication(module: String, target: String): String {
@@ -376,7 +454,7 @@ private class Builder(
         if (hasTestCompile) {
             val options = options(module, target, "test", source)
             if (target == "macosArm64") {
-                val production = compilerOptions(module, target, target(module, target).compilerOptions)
+                val production = compilerOptions(compilerModuleName(module, target), target, target(module, target).compilerOptions)
                 require(options.optIns.containsAll(production.optIns)) { "Native tests recompile main sources: test opt-ins must include main opt-ins" }
             }
             val artifacts = artifactEntries(external(module, target, "test", if (target == "jvm") "java-api" else "kotlin-api"), target)

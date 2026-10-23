@@ -110,7 +110,13 @@ DEFS["compilerPlugin"]["oneOf"] = [
         "options": array({"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*="})}},
     {"required": ["coordinate"], "not": {"anyOf": [{"required": [name]} for name in ("module", "id", "compilerVersion")]},
      "properties": {"pathOptions": {"maxItems": 0}, "outputs": {"maxItems": 0}}}]
-DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1), "compilerPlugins": array(ref("compilerPlugin"))})
+DEFS["libraryPublication"] = object_({"coordinate": {"allOf": [COORDINATE,
+    {"type": "string", "pattern": r"^[^\u0000-\u0020]*(?![\s\S])"}]}})
+DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1),
+    "compilerPlugins": array(ref("compilerPlugin")), "publication": ref("libraryPublication")}, optional=("publication",))
+DEFS["module"]["allOf"] = [{"if": {"required": ["publication"]},
+    "then": {"properties": {"targets": {"items": {"not": {"required": ["application"]}}}}}}]
+DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate derived target publication coordinates across modules."
 DEFS["repository"] = object_({"id": ID, "url": {"type": "string", "pattern": "^https://"}})
 # Script declarations are distinct from module compilation selections. Older nonempty profile
 # arrays were schema-only and rejected by Native; v1 now gives profiles an explicit object shape.
@@ -296,7 +302,7 @@ DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, 
     "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
 DEFS["requestedCheck"] = {"oneOf": [
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application|package)$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1)})

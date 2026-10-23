@@ -61,7 +61,7 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
 }
 
 private fun parseModule(value: JsonValue): ModuleSpec {
-    val fields = value.fields(setOf("id", "sourceSets", "targets", "compilerPlugins"))
+    val fields = value.fields(setOf("id", "sourceSets", "targets", "compilerPlugins"), setOf("publication"))
     val id = fields.getValue("id").identifier()
     val sourceSets = fields.getValue("sourceSets").arrayValue().map { source ->
         val entry = source.fields(setOf("name", "directories", "resources", "dependsOn", "dependencies"))
@@ -99,7 +99,11 @@ private fun parseModule(value: JsonValue): ModuleSpec {
     }
     require(targets.isNotEmpty()) { "Module $id requires targets" }
     targets.map { it.name }.unique("target in $id")
-    return ModuleSpec(id, sourceSets, targets, fields.getValue("compilerPlugins").arrayValue().map(::parseCompilerPlugin))
+    val publication = fields["publication"]?.let { value ->
+        val declaration = value.fields(setOf("coordinate"))
+        LibraryPublicationSpec(Coordinate.parse(declaration.getValue("coordinate").stringValue()))
+    }
+    return ModuleSpec(id, sourceSets, targets, fields.getValue("compilerPlugins").arrayValue().map(::parseCompilerPlugin), publication)
 }
 
 private fun parseDependency(value: JsonValue): Dependency {

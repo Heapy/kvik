@@ -18,6 +18,7 @@ import kvik.core.*
 import kvik.execution.*
 import kvik.execution.platform.*
 import kvik.locking.*
+import kvik.library.LibraryPackageExecutor
 import kvik.projectgraph.*
 import kvik.projectsnapshot.*
 import kvik.runevidence.*
@@ -62,6 +63,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.BUILD -> "build"
         ProjectMode.TEST -> "test"
         ProjectMode.APPLICATION -> "prepare-application"
+        ProjectMode.PACKAGE -> "package-library"
     }
     val project = if (scriptFile == null) {
         if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
@@ -174,10 +176,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val application = ApplicationBundleExecutor(content)
+                    val library = LibraryPackageExecutor(content)
                     val delegate = object : ActionExecutor {
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
                             "kvik-jvm-script-v1" -> scripts
                             "kvik-application-bundle-v1" -> application
+                            "kvik-library-package-v1" -> library
                             "kvik-ksp-native-v1" -> ksp
                             "kvik-kotest-native-tests-v1" -> kotest
                             else -> when (action.target) {
@@ -343,6 +347,27 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
                 journal.diagnostic(Diagnostic("KVIK_APPLICATION_PREPARATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
                     failure.message ?: "Cannot materialize application bundle"))
+            }
+        }
+        if (mode == ProjectMode.PACKAGE && record.status == VerificationStatus.PASSED) {
+            try {
+                var current = Freshness.INDETERMINATE
+                val exposed = materializeLibraryPackages(record, content, run.path) {
+                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    cancelled = kvik_interrupt_requested() != 0
+                    !cancelled && current == Freshness.CURRENT
+                }
+                cancelled = cancelled || kvik_interrupt_requested() != 0
+                if (!exposed || cancelled) record = record.copy(
+                    status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                    freshnessAtCompletion = current)
+            } catch (failure: Exception) {
+                failedSetup = true
+                failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_LIBRARY_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize library artifacts"))
             }
         }
         NativeFiles.writeNew("${run.path}/verification.json", record.toJson().canonical().encodeToByteArray())

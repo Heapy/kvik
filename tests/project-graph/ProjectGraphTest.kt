@@ -6,6 +6,7 @@ import kvik.locking.*
 import kvik.compiler.jvm.*
 import kvik.compiler.native.*
 import kvik.compiler.ksp.*
+import kvik.library.*
 import kotlin.test.*
 import kotlinx.cinterop.*
 import platform.posix.*
@@ -33,7 +34,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
             "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
-                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()) }.json()))
+                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()).let { value -> if (m.publication == null) value else JsonValue.Object(value.objectValue() + ("publication" to obj("coordinate" to m.publication.coordinate.toString().json()))) } }.json()))
 }
 private val base = module("base", listOf(external("g:stdlib:1")))
 private val app = module("app", listOf(Dependency.Module("base"), external("g:library:1")))
@@ -90,7 +91,114 @@ private fun applicationFixture(settings: (String) -> ApplicationSpec = { target 
     return configuration(library, hidden, runtime, main) to TreeManifest(snapshot().files + additional)
 }
 
+private fun published(module: ModuleSpec, resources: Boolean = true) = module.copy(
+    publication = LibraryPublicationSpec(Coordinate("fixture", module.id, "1")),
+    sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
+
 class ProjectGraphTest {
+    @Test fun libraryPackageHasOnlyOwnClassesResourcesAndDirectDependencyMetadata() {
+        val runtime = published(module("runtime"))
+        val library = published(module("app", listOf(Dependency.Module("base", exported = true),
+            Dependency.Module("runtime", DependencyScopeKind.RUNTIME), Dependency.External(Coordinate.parse("g:library:1")))))
+        val config = configuration(published(base), runtime, library)
+        val files = TreeManifest(snapshot().files + FileEntry(LogicalPath("runtime/common/Runtime.kt"), digest("runtime")))
+        val plan = graph(config, files, request(ProjectMode.PACKAGE))
+        val actions = resolved(plan)
+        assertEquals(setOf("app:jvm:package"), plan.requestedChecks)
+        assertEquals(setOf("app:jvm:main", "base:jvm:package", "runtime:jvm:package"), plan.nodes.single { it.id == "app:jvm:package" }.dependencies)
+        val action = actions.getValue("app:jvm:package")
+        assertEquals(ActionKind.PACKAGE, action.kind)
+        assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+        assertEquals("kvik-library-package-v1", action.implementation)
+        val selection = LibraryPackage.fromJson(action.parameters)
+        assertEquals(Coordinate("fixture", "app-jvm", "1"), selection.coordinate)
+        assertEquals(DEFAULT_JVM_TARGET, selection.jvmTarget)
+        assertEquals(listOf(LibraryDependency(Coordinate("fixture", "base-jvm", "1"), true),
+            LibraryDependency(Coordinate("fixture", "runtime-jvm", "1"), false), LibraryDependency(Coordinate("g", "library", "1"), false)), selection.dependencies)
+        assertEquals(setOf("classes/Example.class", "classes/config.txt"), action.inputs.files.map { it.path.value }.toSet())
+        assertEquals(digest("app:jvm:main"), action.inputs.files.single { it.path.value.endsWith(".class") }.digest)
+        assertEquals(digest("app/resources/config.txt"), action.inputs.files.single { it.path.value.endsWith("config.txt") }.digest)
+        assertEquals(action.key(Sha256), resolved(plan, "base:jvm:main").getValue("app:jvm:package").key(Sha256))
+        assertNotEquals(action.key(Sha256), resolved(plan, "app:jvm:main").getValue("app:jvm:package").key(Sha256))
+    }
+
+    @Test fun nativePackageHasOnlyOwnKlibAndRejectsUnrepresentedResources() {
+        val nativeLibrary = module("app", listOf(Dependency.Module("base"),
+            Dependency.External(Coordinate.parse("g:library:1")),
+            Dependency.External(Coordinate.parse("g:only-runtime:1"), DependencyScopeKind.RUNTIME)))
+        val unsupported = assertFailsWith<IllegalArgumentException> {
+            graph(configuration(published(base, false), published(nativeLibrary, false)), request = request(ProjectMode.PACKAGE, "macosArm64"))
+        }
+        assertTrue(unsupported.message!!.contains("cannot represent runtime-only dependencies"))
+        val config = configuration(published(base, false), published(app, false))
+        val plan = graph(config, request = request(ProjectMode.PACKAGE, "macosArm64"))
+        val action = resolved(plan).getValue("app:macosArm64:package")
+        assertEquals(listOf(FileEntry(LogicalPath("module.klib"), digest("app:macosArm64:main"))), action.inputs.files)
+        val selection = LibraryPackage.fromJson(action.parameters)
+        assertNull(selection.jvmTarget)
+        assertEquals("app-macosarm64", selection.coordinate.name)
+        assertEquals(mapOf("fixture:base-macosarm64:1" to true, "g:library:1" to true),
+            selection.dependencies.associate { it.coordinate.toString() to it.api })
+        assertFailsWith<IllegalArgumentException> { graph(configuration(published(base), published(app)), request = request(ProjectMode.PACKAGE, "macosArm64")) }
+    }
+
+    @Test fun nativePublicationNamesUseRootCoordinatesInAllModesAndRejectCollidingOverrides() {
+        val config = configuration(published(base, false), published(app, false))
+        for (mode in listOf(ProjectMode.BUILD, ProjectMode.PACKAGE)) {
+            val actions = resolved(graph(config, request = request(mode, "macosArm64")))
+            assertEquals("fixture:app", NativeCompilation.fromJson(actions.getValue("app:macosArm64:main").parameters).moduleName)
+            assertEquals("fixture:base", NativeCompilation.fromJson(actions.getValue("base:macosArm64:main").parameters).moduleName)
+        }
+        fun named(module: ModuleSpec, name: String) = published(module, false).let { value ->
+            value.copy(targets = value.targets.map { if (it.name == "macosArm64") it.copy(compilerOptions = listOf("-module-name", name)) else it })
+        }
+        val explicit = resolved(graph(configuration(published(base, false), named(app, "explicit.name")), request = request(ProjectMode.PACKAGE, "macosArm64")))
+        assertEquals("explicit.name", NativeCompilation.fromJson(explicit.getValue("app:macosArm64:main").parameters).moduleName)
+        assertFailsWith<IllegalArgumentException> { graph(configuration(named(base, "collision"), named(app, "collision")), request = request(ProjectMode.PACKAGE, "macosArm64")) }
+    }
+
+    @Test fun libraryPackageRefusesMissingPublicationFailedPrerequisitesAndResourceCollision() {
+        assertFailsWith<IllegalStateException> { graph(configuration(base, published(app)), request = request(ProjectMode.PACKAGE)) }
+        val plan = graph(configuration(published(base), published(app)), request = request(ProjectMode.PACKAGE))
+        val node = plan.nodes.single { it.id == "app:jvm:package" }
+        val prerequisites = node.dependencies.associateWith { id -> ActionResult(id, digest(id), ActionStatus.EXECUTED,
+            TreeManifest(listOf(FileEntry(LogicalPath(if (id.endsWith(":main")) "classes/Example.class" else "library/artifact.jar"), digest(id)))), 0) }
+        assertFailsWith<IllegalArgumentException> { node.resolve(prerequisites + ("app:jvm:main" to prerequisites.getValue("app:jvm:main").copy(status = ActionStatus.FAILED, exitCode = 1))) }
+        val collision = TreeManifest(snapshot().files + FileEntry(LogicalPath("app/resources/Example.class"), digest("resource")))
+        assertFailsWith<IllegalArgumentException> { resolved(graph(configuration(published(base), published(app)), collision, request(ProjectMode.PACKAGE))) }
+        val extra = prerequisites.getValue("app:jvm:main").copy(outputs = TreeManifest(prerequisites.getValue("app:jvm:main").outputs.files + FileEntry(LogicalPath("plugins/report.txt"), digest("plugin report"))))
+        val action = node.resolve(prerequisites + ("app:jvm:main" to extra))
+        assertTrue(action.inputs.files.none { it.path.value.startsWith("plugins/") })
+    }
+
+    @Test fun libraryPackageRequiresRuntimeDomainsAndRejectsPolicyOverrides() {
+        val config = configuration(published(base), published(app))
+        val restricted = effectiveConfiguration(config, scopes = listOf(DependencyScope("app", "jvm", "main", "java-api")))
+        assertFailsWith<IllegalArgumentException> { projectActionGraph(restricted, lock(restricted), snapshot(), composition, tools, request(ProjectMode.PACKAGE)) }
+        val excluded = effectiveConfiguration(config, ResolverPolicy(metadataExclusions = listOf(ScopedMetadataExclusion(
+            ResolutionDomain("app", "jvm", "main", "java-runtime"), MetadataEdgeExclusion(Coordinate.parse("g:library:1"), digest("metadata"),
+                "runtime", Coordinate.parse("g:runtime-only:1"), "fixture correction")))))
+        assertFailsWith<IllegalArgumentException> { projectActionGraph(excluded, lock(excluded), snapshot(), composition, tools, request(ProjectMode.PACKAGE)) }
+        for ((pin, accepted) in listOf("g:library:1" to true, "g:library:2" to false, "g:runtime-only:1" to false)) {
+            val effective = effectiveConfiguration(config, ResolverPolicy(pins = listOf(Coordinate.parse(pin))))
+            if (accepted) resolved(projectActionGraph(effective, lock(effective), snapshot(), composition, tools, request(ProjectMode.PACKAGE)))
+            else assertFailsWith<IllegalArgumentException> { projectActionGraph(effective, lock(effective), snapshot(), composition, tools, request(ProjectMode.PACKAGE)) }
+        }
+    }
+
+    @Test fun compilerPluginHostModulesNeedNoPublicationAndNeverEnterPackageMetadata() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main"), emptyList(), emptyList(), "example.plugin", "2.4.20")
+        val producer = module("producer", listOf(Dependency.External(Coordinate.parse("g:compiler-api:1"))))
+        val config = configuration(published(base), producer, published(app.copy(compilerPlugins = listOf(plugin))))
+        val files = TreeManifest(snapshot().files + FileEntry(LogicalPath("producer/common/Plugin.kt"), digest("plugin")))
+        val actions = resolved(graph(config, files, request(ProjectMode.PACKAGE)))
+        assertTrue("producer:jvm:main" in actions)
+        assertFalse("producer:jvm:package" in actions)
+        val packaged = actions.getValue("app:jvm:package")
+        assertFalse(LibraryPackage.fromJson(packaged.parameters).dependencies.any { it.coordinate.name.contains("producer") || it.coordinate.name.contains("compiler") })
+        assertTrue(packaged.inputs.files.all { it.path.value.startsWith("classes/") })
+    }
+
     @Test fun applicationRuntimeClosuresPreservePrivateAndRuntimeOnlyBoundaries() {
         val (config, files) = applicationFixture()
         for (target in listOf("jvm", "macosArm64")) {

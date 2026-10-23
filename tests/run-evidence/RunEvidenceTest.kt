@@ -49,6 +49,17 @@ class RunEvidenceTest {
         assertTrue(evidence.record.tests.isEmpty())
     }
 
+    @Test fun libraryPackageChecksRequireSuccessfulClosureAndPermitCachedPreparation() {
+        val check = "app:jvm:package"
+        val evidence = aggregate(checks = setOf(check), terminals = mapOf(check to "main"), dependencies = graph - "tests",
+            actions = listOf(result("main", ActionStatus.LOCAL_HIT), result("base")), reports = emptyMap())
+        assertEquals(ExitStatus.SUCCESS, evidence.exitStatus)
+        assertEquals(setOf(check), evidence.record.completedChecks)
+        assertTrue(evidence.record.tests.isEmpty())
+        assertEquals(ExitStatus.INCOMPLETE, aggregate(checks = setOf(check), terminals = mapOf(check to "main"), dependencies = graph - "tests",
+            actions = listOf(result("main", ActionStatus.LOCAL_HIT)), reports = emptyMap()).exitStatus)
+    }
+
     @Test fun emptyOrPartialSetupNeverProvesChecks() {
         for (checks in listOf(setOf("app:jvm:test"), setOf("app:jvm:build"))) {
             val evidence = aggregate(checks, emptyMap(), emptyMap(), emptyList(), emptyMap())

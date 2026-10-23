@@ -792,6 +792,28 @@
         }
       ]
     },
+    "libraryPublication": {
+      "type": "object",
+      "properties": {
+        "coordinate": {
+          "allOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+            },
+            {
+              "type": "string",
+              "pattern": "^[^\\u0000-\\u0020]*(?![\\s\\S])"
+            }
+          ]
+        }
+      },
+      "required": [
+        "coordinate"
+      ],
+      "additionalProperties": false,
+      "$comment": "Project validation rejects duplicate derived target publication coordinates across modules."
+    },
     "module": {
       "type": "object",
       "properties": {
@@ -818,6 +840,9 @@
           "items": {
             "$ref": "#/$defs/compilerPlugin"
           }
+        },
+        "publication": {
+          "$ref": "#/$defs/libraryPublication"
         }
       },
       "required": [
@@ -826,7 +851,29 @@
         "targets",
         "compilerPlugins"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "publication"
+            ]
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "items": {
+                  "not": {
+                    "required": [
+                      "application"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "repository": {
       "type": "object",
@@ -3670,7 +3717,7 @@
       "oneOf": [
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application)$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application|package)$(?![\\s\\S])"
         },
         {
           "type": "string",

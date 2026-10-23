@@ -27,7 +27,7 @@ def main():
         [args.konan_home / 'bin/cinterop', '-def', boundary / 'process.def', '-compiler-option', '-I' + str(boundary),
          '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'],
     ]
-    sources = [p for directory in ('core/src', 'execution/src', 'integration/resolution/src', 'integration/project-graph/src',
+    sources = [p for directory in ('core/src', 'execution/src', 'integration/resolution/src', 'integration/project-graph/src', 'integration/library/src',
                                    'integration/project-snapshot/src', 'tests/session-coordinator')
                for p in sorted((ROOT / directory).rglob('*.kt'))]
     sources += [ROOT / name for name in (

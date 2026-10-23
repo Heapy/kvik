@@ -115,11 +115,38 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         } else require(id == null && compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions are not supported" }
     }
 }
-data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targets: List<TargetSpec>, val compilerPlugins: List<CompilerPluginSpec>)
+/** Base coordinate for explicit target packages; this does not declare a root KMP publication. */
+data class LibraryPublicationSpec(val coordinate: Coordinate) {
+    fun coordinateFor(target: String): Coordinate {
+        val suffix = when (target) {
+            "jvm" -> "jvm"
+            "macosArm64" -> "macosarm64"
+            else -> error("Unsupported library publication target: $target")
+        }
+        return coordinate.copy(name = "${coordinate.name}-$suffix")
+    }
+}
+
+data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targets: List<TargetSpec>, val compilerPlugins: List<CompilerPluginSpec>,
+                      val publication: LibraryPublicationSpec? = null) {
+    init {
+        publication?.let { spec ->
+            require(targets.none { it.application != null }) { "Published library module $id cannot declare application settings" }
+            targets.forEach { spec.coordinateFor(it.name) }
+        }
+    }
+}
 data class ProjectSpec(val name: String, val repositories: List<Repository>, val modules: List<ModuleSpec>,
                        val dependencyCatalog: Map<String, Coordinate> = emptyMap(),
                        val dependencyProfiles: Map<String, ScriptDependencyProfile> = emptyMap(),
-                       val scripts: Map<String, ScriptSpec> = emptyMap())
+                       val scripts: Map<String, ScriptSpec> = emptyMap()) {
+    init {
+        val coordinates = modules.flatMap { module ->
+            module.publication?.let { publication -> module.targets.map { publication.coordinateFor(it.name) } } ?: emptyList()
+        }
+        require(coordinates.distinct().size == coordinates.size) { "Duplicate target library publication coordinate" }
+    }
+}
 
 data class VariantRequest(val platform: String, val usage: String, val attributes: Map<String, String>) {
     init { require(platform in setOf("jvm", "macosArm64", "common") && usage.isNotBlank()) }
