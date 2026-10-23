@@ -98,4 +98,78 @@ kvik_rpc_reply *kvik_rpc(const char *url, const char *authorization,
     curl_easy_cleanup(curl);
     return reply;
 }
+static size_t json_header(char *bytes, size_t size, size_t count, void *context) {
+    (void)bytes;
+    Transfer *transfer = context;
+    if (size && count > SIZE_MAX / size) return 0;
+    size_t length = size * count;
+    if (length > 65536 - transfer->headers) return 0;
+    transfer->headers += length;
+    return length;
+}
+static int append_header(struct curl_slist **headers, const char *value) {
+    struct curl_slist *next = curl_slist_append(*headers, value);
+    if (!next) return 0;
+    *headers = next;
+    return 1;
+}
+kvik_rpc_reply *kvik_json_post(const char *url, const char *bearer_token,
+    const unsigned char *request, size_t request_size, int (*cancelled)(void *), void *cancel_context) {
+    kvik_rpc_reply *reply = calloc(1, sizeof(*reply));
+    if (!reply) return NULL;
+    reply->grpc_status = -1;
+    reply->transport_error = CURLE_BAD_FUNCTION_ARGUMENT;
+    if (!url || !bearer_token || request_size > 1024 * 1024 || (request_size && !request)) return reply;
+    size_t token_size = strnlen(bearer_token, 8193);
+    if (!token_size || token_size > 8192) return reply;
+    for (size_t index = 0; index < token_size; ++index)
+        if ((unsigned char)bearer_token[index] < 33 || (unsigned char)bearer_token[index] > 126) return reply;
+    pthread_once(&initialized, initialize);
+    if (initialization != CURLE_OK) { reply->transport_error = initialization; return reply; }
+    CURL *curl = curl_easy_init();
+    if (!curl) { reply->transport_error = CURLE_FAILED_INIT; return reply; }
+    struct curl_slist *headers = NULL;
+    char authorization[sizeof("Authorization: Bearer ") + 8192];
+    memcpy(authorization, "Authorization: Bearer ", sizeof("Authorization: Bearer ") - 1);
+    memcpy(authorization + sizeof("Authorization: Bearer ") - 1, bearer_token, token_size + 1);
+    if (!append_header(&headers, "Accept: application/vnd.github+json") ||
+        !append_header(&headers, "X-GitHub-Api-Version: 2026-03-10") ||
+        !append_header(&headers, "User-Agent: kvik") ||
+        !append_header(&headers, "Content-Type: application/json") ||
+        !append_header(&headers, "Expect:") || !append_header(&headers, authorization)) {
+        reply->transport_error = CURLE_OUT_OF_MEMORY;
+        goto cleanup;
+    }
+    Transfer transfer = {reply, 1024 * 1024, 0, 0};
+    Cancellation cancellation = {cancelled, cancel_context};
+    CURLcode setting;
+#define JSON_SET(option, value) do { setting = curl_easy_setopt(curl, option, value); \
+    if (setting != CURLE_OK) { reply->transport_error = setting; goto cleanup; } } while (0)
+    JSON_SET(CURLOPT_URL, url);
+    JSON_SET(CURLOPT_HTTPHEADER, headers);
+    JSON_SET(CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+    JSON_SET(CURLOPT_PROTOCOLS_STR, "http,https");
+    JSON_SET(CURLOPT_PROXY, "");
+    JSON_SET(CURLOPT_FOLLOWLOCATION, 0L);
+    JSON_SET(CURLOPT_NOSIGNAL, 1L);
+    JSON_SET(CURLOPT_CONNECTTIMEOUT_MS, 30000L);
+    JSON_SET(CURLOPT_TIMEOUT_MS, 30000L);
+    JSON_SET(CURLOPT_POST, 1L);
+    JSON_SET(CURLOPT_POSTFIELDS, request ? (const char *)request : "");
+    JSON_SET(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)request_size);
+    JSON_SET(CURLOPT_WRITEFUNCTION, receive);
+    JSON_SET(CURLOPT_WRITEDATA, &transfer);
+    JSON_SET(CURLOPT_HEADERFUNCTION, json_header);
+    JSON_SET(CURLOPT_HEADERDATA, &transfer);
+    JSON_SET(CURLOPT_NOPROGRESS, 0L);
+    JSON_SET(CURLOPT_XFERINFOFUNCTION, progress);
+    JSON_SET(CURLOPT_XFERINFODATA, &cancellation);
+#undef JSON_SET
+    reply->transport_error = (int)curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &reply->http_status);
+cleanup:
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return reply;
+}
 void kvik_rpc_free(kvik_rpc_reply *reply) { if (reply) { free(reply->data); free(reply); } }
