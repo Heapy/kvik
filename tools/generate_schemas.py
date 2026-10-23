@@ -403,8 +403,46 @@ DEFS["coverageThresholdResult"]["allOf"] = [
        "then": {"properties": {"status": {"const": status}}}} for outcome, status in (
            ("passed", "passed"), ("below_threshold", "failed"), ("incomplete", "incomplete"), ("unsupported", "incomplete"))],
 ]
+DEFS["coverageAggregateThresholdPolicy"] = object_({"targets": array(
+    object_({"target": COVERAGE_ID, "policy": ref("coverageThresholdPolicy")}), minItems=1, maxItems=1000, uniqueItems=True)})
+DEFS["coverageAggregateThresholdPolicy"]["$comment"] = "Kotlin parsing also rejects repeated target IDs with different policies; serialization sorts targets."
+AGGREGATE_THRESHOLD_COUNTER = {"type": "integer", "minimum": 0, "maximum": 100_000_000_000_000}
+DEFS["coverageAggregateThresholdTargetResult"] = object_({"target": COVERAGE_ID, "sourceStatus": REPORT_STATUS,
+    "policy": ref("coverageThresholdPolicy"), "outcome": enum("passed", "below_threshold", "incomplete", "unsupported"),
+    "status": REPORT_STATUS, **{name: nullable(AGGREGATE_THRESHOLD_COUNTER) for name in ("covered", "executable", "unknown")},
+    "sourceCount": {"type": "integer", "minimum": 0, "maximum": 100_000_000}, "diagnostics": array(STRING)})
+DEFS["coverageAggregateThresholdTargetResult"]["allOf"] = [
+    {"oneOf": [{"properties": {name: {"type": "null"} for name in ("covered", "executable", "unknown")}},
+               {"properties": {name: AGGREGATE_THRESHOLD_COUNTER for name in ("covered", "executable", "unknown")}}]},
+    {"if": {"anyOf": [{"properties": {"target": {"not": {"const": "jvm"}}}},
+                       {"properties": {"policy": {"properties": {"metric": {"not": {"const": "line"}}}}}}]},
+     "then": {"properties": {"outcome": {"const": "unsupported"}}}},
+    {"if": {"properties": {"outcome": {"const": "unsupported"}}},
+     "then": {"properties": {name: {"type": "null"} for name in ("covered", "executable", "unknown")}}},
+    {"if": {"properties": {"outcome": {"enum": ["passed", "below_threshold"]}}}, "then": {"properties": {
+        "covered": AGGREGATE_THRESHOLD_COUNTER, "executable": {**AGGREGATE_THRESHOLD_COUNTER, "minimum": 1},
+        "unknown": {"const": 0}, "sourceCount": {"minimum": 1}}}},
+    *[{"if": {"properties": {"sourceStatus": {"const": status}}},
+       "then": {"properties": {"status": {"const": status}}}} for status in ("failed", "incomplete", "cancelled")],
+    *[{"if": {"properties": {"sourceStatus": {"const": "passed"}, "outcome": {"const": outcome}}},
+       "then": {"properties": {"status": {"const": status}}}} for outcome, status in (
+           ("passed", "passed"), ("below_threshold", "failed"), ("incomplete", "incomplete"), ("unsupported", "incomplete"))],
+]
+DEFS["coverageAggregateThresholdResult"] = versioned({"kind": {"const": "coverage-aggregate-threshold"},
+    "report": ref("digest"), "sourceStatus": REPORT_STATUS, "policy": ref("coverageAggregateThresholdPolicy"),
+    "targets": array(ref("coverageAggregateThresholdTargetResult"), minItems=1, maxItems=1000, uniqueItems=True), "status": REPORT_STATUS})
+DEFS["coverageAggregateThresholdResult"]["$comment"] = ("Core evaluation matches targets and policies to the retained aggregate, "
+    "counts distinct source paths within each target, and performs an exact integer comparison. JSON Schema cannot verify target-ID "
+    "uniqueness across differing records, policy correspondence, covered <= executable or the comparison arithmetic.")
+AGGREGATE_THRESHOLD_STATUS = {"properties": {"status": {"const": "passed"}}}
+for status in ("incomplete", "failed", "cancelled"):
+    AGGREGATE_THRESHOLD_STATUS = {"if": {"anyOf": [
+        {"properties": {"sourceStatus": {"const": status}}},
+        {"properties": {"targets": {"contains": {"properties": {"status": {"const": status}}}}}},
+    ]}, "then": {"properties": {"status": {"const": status}}}, "else": AGGREGATE_THRESHOLD_STATUS}
+DEFS["coverageAggregateThresholdResult"]["allOf"] = [AGGREGATE_THRESHOLD_STATUS]
 DEFS["coverageThresholdExport"] = versioned({"outputDirectory": NONEMPTY,
-    "result": ref("coverageThresholdResult"), "artifacts": ref("tree")})
+    "result": {"oneOf": [ref("coverageThresholdResult"), ref("coverageAggregateThresholdResult")]}, "artifacts": ref("tree")})
 DEFS["coverageThresholdGraph"] = versioned({"sourceReport": ref("digest"),
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})

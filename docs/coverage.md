@@ -46,7 +46,7 @@ Use repeatable `--module ID` instead of `--all-modules` to select production mod
 
 Only `line` is currently supported. `branch` and `function` produce a structured `unsupported` result rather than borrowing JaCoCo counters that lack normalized source mapping. The command verifies the original report artifacts against their retained digests and requires a new output directory outside the report directory.
 
-Selected modules contribute one combined line ratio, not an average of module percentages. A shared logical source path counts once only when its content digest, line count and every line state agree across the selected modules. Conflicting copies yield an incomplete result. This threshold command consumes one normalized report. It does not yet accept a `coverage-aggregate` result.
+For a single report, selected modules contribute one combined line ratio, not an average of module percentages. A shared logical source path counts once only when its content digest, line count and every line state agree across the selected modules. Conflicting copies yield an incomplete result. For an aggregate, checks use its already merged source lines separately for each selected target.
 
 A passing threshold requires retained sources for every selected module, complete, current-at-completion coverage from a passing source run, and at least one executable line. Unknown lines, partial reports and zero executable lines cannot pass, even with a zero-percent minimum. Checking a historical report does not establish freshness against today's sources.
 
@@ -76,6 +76,20 @@ Missing checks remain visible. Unsupported targets remain both missing and unsup
 
 The new output directory contains `aggregate.json`, `report.json` (the exported aggregate), `scope.json` and `graph.json`. Selected reports and their originals are copied under `contributors/<report-hash>/`; supplied run records are copied under `runs/<runId>/` as `verification.json`, `completion.json` and `events.jsonl`. The aggregate embeds each canonical contributor report with its digest. Stdout identifies the aggregate digest, status, completeness and output artifacts. Valid negative results are saved: exit codes are 0 for passed, 1 for failed, 3 for incomplete and 130 for cancelled.
 
-Aggregation currently exports line coverage only. Threshold checking of aggregate output is not yet supported; `coverage-check` continues to accept an individual `coverage.json` report.
+Aggregation currently exports line coverage only. Check an aggregate with an explicit target selection:
+
+```sh
+kvik coverage-check --report /path/to/aggregate-directory/aggregate.json \
+  --metric line --minimum 80 --all-targets --all-modules \
+  --output /path/to/new-aggregate-threshold-directory
+```
+
+`report.json` from the aggregate directory is also accepted. Aggregate checks require repeatable `--target ID` or `--all-targets`. A single coverage report keeps its existing behavior; an explicit `--target jvm` or `--all-targets` is optional there. Each check also requires repeatable `--module ID` or `--all-modules`.
+
+For aggregate checks, `--all-modules` selects production roots from contributors together with expected-check modules, separately for each selected target. An explicit module must exist somewhere in the aggregate; absence on a selected target produces an incomplete result. Each target gets its own policy and line ratio. A logical source path counts once within that target, and counters are never pooled across targets. Incomplete target measurements retain null counters; unsupported targets or metrics produce an `unsupported` outcome.
+
+The overall check preserves the whole aggregate's source status, even when selecting fewer targets or modules. To gate an independently scoped subset, first create an aggregate with the desired `coverage-aggregate --module` and `--target` filters, then check that aggregate. Threshold checking verifies retained contributor reports and originals without rerunning tests.
+
+Aggregate checks write the same threshold artifacts as single-report checks. `coverageThresholdExport.result` is either a `coverageThresholdResult` or a `coverageAggregateThresholdResult`; the aggregate form contains a `coverageAggregateThresholdPolicy` and separate `coverageAggregateThresholdTargetResult` entries.
 
 The aggregate contract is `coverageAggregate` in `schemas/v1/contracts.json`, with supporting `coverageAggregationScope`, `coverageContribution`, `coverageMergedSource` and `coverageAggregateTarget` definitions. `coverageAggregateExport` describes stdout and `coverageAggregateGraph` describes `graph.json`.

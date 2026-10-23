@@ -5131,6 +5131,547 @@
         }
       ]
     },
+    "coverageAggregateThresholdPolicy": {
+      "type": "object",
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+              },
+              "policy": {
+                "$ref": "#/$defs/coverageThresholdPolicy"
+              }
+            },
+            "required": [
+              "target",
+              "policy"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "additionalProperties": false,
+      "$comment": "Kotlin parsing also rejects repeated target IDs with different policies; serialization sorts targets."
+    },
+    "coverageAggregateThresholdTargetResult": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "sourceStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/coverageThresholdPolicy"
+        },
+        "outcome": {
+          "enum": [
+            "passed",
+            "below_threshold",
+            "incomplete",
+            "unsupported"
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "covered": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unknown": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "target",
+        "sourceStatus",
+        "policy",
+        "outcome",
+        "status",
+        "covered",
+        "executable",
+        "unknown",
+        "sourceCount",
+        "diagnostics"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "covered": {
+                  "type": "null"
+                },
+                "executable": {
+                  "type": "null"
+                },
+                "unknown": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "properties": {
+                "covered": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000000000000
+                },
+                "executable": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000000000000
+                },
+                "unknown": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000000000000
+                }
+              }
+            }
+          ]
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "target": {
+                    "not": {
+                      "const": "jvm"
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "policy": {
+                    "properties": {
+                      "metric": {
+                        "not": {
+                          "const": "line"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "unsupported"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "covered": {
+                "type": "null"
+              },
+              "executable": {
+                "type": "null"
+              },
+              "unknown": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "passed",
+                  "below_threshold"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "covered": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000000000000
+              },
+              "executable": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000000000
+              },
+              "unknown": {
+                "const": 0
+              },
+              "sourceCount": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "below_threshold"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "incomplete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceStatus": {
+                "const": "passed"
+              },
+              "outcome": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "incomplete"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "coverageAggregateThresholdResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "coverage-aggregate-threshold"
+        },
+        "report": {
+          "$ref": "#/$defs/digest"
+        },
+        "sourceStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/coverageAggregateThresholdPolicy"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageAggregateThresholdTargetResult"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "report",
+        "sourceStatus",
+        "policy",
+        "targets",
+        "status"
+      ],
+      "additionalProperties": false,
+      "$comment": "Core evaluation matches targets and policies to the retained aggregate, counts distinct source paths within each target, and performs an exact integer comparison. JSON Schema cannot verify target-ID uniqueness across differing records, policy correspondence, covered <= executable or the comparison arithmetic.",
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "sourceStatus": {
+                    "const": "cancelled"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "targets": {
+                    "contains": {
+                      "properties": {
+                        "status": {
+                          "const": "cancelled"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "sourceStatus": {
+                      "const": "failed"
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "targets": {
+                      "contains": {
+                        "properties": {
+                          "status": {
+                            "const": "failed"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              }
+            },
+            "else": {
+              "if": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "sourceStatus": {
+                        "const": "incomplete"
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "targets": {
+                        "contains": {
+                          "properties": {
+                            "status": {
+                              "const": "incomplete"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "then": {
+                "properties": {
+                  "status": {
+                    "const": "incomplete"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "status": {
+                    "const": "passed"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "coverageThresholdExport": {
       "type": "object",
       "properties": {
@@ -5142,7 +5683,14 @@
           "pattern": "\\S"
         },
         "result": {
-          "$ref": "#/$defs/coverageThresholdResult"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/coverageThresholdResult"
+            },
+            {
+              "$ref": "#/$defs/coverageAggregateThresholdResult"
+            }
+          ]
         },
         "artifacts": {
           "$ref": "#/$defs/tree"
