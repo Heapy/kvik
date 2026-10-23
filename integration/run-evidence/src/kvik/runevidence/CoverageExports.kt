@@ -16,7 +16,7 @@ class CoverageExportSelection(val target: String, modules: Set<String>) {
 
 class CoverageConsumerExport internal constructor(
     val report: Digest, selection: CoverageExportSelection, val sourceStatus: VerificationStatus,
-    val outcome: String, diagnostics: List<String>, artifacts: Map<String, ByteArray>,
+    val outcome: String, diagnostics: List<String>, artifacts: Map<String, ByteArray>, val format: String = "sonar-generic",
 ) {
     val target = selection.target
     private val selectedModules = selection.modules
@@ -25,7 +25,7 @@ class CoverageConsumerExport internal constructor(
     val status: VerificationStatus = if (sourceStatus != VerificationStatus.PASSED) sourceStatus
         else if (complete) VerificationStatus.PASSED else VerificationStatus.INCOMPLETE
     val diagnostics = diagnostics.toList()
-    val conversionLosses: List<String> = listOf(
+    val conversionLosses: List<String> = if (format == "jacoco-xml") emptyList() else listOf(
         "Only line coverage is exported; branch, function and instruction metrics are not represented.",
         "Source provenance, target identity and verification status cannot be represented by Sonar generic coverage XML and remain in export metadata.",
     )
@@ -34,10 +34,15 @@ class CoverageConsumerExport internal constructor(
     val files: TreeManifest = TreeManifest(retainedArtifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
     init {
         require(outcome in setOf("exported", "incomplete", "unsupported"))
-        require(retainedArtifacts.keys == if (complete) setOf("coverage.xml") else emptySet<String>())
+        require(format in setOf("sonar-generic", "jacoco-xml"))
+        if (!complete) require(retainedArtifacts.isEmpty())
+        else if (format == "sonar-generic") require(retainedArtifacts.keys == setOf("coverage.xml"))
+        else require(retainedArtifacts.isNotEmpty() && retainedArtifacts.keys.all {
+            it.matches(Regex("jacoco/[A-Za-z][A-Za-z0-9_.-]*/jvm/test/[A-Za-z][A-Za-z0-9_.-]*\\.xml"))
+        })
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "kind" to "coverage-consumer-export".json(),
-        "format" to "sonar-generic".json(), "report" to report.toJson(), "target" to target.json(),
+        "format" to format.json(), "report" to report.toJson(), "target" to target.json(),
         "modules" to selectedModules.sorted().map { it.json() }.json(), "sourceStatus" to sourceStatus.name.lowercase().json(),
         "status" to status.name.lowercase().json(), "outcome" to outcome.json(), "complete" to complete.json(),
         "conversionLosses" to conversionLosses.map { it.json() }.json(), "diagnostics" to diagnostics.map { it.json() }.json(), "files" to files.toJson())
@@ -77,6 +82,75 @@ fun exportSonarCoverage(aggregate: CoverageAggregate, reportDigest: Digest, sele
         diagnostics += "Target coverage or selected source measurements are incomplete; narrowing modules cannot hide a missing contributor."
     if (missing.isNotEmpty()) diagnostics += missingSources(missing)
     return finishExport(reportDigest, selection, aggregate.status, diagnostics, selected.sortedBy { it.path.value }.map { ExportFile(it.path, it.lines) })
+}
+
+/** Copy original JaCoCo reports without interpreting their richer counters or changing bytes. */
+fun exportJacocoCoverage(report: CoverageReport, reportDigest: Digest, selection: CoverageExportSelection,
+    readOriginal: (FileEntry) -> ByteArray): CoverageConsumerExport {
+    require(selection.target == "jvm") { "Selected coverage export target is absent from the report" }
+    val modules = selection.modules
+    require(report.specification.classDirectories.map { it.module }.toSet().containsAll(modules)) { "Unknown coverage export module" }
+    val diagnostics = mutableListOf<String>()
+    val planned = jacocoEntries(report, modules, "", diagnostics)
+    return copyJacoco(reportDigest, selection, report.status, diagnostics, planned, readOriginal)
+}
+
+fun exportJacocoCoverage(aggregate: CoverageAggregate, reportDigest: Digest, selection: CoverageExportSelection,
+    readOriginal: (FileEntry) -> ByteArray): CoverageConsumerExport {
+    val target = aggregate.targets.singleOrNull { it.target == selection.target } ?: error("Unknown coverage export target")
+    val modules = selection.modules
+    val knownModules = aggregate.scope.expectedChecks.map { it.substringBefore(':') }.toSet() +
+        aggregate.contributions.flatMap { it.report.specification.classDirectories.map { root -> root.module } }
+    require(knownModules.containsAll(modules)) { "Unknown coverage export module" }
+    if (target.target != "jvm") return CoverageConsumerExport(reportDigest, selection, aggregate.status, "unsupported",
+        listOf("Original JaCoCo XML export is unsupported for target '${target.target}'."), emptyMap(), "jacoco-xml")
+    val contributors = aggregate.contributions.filter { it.report.check in target.expectedChecks }
+    val roots = contributors.flatMap { it.report.specification.classDirectories.map { root -> root.module } }.toSet()
+    val diagnostics = mutableListOf<String>()
+    if (target.missingChecks.isNotEmpty()) diagnostics += "Target is missing ${target.missingChecks.size} expected contributors; narrowing modules cannot hide a missing report."
+    val missingModules = modules - roots
+    if (missingModules.isNotEmpty()) diagnostics += "Selected modules have no production class roots on ${target.target} (first 20 of ${missingModules.size}): ${missingModules.sorted().take(20).joinToString()}"
+    val planned = contributors.flatMap { contribution ->
+        val selectedRoots = contribution.report.specification.classDirectories.map { it.module }.toSet().intersect(modules)
+        jacocoEntries(contribution.report, selectedRoots, "contributors/${contribution.digest.hash}/", diagnostics)
+    }
+    return copyJacoco(reportDigest, selection, aggregate.status, diagnostics, planned, readOriginal)
+}
+
+private data class JacocoCopy(val output: String, val original: FileEntry)
+private fun jacocoEntries(report: CoverageReport, modules: Set<String>, prefix: String, diagnostics: MutableList<String>): List<JacocoCopy> {
+    val originals = report.originals.files.associateBy { it.path.value }
+    return modules.sorted().mapNotNull { module ->
+        val path = "coverage/$module/jacoco.xml"
+        val original = originals[path]
+        if (original == null) {
+            diagnostics += "Missing original JaCoCo XML for ${report.check}: $module."
+            null
+        } else JacocoCopy("jacoco/${report.check.replace(':', '/')}/$module.xml", original.copy(path = LogicalPath(prefix + path)))
+    }
+}
+
+private fun copyJacoco(report: Digest, selection: CoverageExportSelection, status: VerificationStatus, diagnostics: List<String>,
+    planned: List<JacocoCopy>, readOriginal: (FileEntry) -> ByteArray): CoverageConsumerExport {
+    fun incomplete(messages: List<String>) = CoverageConsumerExport(report, selection, status, "incomplete", messages, emptyMap(), "jacoco-xml")
+    if (diagnostics.isNotEmpty() || planned.isEmpty()) return incomplete(diagnostics.ifEmpty { listOf("No selected original JaCoCo XML reports are available.") })
+    require(planned.map { it.output }.distinct().size == planned.size) { "Duplicate original JaCoCo export path" }
+    var total = 0L
+    // Check the whole selected set before the first callback, avoiding partial reads or overflow.
+    for (copy in planned) {
+        if (copy.original.digest.sizeBytes > MAX_COVERAGE_XML_BYTES - total)
+            return incomplete(listOf("Selected original JaCoCo XML exceeds 64 MiB; select fewer modules."))
+        total += copy.original.digest.sizeBytes
+    }
+    val artifacts = planned.sortedBy { it.output }.associate { copy ->
+        val bytes = readOriginal(copy.original)
+        require(bytes.size.toLong() == copy.original.digest.sizeBytes && Sha256.digest(bytes) == copy.original.digest) {
+            "Original JaCoCo XML differs from its retained digest: ${copy.original.path.value}"
+        }
+        copy.output to bytes.copyOf()
+    }
+    return CoverageConsumerExport(report, selection, status, "exported",
+        listOf("Independent original JaCoCo XML reports are copied byte-for-byte; no aggregate counters are synthesized."), artifacts, "jacoco-xml")
 }
 
 private fun missingSources(modules: Set<String>): String =
