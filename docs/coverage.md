@@ -93,3 +93,30 @@ The overall check preserves the whole aggregate's source status, even when selec
 Aggregate checks write the same threshold artifacts as single-report checks. `coverageThresholdExport.result` is either a `coverageThresholdResult` or a `coverageAggregateThresholdResult`; the aggregate form contains a `coverageAggregateThresholdPolicy` and separate `coverageAggregateThresholdTargetResult` entries.
 
 The aggregate contract is `coverageAggregate` in `schemas/v1/contracts.json`, with supporting `coverageAggregationScope`, `coverageContribution`, `coverageMergedSource` and `coverageAggregateTarget` definitions. `coverageAggregateExport` describes stdout and `coverageAggregateGraph` describes `graph.json`.
+
+## Export for SonarQube
+
+Convert retained line coverage to SonarQube's generic coverage format:
+
+```sh
+kvik coverage-export --report /path/to/coverage-directory/coverage.json \
+  --format sonar-generic --all-modules --output /path/to/new-sonar-directory
+```
+
+For `aggregate.json` or its exported `report.json`, supply exactly one `--target ID`. A single coverage report defaults to JVM and permits an explicit `--target jvm`. Repeat `--module ID` instead of `--all-modules` to select modules. Aggregate `--all-modules` includes contributor production roots and expected-check modules for the selected target. An explicit module must exist somewhere in the aggregate; absence on the selected target yields an incomplete export. Targets are never pooled.
+
+When source mappings and measurements are complete, the output contains `report/coverage.xml`, `report/export.json` and `graph.json`. The XML uses [SonarQube's generic coverage version 1 format](https://docs.sonarsource.com/sonarqube-server/analyzing-source-code/test-coverage/generic-test-data). Configure the scanner with:
+
+```properties
+sonar.coverageReportPaths=/path/to/new-sonar-directory/report/coverage.xml
+```
+
+XML source paths remain relative to the Kvik project root. Configure the scanner's project root accordingly. The XML includes executable source lines with their covered state; optional branch attributes are omitted. Branch or function measurements are not invented. The original JaCoCo XML files remain available separately for consumers that import their richer counters directly.
+
+Sonar's generic coverage format cannot preserve unknown line states. No XML is written for missing sources, unknown or partial measurements, incompatible duplicate source mappings, or unsupported targets. The command still saves `report/export.json` and `graph.json` with the incomplete or unsupported outcome. Known sources with zero executable lines can be exported as valid XML; this differs from a threshold check, which requires a nonzero denominator to pass.
+
+Data export and source-run success are separate. Complete XML can accompany a failed, cancelled or stale source result; the metadata retains that status. For an aggregate, the whole aggregate's source status remains authoritative even when exporting one target or a subset of modules. Keep `export.json` with the XML: provenance, module and target selection, status and conversion losses live in that sidecar and cannot be fully represented in the consumer XML.
+
+The output directory must be new and outside the source report directory. Export verifies retained reports and original artifacts; it does not start a JDK, rerun tests, contact SonarQube or publish results. Exit codes follow status: 0 passed, 1 failed, 3 incomplete, 130 cancelled; invalid arguments use 2. An unsupported export normally has incomplete status, while a source failure or cancellation keeps its original status.
+
+The JSON definitions are `coverageConsumerExportResult` for `report/export.json`, `coverageConsumerExport` for stdout and `coverageConsumerExportGraph` for `graph.json` in `schemas/v1/contracts.json`.

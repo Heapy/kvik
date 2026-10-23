@@ -501,6 +501,31 @@ DEFS["coverageAggregateGraph"] = versioned({"scope": ref("coverageAggregationSco
     "runs": array(object_({"runId": NONEMPTY, "verification": ref("digest")}), minItems=1, maxItems=100, uniqueItems=True),
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+DEFS["coverageConsumerExportResult"] = versioned({"kind": {"const": "coverage-consumer-export"},
+    "format": {"const": "sonar-generic"}, "report": ref("digest"), "target": COVERAGE_ID,
+    "modules": array(COVERAGE_ID, minItems=1, uniqueItems=True), "sourceStatus": REPORT_STATUS, "status": REPORT_STATUS,
+    "outcome": enum("exported", "incomplete", "unsupported"), "complete": BOOL,
+    "conversionLosses": array(STRING), "diagnostics": array(STRING), "files": ref("tree")})
+DEFS["coverageConsumerExportResult"]["allOf"] = [
+    {"if": {"properties": {"outcome": {"const": "exported"}}}, "then": {"properties": {
+        "complete": {"const": True}, "files": {"properties": {"files": {"minItems": 1, "maxItems": 1,
+            "items": {"properties": {"path": {"const": "coverage.xml"}, "executable": {"const": False}}}}}}}},
+     "else": {"properties": {"complete": {"const": False}, "files": {"properties": {"files": {"maxItems": 0}}}}}},
+    {"if": {"properties": {"target": {"not": {"const": "jvm"}}}},
+     "then": {"properties": {"outcome": {"const": "unsupported"}}}},
+    *[{"if": {"properties": {"sourceStatus": {"const": status}}},
+       "then": {"properties": {"status": {"const": status}}}} for status in ("failed", "incomplete", "cancelled")],
+    *[{"if": {"properties": {"sourceStatus": {"const": "passed"}, "outcome": {"const": outcome}}},
+       "then": {"properties": {"status": {"const": status}}}} for outcome, status in (
+           ("exported", "passed"), ("incomplete", "incomplete"), ("unsupported", "incomplete"))],
+]
+DEFS["coverageConsumerExportResult"]["$comment"] = ("Core export additionally verifies source/module selection and complete compatible "
+    "line mappings before emitting XML. The files manifest is relative to the report output directory; provenance/status remain in the sidecar.")
+DEFS["coverageConsumerExport"] = versioned({"outputDirectory": NONEMPTY,
+    "result": ref("coverageConsumerExportResult"), "artifacts": ref("tree")})
+DEFS["coverageConsumerExportGraph"] = versioned({"sourceReport": ref("digest"),
+    "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=1, maxItems=1),
+    "results": array(ref("actionResult"), minItems=1, maxItems=1), "events": array(ref("event"))})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
 APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({
