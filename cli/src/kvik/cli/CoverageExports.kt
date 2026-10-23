@@ -11,7 +11,7 @@ import kvik.runevidence.*
 /** Consumer conversion is local; service publication is a separate operation. */
 internal fun coverageExportCommand(args: List<String>): ExitStatus {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_COVERAGE_EXPORT_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use coverage-export --report PATH --format sonar-generic [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY",
+        "$message. Use coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY",
         ExitStatus.INVALID_CONFIGURATION)
     val options = linkedMapOf<String, String>()
     val modules = linkedSetOf<String>()
@@ -34,7 +34,7 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
     if (allModules == modules.isNotEmpty()) arguments("Select --all-modules or one or more --module values")
     fun option(flag: String) = options[flag] ?: arguments("Missing $flag")
     val format = option("--format")
-    if (format != "sonar-generic") arguments("Unsupported export format $format")
+    if (format !in setOf("sonar-generic", "jacoco-xml")) arguments("Unsupported export format $format")
     val source = projectPath(currentDirectory(), option("--report"))
     val sourceDirectory = source.substringBeforeLast('/')
     val output = projectPath(currentDirectory(), option("--output"))
@@ -87,13 +87,20 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
             }
             else -> arguments("Unsupported coverage report kind")
         }
-        var totalBytes = 0L
-        val originals = originalEntries.map { entry ->
+        val originalsByPath = originalEntries.associateBy { it.path }
+        require(originalsByPath.size == originalEntries.size) { "Duplicate original coverage artifact path" }
+        fun readOriginal(entry: FileEntry): ByteArray {
             checkpoint()
-            totalBytes += entry.digest.sizeBytes
-            require(totalBytes <= 1024L * 1024 * 1024) { "Original coverage artifacts exceed 1 GiB" }
+            require(originalsByPath[entry.path] == entry) { "Export requested an undeclared original artifact" }
             val original = NativeFiles.read("$sourceDirectory/${entry.path.value}", 64 * 1024 * 1024)
             require(Sha256.digest(original) == entry.digest) { "Original coverage artifact differs: ${entry.path.value}" }
+            return original
+        }
+        var totalBytes = 0L
+        val originals = originalEntries.map { entry ->
+            totalBytes += entry.digest.sizeBytes
+            require(totalBytes <= 1024L * 1024 * 1024) { "Original coverage artifacts exceed 1 GiB" }
+            readOriginal(entry)
             entry.copy(path = LogicalPath("originals/${entry.path.value}"))
         }
         val composition = Digest(runtimeComposition, runtimeCompositionSize)
@@ -108,11 +115,19 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
             override fun resources(action: ActionSpec) = ResourceRequest(128)
             override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
                 checkpoint()
-                val result = if (aggregate != null) exportSonarCoverage(aggregate, reportDigest, selection)
-                    else exportSonarCoverage(checkNotNull(report), reportDigest, selection)
+                val result = when (format) {
+                    "jacoco-xml" -> if (aggregate != null) exportJacocoCoverage(aggregate, reportDigest, selection, ::readOriginal)
+                        else exportJacocoCoverage(checkNotNull(report), reportDigest, selection, ::readOriginal)
+                    else -> if (aggregate != null) exportSonarCoverage(aggregate, reportDigest, selection)
+                        else exportSonarCoverage(checkNotNull(report), reportDigest, selection)
+                }
                 exported = result
                 result.artifacts.forEach { (path, data) ->
-                    require(path == "coverage.xml") { "Unexpected consumer export artifact" }
+                    LogicalPath(path)
+                    require(if (format == "sonar-generic") path == "coverage.xml" else
+                        path.matches(Regex("jacoco/[A-Za-z][A-Za-z0-9_.-]*/[A-Za-z][A-Za-z0-9_.-]*/test/[A-Za-z][A-Za-z0-9_.-]*\\.xml"))) {
+                        "Unexpected consumer export artifact"
+                    }
                     require(data.size <= 64 * 1024 * 1024) { "Consumer export exceeds 64 MiB" }
                     artifacts["report/$path"] = data
                 }
@@ -140,9 +155,13 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
         val parent = output.substringBeforeLast('/')
         NativeFiles.ensureDirectory(parent)
         val pending = NativeFiles.tempDirectory(parent).also { stage = it }
-        NativeFiles.ensureDirectory("$pending/report")
+        val directories = artifacts.keys.flatMap { name ->
+            val parts = name.split('/').dropLast(1)
+            parts.indices.map { parts.take(it + 1).joinToString("/") }
+        }.distinct().sortedBy { it.count { char -> char == '/' } }
+        directories.forEach { checkpoint(); NativeFiles.ensureDirectory("$pending/$it") }
         artifacts.forEach { (name, data) -> checkpoint(); NativeFiles.writeNew("$pending/$name", data) }
-        NativeFiles.syncDirectory("$pending/report")
+        directories.asReversed().forEach { NativeFiles.syncDirectory("$pending/$it") }
         NativeFiles.syncDirectory(pending)
         checkpoint()
         NativeFiles.exposeDirectory(pending, output)

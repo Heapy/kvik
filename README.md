@@ -61,7 +61,7 @@ and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
 
-Use the [coverage commands](docs/coverage.md) to capture JVM line coverage, generate retained reports, check thresholds, aggregate compatible test checks and export SonarQube coverage XML.
+Use the [coverage commands](docs/coverage.md) to capture JVM line coverage, generate retained reports, check thresholds, aggregate compatible test checks and export SonarQube coverage XML or unchanged JaCoCo reports.
 
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;

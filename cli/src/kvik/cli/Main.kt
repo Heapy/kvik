@@ -53,7 +53,7 @@ private fun command(args: Array<String>) {
             Test reports: test-report --run PATH --output NEW_DIRECTORY [--format json|junit-xml] [--module ID] [--target TARGET] (no test execution)
             Coverage: test --coverage --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
             Coverage threshold: coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY
-            Coverage export: coverage-export --report PATH --format sonar-generic [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY
+            Coverage export: coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY
             Coverage aggregation: coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
