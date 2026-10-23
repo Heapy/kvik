@@ -136,7 +136,7 @@ def aggregate(args):
         values = invoke(args.runtime, case, 'aggregate-'+label, command, code)
         if diagnostic:
             assert not output.exists()
-            assert diagnostic in (case/('aggregate-'+label+'.stderr.log')).read_text()
+            assert any(diagnostic in value.get('diagnostic', {}).get('message', '') for value in values), values
             return None
         response, = values
         validate(response, 'coverageAggregateExport')
