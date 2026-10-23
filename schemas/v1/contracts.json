@@ -6485,7 +6485,10 @@
           "const": "coverage-consumer-export"
         },
         "format": {
-          "const": "sonar-generic"
+          "enum": [
+            "sonar-generic",
+            "jacoco-xml"
+          ]
         },
         "report": {
           "$ref": "#/$defs/digest"
@@ -6565,6 +6568,54 @@
         {
           "if": {
             "properties": {
+              "format": {
+                "const": "sonar-generic"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "files": {
+                "properties": {
+                  "files": {
+                    "maxItems": 1,
+                    "items": {
+                      "properties": {
+                        "path": {
+                          "const": "coverage.xml"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "conversionLosses": {
+                "const": []
+              },
+              "files": {
+                "properties": {
+                  "files": {
+                    "items": {
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "pattern": "^jacoco/[A-Za-z][A-Za-z0-9_.-]*/jvm/test/[A-Za-z][A-Za-z0-9_.-]*\\.xml(?![\\s\\S])"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "outcome": {
                 "const": "exported"
               }
@@ -6579,12 +6630,8 @@
                 "properties": {
                   "files": {
                     "minItems": 1,
-                    "maxItems": 1,
                     "items": {
                       "properties": {
-                        "path": {
-                          "const": "coverage.xml"
-                        },
                         "executable": {
                           "const": false
                         }
@@ -6734,7 +6781,7 @@
           }
         }
       ],
-      "$comment": "Core export additionally verifies source/module selection and complete compatible line mappings before emitting XML. The files manifest is relative to the report output directory; provenance/status remain in the sidecar."
+      "$comment": "Core export additionally verifies source/module selection, complete compatible line mappings for Sonar, and original artifact availability for JaCoCo. The files manifest is relative to the report output directory; provenance/status remain in the sidecar. JaCoCo files preserve original bytes, scoped by contributing check and production module."
     },
     "coverageConsumerExport": {
       "type": "object",

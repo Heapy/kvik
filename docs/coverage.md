@@ -120,3 +120,22 @@ Data export and source-run success are separate. Complete XML can accompany a fa
 The output directory must be new and outside the source report directory. Export verifies retained reports and original artifacts; it does not start a JDK, rerun tests, contact SonarQube or publish results. Exit codes follow status: 0 passed, 1 failed, 3 incomplete, 130 cancelled; invalid arguments use 2. An unsupported export normally has incomplete status, while a source failure or cancellation keeps its original status.
 
 The JSON definitions are `coverageConsumerExportResult` for `report/export.json`, `coverageConsumerExport` for stdout and `coverageConsumerExportGraph` for `graph.json` in `schemas/v1/contracts.json`.
+
+## Export original JaCoCo XML
+
+Copy the retained producer reports for a consumer that accepts JaCoCo XML:
+
+```sh
+kvik coverage-export --report /path/to/coverage-directory/coverage.json \
+  --format jacoco-xml --all-modules --output /path/to/new-jacoco-directory
+```
+
+Target and module selection follow the same rules as Sonar export: an aggregate requires exactly one `--target ID`, and every export requires repeatable `--module ID` or `--all-modules`. Only JVM originals are supported.
+
+Files are written under `report/jacoco/<test-module>/jvm/test/<production-module>.xml`. Each contributing test check retains its own report for each selected production module. If two checks cover the same module, both scoped originals are copied deliberately. The command does not merge XML, re-encode it, or synthesize aggregate counters.
+
+Original bytes and digests are preserved, including JaCoCo's [instruction, branch, complexity, line, method and class counters](https://www.jacoco.org/jacoco/trunk/doc/counters.html). These are full producer reports, rather than the normalized line-only output used by Kvik's thresholds or Sonar conversion. The metadata records `format: "jacoco-xml"` and an empty `conversionLosses` list.
+
+For this format, `complete` means all requested original XML files are available. Unknown or incomplete normalized line coverage does not prevent copying available originals; the source report's incomplete, failed or cancelled status is still preserved. Missing expected contributors on the selected target block export even when selecting fewer modules. A missing selected production root or original XML also yields no XML and an incomplete result; unsupported targets yield no XML and an unsupported result.
+
+All originals are verified against retained digests. Selected XML is bounded to 64 MiB in total. `report/export.json`, `graph.json`, stdout and exit codes follow the same contract as Sonar export. This is a local copy operation with no JDK, network, test execution or service publication.
