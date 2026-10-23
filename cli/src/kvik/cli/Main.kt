@@ -29,7 +29,7 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, resolve, check-lock, build, test, test-report, test-aggregate, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, help
+            Commands: runtime-info, inspect, resolve, check-lock, build, test, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
@@ -54,6 +54,7 @@ private fun command(args: Array<String>) {
             Coverage: test --coverage --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
             Coverage threshold: coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY
             Test aggregation: test-aggregate --run PATH ... [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--format json|junit-xml] --output NEW_DIRECTORY
+            GitHub Checks: test-publish --run PATH ... --repository OWNER/REPO --sha SHA [--expect CHECK ...] [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY
             Coverage export: coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY
             Coverage aggregation: coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
@@ -92,6 +93,7 @@ private fun command(args: Array<String>) {
         "test-report" -> println(testReportCommand(args.drop(1)).canonical())
         "coverage-report" -> println(coverageReportCommand(args.drop(1)).canonical())
         "coverage-check" -> exitProcess(coverageCheckCommand(args.drop(1)).code)
+        "test-publish" -> exitProcess(testPublishCommand(args.drop(1)).code)
         "test-aggregate" -> exitProcess(testAggregateCommand(args.drop(1)).code)
         "coverage-export" -> exitProcess(coverageExportCommand(args.drop(1)).code)
         "coverage-aggregate" -> exitProcess(coverageAggregateCommand(args.drop(1)).code)
