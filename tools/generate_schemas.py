@@ -369,6 +369,22 @@ DEFS["testAggregateGraph"] = versioned({"scope": ref("testAggregationScope"),
     "runs": array(object_({"runId": NONEMPTY, "verification": ref("digest")}), minItems=1, maxItems=100, uniqueItems=True),
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+DEFS["githubCheckPublication"] = versioned({
+    "kind": {"const": "github-check-publication"}, "outputDirectory": NONEMPTY,
+    "sourceStatus": REPORT_STATUS, "outcome": enum("published", "rejected", "unknown"),
+    "httpStatus": nullable({"type": "integer", "minimum": 1, "maximum": 2147483647}),
+    "checkRunId": nullable({"type": "integer", "minimum": 1, "maximum": 9223372036854775807}),
+    "request": ref("digest"), "report": ref("digest"),
+    "repository": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,99}/(?!\.{1,2}(?![\s\S]))[A-Za-z0-9_.-]{1,100}(?![\s\S])"},
+    "headSha": {"type": "string", "pattern": r"^[0-9a-f]{40}(?![\s\S])"},
+})
+DEFS["githubCheckPublication"]["allOf"] = [
+    {"if": {"properties": {"outcome": {"const": "published"}}},
+     "then": {"properties": {"httpStatus": {"const": 201}, "checkRunId": {"type": "integer"}}},
+     "else": {"properties": {"checkRunId": {"type": "null"}}}},
+    {"if": {"properties": {"outcome": {"const": "rejected"}}},
+     "then": {"properties": {"httpStatus": {"type": "integer", "minimum": 400, "maximum": 499}}}},
+]
 # Coverage schemas describe the bounded wire format; Kotlin parsers additionally validate
 # cross-field source/class ownership, consecutive lines, manifest paths and derived totals/status.
 COVERAGE_ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"}

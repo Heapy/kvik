@@ -4773,6 +4773,134 @@
       ],
       "additionalProperties": false
     },
+    "githubCheckPublication": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "github-check-publication"
+        },
+        "outputDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sourceStatus": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "published",
+            "rejected",
+            "unknown"
+          ]
+        },
+        "httpStatus": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checkRunId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request": {
+          "$ref": "#/$defs/digest"
+        },
+        "report": {
+          "$ref": "#/$defs/digest"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,99}/(?!\\.{1,2}(?![\\s\\S]))[A-Za-z0-9_.-]{1,100}(?![\\s\\S])"
+        },
+        "headSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "outputDirectory",
+        "sourceStatus",
+        "outcome",
+        "httpStatus",
+        "checkRunId",
+        "request",
+        "report",
+        "repository",
+        "headSha"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "published"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "httpStatus": {
+                "const": 201
+              },
+              "checkRunId": {
+                "type": "integer"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "checkRunId": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "rejected"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "httpStatus": {
+                "type": "integer",
+                "minimum": 400,
+                "maximum": 499
+              }
+            }
+          }
+        }
+      ]
+    },
     "coverageSource": {
       "type": "object",
       "properties": {

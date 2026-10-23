@@ -21,7 +21,7 @@ JUnit XML uses a separate case for each known attempt so an earlier failure rema
 
 The initial XML consumer contract is [GitLab unit test reports](https://docs.gitlab.com/ci/testing/unit_test_reports/). Publication is separate: this command creates local files and requires no service credentials.
 
-[JVM line coverage](coverage.md) is captured separately with `test --coverage`. Use `coverage-check` to evaluate a retained coverage report against a line threshold. Use `coverage-aggregate` for compatible coverage reports with an explicit expected-check matrix. Service publication remains separate work in PLAN.md.
+[JVM line coverage](coverage.md) is captured separately with `test --coverage`. Use `coverage-check` to evaluate a retained coverage report against a line threshold. Use `coverage-aggregate` for compatible coverage reports with an explicit expected-check matrix. GitHub Checks publication below sends test summaries; it does not publish coverage.
 
 ## Aggregate retained test runs
 
@@ -46,3 +46,26 @@ JUnit XML preserves observed attempts and includes infrastructure errors for mis
 Aggregation reads retained run data locally without loading projects, starting a JDK or rerunning tests. It does not verify today's source state or publish results. Valid negative results are saved. Exit codes follow aggregate status: 0 passed, 1 failed, 3 incomplete and 130 cancelled; invalid command arguments use 2. Invalid or incompatible retained inputs return 3 without publishing an output directory.
 
 JSON definitions in `schemas/v1/contracts.json` are `testAggregationScope`, `testReportContribution`, `testAggregate`, `testAggregateExport` (stdout), and `testAggregateGraph` (`graph.json`).
+
+## Publish a GitHub Check
+
+Publish retained test results without rerunning tests:
+
+```sh
+# Supply GITHUB_TOKEN through your CI secret environment.
+kvik test-publish --run /path/to/retained-run \
+  --repository owner/repository --sha 0123456789abcdef0123456789abcdef01234567 \
+  --output /path/to/new-publication-attempt
+```
+
+The default check name is `Kvik tests`; change it with `--name`. A single run defaults to its requested test checks. For multiple `--run` paths, provide the expected matrix with repeatable `--expect MODULE:TARGET:test`, using the same compatibility and missing-check rules as `test-aggregate`. The supplied full 40-character SHA is the destination commit. The caller must establish that this commit corresponds to the retained input snapshot; Kvik does not infer that relationship from Git.
+
+The command calls GitHub's [Create a check run API](https://docs.github.com/en/rest/checks/runs#create-a-check-run), using API version `2026-03-10`. Supply an accepted token with repository **Checks: write** permission in `GITHUB_TOKEN`, or select another environment variable with `--token-env`. The token is transport-only and is not saved in the request or action metadata. The default API is `https://api.github.com`; `--api-url` accepts an HTTPS origin with an optional `/api/v3` suffix for GitHub Enterprise. Loopback HTTP at `http://127.0.0.1:PORT` is available for local testing. A custom API receives the token, so select that endpoint deliberately.
+
+The check is completed with conclusion `success`, `failure`, `action_required` or `cancelled` for passed, failed, incomplete or cancelled source results respectively. Its summary includes unique test counts, attempts, missing checks and provenance. This first publication format sends test summaries, not individual code annotations or coverage data.
+
+Publication uses a `publish` action with cache policy `never`. Before sending HTTP, Kvik saves `aggregate.json`, `request.json`, `action.json`, `intent.json` and copied run records under `runs/<runId>/`. The final `outcome/result.json` and stdout use the `githubCheckPublication` schema in `schemas/v1/contracts.json`; both include the output directory, source status, publication outcome, HTTP status when known, remote check ID when confirmed, and request/report digests.
+
+Exit 0 means the check was **published**, even when the tests failed. Exit 3 means `rejected` or `unknown`; cancellation uses 130. The check's conclusion and `sourceStatus` carry the test outcome. A successful HTTP response is accepted only when its check identity and fields match the request.
+
+There is no automatic POST retry. A transport failure, ambiguous response, or attempt directory containing `intent.json` without a final outcome may mean GitHub already created the check. Inspect the remote checks before retrying. Failed uploads preserve the aggregate and copied runs; use those retained run directories with a new `--output` directory for another attempt. This performs another publication without executing tests, and may create another check.
