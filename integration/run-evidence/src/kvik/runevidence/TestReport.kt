@@ -107,10 +107,21 @@ private fun attemptCounts(tests: List<TestResult>): TestAttemptCounts {
 /** GitLab-compatible JUnit projection: globally unique case names and testcase-level logs.
  * No file access, wall-clock duration invention, or conversion of an incomplete run into success.
  */
-fun junitXml(report: TestReport): String = buildString {
+fun junitXml(report: TestReport): String = renderJUnit(report.scopes) { visibleFailure ->
+    if (report.freshnessAtCompletion != Freshness.CURRENT || (report.status != VerificationStatus.PASSED && !visibleFailure))
+        listOf(JUnitRetainedFailure("retained-verification", retainedJUnitMessage(report))) else emptyList()
+}
+
+internal data class JUnitRetainedFailure(val name: String, val message: String)
+internal fun retainedJUnitMessage(report: TestReport): String =
+    "Source verification ${report.sourceVerification.hash}: ${report.status.name.lowercase()}, freshness at completion ${report.freshnessAtCompletion.name.lowercase()}.\n" +
+        report.diagnostics.joinToString("\n") { "${it.code}: ${it.message}" } + "\n" +
+        report.actionDiagnostics.joinToString("\n") { "${it.actionId}: ${it.diagnostic ?: it.status.name.lowercase()}" }
+
+internal fun renderJUnit(scopes: List<TestReportScope>, retainedFailures: (Boolean) -> List<JUnitRetainedFailure>): String = buildString {
     append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites>\n")
     var visibleFailure = false
-    for (scope in report.scopes) {
+    for (scope in scopes) {
         append("  <testsuite name=\"").append(xml(scope.check)).append("\">\n")
         scope.tests.forEachIndexed { index, test ->
             val attempts = test.details?.attempts
@@ -150,10 +161,9 @@ fun junitXml(report: TestReport): String = buildString {
         }
         append("  </testsuite>\n")
     }
-    if (report.freshnessAtCompletion != Freshness.CURRENT || (report.status != VerificationStatus.PASSED && !visibleFailure)) {
-        append("  <testsuite name=\"retained-verification\">\n")
-        infrastructureCase("retained-verification:infrastructure", "Source verification ${report.sourceVerification.hash}: ${report.status.name.lowercase()}, freshness at completion ${report.freshnessAtCompletion.name.lowercase()}.\n" +
-            report.diagnostics.joinToString("\n") { "${it.code}: ${it.message}" } + "\n" + report.actionDiagnostics.joinToString("\n") { "${it.actionId}: ${it.diagnostic ?: it.status.name.lowercase()}" })
+    for (failure in retainedFailures(visibleFailure)) {
+        append("  <testsuite name=\"").append(xml(failure.name)).append("\">\n")
+        infrastructureCase("${failure.name}:infrastructure", failure.message)
         append("  </testsuite>\n")
     }
     append("</testsuites>\n")
