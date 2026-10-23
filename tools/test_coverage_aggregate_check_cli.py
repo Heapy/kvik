@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -46,6 +47,7 @@ def main():
     original = snapshot(paths)
     original_runs = sorted(str(path) for path in source_case.glob('*/runs/*/verification.json'))
     schema = json.loads((args.schema_root/'schemas/v1/contracts.json').read_text()) if args.schema_root else None
+    environment = dict(os.environ, PATH='/nonexistent', JAVA_HOME='/nonexistent', KONAN_HOME='/nonexistent')
 
     def validate(value, name):
         if schema:
@@ -58,15 +60,17 @@ def main():
                    *selection, '--output', str(destination)]
         (output/(label+'.command.json')).write_text(json.dumps(command))
         with (output/(label+'.stdout.json')).open('wb') as stdout, (output/(label+'.stderr.log')).open('wb') as stderr:
-            result = subprocess.run(command, stdout=stdout, stderr=stderr, timeout=120)
+            result = subprocess.run(command, env=environment, stdout=stdout, stderr=stderr, timeout=120)
         text = (output/(label+'.stdout.json')).read_text()
         error = (output/(label+'.stderr.log')).read_text()
         assert result.returncode == expected, (label, result.returncode, text, error)
         if refusal:
             assert not destination.exists(), (label, 'refused command published output')
-            assert error.strip(), (label, 'missing failure diagnostic')
+            response = json.loads(text)
+            diagnostic = response['diagnostic']
+            assert diagnostic['code'] and diagnostic['message'], (label, 'missing failure diagnostic')
             print('PASS '+label, flush=True)
-            return error
+            return diagnostic
         response = json.loads(text)
         validate(response, 'coverageThresholdExport')
         threshold = response['result']
@@ -126,8 +130,8 @@ def main():
     for label, selection in [('absent-target', ('--all-modules', '--target', 'absent')),
                              ('missing-target-selection', ('--all-modules',)),
                              ('absent-module', ('--module', 'absent', '--all-targets'))]:
-        error = invoke(label, selection=selection, expected=2, refusal=True)
-        assert 'KVIK_COVERAGE_CHECK_ARGUMENTS' in error
+        diagnostic = invoke(label, selection=selection, expected=2, refusal=True)
+        assert diagnostic['code'] == 'KVIK_COVERAGE_CHECK_ARGUMENTS'
     metric = invoke('unsupported-metric', metric='branch', expected=3)
     assert metric['status'] == 'incomplete' and metric['targets'][0]['outcome'] == 'unsupported'
     assert all(metric['targets'][0][name] is None for name in ('covered', 'executable', 'unknown'))
@@ -140,8 +144,9 @@ def main():
     assert execution_data.is_file()
     execution_data.unlink()
     execution_data.write_bytes(b'corrupt copied original')
-    error = invoke('corrupt-original', report=corrupted/'aggregate.json', expected=3, refusal=True)
-    assert 'KVIK_COVERAGE_CHECK_FAILED' in error and ('differs' in error or 'digest' in error)
+    diagnostic = invoke('corrupt-original', report=corrupted/'aggregate.json', expected=3, refusal=True)
+    assert diagnostic['code'] == 'KVIK_COVERAGE_CHECK_FAILED'
+    assert 'differs' in diagnostic['message'] or 'digest' in diagnostic['message']
     assert snapshot(paths) == original, 'Thresholds modified original source/effect/report bytes or mtimes'
     assert sorted(str(path) for path in source_case.glob('*/runs/*/verification.json')) == original_runs
     print('PASS aggregate thresholds: explicit scope, dedup, unknown/unsupported/refusal semantics; no test rerun ('+str(output)+')', flush=True)
