@@ -1,0 +1,10 @@
+CREATE TABLE Item (
+  id INTEGER NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+allItems:
+SELECT * FROM Item ORDER BY id;
+
+insertItem:
+INSERT INTO Item(id, name) VALUES (?, ?);
