@@ -4,7 +4,7 @@ import kotlin.test.*
 
 class LinuxTargetTest {
     @Test fun linuxSettingsAndPublicationRoundtripWithStrictTargetNames() {
-        val raw = """{"schemaVersion":1,"name":"linux","repositories":[],"modules":[{"id":"app",
+        val raw = """{"schemaVersion":1,"name":"linux","repositories":[{"id":"fixture","url":"https://example.test/maven"}],"modules":[{"id":"app",
             "sourceSets":[{"name":"main","directories":["src"],"resources":[],"dependsOn":[],"dependencies":[]},
             {"name":"test","directories":["test"],"resources":[],"dependsOn":["main"],"dependencies":[]}],
             "targets":[{"name":"linuxX64","main":"main","test":"test","compilerOptions":["-module-name=fixture:app"],
