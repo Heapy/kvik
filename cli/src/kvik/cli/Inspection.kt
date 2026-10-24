@@ -12,7 +12,7 @@ import platform.posix.*
 
 private data class Owner(val module: String, val sourceSet: String, val targets: List<String>)
 
-/** Read-only inspection of declared directories, including untracked files. */
+/** Read-only inspection of declared directories and manually tagged files, including untracked files. */
 fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy()): JsonValue {
     val project = readProject(projectPath)
     val root = project.root
@@ -25,7 +25,21 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
             else -> error("Unsupported symlink or special project input: $path")
         }
     }
-    return inspectConfiguration(project.configuration, project.name, policy) { directory ->
+    fun existingFile(path: LogicalPath): Boolean {
+        var current = root
+        val parts = path.value.split('/')
+        for ((index, part) in parts.withIndex()) {
+            current += "/$part"
+            val status = NativeFiles.info(current) ?: return false
+            require(NativeFiles.directory(status) || NativeFiles.regular(status)) {
+                "Unsupported symlink or special tagged file: ${path.value}"
+            }
+            if (index == parts.lastIndex) return NativeFiles.regular(status)
+            if (!NativeFiles.directory(status)) return false
+        }
+        return false
+    }
+    return inspectConfiguration(project.configuration, project.name, policy, ::existingFile) { directory ->
         // Reject links in every declared ancestor, including a link whose leaf is absent.
         var current = root
         var missing = false
@@ -52,7 +66,8 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
     val prefix = if (root.isEmpty()) "" else "$root/"
     val files = manifest.files.map { it.path.value }.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
     val directories = manifest.directories.map { it.value }.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
-    val inspected = inspectConfiguration(configuration, LogicalPath(fileName.value.substringAfterLast('/')), policy) { directory ->
+    val inspected = inspectConfiguration(configuration, LogicalPath(fileName.value.substringAfterLast('/')), policy,
+        existingFile = { it.value in files }, checkpoint = checkpoint) { directory ->
         checkpoint()
         var parent = ""
         for (part in directory.value.split('/')) {
@@ -66,6 +81,7 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
 }
 
 private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: LogicalPath, policy: ResolverPolicy,
+                                 existingFile: (LogicalPath) -> Boolean, checkpoint: () -> Unit = {},
                                  filesBelow: (LogicalPath) -> List<String>): JsonValue.Object {
     val owners = linkedMapOf<String, MutableList<Owner>>()
     val origins = linkedMapOf<String, JsonValue>()
@@ -84,7 +100,11 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             }
         }
     }
-    val tags = tagProjectFiles(configuration, fileName, null, owners.keys.map(::LogicalPath)).associateBy { it.path.value }
+    for (path in configuration.project.fileTags.keys) {
+        checkpoint()
+        if (existingFile(path)) owners.getOrPut(path.value) { mutableListOf() }
+    }
+    val tags = tagProjectFiles(configuration, fileName, null, owners.keys.map(::LogicalPath), checkpoint).associateBy { it.path.value }
     return obj(
         "schemaVersion" to CONTRACT_VERSION.json(), "project" to configuration.document,
         "configuration" to effectiveConfiguration(configuration, policy).digest.toJson(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
@@ -96,6 +116,6 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             "targets" to entries.flatMap { it.targets }.distinct().sorted().map { it.json() }.json(),
             "tags" to tags.getValue(path).tags.sorted().map { it.json() }.json(),
         ) }.json(), "origins" to JsonValue.Object(origins),
-        "capabilities" to listOf("runtime-info", "project-inspection", "file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "verification").map { it.json() }.json(),
+        "capabilities" to listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "verification").map { it.json() }.json(),
     )
 }

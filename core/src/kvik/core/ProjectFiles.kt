@@ -8,6 +8,20 @@ private fun requireFileTag(tag: String) {
     require(FILE_TAG_PATTERN.matches(tag)) { "Invalid project file tag: $tag" }
 }
 
+/** Exact configuration-relative files; manual metadata cannot impersonate derived ownership. */
+internal fun validateManualFileTags(files: Map<LogicalPath, Set<String>>) {
+    require(files.size <= 4096) { "Manual file tags exceed 4096 paths" }
+    for ((path, tags) in files) {
+        require(tags.size in 1..64) { "Manual file tags require 1 to 64 tags per path: ${path.value}" }
+        for (tag in tags) {
+            requireFileTag(tag)
+            require(tag.startsWith("manual:") && tag.length <= 128) {
+                "Manual file tags must use the manual: namespace and fit 128 characters: $tag"
+            }
+        }
+    }
+}
+
 /** Declarative ownership and purpose; tags do not grant access to the file. */
 data class TaggedProjectFile(val path: LogicalPath, val tags: Set<String>) {
     init {
@@ -97,7 +111,9 @@ fun tagProjectFiles(
             descendants[path.value.substring(0, slash)]?.let(tags::addAll)
             slash = path.value.indexOf('/', slash + 1)
         }
-        TaggedProjectFile(path, tags.ifEmpty { setOf("kind:unclassified") })
+        if (tags.isEmpty()) tags += "kind:unclassified"
+        tags.addAll(project.fileTags[path].orEmpty())
+        TaggedProjectFile(path, tags)
     }
 }
 

@@ -85,7 +85,12 @@ def main():
             source_set('commonTest', '00-tests', [long_name]),
             source_set('jvmTest', 'test', ['commonTest', 'jvmMain']),
         ], targets=[dict(name='jvm', main='jvmMain', test='jvmTest', compilerOptions=[],
-                         abi=dict(baseline='api/library.api'))], compilerPlugins=[])])
+                         abi=dict(baseline='api/library.api'))], compilerPlugins=[])], fileTags={
+            'notes.txt': ['manual:architecture'], 'common/Common.kt': ['manual:contract'],
+            'missing.md': ['manual:architecture'], 'common': ['manual:directory'],
+            'notes.txt/absent.md': ['manual:architecture']})
+        project_validator = jsonschema.Draft202012Validator({'$defs': schema['$defs'], '$ref': '#/$defs/project'})
+        project_validator.validate(config)
         files = {'sub/kvik.json': json.dumps(config), 'sub/locks/deps.json': '{}',
                  'sub/common/Common.kt': 'fun common() = "needle common"\n',
                  'sub/jvm/Main.kt': 'fun main() = println("needle main")\n',
@@ -107,15 +112,60 @@ def main():
         tags = {e['path']: set(e['tags']) for e in everything['files']}
         assert {'source-set:' + long_name, 'scope:production', 'target:jvm', 'kind:source'} <= tags['sub/common/Common.kt']
         assert 'scope:test' not in tags['sub/common/Common.kt']
-        assert tags['sub/notes.txt'] == {'kind:unclassified'}
+        assert tags['sub/notes.txt'] == {'kind:unclassified', 'manual:architecture'}
+        assert 'manual:contract' in tags['sub/common/Common.kt']
         assert 'api:public' in tags['sub/api/library.api']
         assert paths(export(base, 'all', '--tag', 'source-set:' + long_name, '--exclude-tag', 'kind:resource')) == {'sub/common/Common.kt'}
         export(base, 'production', '--pin', 'example:library:1', expected=2)
         export(base, 'production', '--role', 'tests', expected=2)
         inspection = command(runtime, ['inspect', *source_options(base)])
-        assert 'source-views' in inspection['capabilities']
+        assert {'source-views', 'manual-file-tags'} <= set(inspection['capabilities'])
         for entry in inspection['files']:
             assert set(entry['tags']) == tags['sub/' + entry['path']]
+        note = next(entry for entry in inspection['files'] if entry['path'] == 'notes.txt')
+        assert note['modules'] == note['sourceSets'] == note['targets'] == []
+        local = root / 'local'
+        for path, content in files.items():
+            target = local / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        local_inspection = command(runtime, ['inspect', '--project', local / 'sub/kvik.json'])
+        assert local_inspection['files'] == inspection['files']
+        assert local_inspection['configuration'] == inspection['configuration']
+        architecture = export(base, 'all', '--tag', 'manual:architecture')
+        assert paths(architecture) == {'sub/notes.txt'}
+        assert paths(export(base, 'all', '--tag', 'manual:directory')) == set()
+        assert paths(export(base, 'production', '--tag', 'manual:contract')) == {'sub/common/Common.kt'}
+        manual_view = save(architecture, 'architecture')
+        assert {e['path'] for e in store('tree', 'fixture', '--rev', base, '--view', manual_view)['entries']} == paths(architecture)
+        assert store('read', 'fixture', 'sub/notes.txt', '--rev', base, '--view', manual_view)['content'] == files['sub/notes.txt']
+        assert [hit['path'] for hit in store('search', 'fixture', 'unclassified', '--rev', base, '--view', manual_view)['hits']] == ['sub/notes.txt']
+        store('read', 'fixture', 'sub/common/Common.kt', '--rev', base, '--view', manual_view, expected=1)
+        assert 'sub/notes.txt' not in paths(export(base, 'all', '--exclude-tag', 'manual:architecture'))
+
+        # Retagging a separate candidate must not alter the old view or old configuration.
+        retagged = {**config, 'fileTags': {'common/Common.kt': ['manual:architecture']}}
+        candidate = tx(base, {'sub/kvik.json': json.dumps(retagged)})
+        assert paths(export(candidate, 'all', '--tag', 'manual:architecture')) == {'sub/common/Common.kt'}
+        assert export(base, 'all', '--tag', 'manual:architecture') == architecture
+        store('tree', 'fixture', '--rev', candidate, '--view', manual_view, expected=1)
+
+        for bad_tag in ('scope:production', 'manual:', 'manual:architecture\n'):
+            invalid_config = {**config, 'fileTags': {'notes.txt': [bad_tag]}}
+            assert not project_validator.is_valid(invalid_config)
+            bad_revision = tx(base, {'sub/kvik.json': json.dumps(invalid_config)})
+            export(bad_revision, 'all', expected=2)
+
+        # Local inspection never follows manually declared symlinks, including ancestor links.
+        local_notes = local / 'sub/notes.txt'
+        local_notes.unlink()
+        local_notes.symlink_to(local / 'outside.txt')
+        command(runtime, ['inspect', '--project', local / 'sub/kvik.json'], expected=2)
+        local_notes.unlink()
+        local_notes.write_text(files['sub/notes.txt'])
+        (local / 'sub/linked').symlink_to(local, target_is_directory=True)
+        (local / 'sub/kvik.json').write_text(json.dumps({**config, 'fileTags': {'linked/missing.md': ['manual:contract']}}))
+        command(runtime, ['inspect', '--project', local / 'sub/kvik.json'], expected=2)
 
         view = save(production, 'production')
         tree = store('tree', 'fixture', '--rev', base, '--view', view)
@@ -180,6 +230,7 @@ def main():
         home.rename(hidden_home)
         try:
             assert export(base, 'production', '--offline') == production
+            assert export(base, 'all', '--tag', 'manual:architecture', '--offline') == architecture
             export('main', 'production', '--offline', expected=2)
             assert not home.exists()
             assert cache_state() == before

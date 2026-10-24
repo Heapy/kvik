@@ -144,8 +144,10 @@ data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targe
 data class ProjectSpec(val name: String, val repositories: List<Repository>, val modules: List<ModuleSpec>,
                        val dependencyCatalog: Map<String, Coordinate> = emptyMap(),
                        val dependencyProfiles: Map<String, ScriptDependencyProfile> = emptyMap(),
-                       val scripts: Map<String, ScriptSpec> = emptyMap()) {
+                       val scripts: Map<String, ScriptSpec> = emptyMap(),
+                       val fileTags: Map<LogicalPath, Set<String>> = emptyMap()) {
     init {
+        validateManualFileTags(fileTags)
         val coordinates = modules.flatMap { module ->
             module.publication?.let { publication ->
                 (if (module.targets.size > 1) listOf(publication.coordinate) else emptyList()) + module.targets.map { publication.coordinateFor(it.name) }

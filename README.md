@@ -197,6 +197,25 @@ documentation and ABI-baseline tags follow explicit declarations. Tags do not
 infer generated status or declaration visibility from filenames; generated build
 outputs remain artifacts outside the source revision.
 
+Add exact configuration-relative file paths to `fileTags` in `kvik.json` to layer
+manual classifications on top of derived tags:
+
+```json
+"fileTags": {
+  "docs/architecture.md": ["manual:architecture"],
+  "schemas/v1/contracts.json": ["manual:contract"]
+}
+```
+
+Use `view --role all --tag manual:architecture` with the source options above to
+select those files. `inspect` includes existing manually tagged files even outside
+source/resource directories, with empty ownership lists when no source set owns
+them. Paths are literal files, not globs or recursive directory declarations;
+absent files and directory entries are omitted. The metadata remains part of the
+selected revision and works with offline views. Manual tags must use the `manual:`
+namespace (up to 128 characters), with 1–64 distinct tags per path and at most 4096
+paths. They cannot replace derived tags or add compiler inputs.
+
 A view is a display projection. `tx --view` validates the base revision and still
 applies to the full tree. `merge --view` validates the target revision, merges full
 trees and reports every conflict, with `hiddenConflicts` identifying paths outside

@@ -17,7 +17,7 @@ private fun <T> List<T>.unique(label: String): List<T> = also {
 
 /** Reject unsupported authoring features rather than silently dropping their dependencies. */
 fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
-    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyCatalog", "dependencyProfiles", "scripts"))
+    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags"))
     fields.requireVersion()
     val repositories = fields.getValue("repositories").arrayValue().map { value ->
         val entry = value.fields(setOf("id", "url"))
@@ -29,7 +29,10 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
     modules.map { it.id }.unique("module id")
     val project = ProjectSpec(fields.getValue("name").identifier(), repositories, modules,
         parseScriptCatalog(fields["dependencyCatalog"]), parseScriptProfiles(fields["dependencyProfiles"]),
-        parseNamedScripts(fields["scripts"]))
+        parseNamedScripts(fields["scripts"]),
+        fields["fileTags"]?.objectValue()?.map { (path, tags) ->
+            LogicalPath(path) to tags.strings().unique("manual file tag for $path").toSet()
+        }?.toMap() ?: emptyMap())
     val byId = modules.associateBy { it.id }
     val dependencies = modules.associate { module ->
         module.id to (module.sourceSets.flatMap { sourceSet -> sourceSet.dependencies.filterIsInstance<Dependency.Module>().map { it.module } } +

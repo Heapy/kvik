@@ -1725,6 +1725,27 @@
             "maxLength": 128,
             "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
           }
+        },
+        "fileTags": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^manual:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*(?![\\s\\S])"
+            },
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": true
+          },
+          "maxProperties": 4096,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "description": "Manual tags on exact configuration-relative files, additive to derived tags. Absent files and directories are omitted; no glob or recursive matching."
         }
       },
       "required": [

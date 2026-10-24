@@ -199,8 +199,13 @@ def script_mapping(value, maximum):
     return {**mapping(value), "maxProperties": maximum, "propertyNames": SCRIPT_ID}
 SCRIPT_COLLECTIONS = {"dependencyCatalog": script_mapping(SCRIPT_COORDINATE, 1024),
     "dependencyProfiles": script_mapping(ref("scriptDependencyProfile"), 256)}
+MANUAL_FILE_TAGS = {**mapping(array({"type": "string", "maxLength": 128,
+    "pattern": r"^manual:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*(?![\s\S])"}, minItems=1, maxItems=64, uniqueItems=True)),
+    "maxProperties": 4096, "propertyNames": PATH,
+    "description": "Manual tags on exact configuration-relative files, additive to derived tags. Absent files and directories are omitted; no glob or recursive matching."}
 DEFS["project"] = versioned({"name": ID, "repositories": array(ref("repository"), minItems=1), "modules": array(ref("module")),
-    **SCRIPT_COLLECTIONS, "scripts": script_mapping(ref("script"), 256)}, optional=("dependencyCatalog", "dependencyProfiles", "scripts"))
+    **SCRIPT_COLLECTIONS, "scripts": script_mapping(ref("script"), 256), "fileTags": MANUAL_FILE_TAGS},
+    optional=("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags"))
 DEFS["standaloneScript"] = versioned({"name": SCRIPT_ID, "repositories": array(ref("repository"), minItems=1),
     **SCRIPT_COLLECTIONS, "script": ref("script")}, optional=("dependencyCatalog", "dependencyProfiles"))
 DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins, and the CLI must bind the selected .kt to an explicit source file."

@@ -23,8 +23,10 @@ class ProjectFilesTest {
     ), emptyList())
 
     private fun configuration(modules: List<ModuleSpec> = listOf(module), scripts: Map<String, ScriptSpec> = emptyMap(),
-                              profiles: Map<String, ScriptDependencyProfile> = emptyMap()) =
-        ProjectConfiguration(ProjectSpec("sample", emptyList(), modules, dependencyProfiles = profiles, scripts = scripts), obj())
+                              profiles: Map<String, ScriptDependencyProfile> = emptyMap(),
+                              fileTags: Map<LogicalPath, Set<String>> = emptyMap()) =
+        ProjectConfiguration(ProjectSpec("sample", emptyList(), modules, dependencyProfiles = profiles, scripts = scripts,
+            fileTags = fileTags), obj())
 
     private fun tagged(paths: List<String>, config: ProjectConfiguration = configuration()) =
         tagProjectFiles(config, configurationPath, lockPath, paths.map(::LogicalPath))
@@ -51,6 +53,59 @@ class ProjectFilesTest {
         assertTrue("source-set:$name" in file.tags)
         assertEquals(file, TaggedProjectFile.fromJson(file.toJson()))
         assertTrue(FileTagPredicate(all = setOf("source-set:$name")).matches(file.tags))
+    }
+
+    @Test fun manualTagsAreAdditiveExactAndDoNotInventFilesOrDerivedOwnership() {
+        val config = configuration(fileTags = mapOf(
+            LogicalPath("src/common/Public.kt") to setOf("manual:contract"),
+            LogicalPath("docs/design.md") to setOf("manual:architecture", "manual:contract"),
+            LogicalPath("docs") to setOf("manual:directory"),
+            LogicalPath("absent.md") to setOf("manual:absent"),
+            configurationPath to setOf("manual:architecture"),
+        ))
+        val paths = listOf("src/common/Public.kt", "docs/design.md", "docs/other.md", "docs/design.md.bak", "project.json")
+        val before = tagged(paths).associate { it.path to it.tags }
+        val files = tagged(paths.reversed(), config)
+        assertEquals(paths.sorted(), files.map { it.path.value })
+        for (file in files) assertEquals(before.getValue(file.path) + config.project.fileTags[file.path].orEmpty(), file.tags)
+        assertEquals(setOf("docs/design.md", "project.json"), files.filter {
+            roleFilePredicate("all", all = setOf("manual:architecture")).matches(it.tags)
+        }.map { it.path.value }.toSet())
+        assertEquals(setOf("project.json"), files.filter {
+            roleFilePredicate("production", all = setOf("manual:architecture")).matches(it.tags)
+        }.map { it.path.value }.toSet())
+    }
+
+    private fun manualDocument(tags: JsonValue) = obj("schemaVersion" to 1.json(), "name" to "tags".json(),
+        "repositories" to listOf(obj("id" to "central".json(), "url" to "https://example.org/maven".json())).json(),
+        "modules" to emptyList<JsonValue>().json(), "fileTags" to tags)
+
+    @Test fun manualTagsRoundTripInConfigurationAndChangeRevisionMetadataDigest() {
+        val tags = obj("docs/design.md" to listOf("manual:architecture".json(), "manual:contract".json()).json())
+        val document = manualDocument(tags)
+        val parsed = parseProjectConfiguration(parseJson(document.canonical()))
+        assertEquals(mapOf(LogicalPath("docs/design.md") to setOf("manual:architecture", "manual:contract")), parsed.project.fileTags)
+        assertEquals(document, parsed.document)
+        assertNotEquals(parsed.digest, parseProjectConfiguration(manualDocument(obj())).digest)
+        assertEquals(emptyMap(), parseProjectConfiguration(JsonValue.Object(document.values - "fileTags")).project.fileTags)
+    }
+
+    @Test fun manualTagsRejectInvalidNamespacesDuplicatesPathsAndBounds() {
+        for (tag in listOf("architecture", "scope:production", "kind:source", "module:library", "api:public",
+            "manual:", "Manual:architecture", "manual:architecture\n", "manual:a/b", "manual:" + "a".repeat(122))) {
+            assertFails(tag) { configuration(fileTags = mapOf(LogicalPath("file") to setOf(tag))) }
+            assertFails(tag) { parseProjectConfiguration(manualDocument(obj("file" to listOf(tag.json()).json()))) }
+        }
+        configuration(fileTags = mapOf(LogicalPath("file") to setOf("manual:" + "a".repeat(121))))
+        for (path in listOf("", "../outside", "/absolute", "docs//file", "docs/./file", "docs/"))
+            assertFails(path) { parseProjectConfiguration(manualDocument(obj(path to listOf("manual:contract".json()).json()))) }
+        for (tags in listOf(emptyList(), listOf("manual:a", "manual:a"), (0..64).map { "manual:$it" }))
+            assertFails { parseProjectConfiguration(manualDocument(obj("file" to tags.map { it.json() }.json()))) }
+        for (tags in listOf(JsonValue.Null, "manual:a".json(), emptyList<JsonValue>().json()))
+            assertFails { parseProjectConfiguration(manualDocument(tags)) }
+        val limit = (0 until 4096).associate { LogicalPath("file$it") to setOf("manual:a") }
+        configuration(fileTags = limit)
+        assertFails { configuration(fileTags = limit + (LogicalPath("extra") to setOf("manual:a"))) }
     }
 
     @Test fun overlappingOwnersNestedRootsAndKindsAccumulateWithoutPrefixAliases() {
