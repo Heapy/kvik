@@ -399,7 +399,7 @@ class ResolutionTest {
         for (dependency in listOf(
             """{"group":"g","module":"b","version":{"requires":"1.+"}}""",
             """{"group":"g","module":"b","version":{"strictly":"1.0"}}""",
-            """{"group":"g","module":"b","version":{"requires":"1.0"},"excludes":[]}""",
+            """{"group":"g","module":"b","version":{"requires":"1.0"},"excludes":[{"group":"g*","module":"bad"}]}""",
         )) assertFailsWith<IllegalArgumentException> { resolve(module(example, variant(dependencies = ",\"dependencies\":[$dependency]"))) }
         assertFailsWith<IllegalArgumentException> { resolve(module(example, variant(extra = """, "available-at":{"group":"evil","module":"a","version":"1.0","url":"https://evil/a.module"}"""))) }
         assertFailsWith<IllegalArgumentException> { resolve(module(example, variant(extra = """, "available-at":{"group":"example","module":"a","version":"1.0","url":"../../a/1.0/a-1.0.module"}"""))) }
