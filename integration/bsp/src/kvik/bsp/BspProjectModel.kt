@@ -65,10 +65,57 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     /** Only adapters with an explicit source-output contract may contribute generated sources. */
     fun generatedSourceTarget(actionId: String): BspTarget? {
         val parts = actionId.split(':')
-        if (parts.size != 3 || parts[2] != "ksp-test") return null
-        val compilation = byUri[targetUri(parts[0], parts[1], "test")] ?: return null
-        if (compilation.target.nativeTestSettings == null || NativeTarget.find(parts[1]) == null) return null
-        return BspTarget(compilation.uri, parts[0], parts[1], "test")
+        if (parts.size != 3) return null
+        val scope = when (parts[2]) {
+            "ksp-test" -> "test"
+            "sqldelight" -> "main"
+            else -> return null
+        }
+        val compilation = byUri[targetUri(parts[0], parts[1], scope)] ?: return null
+        when (parts[2]) {
+            "ksp-test" -> if (compilation.target.nativeTestSettings == null || NativeTarget.find(parts[1]) == null) return null
+            "sqldelight" -> {
+                val settings = compilation.module.sqlDelight ?: return null
+                if (parts[1] != "jvm" || compilation.sourceSets.none { it.name == settings.sourceSet }) return null
+            }
+        }
+        return BspTarget(compilation.uri, parts[0], parts[1], scope)
+    }
+
+    /** Generator owners in the requested build's prerequisite graph, including host compiler plugins.
+     * Classpath queries build their producers, but do not compile the requested compilation itself. */
+    fun generatedSourceOwners(target: BspTarget, runtime: Boolean = false, classpath: Boolean = false): List<BspTarget> {
+        require(select(listOf(target.uri)).single() == target) { "Generated-source owner differs from imported target" }
+        require(!classpath || target.target == "jvm" && !runtime) { "Classpath preparation requires JVM compile dependencies" }
+        val project = inspection.project.project
+        val visited = mutableSetOf<Pair<String, Boolean>>()
+        val owners = linkedSetOf<BspTarget>()
+        fun visit(module: String, platform: String, scope: String, includeRuntime: Boolean) {
+            val compilation = byUri.getValue(targetUri(module, platform, scope))
+            if (!visited.add(compilation.uri to includeRuntime)) return
+            val generator = if (scope == "main") "sqldelight" else "ksp-test"
+            generatedSourceTarget("$module:$platform:$generator")?.let { owners += it }
+            dependencyClosure(project, module, platform, scope,
+                if (includeRuntime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE).modules.forEach {
+                visit(it, platform, "main", false)
+            }
+            if (scope == "test") visit(module, platform, "main", false)
+            compilation.module.compilerPlugins.filter {
+                it.module != null && platform in it.targets && scope in it.scopes
+            }.forEach { visit(it.module!!, "jvm", "main", true) }
+        }
+        if (classpath) {
+            dependencyClosure(project, target.module, target.target, target.compilation, DependencyUsage.COMPILE).modules.forEach {
+                visit(it, target.target, "main", false)
+            }
+            if (target.compilation == "test") visit(target.module, target.target, "main", false)
+        } else {
+            val compilation = byUri.getValue(target.uri)
+            visit(target.module, target.target, target.compilation, runtime ||
+                target.compilation == "test" && target.target != "jvm" ||
+                target.compilation == "main" && compilation.target.nativeFramework != null)
+        }
+        return owners.toList()
     }
 
     fun replaceGeneratedSources(target: BspTarget, sources: List<BspGeneratedSources>): Boolean {
