@@ -106,13 +106,22 @@ object AbiWorker {
             var expanded = 0L
             val names = mutableSetOf<String>()
             ZipFile(artifact.toFile()).use { zip ->
-                val manifestEntry = requireNotNull(zip.getEntry("default/manifest")) { "Missing Native KLIB manifest" }
+                val manifestEntry = requireNotNull(zip.getEntry("default/manifest")) { "Missing KLIB manifest" }
                 val manifestBytes = zip.getInputStream(manifestEntry).use { it.readNBytes(1024 * 1024 + 1) }
                 require(manifestBytes.size <= 1024 * 1024) { "KLIB manifest exceeds 1 MiB" }
                 val properties = java.util.Properties().apply { manifestBytes.inputStream().use(::load) }
-                require(properties.getProperty("native_targets") == NativeTarget.require(request.extraction.target).compilerName) {
-                    "KLIB target differs from requested ABI target"
+                val target = request.extraction.target
+                val native = NativeTarget.find(target)
+                val matches = if (native != null) {
+                    properties.getProperty("builtins_platform") == "NATIVE" &&
+                        properties.getProperty("native_targets") == native.compilerName && properties.getProperty("wasm_targets") == null
+                } else when (KotlinJsTarget.require(target)) {
+                    KotlinJsTarget.JS -> properties.getProperty("builtins_platform") == "JS" &&
+                        properties.getProperty("native_targets") == null && properties.getProperty("wasm_targets") == null
+                    KotlinJsTarget.WASM_JS -> properties.getProperty("builtins_platform") == "WASM" &&
+                        properties.getProperty("wasm_targets") == "wasm-js" && properties.getProperty("native_targets") == null
                 }
+                require(matches) { "KLIB platform/target differs from requested ABI target" }
                 zip.entries().asSequence().forEach { entry ->
                 require(names.size < 100_000 && names.add(entry.name)) { "Invalid KLIB entry count or duplicate" }
                 LogicalPath(entry.name.removeSuffix("/"))
