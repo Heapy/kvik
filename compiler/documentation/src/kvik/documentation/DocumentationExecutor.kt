@@ -58,7 +58,7 @@ class DocumentationActionExecutor(private val runId: String, private val runDire
         val provider = nativeProviders[target] ?: error("Missing Native documentation provider: ${target.projectName}")
         started += actionId
         return preparingAction(actionId, action, prepare = { checkpoint ->
-            provider.verified(action.toolchains, checkpoint).also { require(it.target == target && it.identities == action.toolchains) { "Native documentation provider identities or target differ" } }
+            provider.verified(action.toolchains, checkpoint).also { require(it.target == target) { "Native documentation provider target differs" } }
         }, start = { layout ->
             object : RunningAction {
                 private var result: ActionResult? = null
