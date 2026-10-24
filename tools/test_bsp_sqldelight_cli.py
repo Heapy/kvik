@@ -65,7 +65,12 @@ def main():
         dict(id='other', sourceSets=[source('main', 'other/src', [stdlib])],
             targets=[dict(name='jvm', main='main', test=None, compilerOptions=[])], compilerPlugins=[])])
     project = write('kvik.json', json.dumps(config))
-    marker_text = 'package fixture\nclass Marker\n'
+    marker_text = f'''package fixture
+// Isolate the compiler warning from previous fixture caches: {root.name}
+class Marker
+@Deprecated("BSP SQL fixture warning") fun oldMarker() = Marker()
+fun warningUse() = oldMarker()
+'''
     marker = write('data/src/Marker.kt', marker_text)
     write('data/test/MarkerTest.kt', 'package fixture\nclass MarkerTest { fun value() = Marker() }\n')
     write('consumer/src/Consumer.kt', 'package consumer\nfun marker() = fixture.Marker()\n')
@@ -144,9 +149,52 @@ SELECT name FROM person ORDER BY id;
             assert set(observed) == set(outputs), (observed, outputs)
             return observed
 
+        latest_run = {}
+
         def compile_target(target=main_target, status=1):
             result = client.request('buildTarget/compile', dict(targets=[target]), timeout=1200)
-            return retained(result, [target], status=status, test_count=0)[0][1]
+            directory, record = retained(result, [target], status=status, test_count=0)[0]
+            latest_run['events'] = [json.loads(line) for line in (directory / 'events.jsonl').read_text().splitlines()]
+            return record
+
+        def effective_diagnostics(path, target=main_target):
+            diagnostics = []
+            for notification in client.notifications:
+                if notification['method'] != 'build/publishDiagnostics':
+                    continue
+                params = notification['params']
+                if params['buildTarget'] == target and params['textDocument']['uri'] == path.as_uri():
+                    assert params['reset'] is True, params
+                    diagnostics = params['diagnostics']
+            return diagnostics
+
+        def assert_sql_errors(path, since):
+            expected = []
+            for event in latest_run['events']:
+                if event['type'] != 'diagnostic':
+                    continue
+                value = event['payload']
+                if value.get('actionId') != PRODUCER or value.get('path') != path.relative_to(root).as_posix():
+                    continue
+                assert value['code'] == 'KVIK_SQLDELIGHT_COMPILATION', value
+                assert value['line'] >= 1 and value['column'] >= 1, value
+                position = dict(line=value['line'] - 1, character=value['column'] - 1)
+                expected.append(dict(range=dict(start=position, end=position), severity=1,
+                                     code=value['code'], source='kvik', message=value['message']))
+            assert expected, latest_run['events']
+            publications = [n['params'] for n in client.notifications[since:]
+                            if n['method'] == 'build/publishDiagnostics' and
+                            n['params']['textDocument']['uri'] == path.as_uri()]
+            assert publications and all(p['buildTarget'] == main_target and p['reset'] is True for p in publications), publications
+            assert effective_diagnostics(path) == expected, (effective_diagnostics(path), expected)
+            return expected
+
+        def assert_cleared(path, since):
+            assert effective_diagnostics(path) == [], effective_diagnostics(path)
+            assert any(n['method'] == 'build/publishDiagnostics' and
+                       n['params']['textDocument']['uri'] == path.as_uri() and
+                       n['params']['buildTarget'] == main_target and n['params']['reset'] is True and
+                       n['params']['diagnostics'] == [] for n in client.notifications[since:]), client.notifications[since:]
 
         def uris(files):
             return [entry[0] for entry in files.values()]
@@ -162,11 +210,14 @@ SELECT name FROM person ORDER BY id;
         cold = compile_target()
         assert next(a for a in cold['actions'] if a['actionId'] == PRODUCER)['status'] == 'executed'
         first = generated(cold)
+        kotlin_warnings = effective_diagnostics(marker)
+        assert any(d['severity'] == 2 and 'BSP SQL fixture warning' in d['message'] for d in kotlin_warnings), kotlin_warnings
         changed_since(seen)
         seen = len(client.notifications)
         warm = compile_target()
         assert warm['actions'] and all(a['status'] == 'local_hit' for a in warm['actions']), warm
         second = generated(warm)
+        assert effective_diagnostics(marker) == kotlin_warnings
         assert set(first) == set(second)
         assert all(first[path][0] != second[path][0] and first[path][2] == second[path][2] for path in first)
         assert_retained(first)
@@ -180,33 +231,70 @@ SELECT name FROM person ORDER BY id;
         statuses = {a['actionId']: a['status'] for a in failed['actions']}
         assert statuses[PRODUCER] == 'local_hit' and statuses['data:jvm:main'] == 'failed', statuses
         files = generated(failed)
+        kotlin_errors = effective_diagnostics(marker)
+        assert any(d['severity'] == 1 and 'missingBspSqlSymbol' in d['message'] for d in kotlin_errors), kotlin_errors
+        sql.write_text('\nCREATE TABL broken (\n')
+        seen = len(client.notifications)
+        compile_target(status=2)
+        assert_sql_errors(sql, seen)
+        assert effective_diagnostics(marker) == kotlin_errors, 'A failed generator cleared the blocked Kotlin compiler errors'
         marker.write_text(marker_text)
-        print('PASS successful SQL generation remains visible after downstream Kotlin failure', flush=True)
+        sql.write_text(sql_text)
+        seen = len(client.notifications)
+        recovered = compile_target()
+        assert next(a for a in recovered['actions'] if a['actionId'] == PRODUCER)['status'] == 'local_hit'
+        assert next(a for a in recovered['actions'] if a['actionId'] == 'data:jvm:main')['status'] == 'local_hit'
+        assert_cleared(sql, seen)
+        assert effective_diagnostics(marker) == kotlin_warnings
+        print('PASS SQL diagnostics have exact zero-based ranges; blocked Kotlin errors survive and cached recovery replays warnings', flush=True)
 
         # Both requests build data main as a prerequisite, although neither asks
         # BSP to compile that target directly. Old main mappings must disappear.
         for target in (test_target, consumer):
+            seen = len(client.notifications)
+            had_errors = bool(effective_diagnostics(sql))
             files = generated(compile_target(target))
+            if had_errors:
+                assert_cleared(sql, seen)
             sql.write_text('CREATE TABL broken (\n')
             seen = len(client.notifications)
             failure = compile_target(target, status=2)
             assert next(a for a in failure['actions'] if a['actionId'] == PRODUCER)['status'] == 'failed', failure
+            assert_sql_errors(sql, seen)
+            assert effective_diagnostics(marker) == kotlin_warnings
             assert_empty(uris(files))
             changed_since(seen)
             assert_retained(files)
             sql.write_text(sql_text)
         files = generated(compile_target(consumer))
+        assert effective_diagnostics(sql) == []
         print('PASS test and dependent compilation invalidate prerequisite generated source mappings', flush=True)
+
+        # Ownership uses configured SQL roots, including files created after import.
+        added = write('data/sql/fixture/database/Added.sq', '\n\nCREATE TABL added_broken (\n')
+        seen = len(client.notifications)
+        compile_target(test_target, status=2)
+        assert_sql_errors(added, seen)
+        assert effective_diagnostics(marker) == kotlin_warnings
+        added.unlink()
+        seen = len(client.notifications)
+        files = generated(compile_target(consumer))
+        assert_cleared(added, seen)
+        print('PASS SQL added after import is diagnosed and deleting the offending file clears its errors', flush=True)
 
         # Unrelated work must leave a valid mapping available.
         compile_target(other)
         assert generated(cold) == files
+        sql.write_text('CREATE TABL broken (\n')
+        seen = len(client.notifications)
+        compile_target(status=2)
+        assert_sql_errors(sql, seen)
         sql.unlink()
         seen = len(client.notifications)
         empty = compile_target(test_target)
         assert next(a for a in empty['actions'] if a['actionId'] == PRODUCER)['outputs']['files'] == []
         assert_empty(uris(files))
-        changed_since(seen)
+        assert_cleared(sql, seen)
         empty_warm = compile_target(consumer)
         assert next(a for a in empty_warm['actions'] if a['actionId'] == PRODUCER)['status'] == 'local_hit'
         assert_empty()
@@ -221,24 +309,57 @@ SELECT name FROM person ORDER BY id;
         files = generated(compile_target(test_target))
         # Force a fresh, large generation so acknowledgement cannot race with an
         # entirely cached build. Cancellation happens through the BSP request ID.
-        sql.write_text('\n'.join(f'CREATE TABLE cancellation_{number} (id INTEGER NOT NULL PRIMARY KEY);'
-                                 for number in range(3000)))
-        seen = len(client.notifications)
-        ident = client.begin('buildTarget/compile', dict(targets=[consumer], originId='cancel-sql-generation'))
-        deadline = time.monotonic() + 30
-        while not any(n['method'] == 'build/taskStart' for n in client.notifications[seen:]):
-            assert time.monotonic() < deadline and ident not in client.responses, client.notifications[seen:]
-            client.pump(.1)
-        assert_empty(uris(files))
-        client.notify('$/cancelRequest', dict(id=ident))
-        cancelled = client.result(ident, timeout=30)
-        assert cancelled['statusCode'] == 3 and cancelled['originId'] == 'cancel-sql-generation', cancelled
-        assert_empty(uris(files))
+        def cancel_generation(suffix):
+            sql.write_text('\n'.join(f'CREATE TABLE cancellation_{suffix}_{number} (id INTEGER NOT NULL PRIMARY KEY);'
+                                     for number in range(3000)))
+            seen = len(client.notifications)
+            ident = client.begin('buildTarget/compile', dict(targets=[consumer], originId='cancel-sql-generation'))
+            deadline = time.monotonic() + 30
+            while not any(n['method'] == 'build/taskStart' for n in client.notifications[seen:]):
+                assert time.monotonic() < deadline and ident not in client.responses, client.notifications[seen:]
+                client.pump(.1)
+            assert_empty(uris(files))
+            client.notify('$/cancelRequest', dict(id=ident))
+            cancelled = client.result(ident, timeout=30)
+            assert cancelled['statusCode'] == 3 and cancelled['originId'] == 'cancel-sql-generation', cancelled
+            assert_empty(uris(files))
+            assert effective_diagnostics(marker) == kotlin_warnings
+            return seen
+
+        seen = cancel_generation('mapping')
         changed_since(seen)
         assert_retained(files)
         sql.write_text(sql_text)
         generated(compile_target(consumer))
         print('PASS reload and cancellation clear prerequisite mappings, followed by recovery', flush=True)
+
+        sql.write_text('CREATE TABL broken (\n')
+        seen = len(client.notifications)
+        compile_target(consumer, status=2)
+        sql_errors = assert_sql_errors(sql, seen)
+        cancel_generation('diagnostics')
+        assert effective_diagnostics(sql) == sql_errors, 'Cancellation cleared errors from the unfinished SQL generator'
+        sql.write_text(sql_text)
+        seen = len(client.notifications)
+        generated(compile_target(consumer))
+        assert_cleared(sql, seen)
+        assert effective_diagnostics(marker) == kotlin_warnings
+        print('PASS cancellation preserves unfinished generator diagnostics and cached recovery clears them', flush=True)
+
+        # Removing the producer target also removes its published source errors.
+        sql.write_text('CREATE TABL broken (\n')
+        seen = len(client.notifications)
+        compile_target(status=2)
+        assert_sql_errors(sql, seen)
+        config['modules'] = [module for module in config['modules'] if module['id'] == 'other']
+        project.write_text(json.dumps(config))
+        seen = len(client.notifications)
+        assert client.request('workspace/reload') is None
+        remaining = client.request('workspace/buildTargets')['targets']
+        assert [target['id'] for target in remaining] == [other], remaining
+        assert_cleared(sql, seen)
+        assert_cleared(marker, seen)
+        print('PASS reload removing the target clears both SQL and Kotlin source diagnostics', flush=True)
         client.request('build/shutdown')
         client.notify('build/exit')
         assert client.process.wait(timeout=10) == 0
