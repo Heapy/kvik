@@ -55,6 +55,25 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun iosDeviceAndSimulatorSelectOnlyTheirOwnNativeMetadata() {
+        val bytes = "ios klib".encodeToByteArray()
+        val digest = Sha256.digest(bytes)
+        fun selected(target: NativeTarget) = """{"name":"${target.projectName}","attributes":{"org.gradle.category":"library","org.gradle.usage":"kotlin-api","org.jetbrains.kotlin.platform.type":"native","org.jetbrains.kotlin.native.target":"${target.compilerName}","org.gradle.libraryelements":"klib"},"files":[{"name":"a.klib","url":"a.klib","size":${bytes.size},"sha256":"${digest.hash}"}]}"""
+        val variants = NativeTarget.entries.joinToString(",", transform = ::selected)
+        val artifacts = mapOf("${repo.url}/example/a/1.0/a.klib" to bytes)
+        for (target in listOf(NativeTarget.IOS_ARM64, NativeTarget.IOS_SIMULATOR_ARM64)) {
+            val request = VariantRequest(target.projectName, "kotlin-api", emptyMap())
+            val result = resolve(module(example, variants), request, artifacts)
+            assertEquals(target.projectName, result.artifacts.single().variant)
+            assertEquals(digest, result.artifacts.single().digest)
+            assertFails { resolve(module(example, NativeTarget.entries.filter { it != target }.joinToString(",", transform = ::selected)), request, artifacts) }
+            assertFails { resolve(module(example, selected(target).replace("a.klib", "a.jar")), request,
+                mapOf("${repo.url}/example/a/1.0/a.jar" to bytes)) }
+            val pom = """<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version></project>""".encodeToByteArray()
+            assertFails { MavenResolver(MemoryTransport(mapOf("${repo.url}/example/a/1.0/a-1.0.pom" to pom)), NativePomParser()).resolve(example, request, listOf(repo)) }
+        }
+    }
+
     @Test fun linuxVariantSelectionNeverSubstitutesMacJvmOrPom() {
         val request = VariantRequest("linuxX64", "kotlin-api", emptyMap())
         val bytes = "linux klib".encodeToByteArray(); val digest = Sha256.digest(bytes)

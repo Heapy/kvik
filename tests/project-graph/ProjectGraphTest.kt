@@ -15,7 +15,8 @@ private fun digest(value: String) = Sha256.digest(value.encodeToByteArray())
 private val composition = digest("runtime")
 private val tools = mapOf("jvm" to listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith(::digest),
     "macosArm64" to listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest),
-    "linuxX64" to listOf("native", "jdk", "system", "native-dependencies").associateWith(::digest))
+    "linuxX64" to listOf("native", "jdk", "system", "native-dependencies").associateWith(::digest)) +
+    listOf("iosArm64", "iosSimulatorArm64").associateWith { listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest) }
 private fun external(value: String) = Dependency.External(Coordinate.parse(value), exported = true)
 private fun source(name: String, directory: String, parents: List<String> = emptyList(), dependencies: List<Dependency> = emptyList(), resource: String? = null) =
     SourceSet(name, listOf(LogicalPath(directory)), listOfNotNull(resource?.let(::LogicalPath)), parents, dependencies)
@@ -33,7 +34,9 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
         "modules" to modules.map { m -> obj("id" to m.id.json(), "sourceSets" to m.sourceSets.map { s -> obj("name" to s.name.json(),
             "directories" to paths(s.directories), "resources" to paths(s.resources), "dependsOn" to strings(s.dependsOn), "dependencies" to s.dependencies.map { d -> when(d) {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
-            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) } }.json(),
+            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
+                t.nativeTimeouts.compileMillis?.let { put("compileMillis", it.json()) }; t.nativeTimeouts.linkMillis?.let { put("linkMillis", it.json()) }
+            }))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
                 if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()).let { value -> if (m.publication == null) value else JsonValue.Object(value.objectValue() + ("publication" to obj("coordinate" to m.publication.coordinate.toString().json()))) } }.json()))
 }
@@ -1108,5 +1111,98 @@ class ProjectGraphTest {
         assertEquals(2, compilation.sources.size)
         assertTrue(compilation.classpath.isEmpty()) // Root integration must explicitly declare stdlib; graph injects nothing.
         assertEquals(snapshot.files.map { it.digest }.toSet(), action.inputs.files.map { it.digest }.toSet())
+    }
+}
+
+class IosFrameworkGraphTest {
+    private fun fixture(target: String, framework: NativeFrameworkSpec? = NativeFrameworkSpec("Sample"),
+                        linkMillis: Long? = null, resources: Boolean = false): Pair<ProjectConfiguration, TreeManifest> {
+        val runtime = module("runtime", listOf(Dependency.External(Coordinate.parse("g:runtime-private:1"))))
+        val consumer = app.copy(sourceSets = app.sourceSets.map { set -> if (set.name != "commonMain") set else set.copy(
+            dependencies = set.dependencies + Dependency.Module("runtime", DependencyScopeKind.RUNTIME) +
+                Dependency.External(Coordinate.parse("g:only-runtime:1"), DependencyScopeKind.RUNTIME)) })
+        val values = listOf(base, consumer, runtime).map { value -> value.copy(
+            sourceSets = value.sourceSets.map { it.copy(resources = if (resources && value.id == "runtime") it.resources else emptyList()) },
+            targets = listOf(TargetSpec(target, "nativeMain", null, emptyList(),
+                nativeTimeouts = linkMillis?.takeIf { value.id == "app" }?.let { NativeTimeouts(linkMillis = it) },
+                nativeFramework = framework.takeIf { value.id == "app" }))) }
+        val files = TreeManifest(snapshot().files + listOf("common/Common.kt", "native/Actual.kt", "resources/data.txt")
+            .map { FileEntry(LogicalPath("runtime/$it"), digest(it)) })
+        return configuration(*values.toTypedArray()) to files
+    }
+
+    @Test fun iosFrameworkLinksRuntimeClosureOnMacHostWithoutExposingItToCompilation() {
+        for (target in listOf("iosArm64", "iosSimulatorArm64")) {
+            val (config, files) = fixture(target)
+            val selected = request(target = target)
+            val plan = graph(config, files, selected)
+            val actions = resolved(plan)
+            assertEquals("app:$target:framework", plan.terminalActions.getValue("app:$target:build"))
+            assertEquals(setOf("app:$target:main", "base:$target:main", "runtime:$target:main"),
+                plan.nodes.single { it.id == "app:$target:framework" }.dependencies)
+            val main = NativeCompilation.fromJson(actions.getValue("app:$target:main").parameters)
+            val linked = actions.getValue("app:$target:framework")
+            val parameters = NativeCompilation.fromJson(linked.parameters)
+            assertEquals(NativeOutput.FRAMEWORK, parameters.produce)
+            assertEquals(NativeTarget.require(target), parameters.target)
+            assertEquals(NativeTarget.MACOS_ARM64.platform, linked.platform)
+            assertEquals(target, linked.target)
+            assertEquals(LogicalPath("Sample.framework"), parameters.output)
+            assertEquals(LogicalPath("modules/app/$target/main.klib"), parameters.includedLibrary)
+            assertTrue(parameters.sources.isEmpty() && parameters.pluginApplications.isEmpty() && parameters.plugins.isEmpty())
+            assertTrue(parameters.libraries.contains(LogicalPath("modules/runtime/$target/main.klib")))
+            assertTrue(main.libraries.none { "runtime" in it.value })
+            assertTrue(linked.inputs.files.any { it.digest == artifact("g:only-runtime:1", target, "kotlin-api").digest })
+            assertTrue(actions.getValue("app:$target:main").inputs.files.none { it.digest == artifact("g:only-runtime:1", target, "kotlin-api").digest })
+            assertEquals(CachePolicy.LOCAL, linked.cachePolicy)
+            assertEquals(setOf(target), projectToolTargets(config.project, selected))
+            assertNotEquals(linked.key(Sha256), resolved(plan, "runtime:$target:main").getValue("app:$target:framework").key(Sha256))
+        }
+    }
+
+    @Test fun frameworkSettingsChangeOnlyLinkIdentityAndPlainBuildStaysKlib() {
+        val target = "iosSimulatorArm64"
+        fun actions(framework: NativeFrameworkSpec?, timeout: Long? = null): Map<String, ActionSpec> {
+            val (config, files) = fixture(target, framework, timeout)
+            return resolved(graph(config, files, request(target = target)))
+        }
+        val original = actions(NativeFrameworkSpec("Sample"))
+        for (changed in listOf(actions(NativeFrameworkSpec("Other")), actions(NativeFrameworkSpec("Sample", true)),
+            actions(NativeFrameworkSpec("Sample"), 600_000))) {
+            assertEquals(original.getValue("app:$target:main").key(Sha256), changed.getValue("app:$target:main").key(Sha256))
+            assertNotEquals(original.getValue("app:$target:framework").key(Sha256), changed.getValue("app:$target:framework").key(Sha256))
+        }
+        val plain = actions(null)
+        assertTrue(plain.keys.none { it.endsWith(":framework") || it.startsWith("runtime:") })
+        assertEquals(original.getValue("app:$target:main").key(Sha256), plain.getValue("app:$target:main").key(Sha256))
+    }
+
+    @Test fun frameworkRuntimeOnlyProducerPluginsRequireJvmHostTools() {
+        val target = "iosArm64"
+        val (config, files) = fixture(target)
+        val plugin = CompilerPluginSpec("producer", null, setOf(target), setOf("main"),
+            emptyList(), emptyList(), "example.plugin", "2.4.20", emptyList(), emptyList())
+        val changed = configuration(*(config.project.modules.map { if (it.id == "runtime") it.copy(compilerPlugins = listOf(plugin)) else it } +
+            module("producer")).toTypedArray())
+        val selected = request(target = target)
+        assertEquals(setOf(target, "jvm"), projectToolTargets(changed.project, selected))
+        val extra = listOf("common/Common.kt", "jvm/Actual.kt").map { FileEntry(LogicalPath("producer/$it"), digest(it)) }
+        val actions = resolved(graph(changed, TreeManifest(files.files + extra), selected))
+        assertTrue("producer:jvm:main" in actions)
+        assertTrue(NativeCompilation.fromJson(actions.getValue("runtime:$target:main").parameters).pluginApplications.isNotEmpty())
+        val linked = NativeCompilation.fromJson(actions.getValue("app:$target:framework").parameters)
+        assertTrue(linked.pluginApplications.isEmpty())
+        assertTrue(actions.getValue("app:$target:framework").inputs.files.none { it.path.value.startsWith("plugins/") })
+    }
+
+    @Test fun frameworkRequiresRuntimeAuthorizationAndRejectsRuntimeResources() {
+        val target = "iosArm64"
+        val (config, files) = fixture(target)
+        val effective = effectiveConfiguration(config, scopes = listOf(DependencyScope("app", target, "main", "kotlin-api")))
+        assertContains(assertFails { projectActionGraph(effective, lock(effective), files, composition, tools, request(target = target)) }.message.orEmpty(), "kotlin-runtime")
+        val (withResources, resourceFiles) = fixture(target, resources = true)
+        assertContains(assertFails { graph(withResources, resourceFiles, request(target = target)) }.message.orEmpty(), "framework resources")
+        assertFails { graph(config, files, request(ProjectMode.TEST, target)) }
+        assertFails { graph(config, files, request(ProjectMode.APPLICATION, target)) }
     }
 }

@@ -46,7 +46,8 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
         }
     }
     for (module in request.modules) for (target in request.targets) {
-        visit(module, target, "main", request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE))
+        visit(module, target, "main", request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
+            request.mode == ProjectMode.BUILD && modules.getValue(module).targets.single { it.name == target }.nativeFramework != null)
         if (request.mode == ProjectMode.TEST) visit(module, target, "test", true)
     }
     return targets.toSet()
@@ -106,7 +107,8 @@ private class Builder(
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
-            val runtime = scope == "test" || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE)
+            val runtime = scope == "test" || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
+                this.request.mode == ProjectMode.BUILD && target(module, target).nativeFramework != null
             val usages = if (target == "jvm") if (runtime) listOf("java-api", "java-runtime") else listOf("java-api") else if (runtime) listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
         }
@@ -118,7 +120,7 @@ private class Builder(
             ensureMain(module, target)
             val check = "$module:$target:${request.mode.name.lowercase()}"
             terminals[check] = when (request.mode) {
-                ProjectMode.BUILD -> mainId(module, target)
+                ProjectMode.BUILD -> if (target(module, target).nativeFramework == null) mainId(module, target) else ensureFramework(module, target)
                 ProjectMode.TEST -> ensureTest(module, target)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
@@ -517,6 +519,32 @@ private class Builder(
             validateResults(results, edges)
             kmpLibraryPackageAction(selection, merge(commonOutputs(results, module, "metadata/commonMain"),
                 packages.flatMap { results.getValue(it).outputs.files }), composition)
+        }
+        return id
+    }
+
+    private fun ensureFramework(module: String, target: String): String {
+        val framework = requireNotNull(target(module, target).nativeFramework)
+        val runtimeDependencies = closure(module, target, "main", true).modules
+        runtimeDependencies.forEach { ensureMain(it, target) }
+        val runtimeIds = listOf(module) + runtimeDependencies
+        require(runtimeIds.all { resources(it, target, "main").isEmpty() }) {
+            "Native framework resources are not supported: $module:$target; remove main/runtime resources before building the framework"
+        }
+        val artifacts = artifactEntries(external(module, target, "main", "kotlin-runtime"), target)
+        val edges = runtimeIds.map { mainId(it, target) }.toSet()
+        val options = options(module, target, "main", mainSources.getValue(module to target))
+        val id = "$module:$target:framework"
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            val libraries = runtimeIds.flatMap { remap(results, it, target, "main") }
+            nativeCompileAction(NativeCompilation(module, emptyList(),
+                libraries = runtimeDependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
+                output = LogicalPath("${framework.baseName}.framework"), produce = NativeOutput.FRAMEWORK,
+                moduleName = options.nativeModuleName, warningsAsErrors = options.warningsAsErrors,
+                includedLibrary = modulePath(module, target, "main"), target = NativeTarget.require(target),
+                isStaticFramework = framework.isStatic), merge(libraries, artifacts), composition, tools.getValue(target),
+                timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
         }
         return id
     }

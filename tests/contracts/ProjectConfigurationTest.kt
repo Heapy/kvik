@@ -3,6 +3,23 @@ package kvik.core
 import kotlin.test.*
 
 class ProjectConfigurationTest {
+    @Test fun iosFrameworkConfigurationIsStrictAndPreservesDeclaredLinkSettings() {
+        for (target in listOf("iosArm64", "iosSimulatorArm64")) {
+            val original = example.replace("\"name\":\"jvm\"", "\"name\":\"$target\"").replace("\"test\":\"jvmTest\"", "\"test\":null")
+            fun selected(value: String) = original.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"nativeFramework\":$value")
+            val configuration = parse(selected("""{"baseName":"Example","isStatic":true}"""))
+            assertEquals(NativeFrameworkSpec("Example", true), configuration.project.modules.single().targets.single().nativeFramework)
+            assertEquals(configuration, parse(configuration.document.canonical()))
+            assertNull(parse(original).project.modules.single().targets.single().nativeFramework)
+            assertEquals(NativeTarget.MACOS_ARM64.platform, NativeTarget.require(target).executionPlatform)
+            assertFalse(NativeTarget.require(target).supportsHostExecution)
+            for (value in listOf("{}", "null", """{"baseName":"../Bad"}""", """{"baseName":"Good","isStatic":1}""", """{"baseName":"Good","export":"dependency"}"""))
+                assertFails { parse(selected(value)) }
+            assertFails { parse(selected("""{"baseName":"Good"}""").replace("\"test\":null", "\"test\":\"jvmTest\"")) }
+            assertFails { parse(original.replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"application\":{\"entryPoint\":\"sample.main\"}")) }
+        }
+    }
+
     @Test fun applicationsAreOptionalTargetSpecificAndKeepCompilerOptionsSeparate() {
         assertNull(parse().project.modules.single().targets.single().application)
         val settings = ApplicationSpec("sample.MainKt", listOf("--input", "literal path"), mapOf("MODE" to "dev"))

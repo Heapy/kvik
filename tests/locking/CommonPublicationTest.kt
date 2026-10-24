@@ -31,6 +31,23 @@ private val commonDomain = ResolutionDomain("root", "common", "main", "kotlin-me
 private val commonScope = DependencyScope("root", "common", "main", "kotlin-metadata")
 
 class CommonPublicationTest {
+    @Test fun iosFrameworkDomainsKeepCompileAndRuntimeClosuresSeparate() {
+        val original = commonProject(commonModule("root", listOf(external("api"), external("runtime", runtime = true))))
+        for (target in listOf("iosArm64", "iosSimulatorArm64")) {
+            val configuration = parseProjectConfiguration(parseJson(original.document.canonical()
+                .replace("macosArm64", target).replace("\"test\":\"tests\"", "\"test\":null")))
+            val api = ResolutionDomain("root", target, "main", "kotlin-api")
+            val runtime = api.copy(usage = "kotlin-runtime")
+            val effective = effectiveConfiguration(configuration, ResolverPolicy(scopedPins = listOf(ScopedPin(runtime, Coordinate("example", "api", "2")))))
+            assertTrue(effective.requests.filter { it.domain == api }.none { it.coordinate.name == "runtime" })
+            assertTrue(effective.requests.filter { it.domain == runtime }.any { it.coordinate.name == "runtime" })
+            assertTrue(effective.requests.filter { it.domain.target == target }.all { it.variant == VariantRequest(target, "kotlin-api", emptyMap()) })
+            assertEquals(emptyList(), effective.policy.pinsFor(api))
+            assertEquals(listOf(Coordinate("example", "api", "2")), effective.policy.pinsFor(runtime))
+            assertEquals(runtime, ResolutionDomain.fromJson(runtime.toJson()))
+        }
+    }
+
     @Test fun linuxResolutionDomainsPreserveConsumerScopesAndHostPluginIdentity() {
         val original = commonProject(commonModule("root", listOf(external("api"), external("runtime", runtime = true))))
         val linux = parseProjectConfiguration(parseJson(original.document.canonical().replace("macosArm64", "linuxX64")))
