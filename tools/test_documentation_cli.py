@@ -71,9 +71,10 @@ expect fun platformName(): String
         result = run(['resolve', '--project', project / 'kvik.json'])
         assert result.returncode == 0, result.stdout + result.stderr
 
-    def invoke(label, success=True):
+    def invoke(label, success=True, selected_targets=None):
+        selected_targets = targets if selected_targets is None else selected_targets
         parts = ['docs', '--project', project / 'kvik.json', '--tools', project / 'tools.json', '--module', 'library', '--jobs', '1', '--offline']
-        for target in targets:
+        for target in selected_targets:
             parts += ['--target', target]
         result = run(parts)
         write(label + '.jsonl', result.stdout)
@@ -89,7 +90,7 @@ expect fun platformName(): String
         ready = [event['payload'] for event in events if event['type'] == 'documentation-ready']
         html = ''
         if success:
-            assert len(ready) == 1 and set(ready[0]['targets']) == set(targets), ready
+            assert len(ready) == 1 and set(ready[0]['targets']) == set(selected_targets), ready
             assert Path(ready[0]['index']).is_file()
             html = '\n'.join(path.read_text() for path in Path(ready[0]['directory']).rglob('*.html'))
             assert 'ERROR CLASS' not in html and 'Symbol not found for' not in html
@@ -105,6 +106,10 @@ expect fun platformName(): String
     assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName', 'workerId', 'Worker']), html[:1000]
     warm, _ = invoke('warm-documentation')
     assert all(action['status'] == 'local_hit' for action in warm['actions'])
+    selected, html = invoke('jvm-selection-preserves-common-metadata', selected_targets=['jvm'])
+    assert all(text in html for text in ['Library', 'Token', 'platformName'])
+    assert 'workerId' not in html
+    assert all(action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in selected['actions'])
     write('Module.md', '# Module library\nRevised module description\n')
     query = run(['verification', '--run', project / '.kvik/runs' / first['runId']])
     assert query.returncode != 0 and json.loads(query.stdout)['freshness'] == 'stale'
