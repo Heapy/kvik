@@ -61,7 +61,7 @@ def main():
 
     def invoke(label, selected=targets, successful=True):
         command = [executable, 'build', '--project', project/'kvik.json', '--tools', project/'tools.json',
-                   '--module', 'consumer', '--offline']
+                   '--module', 'consumer', '--jobs', '1', '--offline']
         for selected_target in selected:
             command += ['--target', selected_target]
         result = subprocess.run(command, capture_output=True, text=True, timeout=600)
