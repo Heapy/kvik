@@ -115,8 +115,23 @@ run; later builds do not overwrite them. Failed or stale prerequisites produce a
 error instead of a partial classpath. Preparation records use `classpath-main` or
 `classpath-test` checks and do not claim that the requested sources compiled.
 
-Debugging, generated source synchronization and unsaved-buffer support remain
-pending. Compatibility is exercised by the framed protocol clients in
+After compiling Native Kotest tests, `buildTarget/sources` also returns the KSP
+launcher as a generated Kotlin file. `buildTarget/inverseSources` maps it to the
+owning test target. The `kvik-generated-source` metadata identifies its producer,
+action key, logical path and content digest. Files are restored from verified cache
+content into a retained directory for that build, including when generation succeeds
+but downstream compilation fails. Later builds use separate directories.
+
+The connection sends `buildTarget/didChange` when generated sources change or the
+project is reloaded. A new build clears the selected target's previous generated
+mapping; failed or cancelled generation does not restore it. Reload starts with
+declared sources only. Source queries do not run generators: compile the test
+target to populate them. This currently covers the pinned Native Kotest/KSP
+adapter; additional generators need explicit source-output contracts.
+The exposed launcher is the original KSP output. Diagnostics referring to the
+Native adapter's rewritten `prepared/kotest.kt` currently remain log messages.
+
+Debugging and unsaved-buffer support remain pending. Compatibility is exercised by the framed protocol clients in
 `tools/test_bsp*_cli.py`; individual IDE clients still need integration testing.
 
 ### Configuration changes

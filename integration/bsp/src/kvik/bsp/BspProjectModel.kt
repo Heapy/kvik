@@ -101,10 +101,9 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
 
     fun sourceUri(target: BspTarget, path: String): String? = try {
         val logical = LogicalPath(path)
-        if (belongs(logical, byUri.getValue(target.uri).directories)) fileUri(logical)
-        else generated[target.uri].orEmpty().firstNotNullOfOrNull { source ->
+        generated[target.uri].orEmpty().firstNotNullOfOrNull { source ->
             source.files.files.singleOrNull { it.path == logical }?.let(source::uri)
-        }
+        } ?: if (belongs(logical, byUri.getValue(target.uri).directories)) fileUri(logical) else null
     } catch (_: IllegalArgumentException) { null }
 
     fun containsSource(target: BspTarget, path: String): Boolean = sourceUri(target, path) != null
