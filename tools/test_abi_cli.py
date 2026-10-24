@@ -41,8 +41,12 @@ def main():
     write('src/Library.kt', original)
     write('tools.json', json.dumps(tools))
     document = dict(schemaVersion=1, name='abiFixture', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')],
-        modules=[dict(id='library', compilerPlugins=[], sourceSets=[dict(name='main', directories=['src'], resources=[], dependsOn=[], dependencies=[])],
-                      targets=[dict(name=target, main='main', test=None, compilerOptions=[], abi=dict(baseline=f'api/{target}.api')) for target in targets])])
+        modules=[dict(id='library', compilerPlugins=[], sourceSets=[
+            dict(name='main', directories=['src'], resources=[], dependsOn=[], dependencies=[]),
+            dict(name='jvmMain', directories=[], resources=[], dependsOn=['main'],
+                 dependencies=[dict(coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.20')])],
+            targets=[dict(name=target, main='jvmMain' if target == 'jvm' else 'main', test=None,
+                          compilerOptions=[], abi=dict(baseline=f'api/{target}.api')) for target in targets])])
     write('kvik.json', json.dumps(document))
     resolved = command(['resolve', '--project', project / 'kvik.json'])
     assert resolved.returncode == 0, resolved.stdout + resolved.stderr
