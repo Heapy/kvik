@@ -154,17 +154,17 @@ class ConsumerTest {
 '''
     gradle = case / 'gradle-consumer'
     write(gradle / 'settings.gradle', "pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }\nrootProject.name = 'web-publication-consumer'\n")
-    write(gradle / 'gradle.properties', 'kotlin.compiler.execution.strategy=in-process\norg.gradle.workers.max=1\n')
+    write(gradle / 'gradle.properties', 'kotlin.compiler.execution.strategy=in-process\norg.gradle.workers.max=1\nkotlin.user.home=.kotlin-user-home\n')
     node_literal = json.dumps(str(node / 'bin/node'))
     write(gradle / 'build.gradle', "plugins { id 'org.jetbrains.kotlin.multiplatform' version '2.4.20' }\n"
           "repositories { maven { url = uri(" + json.dumps(str(repository)) + ") }; mavenCentral() }\n"
           "kotlin { js { nodejs() }; wasmJs { nodejs() }; sourceSets { "
           "commonMain.dependencies { api 'dev.kvik.webfixture:library:1.0' }; "
           "commonTest.dependencies { implementation kotlin('test') } } }\n"
-          "extensions.configure(org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec) {\n"
-          "  download.set(false)\n  command.set(" + node_literal + ")\n}\n"
-          "extensions.configure(org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec) {\n"
-          "  download.set(false)\n  command.set(" + node_literal + ")\n}\n")
+          "extensions.configure(org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec) { spec ->\n"
+          "  spec.download.set(false)\n  spec.command.set(" + node_literal + ")\n}\n"
+          "extensions.configure(org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec) { spec ->\n"
+          "  spec.download.set(false)\n  spec.command.set(" + node_literal + ")\n}\n")
     write(gradle / 'src/commonMain/kotlin/Consumer.kt', common_source)
     write(gradle / 'src/commonTest/kotlin/ConsumerTest.kt', common_test)
     for target in TARGETS:

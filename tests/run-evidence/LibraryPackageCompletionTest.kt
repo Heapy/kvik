@@ -6,7 +6,7 @@ import kotlin.test.*
 class LibraryPackageCompletionTest {
     @Test fun rootPackageHasADistinctTerminalAndMustSucceedAlongsideTargets() {
         val identity = Sha256.digest("package".encodeToByteArray())
-        val targets = setOf("library:jvm:package", "library:macosArm64:package")
+        val targets = setOf("library:jvm:package", "library:macosArm64:package", "library:js:package", "library:wasmJs:package")
         val root = "library:common:package"
         val graph = targets.associateWith { emptySet<String>() } + (root to targets)
         fun run(rootStatus: ActionStatus?) = aggregateRunEvidence("publication", graph.keys, graph.keys.associateWith { it }, graph,
