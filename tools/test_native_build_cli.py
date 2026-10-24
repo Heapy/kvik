@@ -57,13 +57,23 @@ def main():
 
     fixture('library/common/Common.kt', 'package fixture\nexpect fun platformAnswer(): Int\nfun answer() = platformAnswer()\n')
     fixture('library/native/Platform.kt', 'package fixture\nactual fun platformAnswer(): Int = 42\n')
-    fixture('consumer/main/Consumer.kt', 'package fixture\ninternal fun observedAnswer() = answer()\n')
+    fixture('consumer/main/Consumer.kt', '''package fixture
+internal data class Answer(val value: Int, val label: String)
+internal fun observedAnswer(): Int {
+    val (label, value) = Answer(answer(), "native")
+    check(label == "native")
+    return value
+}
+''')
     test_source = '''package fixture
 import kotlin.test.Test
 import kotlin.test.assertEquals
 class AnswerTest {
     @Test fun dependencyAndInternalDeclaration() {
         println("KVIK_NATIVE_TEST_EFFECT")
+        val (label, value) = Answer(observedAnswer(), "test")
+        assertEquals("test", label)
+        assertEquals(42, value)
         assertEquals(42, observedAnswer())
     }
 }
@@ -79,7 +89,8 @@ class AnswerTest {
              targets=[dict(name=target, main='nativeMain', test=None, compilerOptions=[])], compilerPlugins=[]),
         dict(id='consumer', sourceSets=[source('main', 'consumer/main', [{'module': 'library'}]),
              source('tests', 'consumer/test', parents=['main'])],
-             targets=[dict(name=target, main='main', test='tests', compilerOptions=[])], compilerPlugins=[]),
+             targets=[dict(name=target, main='main', test='tests', compilerOptions=[
+                 '-Xreturn-value-checker=full', '-Xname-based-destructuring=complete'])], compilerPlugins=[]),
     ])
     data = args.konan_data.resolve()
     installations = dict(schemaVersion=1, toolLock=json.loads((ROOT/'bootstrap/toolchains.lock.json').read_text()),
