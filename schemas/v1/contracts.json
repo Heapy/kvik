@@ -9251,6 +9251,15 @@
                   "inputSnapshot": {
                     "$ref": "#/$defs/digest"
                   },
+                  "inputManifest": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "inputScope": {
+                    "enum": [
+                      "project",
+                      "partial"
+                    ]
+                  },
                   "source": {
                     "$ref": "#/$defs/sourceReference"
                   },
@@ -9611,6 +9620,274 @@
           }
         }
       ]
+    },
+    "affectedTestSelection": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "selectedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "omittedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "changedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "uniqueItems": true
+        },
+        "reasons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "uniqueItems": true
+          }
+        },
+        "fullReasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestedChecks",
+        "selectedChecks",
+        "omittedChecks",
+        "changedPaths",
+        "reasons",
+        "fullReasons"
+      ],
+      "additionalProperties": false
+    },
+    "changeVerificationPlan": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "directory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "baselineRun": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baselineSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "kind": {
+          "const": "verification-selection"
+        },
+        "status": {
+          "const": "planned"
+        },
+        "selection": {
+          "$ref": "#/$defs/affectedTestSelection"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "directory",
+        "baselineRun",
+        "baselineSnapshot",
+        "inputSnapshot",
+        "limitations",
+        "kind",
+        "status",
+        "selection"
+      ],
+      "additionalProperties": false
+    },
+    "changeVerificationResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "directory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "baselineRun": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baselineSnapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "kind": {
+          "const": "change-verification"
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "unchanged",
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "selectedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "omittedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "freshChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "executionRuns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "directory": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "incomplete",
+                  "cancelled"
+                ]
+              },
+              "completedChecks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/requestedCheck"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "directory",
+              "status",
+              "completedChecks"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "directory",
+        "baselineRun",
+        "baselineSnapshot",
+        "inputSnapshot",
+        "limitations",
+        "kind",
+        "status",
+        "selectedChecks",
+        "omittedChecks",
+        "freshChecks",
+        "executionRuns",
+        "reason"
+      ],
+      "additionalProperties": false
     },
     "workerRequest": {
       "type": "object",

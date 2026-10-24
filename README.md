@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work uses an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `test-report`, `test-aggregate`, `coverage-report`, `coverage-check`, `coverage-aggregate`, `coverage-export`, `explain`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache, [remote JVM compilation cache](docs/remote-cache.md) and retained run results. [Foreground sessions](docs/foreground.md) retain project models and action graphs across reloads. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `verify`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `test-report`, `test-aggregate`, `coverage-report`, `coverage-check`, `coverage-aggregate`, `coverage-export`, `explain`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache, [remote JVM compilation cache](docs/remote-cache.md) and retained run results. [Foreground sessions](docs/foreground.md) retain project models and action graphs across reloads. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -100,6 +100,46 @@ and action prerequisites without compiling or running. See the [script contract]
 and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
+
+Use `verify` to select module/target tests affected since a retained Kvik run:
+
+```sh
+kvik verify --since /project/.kvik/runs/BASELINE_RUN \
+  --project /project/kvik.json --module library --module app --target jvm \
+  --tools /project/tools.json --plan-only
+kvik verify --since /project/.kvik/runs/BASELINE_RUN \
+  --project /project/kvik.json --module library --module app --target jvm \
+  --tools /project/tools.json
+```
+
+`--since` takes a completed Kvik run directory. Changes are compared by content
+and executable bits across the declared input inventories, including new,
+deleted and renamed files. Git staging and commit state do not affect selection.
+Production changes propagate through module dependencies and workspace compiler
+plugins; test-only changes affect their own consumers. Configuration, dependency
+lock, runtime or desired tool changes widen to all requested tests. Unknown input
+ownership, damaged or older baselines without bound manifests also widen the
+selection. A check missing from the baseline's completed checks always runs.
+
+`--full` runs every requested module/target test and can be used without a
+baseline. `--plan-only` captures inputs and prints the selection without starting
+compilers or tests. Ordinary `test` still runs every requested test; `verify`
+executes every selected test freshly, using normal compilation cache behavior.
+Its scope includes test compilation and generator prerequisites. ABI,
+documentation and script checks retain their separate commands.
+
+The JSON stream starts with `kind: "verification-selection"`, follows with normal
+run events when executing, and ends with `kind: "change-verification"`.
+Planning alone prints only the selection. Results distinguish `selectedChecks`,
+`omittedChecks` and successfully completed `freshChecks`, with references to the
+execution runs. `unchanged` means no checks were selected; it does not describe a
+fresh test run. Sources and desired tools are rechecked before and after
+execution; changes during verification produce an incomplete result.
+
+Selection and result records are retained under `.kvik/verification/` in the
+project. Test execution records stay in the usual run directory. These records
+describe the selected scope and observed inputs; they do not establish that
+undeclared external services or test fixtures are unchanged.
 
 Use the [coverage commands](docs/coverage.md) to capture JVM line coverage, generate retained reports, check thresholds, aggregate compatible test checks and export SonarQube coverage XML or unchanged JaCoCo reports.
 

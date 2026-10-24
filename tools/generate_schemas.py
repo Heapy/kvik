@@ -729,9 +729,37 @@ DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] 
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
+DEFS["affectedTestSelection"] = versioned({
+    "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
+    "selectedChecks": array(ref("requestedCheck"), uniqueItems=True),
+    "omittedChecks": array(ref("requestedCheck"), uniqueItems=True),
+    "changedPaths": array(PATH, uniqueItems=True),
+    "reasons": mapping(array(NONEMPTY, uniqueItems=True)),
+    "fullReasons": array(NONEMPTY, uniqueItems=True),
+})
+CHANGE_VERIFICATION_CONTEXT = {
+    "directory": NONEMPTY, "baselineRun": nullable(NONEMPTY), "baselineSnapshot": nullable(ref("digest")),
+    "inputSnapshot": ref("digest"), "limitations": array(NONEMPTY),
+}
+DEFS["changeVerificationPlan"] = versioned({**CHANGE_VERIFICATION_CONTEXT,
+    "kind": {"const": "verification-selection"}, "status": {"const": "planned"},
+    "selection": ref("affectedTestSelection"),
+})
+DEFS["changeVerificationResult"] = versioned({**CHANGE_VERIFICATION_CONTEXT,
+    "kind": {"const": "change-verification"},
+    "status": enum("planned", "unchanged", "passed", "failed", "incomplete", "cancelled"),
+    "selectedChecks": array(ref("requestedCheck"), uniqueItems=True),
+    "omittedChecks": array(ref("requestedCheck"), uniqueItems=True),
+    "freshChecks": array(ref("requestedCheck"), uniqueItems=True),
+    "executionRuns": array(object_({"directory": NONEMPTY,
+        "status": enum("passed", "failed", "incomplete", "cancelled"),
+        "completedChecks": array(ref("requestedCheck"), uniqueItems=True)})),
+    "reason": nullable(STRING),
+})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": {**object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest"),
-        "source": ref("sourceReference"), "sourceRetention": ref("kodeRetentionReference")}, optional=("source", "sourceRetention")),
+        "inputManifest": ref("digest"), "inputScope": enum("project", "partial"),
+        "source": ref("sourceReference"), "sourceRetention": ref("kodeRetentionReference")}, optional=("source", "sourceRetention", "inputManifest", "inputScope")),
         "dependentRequired": {"sourceRetention": ["source"]}},
     "framework-ready": ref("frameworkReady"),
     "abi-ready": ref("abiReady"),

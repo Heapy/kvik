@@ -49,7 +49,7 @@ private class RunJournal(private val runId: String, directory: String, private v
 }
 
 internal data class PreparedRun(val directory: String, val descriptor: Digest)
-internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null, val exitCode: Int = status.code)
+internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null, val exitCode: Int = status.code, val directory: String? = null)
 
 internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
     val (source, remaining) = sourceProjectOptions(args)
@@ -71,9 +71,14 @@ internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile): Build
     BuildOptions(options.forFile(file), emptySet(), setOf("jvm"), checkNotNull(options.tools), options.runs, options.budget),
     ProjectMode.BUILD, true, file, options.arguments)
 
+internal fun executeSelectedTestBuild(options: BuildOptions, snapshot: Digest,
+                                      tools: Map<String, Map<String, Digest>>): BuildOutcome =
+    executeBuildOptions(options, ProjectMode.TEST, ownInterrupts = false, expectedSnapshot = snapshot, expectedTools = tools)
+
 private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInterrupts: Boolean,
                                 scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList(),
-                                sessionCache: BuildSessionCache? = null, sourceProject: PreparedSourceProject? = null): BuildOutcome {
+                                sessionCache: BuildSessionCache? = null, sourceProject: PreparedSourceProject? = null,
+                                expectedSnapshot: Digest? = null, expectedTools: Map<String, Map<String, Digest>>? = null): BuildOutcome {
     val test = mode == ProjectMode.TEST
     require(!options.coverage || test && scriptFile == null && options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
@@ -125,6 +130,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
+    if (expectedSnapshot != null && snapshot.fingerprint != expectedSnapshot)
+        throw CliFailure("KVIK_VERIFICATION_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
+            "Inputs changed after verification selection", ExitStatus.INCOMPLETE)
     fun inputFreshness(): Freshness = if (sourceProject != null) Freshness.CURRENT else checkNotNull(snapshots).freshness(snapshot)
     val effective = if (selection == SnapshotSelection.StandaloneScript) effectiveConfiguration(snapshot.standaloneConfiguration, policy)
         else effectiveConfiguration(snapshot.configuration, policy)
@@ -198,12 +206,17 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     var began = false
     try {
         if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
-        val started = obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson())
+        val started = obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson(),
+            "inputManifest" to Sha256.digest(snapshot.inputs.toJson()).toJson(),
+            "inputScope" to (if (selection == SnapshotSelection.Project) "project" else "partial").json())
         journal.emit("run-started", if (sourceProject == null) started else JsonValue.Object(started.values +
             ("source" to sourceProject.reference.toJson()) + sourceProject.retention?.let { mapOf("sourceRetention" to it.toJson()) }.orEmpty()))
         began = true
         try {
             toolIdentities = tools.desiredIdentities(toolTargets)
+            if (expectedTools != null && toolIdentities.any { (target, identities) -> expectedTools[target] != identities })
+                throw CliFailure("KVIK_VERIFICATION_TOOLS_CHANGED", DiagnosticCategory.TOOLCHAIN,
+                    "Desired tools changed after verification selection", ExitStatus.INCOMPLETE)
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
                 graph = if (scriptFile != null)
@@ -369,6 +382,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         } catch (failure: Exception) {
             failedSetup = true
             failureExit = when {
+                failure is CliFailure -> failure.exitStatus
                 toolIdentities.isEmpty() -> ExitStatus.INCOMPLETE
                 graph == null -> ExitStatus.INVALID_CONFIGURATION
                 else -> ExitStatus.FAILED
@@ -534,7 +548,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             scriptObservation?.processResult?.exitCode?.let { it != 0 } == true -> scriptObservation!!.processResult!!.exitCode
             else -> status.code
         }
-        return BuildOutcome(status, if (status == ExitStatus.SUCCESS) prepared else null, scriptExit)
+        return BuildOutcome(status, if (status == ExitStatus.SUCCESS) prepared else null, scriptExit, run.path)
     } catch (failure: Exception) {
         if (began) throw RunStreamFailure("Run ${run.runId} at ${run.path} has incomplete retained evidence: ${failure.message}")
         throw failure

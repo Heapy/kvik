@@ -30,7 +30,7 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, view, resolve, check-lock, build, test, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, workspace, help
+            Commands: runtime-info, inspect, view, resolve, check-lock, build, test, verify, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, workspace, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
@@ -41,6 +41,7 @@ private fun command(args: Array<String>) {
             Revision view: view with source flags and --role production|tests|all [--tag TAG] [--exclude-tag TAG]; emits a pinned view for kode --view FILE
             Role policy: view also accepts --policy-name NAME [--edit-tag TAG] [--edit-any-tag TAG] [--exclude-edit-tag TAG] [--allow-all-edits] [--allow CAPABILITY]; emits a pinned policy for kode --policy FILE
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64 (repeatable) --tools PATH
+            Change-aware tests: verify --since RUN_DIRECTORY [--full] [--plan-only] plus build selectors; or verify --full
             Test execution: jvm or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking
             Execution: --runs PATH --jobs N --memory-mib N
             Remote compilation cache: --remote-cache PATH (transport JSON); --offline disables remote access
@@ -98,6 +99,7 @@ private fun command(args: Array<String>) {
         "abi-dump" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.ABI_DUMP).status.code)
         "abi-check" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.ABI_CHECK).status.code)
         "docs" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.DOCUMENTATION).status.code)
+        "verify" -> exitProcess(changeVerificationCommand(args.drop(1)).code)
         "build", "test" -> exitProcess(buildCommand(args.drop(1), test = args[0] == "test").code)
         "run-script" -> exitProcess(runScriptCommand(args.drop(1)))
         "inspect-script" -> println(inspectScriptCommand(args.drop(1)).canonical())
