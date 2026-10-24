@@ -23,7 +23,7 @@ defs={
  'domain':obj(module=text,target=enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor','sqldelight-compiler')),
  'diagnostic':obj(code=text,message=text,source=nullable(text)),
  'source':obj(repository=text,url=text,kind=enum('metadata','artifact'),digest=nullable(ref('digest')),observedAt=nullable(time),cache=enum('network','cache','locked','none'),status=enum('found','not-found','missing','corrupt','error'),freshness=freshness,latest=nullable(text),release=nullable(text),lastUpdated=nullable(text)),
- 'requirement':obj(coordinate=coordinate,semantics=enum('requires','prefers','pom-effective','redirect','constraint','explicit-exclusion')),
+ 'requirement':obj(coordinate=coordinate,semantics=enum('requires','prefers','pom-effective','redirect','constraint','explicit-exclusion','metadata-exclusion')),
  'node':obj(id=text,coordinate=coordinate,platform=boolean,expanded=boolean,variant=text,repository=text,metadata=arr(ref('metadata'),32),artifacts=arr(ref('artifact'),32)),
  'edge':obj(source=text,target=nullable(text),kind=enum('dependency','redirect','constraint','excluded'),requirement=ref('requirement'),selected=nullable(coordinate),transitive=boolean),
  'root':obj(requested=coordinate,node=text),
@@ -55,9 +55,12 @@ defs['metadataExclusion'] = obj(parent=coordinate, metadata={'allOf':[ref('diges
     variant={**rule_text,'maxLength':256}, dependency=coordinate, reason={**rule_text,'maxLength':1024})
 defs['edge']['properties']['exclusion'] = obj(rule=ref('metadataExclusion'), digest=ref('digest'))
 defs['edge']['allOf'] = [{'if': {'properties': {'kind': {'const':'excluded'}}},
-    'then': {'required':['exclusion'], 'properties': {'target':{'type':'null'}, 'selected':{'type':'null'}, 'transitive':{'const':False},
-        'requirement': {'properties': {'semantics': {'const':'explicit-exclusion'}}}}},
+    'then': {'properties': {'target':{'type':'null'}, 'selected':{'type':'null'}, 'transitive':{'const':False},
+        'requirement': {'properties': {'semantics': enum('explicit-exclusion','metadata-exclusion')}}},
+        'allOf': [{'if': {'properties': {'requirement': {'properties': {'semantics': {'const':'explicit-exclusion'}}}}},
+                   'then': {'required':['exclusion']}, 'else': {'not': {'required':['exclusion']}}}]},
     'else': {'not': {'required':['exclusion']}, 'properties': {'requirement': {'properties': {'semantics':enum('requires','prefers','pom-effective','redirect','constraint')}}}}}]
+
 base=dict(schemaVersion={'const':1},status=enum('complete','incomplete','unsupported'),observedAt=time,freshness=freshness,freshnessBasis=enum('repository-observation','locked-inputs'),sources=arr(ref('source')),diagnostics=arr(ref('diagnostic'),1024),compatibility={'const':'not-assessed'},truncated=boolean)
 def result(kind,query,**payload):return obj(**base,kind={'const':kind},query=ref(query),**payload)
 defs['versions']=result('package-versions','versionQuery',versions=arr(ref('version'),200),order={'const':'lexical-ascending'},classification={'const':'numeric-known-qualifiers-v1'},page=obj(limit={'type':'integer','minimum':1,'maximum':200},nextCursor=nullable(text),snapshot=nullable(ref('digest')),total=nullable(nonnegative)))

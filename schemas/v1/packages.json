@@ -290,7 +290,8 @@
             "pom-effective",
             "redirect",
             "constraint",
-            "explicit-exclusion"
+            "explicit-exclusion",
+            "metadata-exclusion"
           ]
         }
       },
@@ -433,9 +434,6 @@
             }
           },
           "then": {
-            "required": [
-              "exclusion"
-            ],
             "properties": {
               "target": {
                 "type": "null"
@@ -449,11 +447,41 @@
               "requirement": {
                 "properties": {
                   "semantics": {
-                    "const": "explicit-exclusion"
+                    "enum": [
+                      "explicit-exclusion",
+                      "metadata-exclusion"
+                    ]
                   }
                 }
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "requirement": {
+                      "properties": {
+                        "semantics": {
+                          "const": "explicit-exclusion"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "exclusion"
+                  ]
+                },
+                "else": {
+                  "not": {
+                    "required": [
+                      "exclusion"
+                    ]
+                  }
+                }
+              }
+            ]
           },
           "else": {
             "not": {

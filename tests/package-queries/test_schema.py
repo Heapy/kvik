@@ -60,6 +60,15 @@ class PackageSchemaTest(unittest.TestCase):
         bad=copy.deepcopy(edge);bad['requirement']='a:b:2'
         with self.assertRaises(jsonschema.ValidationError): self.validator('edge').validate(bad)
 
+    def test_metadata_exclusions_cannot_impersonate_policy_exclusions(self):
+        edge = dict(source='root', target=None, kind='excluded', requirement=dict(coordinate='a:b:1', semantics='metadata-exclusion'),
+                    selected=None, transitive=False)
+        validator = self.validator('edge')
+        validator.validate(edge)
+        for changes in [dict(target='node'), dict(selected='a:b:1'), dict(transitive=True), dict(kind='dependency'), dict(exclusion={})]:
+            self.assertFalse(validator.is_valid({**edge, **changes}), changes)
+        self.assertFalse(validator.is_valid({**edge, 'requirement': dict(coordinate='a:b:1', semantics='explicit-exclusion')}))
+
     def test_sqldelight_host_domain_and_declaration(self):
         self.validator('domain').validate(dict(module='library', target='jvm', compilation='main',
                                                usage='java-runtime', purpose='sqldelight-compiler'))
