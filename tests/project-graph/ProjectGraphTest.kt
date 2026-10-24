@@ -198,18 +198,23 @@ class ProjectGraphTest {
 
     @Test fun linuxRootMetadataUsesExactlyDeclaredTargetsIncludingNativeOnlyIntersection() {
         for (selected in listOf(setOf("jvm", "linuxX64"), setOf("macosArm64", "linuxX64"), setOf("jvm", "macosArm64", "linuxX64"))) {
-            fun forTargets(value: ModuleSpec): ModuleSpec = published(value, false).copy(targets = selected.sorted().map { name ->
-                (if (name == "jvm") value.targets.first() else value.targets.last()).copy(name = name)
-            })
+            fun forTargets(value: ModuleSpec): ModuleSpec = published(value, false).copy(
+                sourceSets = value.sourceSets.map { it.copy(resources = emptyList()) } + source("linuxMain", "${value.id}/linux", listOf("commonMain")),
+                targets = selected.sorted().map { name ->
+                    (if (name == "jvm") value.targets.first() else value.targets.last()).let {
+                        it.copy(name = name, main = if (name == "linuxX64") "linuxMain" else it.main)
+                    }
+                })
             val config = configuration(forTargets(base), forTargets(app))
             val request = ProjectGraphRequest(setOf("app"), selected, ProjectMode.PACKAGE)
-            val plan = graph(config, request = request)
+            val files = TreeManifest(snapshot().files + listOf("base", "app").map { FileEntry(LogicalPath("$it/linux/Actual.kt"), digest("linux $it")) })
+            val plan = graph(config, files, request)
             assertEquals(selected.map { "app:$it:package" }.toSet() + "app:common:package", plan.requestedChecks)
             assertEquals(plan.requestedChecks, projectRequestedChecks(request))
             assertTrue("jvm" in projectToolTargets(config.project, request))
             val metadata = plan.nodes.single { it.id == "base:common:metadata" }.resolve(emptyMap())
             assertEquals(selected, JvmMetadataCompilation.fromJson(metadata.parameters).targets)
-            assertTrue(metadata.inputs.files.none { "/native/" in it.path.value || "/jvm/" in it.path.value })
+            assertTrue(metadata.inputs.files.none { "/native/" in it.path.value || "/jvm/" in it.path.value || "/linux/" in it.path.value })
             val packageNode = plan.nodes.single { it.id == "app:common:package" }
             assertTrue(packageNode.dependencies.containsAll(selected.map { "app:$it:package" }))
         }
