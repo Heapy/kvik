@@ -6,6 +6,7 @@ import kvik.compiler.jvm.*
 import kvik.compiler.native.*
 import kvik.compiler.js.*
 import kvik.compiler.ksp.*
+import kvik.compiler.sqldelight.*
 import kvik.application.applicationBundleAction
 import kvik.library.*
 import kvik.abi.*
@@ -606,6 +607,47 @@ private class Builder(
         return runId
     }
 
+    private fun ensureSqlDelight(module: String): String? {
+        val settings = modules.getValue(module).sqlDelight ?: return null
+        val id = "$module:jvm:sqldelight"
+        if (id in nodes) return id
+        val domain = ResolutionDomain(module, "jvm", "main", "java-runtime", "sqldelight-compiler")
+        require(domain in authorized) { "SQLDelight needs a locked compiler domain: $module; run resolve" }
+        val artifacts = artifactEntries(sqlDelightCompilerCoordinates(settings.version).flatMap { locked(it, domain).artifacts }, "jvm")
+            .distinctBy { it.path }.sortedBy { it.path.value }
+        val embedded = sqlDelightWorkerSources().map { (path, text) -> FileEntry(path, Sha256.digest(text.encodeToByteArray())) }.sortedBy { it.path.value }
+        val workerId = "$module:jvm:sqldelight-worker"
+        nodes[workerId] = ActionNode(workerId, emptySet()) { results ->
+            validateResults(results, emptySet())
+            jvmCompileAction(JvmCompilation("kvik-sqldelight-worker", embedded.map { it.path }, artifacts.map { it.path },
+                LogicalPath("sqldelight-worker"), includeStandardLibrary = true), merge(embedded, artifacts), composition, tools.getValue("jvm"))
+        }
+        require(files.none { it.path == settings.sourceDirectory }) { "SQLDelight source directory is a file" }
+        val sql = files.filter { it.path.value.startsWith(settings.sourceDirectory.value + "/") }
+        require(sql.all { it.path.value.endsWith(".sq") && !it.executable }) {
+            "SQLDelight supports regular .sq sources only; migrations and database files require a separate adapter"
+        }
+        nodes[id] = ActionNode(id, setOf(workerId)) { results ->
+            validateResults(results, setOf(workerId))
+            val worker = results.getValue(workerId).outputs.files
+            require(worker.isNotEmpty() && worker.all { it.path.value.startsWith("sqldelight-worker/") && !it.executable } &&
+                worker.any { it.path.value.endsWith(".class") }) { "Invalid SQLDelight worker compilation output" }
+            val root = LogicalPath("tools/sqldelight-worker")
+            val remapped = worker.map { it.copy(path = LogicalPath(root.value + "/" + it.path.value.removePrefix("sqldelight-worker/"))) }
+            sqlDelightAction(SqlDelightGeneration(module, settings, sql.map { it.path }, artifacts.map { it.path }, root),
+                merge(sql, artifacts, remapped), composition, tools.getValue("jvm"))
+        }
+        return id
+    }
+
+    private fun sqlDelightOutputs(module: String, id: String, results: Map<String, ActionResult>): List<FileEntry> =
+        results.getValue(id).outputs.files.also { generated ->
+            val prefix = "generated/sqldelight/$module/"
+            require(generated.all { it.path.value.startsWith(prefix) && it.path.value.endsWith(".kt") && !it.executable }) {
+                "Unexpected SQLDelight generated output: $module"
+            }
+        }
+
     private fun ensureMain(module: String, target: String) {
         val id = mainId(module, target)
         if (id in nodes) return
@@ -615,7 +657,8 @@ private class Builder(
         val pluginDependencies = pluginModules(module, target, "main")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val source = sources(module, target, "main")
-        require(source.paths.isNotEmpty()) { "No Kotlin main sources: $module:$target" }
+        val sqlDelight = if (target == "jvm") ensureSqlDelight(module) else null
+        require(source.paths.isNotEmpty() || sqlDelight != null) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
         val options = options(module, target, "main", source)
         if (NativeTarget.find(target) != null) {
@@ -629,14 +672,15 @@ private class Builder(
         val artifacts = compilationClasspath.artifacts
         val plugin = plugins(module, target, "main")
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
-        val edges = dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
+        val edges = dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight)
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val compilerInputs = classpathInputs(compilationClasspath, target, results)
             val workspace = workspacePlugin(module, target, "main", results)
-            val inputs = merge(source.entries, resource, compilerInputs.files, plugin, workspace.entries)
+            val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
+            val inputs = merge(source.entries, resource, compilerInputs.files, plugin, workspace.entries, generated)
             val classpath = classpathPaths(compilationClasspath, target)
-            if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
+            if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths + generated.map { it.path }, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else if (KotlinJsTarget.find(target) != null) jsCompileAction(JsCompilation(module = module, target = KotlinJsTarget.require(target),

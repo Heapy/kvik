@@ -1,0 +1,10 @@
+CREATE TABLE person (
+  id INTEGER NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+insertPerson:
+INSERT INTO person(id, name) VALUES (?, ?);
+
+selectNames:
+SELECT name FROM person ORDER BY id;
