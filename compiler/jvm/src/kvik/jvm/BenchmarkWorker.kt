@@ -67,9 +67,10 @@ object BenchmarkWorker {
             generatorType.getMethod("complete", *signature).invoke(generator, source, destination)
             require(call(destination, "hasErrors") == false) { "JMH harness generation failed: ${call(destination, "getErrors")}" }
             val entries = entries(generated)
-            require(entries.isNotEmpty() && entries.map { call(it, "getUserClassQName") }.toSet() == harness.classes.toSet()) {
+            require(entries.isNotEmpty() && entries.map { call(it, "getUserClassQName") }.toSet() == selectedNames(harness.classes).keys) {
                 "Every declared benchmark class must contribute a generated benchmark"
             }
+            workspace.publish("output/benchmark-harness/kvik-metadata.json", JvmBenchmarkHarnessMetadata(entries.map(::groupSize).distinct().sorted()).toJson())
             val javaSources = Files.walk(sources).use { paths -> paths.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) && it.toString().endsWith(".java") }.sorted().toList() }
             require(javaSources.isNotEmpty() && javaSources.size <= 100_000) { "Missing or excessive generated JMH sources" }
             val compiler = requireNotNull(ToolProvider.getSystemJavaCompiler()) { "JMH preparation needs a JDK Java compiler" }
@@ -83,11 +84,17 @@ object BenchmarkWorker {
     private fun measure(workspace: Workspace, run: JvmBenchmarkRun) {
         val paths = classpath(workspace, run.classpath)
         val settings = run.effectiveSettings
-        val expected = expectedResults(entries(paths.first()), settings.classes, settings.mode)
+        val names = selectedNames(settings.classes)
+        val entries = entries(paths.first())
+        val expected = expectedResults(entries, names, settings.mode)
+        val groupSizes = entries.associate { (call(it, "getUsername") as String) to groupSize(it) }
+        val metadata = JvmBenchmarkHarnessMetadata.fromJson(workspace.readJson("input/${run.classpath.first().value}/kvik-metadata.json"))
+        require(metadata.groupSizes == groupSizes.values.distinct().sorted()) { "JMH harness group metadata differs" }
+        metadata.maximumThreads(settings.threads)
         val builderType = type("org.openjdk.jmh.runner.options.OptionsBuilder")
         val builder = builderType.getConstructor().newInstance()
         fun option(name: String, kind: Class<*>, value: Any) { builderType.getMethod(name, kind).invoke(builder, value) }
-        settings.classes.forEach { option("include", String::class.java, "^${Pattern.quote(it)}\\.[^.]+$") }
+        names.keys.forEach { option("include", String::class.java, "^${Pattern.quote(it)}\\.[^.]+$") }
         option("shouldFailOnError", Boolean::class.javaPrimitiveType!!, true)
         option("forks", Int::class.javaPrimitiveType!!, settings.forks)
         option("warmupForks", Int::class.javaPrimitiveType!!, 0)
@@ -116,7 +123,10 @@ object BenchmarkWorker {
         val results = rawResults.map { raw ->
             val result = requireNotNull(raw)
             val params = call(result, "getParams")
-            require(call(params, "getForks") == settings.forks && call(params, "getThreads") == settings.threads) { "JMH run settings differ" }
+            val name = call(params, "getBenchmark") as String
+            val size = groupSizes.getValue(name)
+            val effectiveThreads = ((settings.threads + size - 1) / size) * size
+            require(call(params, "getForks") == settings.forks && call(params, "getThreads") == effectiveThreads) { "JMH run settings differ" }
             for ((method, count) in listOf("getWarmup" to settings.warmups, "getMeasurement" to settings.iterations)) {
                 val iteration = call(params, method)
                 require(call(iteration, "getCount") == count && call(iteration, "getTime") == time) { "JMH iteration settings differ" }
@@ -132,7 +142,7 @@ object BenchmarkWorker {
             val parameterKeys = (call(params, "getParamsKeys") as Collection<*>).map { it as String }.sorted()
             val parameters = parameterKeys.associateWith { params.javaClass.getMethod("getParam", String::class.java).invoke(params, it) as String }
             val mode = call(call(params, "getMode"), "shortLabel") as String
-            JvmBenchmarkResult(call(params, "getBenchmark") as String, mode, parameters, score.toString(), error.takeIf { it.isFinite() }?.toString(),
+            JvmBenchmarkResult(binaryBenchmarkName(call(params, "getBenchmark") as String, names), mode, parameters, score.toString(), error.takeIf { it.isFinite() }?.toString(),
                 call(primary, "getScoreUnit") as String, call(primary, "getSampleCount") as Long)
         }.sortedBy { it.identity }
         require(results.map { it.identity }.toSet() == expected && results.size == expected.size) { "JMH measurements do not cover every generated benchmark and parameter combination" }
@@ -151,8 +161,8 @@ object BenchmarkWorker {
     }
 
     /** JMH's generated metadata already incorporates inherited methods, groups and enum parameters. */
-    private fun expectedResults(entries: List<Any>, classes: List<String>, mode: String): Set<String> {
-        require(entries.map { call(it, "getUserClassQName") }.toSet() == classes.toSet()) { "Generated harness classes differ from selection" }
+    private fun expectedResults(entries: List<Any>, names: Map<String, String>, mode: String): Set<String> {
+        require(entries.map { call(it, "getUserClassQName") }.toSet() == names.keys) { "Generated harness classes differ from selection" }
         val expected = linkedSetOf<String>()
         for (entry in entries) {
             val optional = call(entry, "getParams")
@@ -165,12 +175,26 @@ object BenchmarkWorker {
                 combinations = combinations.flatMap { previous -> values.map { previous + (name to it) } }
             }
             for (parameters in combinations) {
-                expected += JvmBenchmarkResult(call(entry, "getUsername") as String, mode, parameters, "0", null, "ns/op", 1).identity
+                expected += JvmBenchmarkResult(binaryBenchmarkName(call(entry, "getUsername") as String, names), mode, parameters, "0", null, "ns/op", 1).identity
                 require(expected.size <= 100_000) { "Excessive benchmark combinations" }
             }
         }
         return expected.also { require(it.isNotEmpty()) }
     }
+
+    private fun groupSize(entry: Any): Int = (call(entry, "getThreadGroups") as IntArray).let { groups ->
+        require(groups.isNotEmpty() && groups.all { it in 0..1024 }) { "Invalid JMH thread group" }
+        groups.sum().also { require(it in 1..1024) { "JMH method group exceeds 1024 threads" } }
+    }
+
+    // JMH uses canonical Java names, while project declarations and the normalized contract use JVM binary names.
+    private fun selectedNames(classes: List<String>): Map<String, String> = classes.associateBy { name ->
+        val loaded = Class.forName(name, false, BenchmarkWorker::class.java.classLoader)
+        (loaded.canonicalName ?: loaded.name).replace('$', '.')
+    }.also { require(it.size == classes.size) { "Benchmark class names collide in JMH metadata" } }
+
+    private fun binaryBenchmarkName(name: String, names: Map<String, String>): String =
+        requireNotNull(names[name.substringBeforeLast('.')]) { "Unexpected benchmark class: $name" } + "." + name.substringAfterLast('.')
 
     private fun type(name: String): Class<*> = Class.forName(name, false, BenchmarkWorker::class.java.classLoader)
     private fun call(receiver: Any, method: String): Any = requireNotNull(receiver.javaClass.getMethod(method).invoke(receiver))

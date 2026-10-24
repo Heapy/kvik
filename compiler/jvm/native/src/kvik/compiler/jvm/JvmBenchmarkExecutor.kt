@@ -28,7 +28,13 @@ class JvmBenchmarkExecutor(
     val observations: Map<String, JvmBenchmarkObservation> get() = recorded.toMap()
     override fun resources(action: ActionSpec): ResourceRequest = if (action.kind == ActionKind.BENCHMARK) {
         val settings = JvmBenchmarkRun.fromJson(action.parameters).effectiveSettings
-        ResourceRequest(1024L + settings.threads * 16L, setOf("jvm-benchmark-measurement"))
+        val module = JvmBenchmarkRun.fromJson(action.parameters).module
+        val metadataFile = action.inputs.files.single { it.path.value == "harness/$module/kvik-metadata.json" }
+        require(metadataFile.digest.sizeBytes <= 8192) { "Oversized JMH harness metadata" }
+        val bytes = requireNotNull(content.get(metadataFile.digest)) { "Missing JMH harness metadata" }
+        require(Sha256.digest(bytes) == metadataFile.digest) { "Invalid JMH harness metadata digest" }
+        val metadata = JvmBenchmarkHarnessMetadata.fromJson(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+        ResourceRequest(1024L + metadata.maximumThreads(settings.threads) * 16L, setOf("jvm-benchmark-measurement"))
     } else ResourceRequest(2048)
 
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {

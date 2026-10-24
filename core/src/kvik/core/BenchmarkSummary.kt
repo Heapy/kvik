@@ -48,3 +48,17 @@ data class JvmBenchmarkReport(val module: String, val profile: BenchmarkProfile,
 
 private fun benchmarkDecimal(value: String): Boolean = value.length in 1..128 &&
     value.matches(Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")) && value.toDoubleOrNull()?.isFinite() == true
+
+/** JMH rounds requested threads up to a whole method group; schedule that actual allocation. */
+data class JvmBenchmarkHarnessMetadata(val groupSizes: List<Int>) {
+    init { require(groupSizes.isNotEmpty() && groupSizes == groupSizes.distinct().sorted() && groupSizes.all { it in 1..1024 }) { "JMH method groups must contain 1..1024 threads" } }
+    fun maximumThreads(requested: Int): Int = groupSizes.maxOf { size -> ((requested + size - 1) / size) * size }
+        .also { require(it in 1..1024) { "JMH effective thread count exceeds 1024" } }
+    fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "groupSizes" to groupSizes.map { it.json() }.json())
+    companion object {
+        fun fromJson(value: JsonValue): JvmBenchmarkHarnessMetadata = value.fields(setOf("schemaVersion", "groupSizes")).let {
+            it.requireVersion()
+            JvmBenchmarkHarnessMetadata(it.getValue("groupSizes").arrayValue().map { item -> item.longValue().also { size -> require(size in 1..1024) }.toInt() })
+        }
+    }
+}

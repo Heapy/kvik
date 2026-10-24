@@ -2,6 +2,8 @@
 """Direct worker regression: real JMH generation, parameter/group coverage and failure handling."""
 import argparse
 import json
+import os
+import signal
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,6 +39,7 @@ def main():
                 @Benchmark @Group("pair") public int left() { return 1; }
                 @Benchmark @Group("pair") public int right() { return 2; }
             }''',
+            'Outer': '''public class Outer { public static class Nested { @Benchmark public int value() { return 1; } } }''',
             'Empty': 'public class Empty {}',
             'Broken': '''public class Broken { @Benchmark public void fail() { throw new IllegalStateException("expected benchmark failure"); } }''',
         }
@@ -61,29 +64,39 @@ def main():
                 shutil.copytree(harness / 'output/benchmark-harness', work / 'input/harness/sample')
                 classpath.insert(0, 'harness/sample')
                 parameters = {'module': 'sample', 'classpath': classpath, 'profile': 'smoke',
-                    'settings': {'classes': selected, 'forks': 1, 'threads': 2}}
+                    'settings': {'classes': selected, 'forks': 1, 'threads': 1}}
             request = {'schemaVersion': 1, 'requestId': name, 'operation': operation, 'parameters': parameters}
             (work / 'request.json').write_text(json.dumps(request))
             cp = [args.worker_classes, args.stdlib, *(work / 'input' / item for item in classpath)]
             with (work / 'worker.log').open('w') as log:
-                result = subprocess.run([java, f'-Duser.home={work}/home', f'-Djava.io.tmpdir={work}/tmp', '-cp', ':'.join(map(str, cp)),
-                    'kvik.jvm.BenchmarkWorker', work, 'request.json', 'result.json'], cwd=work, stdout=log, stderr=subprocess.STDOUT, timeout=90)
+                result = subprocess.Popen([java, f'-Duser.home={work}/home', f'-Djava.io.tmpdir={work}/tmp', '-cp', ':'.join(map(str, cp)),
+                    'kvik.jvm.BenchmarkWorker', work, 'request.json', 'result.json'], cwd=work, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    result.wait(timeout=90)
+                finally:
+                    try:
+                        os.killpg(result.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    result.wait()
             assert (result.returncode == 0) == success, (work / 'worker.log').read_text() + (work / 'result.json').read_text()
             assert ((json.loads((work / 'result.json').read_text())['status'] == 'success') == success)
             return work
 
-        selected = ['bench.Sample', 'bench.Grouped']
+        selected = ['bench.Sample', 'bench.Grouped', 'bench.Outer$Nested']
         harness = invoke('prepare', 'harness', selected)
         assert not (harness / 'home/initialized').exists(), 'Harness generation initialized benchmark code'
+        assert json.loads((harness / 'output/benchmark-harness/kvik-metadata.json').read_text())['groupSizes'] == [1, 2]
         measured = invoke('measure', 'run', selected, harness)
         summary = json.loads((measured / 'output/benchmark-summary.json').read_text())
-        assert len(summary['results']) == 3, summary
-        assert {r['benchmark'] for r in summary['results']} == {'bench.Sample.value', 'bench.Grouped.pair'}
+        assert len(summary['results']) == 4, summary
+        assert {r['benchmark'] for r in summary['results']} == {'bench.Sample.value', 'bench.Grouped.pair', 'bench.Outer$Nested.value'}
         assert {r['parameters']['size'] for r in summary['results'] if r['benchmark'] == 'bench.Sample.value'} == {'1', '2'}
         assert all(r['samples'] > 0 and isinstance(r['score'], str) for r in summary['results'])
         assert (measured / 'home/initialized').is_file()
         raw = json.loads((measured / 'output/benchmark-results.json').read_text())
-        assert len(raw) == 3 and all(r['warmupIterations'] == 1 and r['measurementIterations'] == 1 for r in raw)
+        assert len(raw) == 4 and all(r['warmupIterations'] == 1 and r['measurementIterations'] == 1 for r in raw)
+        assert all(r['threads'] == (2 if r['benchmark'] == 'bench.Grouped.pair' else 1) for r in raw)
         invoke('empty', 'harness', ['bench.Empty'], success=False)
         broken = invoke('prepare-broken', 'harness', ['bench.Broken'])
         failed = invoke('measure-broken', 'run', ['bench.Broken'], broken, success=False)
