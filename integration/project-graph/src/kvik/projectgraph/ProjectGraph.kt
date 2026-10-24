@@ -290,9 +290,9 @@ private class Builder(
             require(result.outputs.files.count { it.path.value == output } == 1 &&
                 result.outputs.files.all { it.path.value == output || it.path.value.startsWith("plugins/") }) { "Unexpected Native library output" }
         } else require(result.outputs.files.all { (it.path.value.startsWith("$output/") || it.path.value.startsWith("plugins/")) && target == "jvm" ||
-            NativeTarget.find(target) != null && (it.path.value == output || it.path.value.startsWith("$output.dSYM/")) }) { "Unexpected prerequisite output: $id" }
+            NativeTarget.find(target) != null && (it.path.value == output || target == NativeTarget.MACOS_ARM64.projectName && it.path.value.startsWith("$output.dSYM/")) }) { "Unexpected prerequisite output: $id" }
         val selected = result.outputs.files.filter { if (target == "jvm") it.path.value.startsWith("$output/")
-            else it.path.value == output || it.path.value.startsWith("$output.dSYM/") }
+            else it.path.value == output || target == NativeTarget.MACOS_ARM64.projectName && it.path.value.startsWith("$output.dSYM/") }
         require(selected.isNotEmpty()) { "Missing compiled classes: $id" }
         return selected.map { it.copy(path = LogicalPath(prefix + it.path.value.removePrefix(output))) }
     }
@@ -555,7 +555,7 @@ private class Builder(
                 validateResults(results, setOf(linkId))
                 val linked = results.getValue(linkId).outputs.files
                 require(linked.any { it.path.value == "application.kexe" && it.executable } && linked.all {
-                    it.path.value == "application.kexe" || it.path.value.startsWith("application.kexe.dSYM/")
+                    it.path.value == "application.kexe" || target == NativeTarget.MACOS_ARM64.projectName && it.path.value.startsWith("application.kexe.dSYM/")
                 }) { "Unexpected Native application output" }
                 val prefix = "modules/$module/$target/"
                 val executable = LogicalPath(prefix + "application.kexe")

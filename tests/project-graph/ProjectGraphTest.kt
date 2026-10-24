@@ -65,7 +65,9 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
-    "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).output.let { output -> listOf(FileEntry(output, digest(salt), true), FileEntry(LogicalPath(output.value + ".dSYM/Contents/Info.plist"), digest("symbols"))) }
+    "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).let { compilation ->
+        listOf(FileEntry(compilation.output, digest(salt), true)) + if (compilation.target == NativeTarget.MACOS_ARM64)
+            listOf(FileEntry(LogicalPath(compilation.output.value + ".dSYM/Contents/Info.plist"), digest("symbols"))) else emptyList() }
         else listOf(FileEntry(NativeCompilation.fromJson(action.parameters).output, digest(salt)))
     else -> listOf(FileEntry(LogicalPath("test-results.json"), digest("report")))
 })
@@ -145,6 +147,13 @@ class ProjectGraphTest {
         val wrongTools = tools + ("linuxX64" to tools.getValue("macosArm64"))
         val effective = effectiveConfiguration(config)
         assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition, wrongTools, request(ProjectMode.TEST, "linuxX64")) }
+        val testNode = plan.nodes.single { it.id == "app:linuxX64:test" }
+        val testResults = testNode.dependencies.associateWith { id ->
+            val action = actions.getValue(id)
+            val extra = if (id.endsWith(":test-link")) listOf(FileEntry(LogicalPath("tests.kexe.dSYM/Contents/Info.plist"), digest("unexpected"))) else emptyList()
+            ActionResult(id, action.key(Sha256), ActionStatus.EXECUTED, TreeManifest(outputs(action, id).files + extra), 0)
+        }
+        assertFails { testNode.resolve(testResults) }
         val altered = resolved(plan, "base:linuxX64:main")
         assertNotEquals(linked.key(Sha256), altered.getValue("app:linuxX64:test-link").key(Sha256))
     }
@@ -178,6 +187,10 @@ class ProjectGraphTest {
         assertTrue(link.libraries.any { it.value == "modules/runtime/linuxX64/main.klib" })
         assertEquals(NativeTarget.LINUX_X64, link.target)
         assertEquals("fixture.main", link.entryPoint)
+        val bundleNode = graph(config, files, request(ProjectMode.APPLICATION, "linuxX64")).nodes.single { it.id == "app:linuxX64:application" }
+        val linkAction = actions.getValue("app:linuxX64:application-link")
+        assertFails { bundleNode.resolve(mapOf("app:linuxX64:application-link" to ActionResult("app:linuxX64:application-link", linkAction.key(Sha256), ActionStatus.EXECUTED,
+            TreeManifest(outputs(linkAction, "linked").files + FileEntry(LogicalPath("application.kexe.dSYM/Contents/Info.plist"), digest("unexpected"))), 0))) }
         val bundle = actions.getValue("app:linuxX64:application")
         assertEquals("linuxX64", ApplicationLaunch.fromJson(bundle.parameters).target)
         assertTrue(bundle.inputs.files.any { it.path.value.startsWith("runtime/runtime/main/") })
