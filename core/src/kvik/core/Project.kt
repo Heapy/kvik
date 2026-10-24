@@ -89,8 +89,8 @@ data class TargetSpec(
     init {
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
-        require(nativeTestSettings == null || name == "macosArm64" && test != null) { "nativeTestSettings requires a macosArm64 target with a test source set" }
-        require(nativeTimeouts == null || name == "macosArm64") { "nativeTimeouts requires a macosArm64 target" }
+        require(nativeTestSettings == null || NativeTarget.find(name) != null && test != null) { "nativeTestSettings requires a supported Native target with a test source set" }
+        require(nativeTimeouts == null || NativeTarget.find(name) != null) { "nativeTimeouts requires a supported Native target" }
         application?.requireTarget(name)
     }
     fun optionsFor(compilation: String): List<String> = when (compilation) {
@@ -108,7 +108,7 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         if (module != null) {
             require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilerVersion == "2.4.20") { "Workspace plugin requires an id and compilerVersion=2.4.20" }
             require(if ("script" in scopes) targets == setOf("jvm") && scopes == setOf("script")
-                else targets.all { it in setOf("jvm", "macosArm64") }) {
+                else targets.all { it == "jvm" || NativeTarget.find(it) != null }) {
                 "Workspace compiler plugins require JVM/Native main/test or a separate JVM script declaration"
             }
             validatePluginOptions(options, inputs, pathOptions, outputs)
@@ -120,8 +120,7 @@ data class LibraryPublicationSpec(val coordinate: Coordinate) {
     fun coordinateFor(target: String): Coordinate {
         val suffix = when (target) {
             "jvm" -> "jvm"
-            "macosArm64" -> "macosarm64"
-            else -> error("Unsupported library publication target: $target")
+            else -> NativeTarget.require(target).publicationSuffix
         }
         return coordinate.copy(name = "${coordinate.name}-$suffix")
     }
@@ -151,7 +150,7 @@ data class ProjectSpec(val name: String, val repositories: List<Repository>, val
 }
 
 data class VariantRequest(val platform: String, val usage: String, val attributes: Map<String, String>) {
-    init { require(platform in setOf("jvm", "macosArm64", "common") && usage.isNotBlank()) }
+    init { require((platform in setOf("jvm", "common") || NativeTarget.find(platform) != null) && usage.isNotBlank()) }
 }
 data class LockedArtifact(val coordinate: Coordinate, val variant: String, val repository: String, val url: String, val digest: Digest)
 data class MetadataIdentity(val url: String, val digest: Digest)

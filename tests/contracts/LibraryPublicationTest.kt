@@ -19,6 +19,7 @@ class LibraryPublicationTest {
         val spec = LibraryPublicationSpec(base)
         assertEquals(Coordinate("org.example", "library-jvm", "1.0.0"), spec.coordinateFor("jvm"))
         assertEquals(Coordinate("org.example", "library-macosarm64", "1.0.0"), spec.coordinateFor("macosArm64"))
+        assertEquals(Coordinate("org.example", "library-linuxx64", "1.0.0"), spec.coordinateFor("linuxX64"))
         for (target in listOf("common", "js", "macosarm64", "")) assertFails { spec.coordinateFor(target) }
         val legacy = parse(document())
         assertNull(legacy.project.modules.single().publication)

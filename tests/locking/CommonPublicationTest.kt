@@ -31,6 +31,32 @@ private val commonDomain = ResolutionDomain("root", "common", "main", "kotlin-me
 private val commonScope = DependencyScope("root", "common", "main", "kotlin-metadata")
 
 class CommonPublicationTest {
+    @Test fun linuxResolutionDomainsPreserveConsumerScopesAndHostPluginIdentity() {
+        val original = commonProject(commonModule("root", listOf(external("api"), external("runtime", runtime = true))))
+        val linux = parseProjectConfiguration(parseJson(original.document.canonical().replace("macosArm64", "linuxX64")))
+        val api = ResolutionDomain("root", "linuxX64", "main", "kotlin-api")
+        val runtime = api.copy(usage = "kotlin-runtime")
+        val policy = ResolverPolicy(scopedPins = listOf(ScopedPin(runtime, Coordinate("example", "api", "2"))))
+        val effective = effectiveConfiguration(linux, policy)
+        val apiRequests = effective.requests.filter { it.domain == api }
+        val runtimeRequests = effective.requests.filter { it.domain == runtime }
+        assertTrue(apiRequests.none { it.coordinate.name == "runtime" })
+        assertTrue(runtimeRequests.any { it.coordinate.name == "runtime" })
+        assertTrue((apiRequests + runtimeRequests).all { it.variant == VariantRequest("linuxX64", "kotlin-api", emptyMap()) })
+        assertEquals(emptyList(), effective.policy.pinsFor(api))
+        assertEquals(listOf(Coordinate("example", "api", "2")), effective.policy.pinsFor(runtime))
+        assertEquals(runtime, ResolutionDomain.fromJson(runtime.toJson()))
+        assertNotEquals(effective.digest, effectiveConfiguration(original).digest)
+        assertTrue(effective.requests.any { it.domain.target == "common" && it.coordinate.name == "kotlin-stdlib" })
+        for (purpose in listOf("compiler-plugin", "ksp-runtime", "symbol-processor")) {
+            val host = ResolutionDomain("root", "linuxX64", "test", "java-runtime", purpose)
+            assertTrue(host.isHostTool)
+            assertEquals(host, ResolutionDomain.fromJson(host.toJson()))
+        }
+        assertFails { ResolutionDomain("root", "linuxArm64", "main", "kotlin-api") }
+        assertFails { ResolutionDomain("root", "linuxX64", "main", "java-runtime", "ksp-runtime") }
+    }
+
     @Test fun sharedIntersectionAndVisibilityAreIndependentOfPlatformAndTestDeclarations() {
         val configuration = commonProject(commonModule("root", listOf(Dependency.Module("dependency"), external("own-private"), external("runtime", runtime = true))),
             commonModule("dependency", listOf(Dependency.Module("exported", exported = true), Dependency.Module("private"), external("public", true), external("hidden"))),

@@ -22,9 +22,9 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
             require(purpose in setOf("dependencies", "compiler-plugin")) { "Unsupported script resolution purpose" }
         } else if (target == "common") {
             require(compilation == "main" && usage == "kotlin-metadata" && purpose == "dependencies") { "Common resolution requires main kotlin-metadata dependencies" }
-        } else require(target in setOf("jvm", "macosArm64") && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
+        } else require((target == "jvm" || NativeTarget.find(target) != null) && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
         require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")) { "Invalid resolution domain purpose" }
-        require(purpose !in setOf("ksp-runtime", "symbol-processor") || target == "macosArm64" && compilation == "test") { "KSP domains currently require macosArm64 tests" }
+        require(purpose !in setOf("ksp-runtime", "symbol-processor") || NativeTarget.find(target) != null && compilation == "test") { "KSP domains currently require supported Native tests" }
         require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else if (target == "common") setOf("kotlin-metadata") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
     }
     val isHostTool: Boolean get() = purpose != "dependencies"
@@ -195,7 +195,7 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
             requests += ResolutionRequest(settings.processor, host, processorDomain)
         }
         val selectedPlugins = module.compilerPlugins.filter { target.name in it.targets &&
-            (domain.compilation in it.scopes || it.module == null && target.name == "macosArm64" && domain.compilation == "test" && "main" in it.scopes) }
+            (domain.compilation in it.scopes || it.module == null && NativeTarget.find(target.name) != null && domain.compilation == "test" && "main" in it.scopes) }
         if (selectedPlugins.isNotEmpty()) {
             val pluginDomain = domain.copy(usage = "java-runtime", purpose = "compiler-plugin")
             domains += pluginDomain

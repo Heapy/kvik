@@ -39,7 +39,7 @@ internal fun compilerOptions(module: String, target: String, arguments: List<Str
                 require(supportedJvmTarget(value()) == jvm.jdkRelease)
             }
             "-module-name" -> {
-                require(target == "macosArm64") { "Custom JVM module names are not represented by the adapter" }
+                require(NativeTarget.find(target) != null) { "Custom JVM module names are not represented by the adapter" }
                 nativeModuleName = value()
                 require(nativeModuleName.matches(Regex("[A-Za-z0-9_.:-]+"))) { "Invalid Native module name" }
             }

@@ -149,7 +149,7 @@ data class WorkerRequest(
     val metadataTargets: Set<String> = if (operation == "metadata-compile") setOf("jvm", "macosArm64") else emptySet(),
 ) {
     init {
-        require(metadataTargets == if (operation == "metadata-compile") setOf("jvm", "macosArm64") else emptySet()) { "Unsupported metadata target intersection" }
+        require(if (operation == "metadata-compile") metadataTargets.size >= 2 && metadataTargets.all { it == "jvm" || NativeTarget.find(it) != null } else metadataTargets.isEmpty()) { "Unsupported metadata target intersection" }
         require(requestId.isNotBlank() && operation in setOf("jvm-compile", "metadata-compile") && sources.isNotEmpty())
         require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || pluginClasspath.isEmpty())) { "Only one compiler plugin representation/application is supported" }
     }

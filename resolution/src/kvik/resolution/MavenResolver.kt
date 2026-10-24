@@ -184,6 +184,7 @@ class MavenResolver(
                         val path = file.string("url")
                         require(path.matches(Regex("[A-Za-z0-9_.-]+")) && path !in setOf(".", "..")) { "Unsupported artifact URL" }
                         require(variant.platform != "common" || path.endsWith(".jar")) { "Common metadata requires a metadata JAR" }
+                        require(NativeTarget.find(variant.platform) == null || path.endsWith(".klib")) { "Native variant requires a KLIB" }
                         val url = found.url.substringBeforeLast('/') + "/" + path
                         val expected = Digest(file.string("sha256"), file.getValue("size").longValue())
                         require(expected.sizeBytes <= maxArtifactBytes) { "Artifact exceeds byte bound" }
@@ -323,7 +324,8 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
     val a = v["attributes"]?.objectValue() ?: error("Variant missing attributes")
     fun attribute(key: String) = a[key]?.stringValue()
     if (attribute("org.gradle.category") != if (platform) "platform" else "library") return false
-    val type = when (request.platform) { "macosArm64" -> "native"; else -> request.platform }
+    val nativeTarget = NativeTarget.find(request.platform)
+    val type = if (nativeTarget != null) "native" else request.platform
     if (attribute("org.gradle.usage") != request.usage) return false
     if (!platform && attribute("org.jetbrains.kotlin.platform.type") != type) {
         // Java publications need not carry Kotlin's platform attribute. Require the explicit Java
@@ -331,8 +333,8 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
         if (type != "jvm" || attribute("org.jetbrains.kotlin.platform.type") != null ||
             request.usage !in setOf("java-api", "java-runtime") || attribute("org.gradle.libraryelements") != "jar") return false
     }
-    if (request.platform == "macosArm64" && attribute("org.jetbrains.kotlin.native.target") !in setOf(null, "macos_arm64")) return false
-    if (request.platform == "macosArm64" && attribute("org.jetbrains.kotlin.native.target") == null) {
+    if (nativeTarget != null && attribute("org.jetbrains.kotlin.native.target") !in setOf(null, nativeTarget.compilerName)) return false
+    if (nativeTarget != null && attribute("org.jetbrains.kotlin.native.target") == null) {
         require(v.items("files").isEmpty() && v.items("dependencies").isEmpty() && v["available-at"] == null) { "Native binary variant lacks target" }
     }
     val supported = setOf("artifactType", "org.gradle.category", "org.gradle.usage", "org.gradle.jvm.environment", "org.gradle.libraryelements", "org.gradle.dependency.bundling", "org.jetbrains.kotlin.platform.type", "org.jetbrains.kotlin.native.target", "org.jetbrains.kotlin.klib.packaging") +

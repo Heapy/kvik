@@ -34,7 +34,9 @@ class ApplicationTest {
         assertFails { launch.copy(executable = null) }
         assertFails { launch.copy(application = ApplicationSpec("sample.Outer\$Nested")) }
         jvm().copy(application = ApplicationSpec("sample.Outer\$Nested"))
-        assertFails { launch.copy(target = "linuxX64") }
+        val linux = launch.copy(target = "linuxX64")
+        assertEquals(linux, ApplicationLaunch.fromJson(linux.toJson()))
+        assertFails { launch.copy(target = "linuxArm64") }
     }
 
     @Test fun settingsRejectUnknownFieldsNulsInvalidUnicodeAndOversizedPayloads() {

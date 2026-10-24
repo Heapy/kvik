@@ -41,7 +41,8 @@ class CompilerPluginsTest {
         assertFails { workspace.copy(id = null) }
         assertEquals(setOf("macosArm64"), workspace.copy(targets = setOf("macosArm64")).targets)
         assertEquals(setOf("jvm", "macosArm64"), workspace.copy(targets = setOf("jvm", "macosArm64")).targets)
-        assertFails { workspace.copy(targets = setOf("linuxX64")) }
+        assertEquals(setOf("linuxX64"), workspace.copy(targets = setOf("linuxX64")).targets)
+        assertFails { workspace.copy(targets = setOf("linuxArm64")) }
         assertEquals(setOf("script"), workspace.copy(scopes = setOf("script")).scopes)
         assertFails { workspace.copy(targets = setOf("macosArm64"), scopes = setOf("script")) }
         assertFails { workspace.copy(targets = setOf("jvm", "macosArm64"), scopes = setOf("script")) }

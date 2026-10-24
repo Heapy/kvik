@@ -55,6 +55,25 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun linuxVariantSelectionNeverSubstitutesMacJvmOrPom() {
+        val request = VariantRequest("linuxX64", "kotlin-api", emptyMap())
+        val bytes = "linux klib".encodeToByteArray(); val digest = Sha256.digest(bytes)
+        fun selected(name: String, target: String) = """{"name":"$name","attributes":{"org.gradle.category":"library","org.gradle.usage":"kotlin-api","org.jetbrains.kotlin.platform.type":"native","org.jetbrains.kotlin.native.target":"$target","org.gradle.libraryelements":"klib"},"files":[{"name":"a.klib","url":"a.klib","size":${bytes.size},"sha256":"${digest.hash}"}]}"""
+        val linux = selected("linux", "linux_x64")
+        val mac = selected("mac", "macos_arm64")
+        val artifacts = mapOf("${repo.url}/example/a/1.0/a.klib" to bytes)
+        val result = resolve(module(example, "$mac,$linux"), request, artifacts)
+        assertEquals("linux", result.artifacts.single().variant)
+        assertEquals(digest, result.artifacts.single().digest)
+        assertEquals("mac", resolve(module(example, "$mac,$linux"), native, artifacts).artifacts.single().variant)
+        assertFails { resolve(module(example, mac), request, artifacts) }
+        assertFails { resolve(module(example, "$linux,$linux"), request, artifacts) }
+        assertFails { resolve(module(example, linux.replace(",\"org.jetbrains.kotlin.native.target\":\"linux_x64\"", "")), request, artifacts) }
+        assertFails { resolve(module(example, linux.replace("a.klib", "a.jar")), request, mapOf("${repo.url}/example/a/1.0/a.jar" to bytes)) }
+        val pom = """<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version></project>""".encodeToByteArray()
+        assertFails { MavenResolver(MemoryTransport(mapOf("${repo.url}/example/a/1.0/a-1.0.pom" to pom)), NativePomParser()).resolve(example, request, listOf(repo)) }
+    }
+
     @Test fun commonMetadataSelectsPinnedRootArtifactsAndVerifiesTheirBytes() {
         val transport = FixtureTransport()
         val standard = Coordinate.parse("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")

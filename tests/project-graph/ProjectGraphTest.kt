@@ -14,7 +14,8 @@ import platform.posix.*
 private fun digest(value: String) = Sha256.digest(value.encodeToByteArray())
 private val composition = digest("runtime")
 private val tools = mapOf("jvm" to listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith(::digest),
-    "macosArm64" to listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest))
+    "macosArm64" to listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest),
+    "linuxX64" to listOf("native", "jdk", "system", "native-dependencies").associateWith(::digest))
 private fun external(value: String) = Dependency.External(Coordinate.parse(value), exported = true)
 private fun source(name: String, directory: String, parents: List<String> = emptyList(), dependencies: List<Dependency> = emptyList(), resource: String? = null) =
     SourceSet(name, listOf(LogicalPath(directory)), listOfNotNull(resource?.let(::LogicalPath)), parents, dependencies)
@@ -96,6 +97,112 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun linuxWorkspacePluginUsesJvmProducerRuntimeAndHonorsMainOnlyScope() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("linuxX64"), setOf("main"),
+            listOf("value=a,b=c"), emptyList(), "example.plugin", "2.4.20",
+            listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val producer = module("producer", listOf(Dependency.Module("runtime", DependencyScopeKind.RUNTIME)))
+        val runtime = module("runtime", listOf(external("g:host:1")))
+        val original = configuration(base, app, producer, runtime)
+        val linux = parseProjectConfiguration(parseJson(original.document.canonical().replace("macosArm64", "linuxX64"))).project.modules
+        val config = configuration(*linux.map { if (it.id == "app") it.copy(compilerPlugins = listOf(plugin)) else it }.toTypedArray())
+        val extra = listOf("producer", "runtime").flatMap { id -> listOf("common/Common.kt", "jvm/Actual.kt")
+            .map { FileEntry(LogicalPath("$id/$it"), digest("$id/$it")) } }
+        val selected = request(ProjectMode.TEST, "linuxX64")
+        assertEquals(setOf("linuxX64", "jvm"), projectToolTargets(config.project, selected))
+        val plan = graph(config, TreeManifest(snapshot().files + extra), selected)
+        val actions = resolved(plan)
+        assertTrue("producer:jvm:main" in actions && "runtime:jvm:main" in actions)
+        val compile = NativeCompilation.fromJson(actions.getValue("app:linuxX64:main").parameters)
+        val application = compile.pluginApplications.single()
+        assertTrue(application.classpath.any { "runtime/classes" in it.value })
+        assertTrue(application.classpath.none { it in compile.libraries })
+        assertEquals(plugin.options, application.options)
+        assertTrue(NativeCompilation.fromJson(actions.getValue("app:linuxX64:test-compile").parameters).pluginApplications.isEmpty())
+        assertTrue(actions.getValue("app:linuxX64:test-link").inputs.files.none { it.path.value.startsWith("plugins/") })
+        assertNotEquals(actions.getValue("app:linuxX64:main").key(Sha256),
+            resolved(plan, "runtime:jvm:main").getValue("app:linuxX64:main").key(Sha256))
+    }
+
+
+    @Test fun linuxTestsUseSeparateApiLinkClosureAndLinuxTools() {
+        val config = parseProjectConfiguration(parseJson(project.document.canonical().replace("macosArm64", "linuxX64")))
+        val plan = graph(config, request = request(ProjectMode.TEST, "linuxX64"))
+        val actions = resolved(plan)
+        assertEquals(setOf("app:linuxX64:test"), plan.requestedChecks)
+        assertTrue(actions.keys.none { "macosArm64" in it })
+        val compiled = actions.getValue("app:linuxX64:test-compile")
+        val linked = actions.getValue("app:linuxX64:test-link")
+        val parameters = NativeCompilation.fromJson(linked.parameters)
+        assertEquals(NativeTarget.LINUX_X64, parameters.target)
+        assertEquals(LogicalPath("modules/app/linuxX64/test.klib"), parameters.includedLibrary)
+        assertEquals(mapOf("os" to "linux", "arch" to "x64"), linked.platform)
+        assertEquals(tools.getValue("linuxX64"), linked.toolchains)
+        assertTrue(linked.arguments.containsAll(listOf("-target", "linux_x64")))
+        assertTrue(NativeCompilation.fromJson(compiled.parameters).sources.any { "/common/" in it.value })
+        assertEquals(CachePolicy.NEVER, actions.getValue("app:linuxX64:test").cachePolicy)
+        assertEquals("linuxX64", actions.getValue("app:linuxX64:test").target)
+        val wrongTools = tools + ("linuxX64" to tools.getValue("macosArm64"))
+        val effective = effectiveConfiguration(config)
+        assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition, wrongTools, request(ProjectMode.TEST, "linuxX64")) }
+        val altered = resolved(plan, "base:linuxX64:main")
+        assertNotEquals(linked.key(Sha256), altered.getValue("app:linuxX64:test-link").key(Sha256))
+    }
+
+    @Test fun linuxKotestUsesLinuxRuntimeAndJvmHostDomains() {
+        val document = project.document.canonical().replace("\"name\":\"macosArm64\"",
+            """"name":"linuxX64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")
+            .replace("g:tests:1", "io.kotest:kotest-framework-engine-linuxx64:6.2.5")
+        val config = parseProjectConfiguration(parseJson(document))
+        val effective = effectiveConfiguration(config)
+        val hosts = effective.requests.filter { it.domain.target == "linuxX64" && it.domain.isHostTool }
+        assertEquals(setOf("ksp-runtime", "symbol-processor"), hosts.map { it.domain.purpose }.toSet())
+        assertTrue(hosts.all { it.variant.platform == "jvm" && it.variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE] == "25" })
+        val actions = resolved(graph(config, request = request(ProjectMode.TEST, "linuxX64")))
+        val generation = actions.getValue("app:linuxX64:ksp-test")
+        assertEquals(NativeTarget.LINUX_X64, KspNativeCompilation.fromJson(generation.parameters).target)
+        assertTrue(generation.arguments.contains("-target=linuxX64"))
+        assertEquals("kvik-kotest-native-tests-v1", actions.getValue("app:linuxX64:test").implementation)
+        assertEquals("linuxX64", actions.getValue("app:linuxX64:test").target)
+        val wrong = parseProjectConfiguration(parseJson(document.replace("kotest-framework-engine-linuxx64", "kotest-framework-engine-macosarm64")))
+        assertFails { graph(wrong, request = request(ProjectMode.TEST, "linuxX64")) }
+    }
+
+    @Test fun linuxApplicationKeepsRuntimeOnlyDependenciesOutOfCompilation() {
+        val (original, files) = applicationFixture()
+        val config = parseProjectConfiguration(parseJson(original.document.canonical().replace("macosArm64", "linuxX64")))
+        val actions = resolved(graph(config, files, request(ProjectMode.APPLICATION, "linuxX64")))
+        val compile = NativeCompilation.fromJson(actions.getValue("app:linuxX64:main").parameters)
+        val link = NativeCompilation.fromJson(actions.getValue("app:linuxX64:application-link").parameters)
+        assertTrue(compile.libraries.none { "/runtime/" in it.value })
+        assertTrue(link.libraries.any { it.value == "modules/runtime/linuxX64/main.klib" })
+        assertEquals(NativeTarget.LINUX_X64, link.target)
+        assertEquals("fixture.main", link.entryPoint)
+        val bundle = actions.getValue("app:linuxX64:application")
+        assertEquals("linuxX64", ApplicationLaunch.fromJson(bundle.parameters).target)
+        assertTrue(bundle.inputs.files.any { it.path.value.startsWith("runtime/runtime/main/") })
+    }
+
+    @Test fun linuxRootMetadataUsesExactlyDeclaredTargetsIncludingNativeOnlyIntersection() {
+        for (selected in listOf(setOf("jvm", "linuxX64"), setOf("macosArm64", "linuxX64"), setOf("jvm", "macosArm64", "linuxX64"))) {
+            fun forTargets(value: ModuleSpec): ModuleSpec = published(value, false).copy(targets = selected.sorted().map { name ->
+                (if (name == "jvm") value.targets.first() else value.targets.last()).copy(name = name)
+            })
+            val config = configuration(forTargets(base), forTargets(app))
+            val request = ProjectGraphRequest(setOf("app"), selected, ProjectMode.PACKAGE)
+            val plan = graph(config, request = request)
+            assertEquals(selected.map { "app:$it:package" }.toSet() + "app:common:package", plan.requestedChecks)
+            assertEquals(plan.requestedChecks, projectRequestedChecks(request))
+            assertTrue("jvm" in projectToolTargets(config.project, request))
+            val metadata = plan.nodes.single { it.id == "base:common:metadata" }.resolve(emptyMap())
+            assertEquals(selected, JvmMetadataCompilation.fromJson(metadata.parameters).targets)
+            assertTrue(metadata.inputs.files.none { "/native/" in it.path.value || "/jvm/" in it.path.value })
+            val packageNode = plan.nodes.single { it.id == "app:common:package" }
+            assertTrue(packageNode.dependencies.containsAll(selected.map { "app:$it:package" }))
+        }
+    }
+
+
     @Test fun sharedPublishedPluginUsesLockedJvmHostArtifactForMetadata() {
         val plugin = CompilerPluginSpec(null, Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20"),
             setOf("jvm", "macosArm64"), setOf("main"), emptyList(), emptyList())

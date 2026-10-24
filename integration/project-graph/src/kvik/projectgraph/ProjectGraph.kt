@@ -24,7 +24,7 @@ data class ProjectActionGraph(val nodes: List<ActionNode>, val requestedChecks: 
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
     request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.name.lowercase()}" } +
-        if (request.mode == ProjectMode.PACKAGE && request.targets == setOf("jvm", "macosArm64")) listOf("$module:common:package") else emptyList()
+        if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) listOf("$module:common:package") else emptyList()
     }.toSet()
 
 /** Host JVM producers may be prerequisites even when only a Native target was requested. */
@@ -32,6 +32,7 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
     val modules = project.modules.associateBy { it.id }
     val visited = mutableSetOf<List<String>>()
     val targets = request.targets.toMutableSet()
+    if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) targets += "jvm"
     fun visit(module: String, target: String, scope: String, runtime: Boolean) {
         if (!visited.add(listOf(module, target, scope, runtime.toString()))) return
         targets += target
@@ -80,9 +81,9 @@ private class Builder(
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
-    private val nativeMainNames = mutableMapOf<String, String>()
+    private val nativeMainNames = mutableMapOf<Pair<String, String>, String>()
     private val rootPublicationModules: Set<String> = if (request.mode == ProjectMode.PACKAGE &&
-        request.targets == setOf("jvm", "macosArm64")) buildSet {
+        request.targets.size > 1) buildSet {
         fun visit(module: String) {
             if (!add(module)) return
             commonPublicationSourceSets(modules.getValue(module)).flatMap { it.dependencies }
@@ -95,13 +96,13 @@ private class Builder(
         require(lock.configuration == effective.digest) { "Stale dependency lock" }
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
-        require(this.request.modules.all { it in modules } && this.request.targets.all { it in setOf("jvm", "macosArm64") }) { "Unknown project module/target selection" }
+        require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Unknown project module/target selection" }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
         for (module in this.request.modules) for (target in this.request.targets) {
             target(module, target)
             require(tools[target]?.keys == if (target == "jvm") setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
-                else setOf("native", "jdk", "sdk", "native-dependencies")) { "Missing/incompatible tool identities: $target" }
+                else NativeTarget.require(target).toolIdentityNames) { "Missing/incompatible tool identities: $target" }
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
@@ -123,7 +124,7 @@ private class Builder(
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
             }
         }
-        if (request.mode == ProjectMode.PACKAGE && request.targets == setOf("jvm", "macosArm64")) {
+        if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) {
             for (module in request.modules.sorted()) {
                 val root = ensureRootPackage(module)
                 terminals["$module:common:package"] = root
@@ -201,7 +202,7 @@ private class Builder(
     }.distinct()
     private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
         modules.getValue(module).compilerPlugins.filter { target in it.targets &&
-            (scope in it.scopes || it.module == null && target == "macosArm64" && scope == "test" && "main" in it.scopes) }.distinct()
+            (scope in it.scopes || it.module == null && NativeTarget.find(target) != null && scope == "test" && "main" in it.scopes) }.distinct()
             .also { require(it.size <= 1) { "Multiple compiler plugins per compilation are unsupported" } }
     private fun plugins(module: String, target: String, scope: String): List<FileEntry> {
         val selected = selectedPlugins(module, target, scope).filter { it.module == null }
@@ -254,8 +255,8 @@ private class Builder(
             plugin.pathOptions.map { it.copy(path = if (it.kind == PluginPathKind.INPUT_FILE) input(it.path) else output(it.path)) }, plugin.outputs.map(::output))
         return WorkspacePlugin(entries, listOf(application))
     }
-    private fun nativeTools(applications: List<JvmPluginApplication>): Map<String, Digest> {
-        val native = tools.getValue("macosArm64")
+    private fun nativeTools(target: String, applications: List<JvmPluginApplication>): Map<String, Digest> {
+        val native = tools.getValue(target)
         if (applications.isEmpty()) return native
         val jvm = tools["jvm"] ?: error("Native workspace compiler plugins require JVM producer/worker tool identities")
         require(jvm.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit") && jvm["jdk"] == native["jdk"]) {
@@ -274,22 +275,22 @@ private class Builder(
     }
     private fun mainId(module: String, target: String) = "$module:$target:main"
     private fun compileId(module: String, target: String) = "$module:$target:test-compile"
-    private fun linkId(module: String) = "$module:macosArm64:test-link"
-    private fun nativeTestLibraryPath(module: String) = LogicalPath("modules/$module/macosArm64/test.klib")
-    private fun generationId(module: String) = "$module:macosArm64:ksp-test"
+    private fun linkId(module: String, target: String) = "$module:$target:test-link"
+    private fun nativeTestLibraryPath(module: String, target: String) = LogicalPath("modules/$module/$target/test.klib")
+    private fun generationId(module: String, target: String) = "$module:$target:ksp-test"
     private fun modulePath(module: String, target: String, scope: String) = LogicalPath("modules/$module/$target/$scope" + if (target == "jvm") "" else if (scope == "main") ".klib" else "/tests.kexe")
     private fun remap(results: Map<String, ActionResult>, module: String, target: String, scope: String): List<FileEntry> {
-        val id = if (scope == "main") mainId(module, target) else if (target == "macosArm64") linkId(module) else compileId(module, target)
+        val id = if (scope == "main") mainId(module, target) else if (NativeTarget.find(target) != null) linkId(module, target) else compileId(module, target)
         val result = results[id] ?: error("Missing prerequisite result: $id")
         require(result.actionId == id && result.successful) { "Unsuccessful/mismatched prerequisite: $id" }
         val output = if (target == "jvm") "classes" else if (scope == "main") "module.klib" else "tests.kexe"
         require(result.outputs.files.isNotEmpty()) { "Empty prerequisite outputs: $id" }
         val prefix = modulePath(module, target, scope).value
-        if (target == "macosArm64" && scope == "main") {
+        if (NativeTarget.find(target) != null && scope == "main") {
             require(result.outputs.files.count { it.path.value == output } == 1 &&
                 result.outputs.files.all { it.path.value == output || it.path.value.startsWith("plugins/") }) { "Unexpected Native library output" }
         } else require(result.outputs.files.all { (it.path.value.startsWith("$output/") || it.path.value.startsWith("plugins/")) && target == "jvm" ||
-            target == "macosArm64" && (it.path.value == output || it.path.value.startsWith("$output.dSYM/")) }) { "Unexpected prerequisite output: $id" }
+            NativeTarget.find(target) != null && (it.path.value == output || it.path.value.startsWith("$output.dSYM/")) }) { "Unexpected prerequisite output: $id" }
         val selected = result.outputs.files.filter { if (target == "jvm") it.path.value.startsWith("$output/")
             else it.path.value == output || it.path.value.startsWith("$output.dSYM/") }
         require(selected.isNotEmpty()) { "Missing compiled classes: $id" }
@@ -299,7 +300,7 @@ private class Builder(
         require(results.keys == dependencies && results.all { (id, result) -> result.actionId == id && result.successful }) { "Prerequisite result set/status differs" }
     }
     private fun compilerModuleName(module: String, target: String): String =
-        if (target == "macosArm64") modules.getValue(module).publication?.coordinate?.let { "${it.group}:${it.name}" } ?: module else module
+        if (NativeTarget.find(target) != null) modules.getValue(module).publication?.coordinate?.let { "${it.group}:${it.name}" } ?: module else module
     private fun options(module: String, target: String, scope: String, sources: Sources): CompilerOptions = compilerOptions(compilerModuleName(module, target), target, target(module, target).optionsFor(scope)).also {
         require(!it.multiplatform || sources.common.isNotEmpty()) { "Explicit multiplatform option requires common fragments" }
     }
@@ -315,12 +316,12 @@ private class Builder(
         require(source.paths.isNotEmpty()) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
         val options = options(module, target, "main", source)
-        if (target == "macosArm64") {
-            val prior = nativeMainNames[options.nativeModuleName]
+        if (NativeTarget.find(target) != null) {
+            val prior = nativeMainNames[target to options.nativeModuleName]
             require(prior == null || prior == module || modules.getValue(prior).publication == null && modules.getValue(module).publication == null) {
                 "Published Native libraries have conflicting module names: $prior and $module use ${options.nativeModuleName}"
             }
-            nativeMainNames[options.nativeModuleName] = module
+            nativeMainNames[target to options.nativeModuleName] = module
         }
         val resource = resources(module, target, "main")
         val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-api" else "kotlin-api"), target)
@@ -338,14 +339,14 @@ private class Builder(
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
-                pluginApplications = workspace.applications), inputs, composition, nativeTools(workspace.applications),
+                pluginApplications = workspace.applications, target = NativeTarget.require(target)), inputs, composition, nativeTools(target, workspace.applications),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
     }
 
     private fun publicationDependencies(module: String, target: String): List<LibraryDependency> {
         val declared = sourceSets(module, target, "main").flatMap { it.dependencies }
-        require(target != "macosArm64" || declared.none { it.scope == DependencyScopeKind.RUNTIME }) {
+        require(NativeTarget.find(target) == null || declared.none { it.scope == DependencyScopeKind.RUNTIME }) {
             "Native library publication cannot represent runtime-only dependencies for Kotlin/Native consumers: $module; declare a compile dependency or remove the runtime-only dependency before packaging"
         }
         val usages = if (target == "jvm") listOf("java-api", "java-runtime") else listOf("kotlin-api", "kotlin-runtime")
@@ -377,7 +378,7 @@ private class Builder(
             }
             val pomCoordinate = if (dependency is Dependency.Module && dependency.module in rootPublicationModules)
                 modules.getValue(dependency.module).publication!!.coordinateFor(target) else null
-            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (target == "macosArm64" || dependency.exported), pomCoordinate)
+            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (NativeTarget.find(target) != null || dependency.exported), pomCoordinate)
         }
         return dependencies.groupBy { it.coordinate.group to it.coordinate.name }.values.map { group ->
             require(group.map { it.coordinate.version }.distinct().size == 1) { "Library publication has conflicting direct dependency versions" }
@@ -454,10 +455,11 @@ private class Builder(
         if (id in nodes) return id
         val spec = modules.getValue(module)
         val publication = spec.publication ?: error("Common library dependency requires publication: $module")
-        require(spec.targets.map { it.name }.toSet() == setOf("jvm", "macosArm64")) { "Root publication requires JVM and macosArm64: $module" }
-        // Common declarations use only a plugin enabled for both platforms. The metadata
-        // compiler is JVM-hosted, so it reuses that plugin's locked JVM host dependency domain.
-        val applyPlugin = selectedPlugins(module, "jvm", "main").singleOrNull()?.targets?.contains("macosArm64") == true
+        require(spec.targets.map { it.name }.toSet() == request.targets) { "Root publication requires every declared target: $module" }
+        // A common plugin must cover every published target. Its dependency domain is
+        // JVM-hosted regardless of the consumer platform selected below.
+        val pluginTarget = if ("jvm" in request.targets) "jvm" else request.targets.sorted().first()
+        val applyPlugin = selectedPlugins(module, pluginTarget, "main").singleOrNull()?.targets?.containsAll(request.targets) == true
         val shared = commonPublicationSourceSets(spec)
         require(shared.isNotEmpty()) { "Root publication requires shared main source sets: $module" }
         val sources = shared.flatMap { set -> set.directories.flatMap { directory ->
@@ -469,21 +471,21 @@ private class Builder(
         } }.sortedBy { it.path.value }
         require(sources.isNotEmpty() && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
         val dependencies = commonPublicationDependencyClosure(project, module).modules
-        val pluginDependencies = if (applyPlugin) pluginModules(module, "jvm", "main") else emptyList()
+        val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") }
         val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
-        val plugin = if (applyPlugin) plugins(module, "jvm", "main") else emptyList()
+        val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val settings = spec.targets.map { compilerOptions(module, it.name, it.compilerOptions) }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
-            val workspace = if (applyPlugin) workspacePlugin(module, "jvm", "main", results) else WorkspacePlugin(emptyList(), emptyList())
+            val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
             jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", sources.map { it.path },
                 dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),
                 optIns = settings.flatMap { it.optIns }.distinct().sorted(), explicitApi = settings.any { it.explicitApi },
-                warningsAsErrors = settings.any { it.warningsAsErrors }, plugins = plugin.map { it.path }, pluginApplications = workspace.applications),
+                warningsAsErrors = settings.any { it.warningsAsErrors }, plugins = plugin.map { it.path }, pluginApplications = workspace.applications, targets = spec.targets.map { it.name }.toSet()),
                 merge(sources, dependencyFiles, artifacts, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         return id
@@ -504,7 +506,7 @@ private class Builder(
             is Dependency.External -> dependency.coordinate
             is Dependency.Module -> modules.getValue(dependency.module).publication!!.coordinate
         } } + Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct().sortedBy { it.toString() }
-        // Both supported targets share exactly this intersection. Flattening its source-set DAG
+        // The selected targets share exactly this intersection. Flattening its source-set DAG
         // produces one common compilation without exposing any platform-only declarations.
         val selection = KmpLibraryPackage(module, publication.coordinate,
             targets.map { LibraryPackage(module, it.name, publication.coordinateFor(it.name), publicationDependencies(module, it.name),
@@ -546,7 +548,7 @@ private class Builder(
                 val libraries = runtimeIds.flatMap { remap(results, it, target, "main") }
                 nativeCompileAction(NativeCompilation(module, emptyList(), libraries = runtimeDependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
                     output = LogicalPath("application.kexe"), produce = NativeOutput.PROGRAM, moduleName = options.nativeModuleName,
-                    warningsAsErrors = options.warningsAsErrors, includedLibrary = modulePath(module, target, "main"), entryPoint = application.entryPoint),
+                    warningsAsErrors = options.warningsAsErrors, includedLibrary = modulePath(module, target, "main"), entryPoint = application.entryPoint, target = NativeTarget.require(target)),
                     merge(libraries, artifacts), composition, tools.getValue(target), timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
             }
             nodes[id] = ActionNode(id, setOf(linkId)) { results ->
@@ -571,7 +573,7 @@ private class Builder(
         (dependencies + runtimeDependencies).distinct().forEach { ensureMain(it, target) }
         val main = mainSources.getValue(module to target)
         val allSources = sources(module, target, "test")
-        val source = if (target == "macosArm64") allSources else allSources.let { all ->
+        val source = if (NativeTarget.find(target) != null) allSources else allSources.let { all ->
             Sources(all.entries.filter { it.path !in main.paths }, all.paths.filter { it !in main.paths }, all.common.filter { it !in main.paths })
         }
         val resource = resources(module, target, "test") + resources(module, target, "main")
@@ -580,18 +582,18 @@ private class Builder(
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val producerEdges = moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
-        val compileEdges = producerEdges + if (kotest == null) emptySet() else setOf(generationId(module))
-        val hasTestCompile = target == "macosArm64" || source.paths.isNotEmpty()
+        val compileEdges = producerEdges + if (kotest == null) emptySet() else setOf(generationId(module, target))
+        val hasTestCompile = NativeTarget.find(target) != null || source.paths.isNotEmpty()
         if (hasTestCompile) {
             val options = options(module, target, "test", source)
-            if (target == "macosArm64") {
+            if (NativeTarget.find(target) != null) {
                 val production = compilerOptions(compilerModuleName(module, target), target, target(module, target).compilerOptions)
                 require(options.optIns.containsAll(production.optIns)) { "Native tests recompile main sources: test opt-ins must include main opt-ins" }
             }
             val artifacts = artifactEntries(external(module, target, "test", if (target == "jvm") "java-api" else "kotlin-api"), target)
             if (kotest != null) {
                 val lockedRuntime = external(module, target, "test", "kotlin-api")
-                require(lockedRuntime.any { it.coordinate == Coordinate("io.kotest", "kotest-framework-engine-macosarm64", "6.2.5") } &&
+                require(lockedRuntime.any { it.coordinate == Coordinate("io.kotest", "kotest-framework-engine-${NativeTarget.require(target).publicationSuffix}", "6.2.5") } &&
                     lockedRuntime.none { it.coordinate.group == "io.kotest" && it.coordinate.version != "6.2.5" }) { "Native Kotest tests require the pinned 6.2.5 runtime closure" }
                 fun host(purpose: String, roots: List<Coordinate>): List<FileEntry> {
                     val domain = ResolutionDomain(module, target, "test", "java-runtime", purpose)
@@ -603,11 +605,11 @@ private class Builder(
                 val processors = host("symbol-processor", listOf(kotest.processor))
                 val testSources = source.entries.filter { it.path !in main.paths }
                 require(testSources.isNotEmpty()) { "Native Kotest requires test Kotlin sources" }
-                nodes[generationId(module)] = ActionNode(generationId(module), producerEdges) { results ->
+                nodes[generationId(module, target)] = ActionNode(generationId(module, target), producerEdges) { results ->
                     validateResults(results, producerEdges)
                     val modules = moduleIds.flatMap { remap(results, it, target, "main") }
                     kspNativeAction(KspNativeCompilation(module, options.nativeModuleName, testSources.map { it.path }, source.common.filter { path -> testSources.any { it.path == path } },
-                        moduleIds.map { modulePath(it, target, "main") } + artifacts.map { it.path }, ksp.map { it.path }, processors.map { it.path }),
+                        moduleIds.map { modulePath(it, target, "main") } + artifacts.map { it.path }, ksp.map { it.path }, processors.map { it.path }, target = NativeTarget.require(target)),
                         merge(testSources, modules, artifacts, ksp, processors), composition, tools.getValue(target))
                 }
             }
@@ -618,7 +620,7 @@ private class Builder(
                 val linkedModules = if (target == "jvm") moduleIds else dependencies
                 val dependencyFiles = linkedModules.flatMap { remap(results, it, target, "main") }
                 val workspace = workspacePlugin(module, target, "test", results)
-                val generated = if (kotest == null) emptyList() else results.getValue(generationId(module)).outputs.files.also {
+                val generated = if (kotest == null) emptyList() else results.getValue(generationId(module, target)).outputs.files.also {
                     require(it.map { file -> file.path } == listOf(kotestGeneratedLauncher)) { "KSP prerequisite must contain exactly the raw pinned launcher" }
                 }
                 val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries, generated)
@@ -628,30 +630,30 @@ private class Builder(
                     explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
                 else nativeCompileAction(NativeCompilation(module, source.paths + generated.map { it.path }, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.klib"),
                     NativeOutput.LIBRARY, options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors,
-                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }, pluginApplications = workspace.applications), inputs, composition, nativeTools(workspace.applications),
+                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }, pluginApplications = workspace.applications, target = NativeTarget.require(target)), inputs, composition, nativeTools(target, workspace.applications),
                     timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
             }
-            if (target == "macosArm64") {
+            if (NativeTarget.find(target) != null) {
                 val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
                 val runtimeArtifacts = artifactEntries(external(module, target, "test", "kotlin-runtime"), target)
-                nodes[linkId(module)] = ActionNode(linkId(module), linkEdges) { results ->
+                nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges) { results ->
                     validateResults(results, linkEdges)
                     val compiled = results.getValue(compileId(module, target)).outputs.files
                     require(compiled.count { it.path == LogicalPath("tests.klib") } == 1 &&
                         compiled.all { it.path == LogicalPath("tests.klib") || it.path.value.startsWith("plugins/") }) { "Native test compilation must produce its klib and declared plugin outputs" }
-                    val included = compiled.single { it.path == LogicalPath("tests.klib") }.copy(path = nativeTestLibraryPath(module))
+                    val included = compiled.single { it.path == LogicalPath("tests.klib") }.copy(path = nativeTestLibraryPath(module, target))
                     val dependencyFiles = runtimeDependencies.flatMap { remap(results, it, target, "main") }
                     val inputs = merge(listOf(included), runtimeArtifacts, dependencyFiles)
                     nativeCompileAction(NativeCompilation(module, emptyList(), libraries = runtimeDependencies.map { modulePath(it, target, "main") } + runtimeArtifacts.map { it.path },
                         output = LogicalPath("tests.kexe"), produce = if (kotest == null) NativeOutput.TEST else NativeOutput.KOTEST_TEST,
-                        moduleName = options.nativeModuleName, warningsAsErrors = options.warningsAsErrors, includedLibrary = included.path), inputs, composition, tools.getValue(target),
+                        moduleName = options.nativeModuleName, warningsAsErrors = options.warningsAsErrors, includedLibrary = included.path, target = NativeTarget.require(target)), inputs, composition, tools.getValue(target),
                         timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
                 }
             }
         } else require(selectedPlugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
         val id = "$module:$target:test"
         val runtimeIds = listOf(module) + runtimeDependencies
-        val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(if (target == "macosArm64") linkId(module) else compileId(module, target)) else emptySet()
+        val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(if (NativeTarget.find(target) != null) linkId(module, target) else compileId(module, target)) else emptySet()
         val allResources = resource + runtimeDependencies.flatMap { resources(it, target, "main") }
         val runtime = if (target == "jvm") artifactEntries(external(module, target, "test", "java-runtime"), target) else emptyList()
         val testSelection = request.jvmTests[module]
@@ -679,8 +681,8 @@ private class Builder(
                 val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                     runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
                 jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage), inputs, composition, tools.getValue(target))
-            } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
-            else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target))
+            } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target))
+            else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target))
         }
         return id
     }
