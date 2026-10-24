@@ -5,7 +5,7 @@ import kvik.cache.NativeFiles
 import kvik.projectsnapshot.*
 import kotlinx.cinterop.*
 import platform.posix.*
-import platform.Foundation.*
+import kvik.files.platform.kvik_files_potential_component_alias
 
 /** Caller binds capture to project.bytes; only trusted stable ancestors are supported. */
 internal fun requireDisjointStore(project: ProjectFile, store: String, lock: String, tools: String, selection: SnapshotSelection = SnapshotSelection.Project) =
@@ -22,9 +22,9 @@ internal fun requireDisjointInputPath(root: String, configurationPath: String, p
         val ancestry = physicalAncestry(input)
         require(storeAncestry.none { (identity, tail) -> ancestry[identity]?.let { other ->
             tail.take(minOf(tail.size, other.size)).zip(other).all { (a, b) ->
-                NSString.create(string = a).compare(b, NSCaseInsensitiveSearch).toLong() == 0L
+                potentialComponentAlias(a, b)
             }
-        } == true }) { "Output path overlaps watched input: $input" }
+        } == true }) { "Output path overlaps watched input (including potential case/Unicode aliases): $input; choose a disjoint output directory with a distinct ASCII ancestor" }
     }
 }
 
@@ -33,9 +33,15 @@ internal fun pathsPhysicallyOverlap(first: String, second: String): Boolean {
     val ancestry = physicalAncestry(first)
     return physicalAncestry(second).any { (identity, tail) -> ancestry[identity]?.let { other ->
         tail.take(minOf(tail.size, other.size)).zip(other).all { (a, b) ->
-            NSString.create(string = a).compare(b, NSCaseInsensitiveSearch).toLong() == 0L
+            potentialComponentAlias(a, b)
         }
     } == true }
+}
+
+private fun potentialComponentAlias(first: String, second: String): Boolean {
+    val result = kvik_files_potential_component_alias(first, second)
+    check(result >= 0) { "Cannot compare input/output path components" }
+    return result != 0
 }
 
 /** Resolve existing ancestors without creating a store; catches aliases even for missing leaves. */

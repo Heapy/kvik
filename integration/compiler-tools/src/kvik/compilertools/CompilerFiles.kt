@@ -3,7 +3,10 @@
 package kvik.compilertools
 
 import kotlinx.cinterop.*
-import kvik.files.platform.*
+import kvik.files.platform.kvik_files_ctime_nanoseconds
+import kvik.files.platform.kvik_files_ctime_seconds
+import kvik.files.platform.kvik_files_mtime_nanoseconds
+import kvik.files.platform.kvik_files_mtime_seconds
 import platform.posix.*
 import kvik.core.Digest
 import kvik.toolchains.StreamHash

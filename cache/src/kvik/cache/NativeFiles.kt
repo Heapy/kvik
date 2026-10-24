@@ -3,7 +3,8 @@
 package kvik.cache
 
 import kotlinx.cinterop.*
-import kvik.files.platform.*
+import kvik.files.platform.kvik_files_flock
+import kvik.files.platform.kvik_files_rename_exclusive
 import platform.posix.*
 
 class CacheFailure(message: String) : Exception(message)

@@ -4,7 +4,10 @@ package kvik.projectsnapshot
 import kvik.core.*
 import kvik.cache.NativeFiles
 import kotlinx.cinterop.*
-import kvik.files.platform.*
+import kvik.files.platform.kvik_files_ctime_nanoseconds
+import kvik.files.platform.kvik_files_ctime_seconds
+import kvik.files.platform.kvik_files_mtime_nanoseconds
+import kvik.files.platform.kvik_files_mtime_seconds
 import platform.posix.*
 
 class SnapshotFailure(message: String) : Exception(message)

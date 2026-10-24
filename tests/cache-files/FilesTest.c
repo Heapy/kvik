@@ -27,6 +27,18 @@ int main(int argc, char **argv) {
     assert(kvik_files_ctime_seconds(&stamp) == 30);
     assert(kvik_files_ctime_nanoseconds(&stamp) == 987654321);
 
+    assert(kvik_files_potential_component_alias("Source", "source") == 1);
+    assert(kvik_files_potential_component_alias("sources", "source") == 0);
+    assert(kvik_files_potential_component_alias("source", "output") == 0);
+    assert(kvik_files_potential_component_alias("caf\xc3\xa9", "cafe\xcc\x81") == 1);
+    assert(kvik_files_potential_component_alias("\xe2\x84\xaa", "K") == 1);
+#if defined(__APPLE__)
+    assert(kvik_files_potential_component_alias("caf\xc3\xa9", "different") == 0);
+    assert(kvik_files_potential_component_alias("\xff", "invalid") == -1);
+#else
+    assert(kvik_files_potential_component_alias("caf\xc3\xa9", "different") == 1);
+#endif
+
     int lock = open("lock", O_CREAT | O_RDWR, 0600);
     int contender = open("lock", O_RDWR);
     assert(lock >= 0 && contender >= 0);
@@ -59,6 +71,6 @@ int main(int argc, char **argv) {
     assert(lstat("alias", &after) == 0 && S_ISLNK(after.st_mode));
     assert(kvik_files_rename_exclusive("absent", "unused") == -1 && errno == ENOENT);
     assert(lstat("second", &after) == 0 && S_ISDIR(after.st_mode));
-    puts("PASS locks, timestamps and exclusive directory publication preserve existing destinations");
+    puts("PASS locks, timestamps, conservative path aliases and exclusive publication");
     return 0;
 }

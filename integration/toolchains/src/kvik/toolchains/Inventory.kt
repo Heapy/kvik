@@ -3,10 +3,16 @@
 package kvik.toolchains
 
 import kotlinx.cinterop.*
-import kvik.files.platform.*
+import kvik.files.platform.kvik_files_ctime_nanoseconds
+import kvik.files.platform.kvik_files_ctime_seconds
+import kvik.files.platform.kvik_files_mtime_nanoseconds
+import kvik.files.platform.kvik_files_mtime_seconds
 import platform.posix.*
 import kvik.core.*
-import kvik.toolchains.hash.*
+import kvik.toolchains.hash.kvik_sha_finish
+import kvik.toolchains.hash.kvik_sha_free
+import kvik.toolchains.hash.kvik_sha_new
+import kvik.toolchains.hash.kvik_sha_update
 
 class ToolchainVerificationFailure(message: String) : Exception(message)
 
