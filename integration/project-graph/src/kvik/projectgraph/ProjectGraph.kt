@@ -50,6 +50,8 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
         if (!visited.add(listOf(module, target, scope, runtime.toString()))) return
         targets += target
         val spec = modules.getValue(module)
+        if (spec.sqlDelight?.sourceSet in sourceSetClosure(spec, listOf(spec.targets.single { it.name == target }.main)).map { it.name })
+            targets += "jvm"
         val dependencies = dependencyClosure(project, module, target, scope,
             if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
         dependencies.modules.forEach { visit(it, target, "main", false) }
@@ -194,7 +196,8 @@ private class Builder(
 
     private fun documentationMetadataHasSources(module: String, targets: Set<String>): Boolean =
         documentationCommonSourceSets(modules.getValue(module), targets).any { set ->
-            set.directories.any { directory -> files.any { it.path.value.startsWith(directory.value + "/") } }
+            set.name == modules.getValue(module).sqlDelight?.sourceSet ||
+                set.directories.any { directory -> files.any { it.path.value.startsWith(directory.value + "/") } }
         }
 
     private fun documentationMetadataId(module: String, targets: Set<String>) = "$module:common:documentation-metadata-${targets.sorted().joinToString("-")}"
@@ -234,14 +237,15 @@ private class Builder(
                 it.copy(path = LogicalPath("src/${it.path.value}"))
             }
         } }.distinct()
-        require(source.isNotEmpty()) { "No common documentation dependency sources: $module" }
+        val sqlDelight = spec.sqlDelight?.takeIf { settings -> sets.any { it.name == settings.sourceSet } }?.let { ensureSqlDelight(module) }
+        require(source.isNotEmpty() || sqlDelight != null) { "No common documentation dependency sources: $module" }
         val dependencies = documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) }
         val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val nativeTarget = if (targets.all { NativeTarget.find(it) != null }) targets.intersect(request.targets).sorted().firstOrNull()
             ?: error("Native documentation metadata has no selected supporting target") else null
         val stdlibId = nativeTarget?.let { ensureDocumentationStdlib(module, it) }
-        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(stdlibId)
+        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(stdlibId, sqlDelight)
         val artifacts = documentationArtifacts(module, targets, includeStdlib = nativeTarget == null)
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
@@ -254,12 +258,13 @@ private class Builder(
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
             val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
             val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
-            jvmMetadataCompileAction(JvmMetadataCompilation(module, source.map { it.path },
+            val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
+            jvmMetadataCompileAction(JvmMetadataCompilation(module, (source + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path } +
                     listOfNotNull(nativeTarget?.let { LogicalPath("native-stdlib/shared") }), LogicalPath("metadata"),
                 optIns = options.flatMap { it.optIns }.distinct().sorted(), explicitApi = options.any { it.explicitApi }, warningsAsErrors = options.any { it.warningsAsErrors },
                 targets = targets, plugins = plugin.map { it.path }, pluginApplications = workspace.applications),
-                merge(source, artifacts, dependencyFiles, stdlib, plugin, workspace.entries), composition, tools.getValue("jvm"))
+                merge(source, generated, artifacts, dependencyFiles, stdlib, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         return id
     }
@@ -397,7 +402,7 @@ private class Builder(
         val values = selected.values.sortedBy { it.first.path.value }
         return Sources(values.map { it.first }, values.map { it.first.path }, values.filter { it.second }.map { it.first.path })
     }
-    private fun nativeFragments(module: String, target: String, scope: String, generated: List<LogicalPath> = emptyList()): List<NativeSourceFragment> {
+    private fun nativeFragments(module: String, target: String, scope: String, generated: List<LogicalPath> = emptyList(), sqlSources: List<LogicalPath> = emptyList()): List<NativeSourceFragment> {
         val selected = sourceSets(module, target, scope)
         val mainRoot = target(module, target).main
         val mainNames = sourceSetClosure(modules.getValue(module), listOf(mainRoot)).map { it.name }.toSet()
@@ -408,9 +413,9 @@ private class Builder(
             // test sources see main too; main closure membership prevents refinement cycles.
             val parents = if (set.name in testNames && set.dependsOn.none { it in testNames })
                 (set.dependsOn + mainRoot).distinct() else set.dependsOn
-            NativeSourceFragment(set.name, set.directories.flatMap { directory ->
+            NativeSourceFragment(set.name, (set.directories.flatMap { directory ->
                 files.filter { it.path.value.startsWith(directory.value + "/") }.map { LogicalPath("src/${it.path.value}") }
-            }.sortedBy { it.value }, parents)
+            } + if (set.name == modules.getValue(module).sqlDelight?.sourceSet) sqlSources else emptyList()).sortedBy { it.value }, parents)
         }
         var terminal = "kvik_${target}_$scope"
         while (fragments.any { it.name == terminal }) terminal += "_"
@@ -558,7 +563,10 @@ private class Builder(
     private fun compilerModuleName(module: String, target: String): String =
         if (NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) modules.getValue(module).publication?.coordinate?.let { "${it.group}:${it.name}" } ?: module else module
     private fun options(module: String, target: String, scope: String, sources: Sources): CompilerOptions = compilerOptions(compilerModuleName(module, target), target, target(module, target).optionsFor(scope)).also {
-        require(!it.multiplatform || sources.common.isNotEmpty()) { "Explicit multiplatform option requires common fragments" }
+        val generatedCommon = (scope == "main" || target != "jvm") && modules.getValue(module).sqlDelight?.let { sql ->
+            sql.sourceSet in commonSets(module) && sourceSets(module, target, "main").any { set -> set.name == sql.sourceSet }
+        } == true
+        require(!it.multiplatform || sources.common.isNotEmpty() || generatedCommon) { "Explicit multiplatform option requires common fragments" }
     }
 
     private data class CompilationClasspath(val dependencies: List<String>, val modules: List<String>, val artifacts: List<FileEntry>)
@@ -626,10 +634,20 @@ private class Builder(
         return runId
     }
 
+    private fun sqlDelightFor(module: String, target: String): String? = modules.getValue(module).sqlDelight
+        ?.takeIf { settings -> sourceSets(module, target, "main").any { it.name == settings.sourceSet } }
+        ?.let { ensureSqlDelight(module) }
+
+    private fun withSqlDelight(module: String, source: Sources, generated: List<FileEntry>): Sources = Sources(
+        source.entries + generated, source.paths + generated.map { it.path },
+        source.common + if (modules.getValue(module).sqlDelight?.sourceSet in commonSets(module)) generated.map { it.path } else emptyList(),
+    )
+
     private fun ensureSqlDelight(module: String): String? {
         val settings = modules.getValue(module).sqlDelight ?: return null
         val id = "$module:jvm:sqldelight"
         if (id in nodes) return id
+        require(tools["jvm"]?.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit")) { "SQLDelight generation requires JVM tool identities" }
         val domain = ResolutionDomain(module, "jvm", "main", "java-runtime", "sqldelight-compiler")
         require(domain in authorized) { "SQLDelight needs a locked compiler domain: $module; run resolve" }
         val artifacts = artifactEntries(sqlDelightCompilerCoordinates(settings.version).flatMap { locked(it, domain).artifacts }, "jvm")
@@ -676,7 +694,7 @@ private class Builder(
         val pluginDependencies = pluginModules(module, target, "main")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val source = sources(module, target, "main")
-        val sqlDelight = if (target == "jvm") ensureSqlDelight(module) else null
+        val sqlDelight = sqlDelightFor(module, target)
         require(source.paths.isNotEmpty() || sqlDelight != null) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
         val options = options(module, target, "main", source)
@@ -697,18 +715,19 @@ private class Builder(
             val compilerInputs = classpathInputs(compilationClasspath, target, results)
             val workspace = workspacePlugin(module, target, "main", results)
             val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
-            val inputs = merge(source.entries, resource, compilerInputs.files, plugin, workspace.entries, generated)
+            val compiledSource = withSqlDelight(module, source, generated)
+            val inputs = merge(compiledSource.entries, resource, compilerInputs.files, plugin, workspace.entries)
             val classpath = classpathPaths(compilationClasspath, target)
-            if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths + generated.map { it.path }, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
+            if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else if (KotlinJsTarget.find(target) != null) jsCompileAction(JsCompilation(module = module, target = KotlinJsTarget.require(target),
-                sources = source.paths, commonSources = source.common, libraries = classpath, output = LogicalPath("module.klib"), moduleName = compilerModuleName(module, target),
+                sources = compiledSource.paths, commonSources = compiledSource.common, libraries = classpath, output = LogicalPath("module.klib"), moduleName = compilerModuleName(module, target),
                 optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 plugins = plugin.map { it.path }, pluginApplications = workspace.applications), inputs, composition, jsCompilerTools(target))
-            else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
+            else nativeCompileAction(NativeCompilation(module, compiledSource.paths, compiledSource.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
-                pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main"),
+                pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main", sqlSources = generated.map { it.path }),
                 languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
@@ -839,11 +858,12 @@ private class Builder(
                 file.copy(path = LogicalPath("src/${file.path.value}"))
             }
         } }.sortedBy { it.path.value }
-        require(sources.isNotEmpty() && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
+        val sqlDelight = spec.sqlDelight?.takeIf { settings -> shared.any { it.name == settings.sourceSet } }?.let { ensureSqlDelight(module) }
+        require((sources.isNotEmpty() || sqlDelight != null) && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
         val dependencies = commonPublicationDependencyClosure(project, module).modules
         val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") }
+        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight)
         val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
@@ -855,11 +875,12 @@ private class Builder(
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
             val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
-            jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", sources.map { it.path },
+            val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
+            jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", (sources + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),
                 optIns = settings.flatMap { it.optIns }.distinct().sorted(), explicitApi = settings.any { it.explicitApi },
                 warningsAsErrors = settings.any { it.warningsAsErrors }, plugins = plugin.map { it.path }, pluginApplications = workspace.applications, targets = spec.targets.map { it.name }.toSet()),
-                merge(sources, dependencyFiles, artifacts, plugin, workspace.entries), composition, tools.getValue("jvm"))
+                merge(sources, generated, dependencyFiles, artifacts, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         return id
     }
@@ -983,7 +1004,8 @@ private class Builder(
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val producerEdges = moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
-        val compileEdges = producerEdges + if (kotest == null) emptySet() else setOf(generationId(module, target))
+        val sqlDelight = if (NativeTarget.find(target) != null) sqlDelightFor(module, target) else null
+        val compileEdges = producerEdges + listOfNotNull(sqlDelight) + if (kotest == null) emptySet() else setOf(generationId(module, target))
         val hasTestCompile = NativeTarget.find(target) != null || source.paths.isNotEmpty()
         if (hasTestCompile) {
             val options = options(module, target, "test", source)
@@ -1026,15 +1048,17 @@ private class Builder(
                 val generated = if (kotest == null) emptyList() else results.getValue(generationId(module, target)).outputs.files.also {
                     require(it.map { file -> file.path } == listOf(kotestGeneratedLauncher)) { "KSP prerequisite must contain exactly the raw pinned launcher" }
                 }
-                val inputs = merge(source.entries, resource, compilerInputs.files, plugin, workspace.entries, generated)
+                val sqlSources = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
+                val compiledSource = withSqlDelight(module, source, sqlSources)
+                val inputs = merge(compiledSource.entries, resource, compilerInputs.files, plugin, workspace.entries, generated)
                 val classpath = classpathPaths(compilationClasspath, target)
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,
                     explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
-                else nativeCompileAction(NativeCompilation(module, source.paths + generated.map { it.path }, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.klib"),
+                else nativeCompileAction(NativeCompilation(module, compiledSource.paths + generated.map { it.path }, compiledSource.common, classpath, plugin.map { it.path }, LogicalPath("tests.klib"),
                     NativeOutput.LIBRARY, options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors,
                     kotestLauncher = kotest?.let { kotestGeneratedLauncher }, pluginApplications = workspace.applications, target = NativeTarget.require(target),
-                    sourceFragments = nativeFragments(module, target, "test", generated.map { it.path }), languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
+                    sourceFragments = nativeFragments(module, target, "test", generated.map { it.path }, sqlSources.map { it.path }), languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
                     timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
             }
             if (NativeTarget.find(target) != null) {
@@ -1115,16 +1139,19 @@ private class Builder(
         require(plugins.none { plugin -> artifacts.any { it.digest == plugin.digest } }) { "Compiler plugin also appears in consumer classpath" }
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
+        val sqlDelight = sqlDelightFor(module, target)
+        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight)
         nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
             validateResults(results, compileEdges)
             val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
             val workspace = workspacePlugin(module, target, "test", results)
-            jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = source.paths,
-                commonSources = source.common, libraries = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
+            val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
+            val compiledSource = withSqlDelight(module, source, generated)
+            jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = compiledSource.paths,
+                commonSources = compiledSource.common, libraries = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
                 output = LogicalPath("tests.klib"), moduleName = testModuleName, optIns = options.optIns, explicitApi = options.explicitApi,
                 warningsAsErrors = options.warningsAsErrors, plugins = plugins.map { it.path }, pluginApplications = workspace.applications),
-                merge(source.entries, artifacts, plugins, dependencyFiles, workspace.entries), composition, jsCompilerTools(target))
+                merge(compiledSource.entries, artifacts, plugins, dependencyFiles, workspace.entries), composition, jsCompilerTools(target))
         }
         val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
         nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges) { results ->
