@@ -23,7 +23,7 @@ class KotestExecutorTest {
         val digest = content.put(byteArrayOf(1))
         val inputs = TreeManifest(listOf(FileEntry(LogicalPath("test.kexe"), digest, true)))
         val tools = listOf("native", "jdk", "sdk", "native-dependencies").associateWith { digest }
-        val action = kotestNativeTestAction("module", LogicalPath("test.kexe"), inputs, digest, tools)
+        val action = kotestNativeTestAction("module", LogicalPath("test.kexe"), inputs, digest, tools, resources = TestResources(768, setOf("database")))
         var starts = 0; var closes = 0; var cancels = 0
         val host = object : ProcessHost {
             override fun start(request: ProcessRequest): OwnedProcess {
@@ -54,6 +54,7 @@ class KotestExecutorTest {
         val executor = KotestNativeExecutor("run", directory, host, content, NativeToolchainProvider {
             verifications++; error("Kotest execution must not inspect compiler installations")
         })
+        assertEquals(ResourceRequest(768, setOf("database")), executor.resources(action))
         assertFails { executor.start("run", "invalid", action.copy(environment = action.environment + ("KOTEST_INCLUDE_PATTERN" to "none"))) }
         assertEquals(0, verifications)
         executor.start("run", "test", action).use { running ->

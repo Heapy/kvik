@@ -31,7 +31,8 @@ class JsCompilerExecutor(
 ) : ActionExecutor {
     val observations: MutableMap<String, JsActionObservation> = linkedMapOf()
     private val startedActions = mutableSetOf<String>()
-    override fun resources(action: ActionSpec) = ResourceRequest(if (action.kind == ActionKind.TEST) 512 else 2048)
+    override fun resources(action: ActionSpec) = if (action.kind == ActionKind.TEST)
+        JsTestSelection.fromJson(action.parameters).resources.resourceRequest() else ResourceRequest(2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
         val compile = if (action.implementation == "kvik-js-compiler-v1") JsCompilation.fromJson(action.parameters) else null

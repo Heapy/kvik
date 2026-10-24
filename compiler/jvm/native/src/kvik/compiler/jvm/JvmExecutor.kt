@@ -69,7 +69,8 @@ class JvmActionExecutor(
     private val recorded = linkedMapOf<String, JvmActionObservation>()
     private val startedActions = mutableSetOf<String>()
     val observations: Map<String, JvmActionObservation> get() = recorded.toMap()
-    override fun resources(action: ActionSpec) = ResourceRequest(if (action.kind == ActionKind.TEST) 512 else 2048)
+    override fun resources(action: ActionSpec) = if (action.kind == ActionKind.TEST)
+        JvmTestSelection.fromJson(action.parameters).resources.resourceRequest() else ResourceRequest(2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
         val compilation = if (action.implementation == "kvik-jvm-compiler-v1") JvmCompilation.fromJson(action.parameters) else null

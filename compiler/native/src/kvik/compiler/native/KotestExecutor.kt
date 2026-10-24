@@ -16,14 +16,15 @@ class KotestNativeExecutor(
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
     private val startedActions = mutableSetOf<String>()
-    override fun resources(action: ActionSpec) = ResourceRequest(512)
+    override fun resources(action: ActionSpec) = if (action.kind == ActionKind.TEST)
+        nativeTestResources(action).resourceRequest() else ResourceRequest(2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(runId == this.runId && actionId !in startedActions && action.implementation == "kvik-kotest-native-tests-v1")
         val target = NativeTarget.require(action.target)
-        val fields = action.parameters.fields(setOf("module", "executable"))
+        val fields = action.parameters.fields(setOf("module", "executable"), setOf("resources"))
         val module = fields.getValue("module").stringValue()
         val executable = LogicalPath(fields.getValue("executable").stringValue())
-        require(action == kotestNativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, action.timeoutMillis, target)) { "Kotest action differs from typed parameters" }
+        require(action == kotestNativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, action.timeoutMillis, target, nativeTestResources(action))) { "Kotest action differs from typed parameters" }
         startedActions += actionId
         require(executionHost() == target) { "Native executable target is incompatible with this host" }
         return startVerified(actionId, action, module, executable)

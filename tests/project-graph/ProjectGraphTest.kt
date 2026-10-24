@@ -38,7 +38,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
         "modules" to modules.map { m -> obj("id" to m.id.json(), "sourceSets" to m.sourceSets.map { s -> obj("name" to s.name.json(),
             "directories" to paths(s.directories), "resources" to paths(s.resources), "dependsOn" to strings(s.dependsOn), "dependencies" to s.dependencies.map { d -> when(d) {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
-            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.benchmarkSettings == null) fields else JsonValue.Object(fields.values + ("benchmarkSettings" to t.benchmarkSettings.toJson())) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.abi == null) fields else JsonValue.Object(fields.values + ("abi" to t.abi.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
+            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testResources == null) fields else JsonValue.Object(fields.values + ("testResources" to t.testResources.toJson())) }.let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.benchmarkSettings == null) fields else JsonValue.Object(fields.values + ("benchmarkSettings" to t.benchmarkSettings.toJson())) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.abi == null) fields else JsonValue.Object(fields.values + ("abi" to t.abi.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
                 t.nativeTimeouts.compileMillis?.let { put("compileMillis", it.json()) }; t.nativeTimeouts.linkMillis?.let { put("linkMillis", it.json()) }
             }))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
@@ -833,7 +833,7 @@ class ProjectGraphTest {
     }
     @Test fun nativeKotestGenerationPrecedesLinkAndSingleExecutionWithContentSensitiveEdges() {
         val configured = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"name\":\"macosArm64\"",
-            """"name":"macosArm64","nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")
+            """"name":"macosArm64","testResources":{"memoryMiB":768,"exclusiveResources":["database"]},"nativeTestSettings":{"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"}""")
             .replace("g:tests:1", "io.kotest:kotest-framework-engine-macosarm64:6.2.5")))
         val planned = graph(configured, request = request(ProjectMode.TEST, "macosArm64"))
         val actions = resolved(planned)
@@ -857,6 +857,7 @@ class ProjectGraphTest {
         assertTrue(actions.getValue("app:macosArm64:test-link").arguments.containsAll(listOf("-entry", "kvik.kotest.runtime.main")))
         val test = actions.getValue("app:macosArm64:test")
         assertEquals("kvik-kotest-native-tests-v1", test.implementation)
+        assertEquals(TestResources(768, setOf("database")), TestResources.fromJson(test.parameters.values.getValue("resources")))
         assertEquals(CachePolicy.NEVER, test.cachePolicy)
         assertTrue(test.arguments.isEmpty())
         val changed = resolved(planned, "app:macosArm64:ksp-test")
@@ -1151,7 +1152,11 @@ class ProjectGraphTest {
     }
 
     @Test fun coverageSelectsProductionRuntimeClosureAndLeavesCompilationActionsUnchanged() {
-        val (configuration, files) = applicationFixture()
+        val (initial, files) = applicationFixture()
+        val resources = TestResources(768, setOf("database"))
+        val configuration = configuration(*initial.project.modules.map { module ->
+            module.copy(targets = module.targets.map { target -> target.copy(testResources = resources) })
+        }.toTypedArray())
         val coverageTools = JvmCoverageTools(JACOCO_VERSION, digest("agent"), digest("reporter"))
         val plainRequest = request(ProjectMode.TEST)
         val coveredRequest = plainRequest.copy(jvmTests = mapOf("app" to JvmTests(listOf("fixture.Tests"), coverage = coverageTools)))
@@ -1173,7 +1178,9 @@ class ProjectGraphTest {
         assertEquals(plain.keys, covered.keys)
         for (id in plain.keys - "app:jvm:test") assertEquals(plain.getValue(id), covered.getValue(id), id)
         val action = covered.getValue("app:jvm:test")
-        val specification = JvmTestSelection.fromJson(action.parameters).coverage!!
+        val selection = JvmTestSelection.fromJson(action.parameters)
+        assertEquals(resources, selection.resources)
+        val specification = selection.coverage!!
         assertEquals(setOf("app", "base", "hidden", "runtime"), specification.classDirectories.map { it.module }.toSet())
         assertTrue(specification.classDirectories.all { it.path == LogicalPath("modules/${it.module}/jvm/main") })
         assertEquals(8, specification.sources.size)
@@ -1511,6 +1518,32 @@ class JvmClasspathGraphTest {
 }
 
 class CompileTestsGraphTest {
+    @Test fun testResourceEditsChangeOnlyExecutionKeysAcrossTargets() {
+        val resources = TestResources(768, setOf("database", "server-port"))
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
+            fun configured(selected: TestResources?) = configuration(*listOf(base, app).map { module ->
+                module.copy(targets = listOf(TargetSpec(target, "jvmMain", "jvmTest", emptyList(),
+                    testResources = if (module.id == "app") selected else TestResources(1024, setOf("base-only")))))
+            }.toTypedArray())
+            val ordinary = resolved(graph(configured(null), request = request(ProjectMode.TEST, target)))
+            val explicitDefault = resolved(graph(configured(TestResources()), request = request(ProjectMode.TEST, target)))
+            val scheduled = resolved(graph(configured(resources), request = request(ProjectMode.TEST, target)))
+            val executionId = "app:$target:test"
+            assertEquals(ordinary.keys, scheduled.keys)
+            for ((id, action) in ordinary) {
+                assertEquals(action.key(Sha256), explicitDefault.getValue(id).key(Sha256), id)
+                if (id != executionId) assertEquals(action.key(Sha256), scheduled.getValue(id).key(Sha256), id)
+            }
+            val execution = scheduled.getValue(executionId)
+            assertEquals(resources, TestResources.fromJson(execution.parameters.values.getValue("resources")))
+            assertNotEquals(ordinary.getValue(executionId).key(Sha256), execution.key(Sha256))
+            assertEquals(CachePolicy.NEVER, execution.cachePolicy)
+            assertFalse("resources" in ordinary.getValue(executionId).parameters.values)
+            val compileOnly = resolved(graph(configured(resources), request = request(ProjectMode.COMPILE_TESTS, target)))
+            for ((id, action) in compileOnly) assertEquals(ordinary.getValue(id).key(Sha256), action.key(Sha256), id)
+        }
+    }
+
     @Test fun compileOnlyReusesEveryCompilerAndLinkKeyWithoutAnyTestExecutionLeaf() {
         for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
             val config = configuration(*listOf(base, app).map { module ->

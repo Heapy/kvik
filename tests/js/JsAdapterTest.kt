@@ -38,6 +38,38 @@ class JsAdapterTest {
         assertFails { jsTestAction(selection, inputs, digest, emptyMap()) }
         assertFails { jsTestAction(selection, TreeManifest(emptyList()), digest, mapOf("node" to digest)) }
     }
+    @Test fun schedulingResourcesBindJsAndWasmTestsAndRoundTripReports() {
+        val resources = TestResources(768, setOf("server", "database"))
+        for (target in KotlinJsTarget.entries) {
+            val selection = JsTestSelection("sample", target, LogicalPath("tests.mjs"))
+            val custom = selection.copy(resources = resources)
+            val inputs = TreeManifest(listOf(FileEntry(selection.entryPoint, digest)))
+            fun action(value: JsTestSelection) = jsTestAction(value, inputs, digest, mapOf("node" to digest))
+            assertEquals(custom, JsTestSelection.fromJson(custom.toJson()))
+            assertFalse("resources" in selection.toJson().values)
+            assertNotEquals(action(selection).key(Sha256), action(custom).key(Sha256))
+            assertEquals(action(custom).key(Sha256), action(custom.copy(resources = TestResources(768, setOf("database", "server")))).key(Sha256))
+            assertEquals(CachePolicy.NEVER, action(custom).cachePolicy)
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess = error("Resource queries must not launch")
+                override fun close() = Unit
+            }
+            val store = object : ContentStore {
+                override fun put(bytes: ByteArray): Digest = error("No writes")
+                override fun get(digest: Digest): ByteArray? = error("No reads")
+            }
+            val executor = JsCompilerExecutor("run", "/unused", host, store,
+                kvik.compiler.jvm.JvmToolchainProvider { error("No compiler") }, NodeToolchainProvider { _, _ -> error("No Node") })
+            assertEquals(ResourceRequest(512), executor.resources(action(selection)))
+            assertEquals(resources.resourceRequest(), executor.resources(action(custom)))
+        }
+        val (selection, report) = report()
+        val custom = selection.copy(resources = resources)
+        val bound = JsonValue.Object(report.values + ("selection" to custom.toJson()))
+        assertEquals(VerificationStatus.PASSED, parseJsTestReport(bound, "run", custom, 0).status)
+        assertFails { parseJsTestReport(report, "run", custom, 0) }
+    }
+
     private fun report(status: TestStatus = TestStatus.PASSED): Pair<JsTestSelection, JsonValue.Object> {
         val selection = JsTestSelection("sample", KotlinJsTarget.JS, LogicalPath("test.mjs"), "suite.*")
         val failure = if (status == TestStatus.FAILED) TestFailure(TestFailureKind.EXCEPTION, "Error", "failed") else null

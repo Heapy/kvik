@@ -160,7 +160,7 @@ fun jvmMetadataCompileAction(compilation: JvmMetadataCompilation, inputs: TreeMa
         workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null) {
+data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources()) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(classpath.isNotEmpty()) { "Test runtime classpath must be nonempty" }
@@ -170,12 +170,13 @@ data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "classpath" to classpath.jsonPaths(),
         "classes" to classes.map { it.json() }.json(), "engines" to engines.map { it.json() }.json()).let {
-            if (coverage == null) it else JsonValue.Object(it.values + ("coverage" to coverage.toJson()))
+            val measured = if (coverage == null) it else JsonValue.Object(it.values + ("coverage" to coverage.toJson()))
+            if (resources == TestResources()) measured else JsonValue.Object(measured.values + ("resources" to resources.toJson()))
         }
     companion object {
         fun fromJson(value: JsonValue): JvmTestSelection {
-            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage"))
-            return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson))
+            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources"))
+            return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson), d["resources"]?.let(TestResources::fromJson) ?: TestResources())
         }
     }
 }

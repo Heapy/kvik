@@ -1076,9 +1076,9 @@ private class Builder(
                 fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.any { it.path.value.startsWith(prefix.value + "/") } }
                 val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                     runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
-                jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage), inputs, composition, tools.getValue(target))
-            } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target))
-            else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target))
+                jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, target(module, target).testResources ?: TestResources()), inputs, composition, tools.getValue(target))
+            } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target), resources = target(module, target).testResources ?: TestResources())
+            else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target), resources = target(module, target).testResources ?: TestResources())
         }
         return id
     }
@@ -1131,7 +1131,7 @@ private class Builder(
             val linked = results.getValue(linkId(module, target)).outputs.files
             require(linked.isNotEmpty() && linked.all { it.path.value.startsWith("tests/") } &&
                 linked.any { it.path == LogicalPath("tests/$testModuleName.mjs") }) { "Missing JS/Wasm linked test module" }
-            jsTestAction(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter),
+            jsTestAction(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter, target(module, target).testResources ?: TestResources()),
                 merge(linked, resources), composition, mapOf("node" to tools.getValue(target).getValue("node")), settings.timeoutMillis)
         }
         return id

@@ -49,7 +49,8 @@ class NativeCompilerExecutor(
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
     private val startedActions = mutableSetOf<String>()
-    override fun resources(action: ActionSpec) = ResourceRequest(if (action.kind == ActionKind.TEST) 512 else 2048)
+    override fun resources(action: ActionSpec) = if (action.kind == ActionKind.TEST)
+        nativeTestResources(action).resourceRequest() else ResourceRequest(2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
         val target = NativeTarget.require(action.target)
@@ -63,10 +64,10 @@ class NativeCompilerExecutor(
             module = compile.module; executable = null; filter = null
         } else {
             require(action.implementation == "kvik-native-tests-v1") { "Unsupported native adapter" }
-            val fields = action.parameters.fields(setOf("module", "executable", "filter"))
+            val fields = action.parameters.fields(setOf("module", "executable", "filter"), setOf("resources"))
             module = fields.getValue("module").stringValue(); executable = LogicalPath(fields.getValue("executable").stringValue())
             filter = fields.getValue("filter").let { if (it == JsonValue.Null) null else it.stringValue() }
-            require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis, target) == action)
+            require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis, target, nativeTestResources(action)) == action)
         }
         startedActions += actionId
         if (compile == null) {

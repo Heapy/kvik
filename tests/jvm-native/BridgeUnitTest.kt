@@ -10,6 +10,33 @@ import platform.posix.usleep
 
 class BridgeUnitTest {
     private val digest = Sha256.digest(byteArrayOf())
+    @Test fun schedulingResourcesRoundTripAndBindOnlyTheTestAction() {
+        val selection = JvmTestSelection("sample", listOf(LogicalPath("runtime.jar")), emptyList())
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("runtime.jar"), digest)))
+        val tools = jvmIdentities.associateWith { digest }
+        fun action(value: JvmTestSelection) = jvmTestAction(value, inputs, digest, tools)
+        val custom = selection.copy(resources = TestResources(768, linkedSetOf("server", "database")))
+        assertEquals(custom, JvmTestSelection.fromJson(custom.toJson()))
+        assertFalse("resources" in selection.toJson().values)
+        assertNotEquals(action(selection).key(Sha256), action(custom).key(Sha256))
+        assertEquals(action(custom).key(Sha256), action(custom.copy(resources = TestResources(768, linkedSetOf("database", "server")))).key(Sha256))
+        assertEquals(CachePolicy.NEVER, action(custom).cachePolicy)
+        val host = object : ProcessHost {
+            override fun start(request: ProcessRequest): OwnedProcess = error("Resource queries must not launch")
+            override fun close() = Unit
+        }
+        val store = object : ContentStore {
+            override fun put(bytes: ByteArray): Digest = error("No writes")
+            override fun get(digest: Digest): ByteArray? = error("No reads")
+        }
+        val executor = JvmActionExecutor("run", "/unused", host, store, JvmToolchainProvider { error("No tools") })
+        assertEquals(ResourceRequest(512), executor.resources(action(selection)))
+        assertEquals(ResourceRequest(768, setOf("server", "database")), executor.resources(action(custom)))
+        val compile = jvmCompileAction(JvmCompilation("sample", listOf(LogicalPath("Main.kt")), emptyList(), LogicalPath("classes")),
+            TreeManifest(listOf(FileEntry(LogicalPath("Main.kt"), digest))), digest, tools)
+        assertEquals(ResourceRequest(2048), executor.resources(compile))
+    }
+
     @Test fun metadataContractIsSeparateFromJvmAndBindsDeclaredTargetsAndFlags() {
         val source = LogicalPath("Common.kt")
         val library = LogicalPath("common.klib")

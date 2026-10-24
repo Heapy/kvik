@@ -18,7 +18,7 @@ class NativeExecutionTest {
         val resource = content.put("resource".encodeToByteArray())
         val inputs = TreeManifest(listOf(FileEntry(LogicalPath("test.kexe"), executable, true),
             FileEntry(LogicalPath("runtime/data.txt"), resource)))
-        val action = nativeTestAction("sample", LogicalPath("test.kexe"), inputs, executable, target.toolIdentityNames.associateWith { executable })
+        val action = nativeTestAction("sample", LogicalPath("test.kexe"), inputs, executable, target.toolIdentityNames.associateWith { executable }, resources = TestResources(768, setOf("database")))
         var starts = 0
         var closes = 0
         val host = object : ProcessHost {
@@ -42,6 +42,7 @@ class NativeExecutionTest {
             override fun close() = Unit
         }
         val executor = NativeCompilerExecutor("run", root, host, content, compiler)
+        assertEquals(ResourceRequest(768, setOf("database")), executor.resources(action))
         executor.start("run", "test", action).use { running ->
             assertNull(running.poll()) // Discovery completes and starts the actual test process.
             assertEquals(ActionStatus.EXECUTED, running.poll()?.status)
@@ -81,6 +82,28 @@ class NativeExecutionTest {
             assertContains(failure.message.orEmpty(), if (problem == "host") "incompatible" else "invalid bytes")
         }
         assertEquals(0, starts)
+    }
+
+    @Test fun nativeResourceParametersAreCanonicalAndAffectOnlySchedulingAndActionIdentity() {
+        val digest = Sha256.digest(byteArrayOf(1))
+        val executable = LogicalPath("tests.kexe")
+        val inputs = TreeManifest(listOf(FileEntry(executable, digest, true)))
+        for (target in listOf(NativeTarget.MACOS_ARM64, NativeTarget.LINUX_X64)) for (kotest in listOf(false, true)) {
+            val identities = target.toolIdentityNames.associateWith { digest }
+            fun action(resources: TestResources) = if (kotest)
+                kotestNativeTestAction("sample", executable, inputs, digest, identities, target = target, resources = resources)
+                else nativeTestAction("sample", executable, inputs, digest, identities, target = target, resources = resources)
+            val ordinary = action(TestResources())
+            val custom = action(TestResources(768, linkedSetOf("server", "database")))
+            assertFalse("resources" in ordinary.parameters.values)
+            assertEquals(TestResources(), nativeTestResources(ordinary))
+            assertEquals(TestResources(768, setOf("database", "server")), nativeTestResources(custom))
+            assertEquals(custom.key(Sha256), action(TestResources(768, linkedSetOf("database", "server"))).key(Sha256))
+            assertNotEquals(ordinary.key(Sha256), custom.key(Sha256))
+            assertEquals(ordinary.arguments, custom.arguments)
+            assertEquals(ordinary.environment, custom.environment)
+            assertEquals(CachePolicy.NEVER, custom.cachePolicy)
+        }
     }
 
     @Test fun inaccessibleExecutablePermissionsAreRefused() {
