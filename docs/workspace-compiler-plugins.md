@@ -25,7 +25,7 @@ Add a declaration to the consumer module's `compilerPlugins` array:
 
 The option names belong to the plugin. Declare only targets and test compilations
 that exist on the consumer. The producer needs a JVM target even when all its
-consumers are Native. Declare its compiler API and helper dependencies normally;
+consumers target Native, JS or Wasm. Declare its compiler API and helper dependencies normally;
 Kvik preserves the producer's compile and runtime dependency visibility. Include
 the K2 registrar and optional command-line processor service descriptors in the
 producer's resources. The plugin ID must match the declaration, and the plugin
@@ -35,7 +35,9 @@ must support the selected target and pinned compiler version.
 Native test compilation currently recompiles the module's main and test sources
 together. Select both `main` and `test` when the transformation is required in
 both the production library and test executable. A `main`-only workspace plugin
-is not implicitly loaded by the test compilation.
+is not implicitly loaded by Native test compilation. JS/Wasm test compilation
+also recompiles production sources and automatically inherits main-scoped plugins.
+A separate, different test plugin cannot be combined with an inherited main plugin.
 
 Plugin classes, runtime helpers and resources are isolated from the consumer's
 ordinary dependency classpath. A Native build with a workspace plugin also
@@ -61,6 +63,8 @@ After changing configuration, resolve the lock explicitly, then build or test:
 ```
 
 The current adapter accepts one workspace compiler plugin per compilation and
-Kotlin 2.4.20 on JVM or macosArm64. Project scripts can use workspace plugins with
+Kotlin 2.4.20, with fixtures on JVM, macosArm64, `js` and `wasmJs`.
+JS/Wasm uses the JVM-hosted compiler and requires a plugin compatible with that
+backend. Source-free JS/Wasm links do not load the plugin. Project scripts can use workspace plugins with
 `targets: ["jvm"]` and `scopes: ["script"]`; see the
 [script contract](decisions/k12-scripts.md).
