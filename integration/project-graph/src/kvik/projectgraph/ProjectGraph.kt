@@ -4,6 +4,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.compiler.jvm.*
 import kvik.compiler.native.*
+import kvik.compiler.js.*
 import kvik.compiler.ksp.*
 import kvik.application.applicationBundleAction
 import kvik.library.*
@@ -101,12 +102,16 @@ private class Builder(
         require(lock.configuration == effective.digest) { "Stale dependency lock" }
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
-        require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Unknown project module/target selection" }
+        require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unknown project module/target selection" }
+        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST)) {
+            "JS/Wasm currently supports build and test; packaging, ABI, documentation and application modes require their own adapters"
+        }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
         for (module in this.request.modules) for (target in this.request.targets) {
             target(module, target)
             require(tools[target]?.keys == if (target == "jvm") setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
+                else if (KotlinJsTarget.find(target) != null) setOf("jdk", "jvm-compiler", "jvm-worker", "junit", "node")
                 else NativeTarget.require(target).toolIdentityNames) { "Missing/incompatible tool identities: $target" }
             val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
@@ -402,6 +407,7 @@ private class Builder(
     private fun locked(coordinate: Coordinate, domain: ResolutionDomain, consumerJvm: Int? = null): ScopedSelection {
         val variant = if (domain.isHostTool) jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
             else if (domain.target == "jvm") jvmVariantRequest(domain.usage, consumerJvm ?: error("Missing JVM consumer version"))
+            else if (KotlinJsTarget.find(domain.target) != null) VariantRequest(domain.target, domain.usage, KotlinJsTarget.require(domain.target).variantAttributes)
             else VariantRequest(domain.target, "kotlin-api", emptyMap())
         return selections[ResolutionRequest(coordinate, variant, domain)] ?: error("Missing locked dependency: $coordinate:$domain")
     }
@@ -416,7 +422,7 @@ private class Builder(
     }.distinct()
     private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
         modules.getValue(module).compilerPlugins.filter { target in it.targets &&
-            (scope in it.scopes || it.module == null && NativeTarget.find(target) != null && scope == "test" && "main" in it.scopes) }.distinct()
+            (scope in it.scopes || it.module == null && (NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) && scope == "test" && "main" in it.scopes) }.distinct()
             .also { require(it.size <= 1) { "Multiple compiler plugins per compilation are unsupported" } }
     private fun plugins(module: String, target: String, scope: String): List<FileEntry> {
         val selected = selectedPlugins(module, target, scope).filter { it.module == null }
@@ -500,7 +506,7 @@ private class Builder(
         val output = if (target == "jvm") "classes" else if (scope == "main") "module.klib" else "tests.kexe"
         require(result.outputs.files.isNotEmpty()) { "Empty prerequisite outputs: $id" }
         val prefix = modulePath(module, target, scope).value
-        if (NativeTarget.find(target) != null && scope == "main") {
+        if ((NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) && scope == "main") {
             require(result.outputs.files.count { it.path.value == output } == 1 &&
                 result.outputs.files.all { it.path.value == output || it.path.value.startsWith("plugins/") }) { "Unexpected Native library output" }
         } else require(result.outputs.files.all { (it.path.value.startsWith("$output/") || it.path.value.startsWith("plugins/")) && target == "jvm" ||
@@ -551,6 +557,10 @@ private class Builder(
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
+            else if (KotlinJsTarget.find(target) != null) jsCompileAction(JsCompilation(module = module, target = KotlinJsTarget.require(target),
+                sources = source.paths, commonSources = source.common, libraries = classpath, output = LogicalPath("module.klib"),
+                optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
+                plugins = plugin.map { it.path }), inputs, composition, jsCompilerTools(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main"),
@@ -812,6 +822,7 @@ private class Builder(
     }
 
     private fun ensureTest(module: String, target: String): String {
+        if (KotlinJsTarget.find(target) != null) return ensureJsTest(module, KotlinJsTarget.require(target))
         val dependencies = closure(module, target, "test").modules
         val runtimeDependencies = closure(module, target, "test", true).modules
         (dependencies + runtimeDependencies).distinct().forEach { ensureMain(it, target) }
@@ -931,6 +942,59 @@ private class Builder(
                 jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage), inputs, composition, tools.getValue(target))
             } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target))
             else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target))
+        }
+        return id
+    }
+
+    private fun jsCompilerTools(target: String): Map<String, Digest> = tools.getValue(target).filterKeys { it != "node" }
+
+    private fun ensureJsTest(module: String, jsTarget: KotlinJsTarget): String {
+        val target = jsTarget.projectName
+        var testModuleName = "_kvik_test_$module"
+        while (testModuleName in modules) testModuleName += "_"
+        val dependencies = closure(module, target, "test").modules
+        val runtimeDependencies = closure(module, target, "test", true).modules
+        (dependencies + runtimeDependencies).distinct().forEach { ensureMain(it, target) }
+        val source = sources(module, target, "test")
+        val options = options(module, target, "test", source)
+        val mainOptions = compilerOptions(module, target, target(module, target).compilerOptions)
+        require(options.optIns.containsAll(mainOptions.optIns)) { "JS/Wasm tests recompile main sources: test opt-ins must include main opt-ins" }
+        val artifacts = artifactEntries(external(module, target, "test", "kotlin-api"), target)
+        val runtimeArtifacts = artifactEntries(external(module, target, "test", "kotlin-runtime"), target)
+        val plugins = plugins(module, target, "test")
+        require(plugins.none { plugin -> artifacts.any { it.digest == plugin.digest } }) { "Compiler plugin also appears in consumer classpath" }
+        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet()
+        nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
+            validateResults(results, compileEdges)
+            val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
+            jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = source.paths,
+                commonSources = source.common, libraries = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
+                output = LogicalPath("tests.klib"), moduleName = testModuleName, optIns = options.optIns, explicitApi = options.explicitApi,
+                warningsAsErrors = options.warningsAsErrors, plugins = plugins.map { it.path }),
+                merge(source.entries, artifacts, plugins, dependencyFiles), composition, jsCompilerTools(target))
+        }
+        val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
+        nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges) { results ->
+            validateResults(results, linkEdges)
+            val compiled = results.getValue(compileId(module, target)).outputs.files
+            require(compiled.size == 1 && compiled.single().path == LogicalPath("tests.klib")) { "JS/Wasm tests must compile to exactly one KLIB" }
+            val dependencyFiles = runtimeDependencies.flatMap { remap(results, it, target, "main") }
+            jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = emptyList(),
+                libraries = runtimeDependencies.map { modulePath(it, target, "main") } + runtimeArtifacts.map { it.path },
+                output = LogicalPath("tests"), moduleName = testModuleName, includedLibrary = LogicalPath("tests.klib")),
+                merge(compiled, runtimeArtifacts, dependencyFiles), composition, jsCompilerTools(target))
+        }
+        val id = "$module:$target:test"
+        val settings = target(module, target).jsTestSettings ?: JsTestSettings()
+        val resources = resources(module, target, "main") + resources(module, target, "test") +
+            runtimeDependencies.flatMap { resources(it, target, "main") }
+        nodes[id] = ActionNode(id, setOf(linkId(module, target))) { results ->
+            validateResults(results, setOf(linkId(module, target)))
+            val linked = results.getValue(linkId(module, target)).outputs.files
+            require(linked.isNotEmpty() && linked.all { it.path.value.startsWith("tests/") } &&
+                linked.any { it.path == LogicalPath("tests/$testModuleName.mjs") }) { "Missing JS/Wasm linked test module" }
+            jsTestAction(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter),
+                merge(linked, resources), composition, mapOf("node" to tools.getValue(target).getValue("node")), settings.timeoutMillis)
         }
         return id
     }

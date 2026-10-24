@@ -98,6 +98,8 @@
             "linuxX64",
             "iosArm64",
             "iosSimulatorArm64",
+            "js",
+            "wasmJs",
             "common"
           ]
         },
@@ -791,10 +793,12 @@
               "macosArm64",
               "linuxX64",
               "iosArm64",
-              "iosSimulatorArm64"
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
             ]
           },
-          "maxItems": 5
+          "maxItems": 7
         },
         "compilation": {
           "anyOf": [
@@ -859,7 +863,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "compilation": {

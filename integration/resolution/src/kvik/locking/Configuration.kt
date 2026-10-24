@@ -22,7 +22,7 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
             require(purpose in setOf("dependencies", "compiler-plugin")) { "Unsupported script resolution purpose" }
         } else if (target == "common") {
             require(compilation == "main" && usage == "kotlin-metadata" && purpose == "dependencies") { "Common resolution requires main kotlin-metadata dependencies" }
-        } else require((target == "jvm" || NativeTarget.find(target) != null) && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
+        } else require((target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
         require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")) { "Invalid resolution domain purpose" }
         require(purpose !in setOf("ksp-runtime", "symbol-processor") || NativeTarget.find(target) != null && compilation == "test") { "KSP domains currently require supported Native tests" }
         require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else if (target == "common") setOf("kotlin-metadata") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
@@ -184,8 +184,13 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         val runtime = domain.usage.endsWith("runtime")
         val closure = dependencyClosure(project, module.id, target.name, domain.compilation, if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
         if (consumer != null) require(closure.modules.all { id -> jvmTargetFromOptions(modules.getValue(id).targets.single { it.name == target.name }.compilerOptions) <= consumer }) { "Module bytecode target exceeds consumer target: $domain" }
-        // Native producers expose kotlin-api; kotlin-runtime names only our link domain.
-        val variant = if (consumer != null) jvmVariantRequest(domain.usage, consumer) else VariantRequest(target.name, "kotlin-api", emptyMap())
+        // JS/Wasm publish separate API/runtime variants; Native exposes API for both domains.
+        val jsTarget = KotlinJsTarget.find(target.name)
+        val variant = when {
+            consumer != null -> jvmVariantRequest(domain.usage, consumer)
+            jsTarget != null -> VariantRequest(target.name, domain.usage, jsTarget.variantAttributes)
+            else -> VariantRequest(target.name, "kotlin-api", emptyMap())
+        }
         closure.external.forEach { requests += ResolutionRequest(it, variant, domain) }
         val api = if (target.name == "jvm") "java-api" else "kotlin-api"
         closure.modules.forEach { visit(ResolutionDomain(it, target.name, "main", api)) }
@@ -202,7 +207,7 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
             requests += ResolutionRequest(settings.processor, host, processorDomain)
         }
         val selectedPlugins = module.compilerPlugins.filter { target.name in it.targets &&
-            (domain.compilation in it.scopes || it.module == null && NativeTarget.find(target.name) != null && domain.compilation == "test" && "main" in it.scopes) }
+            (domain.compilation in it.scopes || it.module == null && (NativeTarget.find(target.name) != null || jsTarget != null) && domain.compilation == "test" && "main" in it.scopes) }
         if (selectedPlugins.isNotEmpty()) {
             val pluginDomain = domain.copy(usage = "java-runtime", purpose = "compiler-plugin")
             domains += pluginDomain

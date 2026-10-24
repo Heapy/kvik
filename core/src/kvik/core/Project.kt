@@ -87,6 +87,7 @@ data class TargetSpec(
     val application: ApplicationSpec? = null,
     val nativeFramework: NativeFrameworkSpec? = null,
     val abi: AbiSettings? = null,
+    val jsTestSettings: JsTestSettings? = null,
 ) {
     init {
         require(NativeTarget.find(name)?.isIos != true || test == null) { "iOS test execution requires simulator/device support; only compilation and linking are supported" }
@@ -97,6 +98,8 @@ data class TargetSpec(
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
         require(nativeTestSettings == null || NativeTarget.find(name) != null && test != null) { "nativeTestSettings requires a supported Native target with a test source set" }
         require(nativeTimeouts == null || NativeTarget.find(name) != null) { "nativeTimeouts requires a supported Native target" }
+        require(jsTestSettings == null || KotlinJsTarget.find(name) != null && test != null) { "jsTestSettings requires a JS/Wasm target with tests" }
+        require(abi == null || KotlinJsTarget.find(name) == null) { "JS/Wasm ABI checking is not yet supported" }
         application?.requireTarget(name)
     }
     fun optionsFor(compilation: String): List<String> = when (compilation) {
@@ -158,7 +161,7 @@ data class ProjectSpec(val name: String, val repositories: List<Repository>, val
 }
 
 data class VariantRequest(val platform: String, val usage: String, val attributes: Map<String, String>) {
-    init { require((platform in setOf("jvm", "common") || NativeTarget.find(platform) != null) && usage.isNotBlank()) }
+    init { require((platform in setOf("jvm", "common") || NativeTarget.find(platform) != null || KotlinJsTarget.find(platform) != null) && usage.isNotBlank()) }
 }
 data class LockedArtifact(val coordinate: Coordinate, val variant: String, val repository: String, val url: String, val digest: Digest)
 data class MetadataIdentity(val url: String, val digest: Digest)

@@ -40,7 +40,8 @@ private fun command(args: Array<String>) {
             Revision locks: resolve/check-lock accept source flags; resolve returns a guarded Kode transaction; --replace-project FILE includes configuration changes
             Revision view: view with source flags and --role production|tests|all [--tag TAG] [--exclude-tag TAG]; emits a pinned view for kode --view FILE
             Role policy: view also accepts --policy-name NAME [--edit-tag TAG] [--edit-any-tag TAG] [--exclude-edit-tag TAG] [--allow-all-edits] [--allow CAPABILITY]; emits a pinned policy for kode --policy FILE
-            Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64 (repeatable) --tools PATH
+            Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs (repeatable) --tools PATH
+            JS/Wasm: build/test use explicit stdlib/test KLIB dependencies; tools require node.root and pinned node.identity; browser and WASI runtimes are not yet supported
             Configuration edits: config validate --project PATH; config plan --project PATH --edits FILE; config apply --plan FILE
             Change-aware verification: verify --since RUN_DIRECTORY (repeatable) [--check build|test|abi-check] (repeatable; default test) [--full] [--plan-only] plus build selectors; or verify --full
             Test execution: jvm or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking

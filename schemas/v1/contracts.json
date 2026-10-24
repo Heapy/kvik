@@ -406,7 +406,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "main": {
@@ -448,6 +450,9 @@
         "abi": {
           "$ref": "#/$defs/abiSettings"
         },
+        "jsTestSettings": {
+          "$ref": "#/$defs/jsTestSettings"
+        },
         "application": {
           "$ref": "#/$defs/applicationSettings"
         },
@@ -478,6 +483,55 @@
                 "type": "string",
                 "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "jsTestSettings"
+            ]
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "enum": [
+                  "js",
+                  "wasmJs"
+                ]
+              },
+              "test": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "enum": [
+                  "js",
+                  "wasmJs"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "application"
+                  ]
+                },
+                {
+                  "required": [
+                    "abi"
+                  ]
+                }
+              ]
             }
           }
         },
@@ -629,6 +683,31 @@
       ],
       "additionalProperties": false
     },
+    "jsTestSettings": {
+      "type": "object",
+      "properties": {
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeoutMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
     "nativeFramework": {
       "type": "object",
       "properties": {
@@ -756,7 +835,9 @@
               "macosArm64",
               "linuxX64",
               "iosArm64",
-              "iosSimulatorArm64"
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
             ]
           },
           "minItems": 1,
@@ -1234,6 +1315,17 @@
             "properties": {
               "targets": {
                 "items": {
+                  "properties": {
+                    "name": {
+                      "enum": [
+                        "jvm",
+                        "macosArm64",
+                        "linuxX64",
+                        "iosArm64",
+                        "iosSimulatorArm64"
+                      ]
+                    }
+                  },
                   "not": {
                     "required": [
                       "application"
@@ -1992,7 +2084,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "usage": {
@@ -2067,7 +2161,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "compilation": {
@@ -2219,6 +2315,50 @@
               },
               "target": {
                 "const": "iosSimulatorArm64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "enum": [
+                  "kotlin-api",
+                  "kotlin-runtime"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "dependencies"
+              },
+              "target": {
+                "const": "js"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "enum": [
+                  "kotlin-api",
+                  "kotlin-runtime"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "dependencies"
+              },
+              "target": {
+                "const": "wasmJs"
               }
             }
           },
@@ -3944,6 +4084,23 @@
             "compilerArtifacts": {
               "type": "string",
               "pattern": "\\S"
+            },
+            "node": {
+              "type": "object",
+              "properties": {
+                "root": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "identity": {
+                  "$ref": "#/$defs/digest"
+                }
+              },
+              "required": [
+                "root",
+                "identity"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -4081,6 +4238,23 @@
             "compilerArtifacts": {
               "type": "string",
               "pattern": "\\S"
+            },
+            "node": {
+              "type": "object",
+              "properties": {
+                "root": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "identity": {
+                  "$ref": "#/$defs/digest"
+                }
+              },
+              "required": [
+                "root",
+                "identity"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -4608,7 +4782,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package))$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test))$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -5142,7 +5316,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):test(?![\\s\\S])"
           },
           "minItems": 1,
           "maxItems": 1000,
@@ -5198,7 +5372,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):test(?![\\s\\S])"
           },
           "maxItems": 1000,
           "uniqueItems": true
@@ -5207,7 +5381,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):test(?![\\s\\S])"
           },
           "maxItems": 1000,
           "uniqueItems": true
@@ -5247,7 +5421,7 @@
                     "properties": {
                       "check": {
                         "type": "string",
-                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
+                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):test(?![\\s\\S])"
                       }
                     }
                   }
@@ -9774,7 +9948,9 @@
                 "macosArm64",
                 "linuxX64",
                 "iosArm64",
-                "iosSimulatorArm64"
+                "iosSimulatorArm64",
+                "js",
+                "wasmJs"
               ]
             }
           },

@@ -283,5 +283,40 @@
     "file": "org.jetbrains.kotlinx__atomicfu__0.32.1.module",
     "hash": "86d3cedc1bf235d9a7f629344f9dcfe5bbc1da6ea198e4292dae8c5dba698285",
     "sizeBytes": 45316
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-dom-api-compat/2.3.20/kotlin-dom-api-compat-2.3.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-dom-api-compat__2.3.20.module",
+    "hash": "1adf81fda66fe58c8e25693889abfdad54561d8ae9b7f8dbaf66d1873b711550",
+    "sizeBytes": 3395
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-js/2.4.20/kotlin-stdlib-js-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-stdlib-js__2.4.20.module",
+    "hash": "7ff9fb70a28fe33d3822aa7c08f755bde758748bc219989ccad855a4157ed3fe",
+    "sizeBytes": 3112
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-wasm-js/2.4.20/kotlin-stdlib-wasm-js-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-stdlib-wasm-js__2.4.20.module",
+    "hash": "227c93293d0d3ef6bd30ffea38d5ec10439cd38b5869dc488021c257573e6bc9",
+    "sizeBytes": 3160
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-test-js/2.4.20/kotlin-test-js-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-test-js__2.4.20.module",
+    "hash": "4190ad3404375208389ac13f00160a8371f49e887268e5c5d6c9042589e32753",
+    "sizeBytes": 3491
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-test-wasm-js/2.4.20/kotlin-test-wasm-js-2.4.20.module": {
+    "file": "org.jetbrains.kotlin__kotlin-test-wasm-js__2.4.20.module",
+    "hash": "d3c66ff61959af12fb6e061f53f3548bb5167896cbcaa0b214133e65e9e66003",
+    "sizeBytes": 3541
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-js/1.11.0/kotlinx-serialization-core-js-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core-js__1.11.0.module",
+    "hash": "eff06fec382a53fb31fa816d3c251891cd354e8857fbcb349a5d8bd411db19df",
+    "sizeBytes": 3898
+  },
+  "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-wasm-js/1.11.0/kotlinx-serialization-core-wasm-js-1.11.0.module": {
+    "file": "org.jetbrains.kotlinx__kotlinx-serialization-core-wasm-js__1.11.0.module",
+    "hash": "90ab6e726af30360d7e0922d5784611ca76a9fdf60cd5fded5ccc3d0aa4f22df",
+    "sizeBytes": 3592
   }
 }

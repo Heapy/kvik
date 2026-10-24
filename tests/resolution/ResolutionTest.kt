@@ -55,6 +55,60 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun jsAndWasmSelectOnlyTheirExactIrPlatformAndUsage() {
+        val bytes = "IR klib".encodeToByteArray(); val digest = Sha256.digest(bytes)
+        fun selected(target: KotlinJsTarget, usage: String) = obj("name" to "${target.projectName}-$usage".json(),
+            "attributes" to JsonValue.Object(mapOf("org.gradle.category" to "library", "org.gradle.usage" to usage,
+                "org.jetbrains.kotlin.platform.type" to target.platformType, "org.gradle.libraryelements" to "klib")
+                .plus(target.variantAttributes).mapValues { it.value.json() }),
+            "files" to listOf(obj("name" to "a.klib".json(), "url" to "a.klib".json(), "size" to bytes.size.json(), "sha256" to digest.hash.json())).json()).canonical()
+        val artifacts = mapOf("${repo.url}/example/a/1.0/a.klib" to bytes)
+        val variants = KotlinJsTarget.entries.flatMap { target -> listOf("kotlin-api", "kotlin-runtime").map { selected(target, it) } }
+        for (target in KotlinJsTarget.entries) for (usage in listOf("kotlin-api", "kotlin-runtime")) {
+            val request = VariantRequest(target.projectName, usage, target.variantAttributes)
+            val valid = selected(target, usage)
+            assertEquals("${target.projectName}-$usage", resolve(module(example, variants.joinToString(",")), request, artifacts).artifacts.single().variant)
+            assertFails { resolve(module(example, variants.filter { it != valid }.joinToString(",")), request, artifacts) }
+            assertFails { resolve(module(example, "$valid,$valid"), request, artifacts) }
+            for (wrongType in listOf("jvm", "common", "native", if (target == KotlinJsTarget.JS) "wasm" else "js")) {
+                assertFails { resolve(module(example, valid.replace("\"org.jetbrains.kotlin.platform.type\":\"${target.platformType}\"", "\"org.jetbrains.kotlin.platform.type\":\"$wrongType\"")), request, artifacts) }
+            }
+            val (key, expected) = target.variantAttributes.entries.single()
+            for (replacement in listOf("legacy", "wasi")) assertFails {
+                resolve(module(example, valid.replace("\"$key\":\"$expected\"", "\"$key\":\"$replacement\"")), request, artifacts)
+            }
+            assertFails { resolve(module(example, valid.replace(",\"$key\":\"$expected\"", "")), request, artifacts) }
+            assertFails { resolve(module(example, valid.replace("a.klib", "a.jar")), request, mapOf("${repo.url}/example/a/1.0/a.jar" to bytes)) }
+            for (extra in listOf("\"org.jetbrains.kotlin.native.target\":\"macos_arm64\"", "\"unknown.consumer.mode\":\"fast\"", "\"org.jetbrains.kotlin.klib.packaging\":\"unpacked\"")) {
+                assertFails { resolve(module(example, valid.replace("\"attributes\":{", "\"attributes\":{$extra,")), request, artifacts) }
+            }
+            assertFails { resolve(module(example, valid), request.copy(attributes = target.variantAttributes + ("unknown" to "value")), artifacts) }
+            val pom = """<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version></project>""".encodeToByteArray()
+            assertFails { MavenResolver(MemoryTransport(mapOf("${repo.url}/example/a/1.0/a-1.0.pom" to pom)), NativePomParser()).resolve(example, request, listOf(repo)) }
+        }
+    }
+
+    @Test fun publishedJsAndWasmStdlibTestsAndSerializationResolveToVerifiedKlibs() {
+        val standard = Coordinate.parse("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
+        val tests = Coordinate.parse("org.jetbrains.kotlin:kotlin-test:2.4.20")
+        val serialization = Coordinate.parse("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
+        for (target in KotlinJsTarget.entries) for (usage in listOf("kotlin-api", "kotlin-runtime")) {
+            val transport = FixtureTransport()
+            val request = VariantRequest(target.projectName, usage, target.variantAttributes)
+            val selections = MavenResolver(transport, NativePomParser(), listOf(standard))
+                .resolveAll(listOf(standard, tests, serialization), request, listOf(repo))
+            val suffix = if (target == KotlinJsTarget.JS) "js" else "wasm-js"
+            assertEquals("kotlin-stdlib-$suffix", selections[0].artifacts.single().coordinate.name)
+            assertEquals(setOf("kotlin-stdlib-$suffix", "kotlin-test-$suffix"), selections[1].artifacts.map { it.coordinate.name }.toSet())
+            val expected = setOf("kotlin-stdlib-$suffix", "kotlinx-serialization-core-$suffix") +
+                if (target == KotlinJsTarget.JS) setOf("kotlin-dom-api-compat") else emptySet()
+            assertEquals(expected, selections[2].artifacts.map { it.coordinate.name }.toSet())
+            assertTrue(selections.flatMap { it.artifacts }.all { it.url.endsWith(".klib") &&
+                it.variant.contains(if (usage == "kotlin-api") "ApiElements" else "RuntimeElements") })
+            for (selection in selections) assertEquals(selection.artifacts.map { it.digest }, verifyLocked(selection) { transport.blobs[it] }.map(Sha256::digest))
+        }
+    }
+
     @Test fun iosDeviceAndSimulatorSelectOnlyTheirOwnNativeMetadata() {
         val bytes = "ios klib".encodeToByteArray()
         val digest = Sha256.digest(bytes)

@@ -7,6 +7,7 @@ data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, 
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
 internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)")) ||
+    check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(js|wasmJs):(build|test)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|application|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(iosArm64|iosSimulatorArm64):(build|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)")) ||

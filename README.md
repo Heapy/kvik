@@ -178,6 +178,49 @@ and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
 
+### JS and WasmJS
+
+Targets `js` and `wasmJs` support library compilation and `kotlin.test` execution
+through Node. Declare `org.jetbrains.kotlin:kotlin-stdlib:2.4.20` in main dependencies
+and `org.jetbrains.kotlin:kotlin-test:2.4.20` in test dependencies. Resolution selects
+JS IR or WasmJS KLIBs from the published metadata; each target and usage has its own
+lock domain. Workspace library dependencies and common `expect`/target `actual`
+source sets use the ordinary project graph.
+
+```json
+{"name":"wasmJs","main":"wasmMain","test":"wasmTest","compilerOptions":[],
+ "jsTestSettings":{"filter":"example.Tests.*","timeoutMillis":60000}}
+```
+
+`jsTestSettings` is optional. Filters match compiler-discovered qualified test IDs,
+with `*` as the only wildcard. Zero matches or only skipped tests report incomplete
+verification; assertion failures report failure. Promise-returning tests are awaited.
+Application `main()` is not run by the test command.
+
+Use the existing JVM compiler/JDK tool configuration and add a `node` object to
+`tools.json`. Generate that object from an explicitly selected standalone Node
+installation with `python3 tools/pin_node.py --root /absolute/node-installation`.
+The command prints the physical root and content identity; Kvik verifies the entire
+installation before running tests. Node is never selected from `PATH`. The current
+JS/Wasm integration is tested with Node 24.21.0.
+
+```sh
+./kvik --no-build -- resolve --project /project/kvik.json
+./kvik --no-build -- test --project /project/kvik.json --tools /project/tools.json \
+  --module library --target js --target wasmJs
+```
+
+Compilation produces a packed KLIB; a separate link creates the test ES module and,
+for WasmJS, its Wasm files. Compilation and linking reuse the local cache; tests run
+fresh on every invocation. Test results use the same event and reporting commands
+as JVM/Native. Published serialization compiler plugins are supported; main-scoped
+plugins also apply when tests recompile production sources.
+
+Browser and WASI runtimes, npm dependencies, JS/Wasm publication, ABI/documentation
+adapters, application launching and workspace compiler plugins are still pending.
+See the [compiler adapter](compiler/js/README.md) for its current boundaries and the
+pinned compiler workaround that suppresses Wasm application startup during tests.
+
 Use `verify` to select affected module/target checks since retained Kvik runs.
 Checks default to `test`; repeat `--check build|test|abi-check` to choose the scope:
 

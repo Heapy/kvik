@@ -45,7 +45,9 @@ def nullable(value):
 
 IOS_TARGETS = ("iosArm64", "iosSimulatorArm64")
 NATIVE_TARGETS = ("macosArm64", "linuxX64", *IOS_TARGETS)
-PROJECT_TARGETS = ("jvm", *NATIVE_TARGETS)
+JVM_NATIVE_TARGETS = ("jvm", *NATIVE_TARGETS)
+JS_TARGETS = ("js", "wasmJs")
+PROJECT_TARGETS = (*JVM_NATIVE_TARGETS, *JS_TARGETS)
 
 DEFS = {}
 DEFS["digest"] = object_({"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "sizeBytes": INT})
@@ -93,11 +95,18 @@ DEFS["applicationLaunch"]["description"] = "Canonical UTF-8 metadata must additi
 DEFS["target"] = object_({"name": enum(*PROJECT_TARGETS), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING), "nativeTestSettings": ref("nativeTestSettings"), "nativeTimeouts": ref("nativeTimeouts")}, optional=("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
 DEFS["abiSettings"] = object_({"baseline": PATH})
 DEFS["target"]["properties"]["abi"] = ref("abiSettings")
+DEFS["jsTestSettings"] = object_({"filter": nullable({"type": "string", "minLength": 1, "maxLength": 4096,
+    "pattern": r"^[^\u0000-\u001f\u007f-\u009f]*$(?![\s\S])"}),
+    "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000}}, optional=("filter", "timeoutMillis"))
+DEFS["target"]["properties"]["jsTestSettings"] = ref("jsTestSettings")
 DEFS["nativeFramework"] = object_({"baseName": {"type": "string", "minLength": 1, "maxLength": 128,
     "pattern": r"^[A-Za-z][A-Za-z0-9_]*$(?![\s\S])"}, "isStatic": BOOL}, optional=("isStatic",))
 DEFS["target"]["properties"]["application"] = ref("applicationSettings")
 DEFS["target"]["properties"]["nativeFramework"] = ref("nativeFramework")
 DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"properties": {"name": {"const": "jvm"}, "test": ID}}}]
+DEFS["target"]["allOf"].append({"if": {"required": ["jsTestSettings"]}, "then": {"properties": {"name": enum(*JS_TARGETS), "test": ID}}})
+DEFS["target"]["allOf"].append({"if": {"properties": {"name": enum(*JS_TARGETS)}},
+    "then": {"not": {"anyOf": [{"required": [name]} for name in ("application", "abi")]}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["testCompilerOptions"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTestSettings"]}, "then": {"properties": {"name": enum("macosArm64", "linuxX64"), "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTimeouts"]}, "then": {"properties": {"name": enum(*NATIVE_TARGETS)}}})
@@ -121,7 +130,7 @@ DEFS["compilerPlugin"] = object_({"module": ID, "coordinate": COORDINATE, "targe
     optional=("module", "coordinate", "id", "compilerVersion", "pathOptions", "outputs"))
 DEFS["compilerPlugin"]["oneOf"] = [
     {"required": ["module", "id", "compilerVersion"], "not": {"required": ["coordinate"]}, "properties": {
-        "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True), "scopes": array(enum("main", "test"), minItems=1, uniqueItems=True),
+        "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True), "scopes": array(enum("main", "test"), minItems=1, uniqueItems=True),
         "options": array({"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*="})}},
     {"required": ["coordinate"], "not": {"anyOf": [{"required": [name]} for name in ("module", "id", "compilerVersion")]},
      "properties": {"pathOptions": {"maxItems": 0}, "outputs": {"maxItems": 0}}}]
@@ -136,9 +145,9 @@ DEFS["documentationSettings"] = object_({
 DEFS["documentationSourceSet"] = object_({"name": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
     "platform": enum("common", "jvm", "native"), "sourceRoot": PATH,
     "classpath": array(PATH, maxItems=1024, uniqueItems=True), "dependsOn": array(ID, uniqueItems=True),
-    "supportingTargets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)})
+    "supportingTargets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True)})
 DEFS["documentationSpec"] = versioned({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
-    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
+    "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True),
     "sourceSets": array(ref("documentationSourceSet"), minItems=1, maxItems=256), "settings": ref("documentationSettings")})
 DEFS["documentationSpec"]["description"] = "Source-set names and roots must be unique; roots cannot overlap; dependency edges must form a closed acyclic graph."
 DOKKA_JARS = ("dokka-cli-2.2.0.jar", "dokka-base-2.2.0.jar", "analysis-kotlin-symbols-2.2.0.jar", "kotlinx-html-jvm-0.8.0.jar", "freemarker-2.3.31.jar")
@@ -151,7 +160,7 @@ DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minIte
     "compilerPlugins": array(ref("compilerPlugin")), "publication": ref("libraryPublication")}, optional=("publication",))
 DEFS["module"]["properties"]["documentation"] = ref("documentationSettings")
 DEFS["module"]["allOf"] = [{"if": {"required": ["publication"]},
-    "then": {"properties": {"targets": {"items": {"not": {"required": ["application"]}}}}}}]
+    "then": {"properties": {"targets": {"items": {"properties": {"name": enum(*JVM_NATIVE_TARGETS)}, "not": {"required": ["application"]}}}}}}]
 DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate emitted root or derived target publication coordinates across modules."
 DEFS["repository"] = object_({"id": ID, "url": {"type": "string", "pattern": "^https://"}})
 # Script declarations are distinct from module compilation selections. Older nonempty profile
@@ -226,7 +235,7 @@ DEFS["resolutionDomain"]["allOf"] = [
      "then": {"properties": {"usage": {"const": "java-runtime"}}}},
     *[{"if": {"properties": {"purpose": {"const": "dependencies"}, "target": {"const": target}}},
        "then": {"properties": {"usage": enum(*usages)}}}
-      for target, usages in (("jvm", ("java-api", "java-runtime")), ("macosArm64", ("kotlin-api", "kotlin-runtime")), ("linuxX64", ("kotlin-api", "kotlin-runtime")), *((target, ("kotlin-api", "kotlin-runtime")) for target in IOS_TARGETS), ("common", ("kotlin-metadata",)))],
+      for target, usages in (("jvm", ("java-api", "java-runtime")), ("macosArm64", ("kotlin-api", "kotlin-runtime")), ("linuxX64", ("kotlin-api", "kotlin-runtime")), *((target, ("kotlin-api", "kotlin-runtime")) for target in (*IOS_TARGETS, *JS_TARGETS)), ("common", ("kotlin-metadata",)))],
 ]
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"target": {"const": "common"}}},
     "then": {"properties": {"compilation": {"const": "main"}, "purpose": {"const": "dependencies"}, "usage": {"const": "kotlin-metadata"}}}})
@@ -243,11 +252,11 @@ DEFS["scriptResolutionDomain"]["allOf"] = [{"if": {"properties": {"purpose": {"c
 DEFS["resolutionDomain"] = {"oneOf": [ref("moduleResolutionDomain"), ref("scriptResolutionDomain")]}
 DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
     object_({"kind": {"const": "abi-check"}, "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
-        "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}),
+        "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True)}),
     object_({"kind": {"const": "script"}, "name": SCRIPT_ID}), object_({"kind": {"const": "standalone-script"}})]}
 DEFS["snapshotSelection"]["oneOf"].append(object_({"kind": {"const": "documentation"},
     "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
-    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}))
+    "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True)}))
 DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
 EXCLUSION_COORDINATE = {**COORDINATE, "maxLength": 1024, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
 DEFS["metadataEdgeExclusion"] = object_({"parent": EXCLUSION_COORDINATE, "metadata": ref("digest"),
@@ -339,7 +348,8 @@ DEFS["installedLinuxToolLock"] = versioned({"kotlinVersion": {"const": "2.4.20"}
     "components": object_({name: ref("digest") for name in LINUX_TOOL_COMPONENTS})})
 DEFS["installedToolLock"] = {"oneOf": [ref("installedDarwinToolLock"), ref("installedLinuxToolLock")]}
 DEFS["toolInstallation"] = {"oneOf": [versioned({"toolLock": ref(lock),
-    "roots": object_({name: NONEMPTY for name in components}), "konanData": NONEMPTY, "compilerArtifacts": NONEMPTY})
+    "roots": object_({name: NONEMPTY for name in components}), "konanData": NONEMPTY, "compilerArtifacts": NONEMPTY,
+    "node": object_({"root": NONEMPTY, "identity": ref("digest")})}, optional=("node",))
     for lock, components in (("installedDarwinToolLock", TOOL_COMPONENTS), ("installedLinuxToolLock", LINUX_TOOL_COMPONENTS))]}
 _darwin_installation = DEFS["toolInstallation"]["oneOf"][0]
 _darwin_installation["properties"]["roots"]["properties"].update({name: NONEMPTY for name in ("iosSdk", "iosSimulatorSdk")})
@@ -371,7 +381,7 @@ DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "fai
 DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package))$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1), "source": ref("sourceReference")}, optional=("source",))
@@ -396,7 +406,7 @@ DEFS["testReportExport"] = versioned({"runId": NONEMPTY, "outputDirectory": NONE
 DEFS["testReportGraph"] = versioned({"sourceRun": NONEMPTY, "sourceDirectory": NONEMPTY,
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
-TEST_AGGREGATE_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\s\S])"}
+TEST_AGGREGATE_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):test(?![\s\S])"}
 DEFS["testAggregationScope"] = object_({
     **{name: ref("digest") for name in ("inputSnapshot", "configuration", "dependencyLock", "composition")},
     "expectedChecks": array(TEST_AGGREGATE_CHECK, minItems=1, maxItems=1000, uniqueItems=True)})
@@ -696,7 +706,7 @@ DEFS["actionCacheDecision"] = object_({"actionId": NONEMPTY, "key": ref("digest"
     "decision": enum("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error", "remote-hit", "remote-miss", "remote-error"), "detail": nullable(STRING)})
 DEFS["actionCacheDecision"]["allOf"] = [{"if": {"properties": {"decision": {"enum": ["local-error", "remote-error"]}}},
     "then": {"properties": {"detail": STRING}}, "else": {"properties": {"detail": {"type": "null"}}}}]
-ABI_SCOPE = {"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum(*PROJECT_TARGETS)}
+ABI_SCOPE = {"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum(*JVM_NATIVE_TARGETS)}
 DEFS["abiExtraction"] = object_({**ABI_SCOPE, "artifact": PATH})
 DEFS["abiExtraction"]["allOf"] = [{"if": {"properties": {"target": enum(*NATIVE_TARGETS)}},
     "then": {"properties": {"artifact": {"pattern": r"\.klib$(?![\s\S])"}}}}]
@@ -725,7 +735,7 @@ DEFS["frameworkReady"] = object_({
 DEFS["frameworkReady"]["allOf"] = [{"if": {"properties": {"isStatic": {"const": True}}},
     "then": {"properties": {"dSYM": {"type": "null"}}}, "else": {"properties": {"dSYM": {"type": "string"}}}}]
 DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
-    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
+    "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True),
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
@@ -795,10 +805,10 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "application-finished": object_({"preparationRun": NONEMPTY, "exitCode": {"type": "integer", "minimum": 0, "maximum": 255},
         "cancelled": BOOL, "timedOut": BOOL, "stdout": NONEMPTY, "stderr": NONEMPTY}),
 }.items()]
-DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum(*PROJECT_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
+DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum(*JVM_NATIVE_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
 DEFS["workerRequest"]["allOf"] = [{"if": {"required": ["pluginApplications"], "properties": {"pluginApplications": {"minItems": 1}}}, "then": {"properties": {"pluginClasspath": {"maxItems": 0}}}}]
 DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-compile"}}},
-    "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": len(PROJECT_TARGETS)}}},
+    "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": len(JVM_NATIVE_TARGETS)}}},
     "else": {"properties": {"metadataTargets": {"maxItems": 0}}}})
 
 DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success", "compilation-error", "infrastructure-error", "cancelled"), "exitCode": {"type": "integer"}, "diagnostics": array(ref("diagnostic"))})

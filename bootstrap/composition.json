@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "coreSources": ["core/src", "cache/src", "cache/remote/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/package-queries/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/kode-source/src", "integration/kode-source-native/src", "integration/action-cache/src", "integration/application/src", "integration/library/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/native/src", "compiler/abi/src", "compiler/documentation/src", "compiler/ksp/src", "cli/src", "integration/foreground/src"],
+  "coreSources": ["core/src", "cache/src", "cache/remote/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/package-queries/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/kode-source/src", "integration/kode-source-native/src", "integration/action-cache/src", "integration/application/src", "integration/library/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/js/src", "compiler/native/src", "compiler/abi/src", "compiler/documentation/src", "compiler/ksp/src", "cli/src", "integration/foreground/src"],
   "nativePlatform": "execution/platform",
   "nativeLibraries": ["files", "resolution", "toolchains", "remote"],
   "jvmWorkerSources": "compiler/jvm/src",

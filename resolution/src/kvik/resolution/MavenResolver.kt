@@ -53,7 +53,11 @@ class MavenResolver(
     private fun traverse(roots: List<Coordinate>, variant: VariantRequest, repositories: List<Repository>, trace: Boolean, requireAllExclusions: Boolean): ResolutionGraph {
         val appliedExclusions = mutableSetOf<MetadataEdgeExclusion>()
         require(roots.isNotEmpty() && roots.size <= maxComponents)
-        require(variant.attributes.keys.all { variant.platform == "jvm" && it == JVM_TARGET_VERSION_ATTRIBUTE }) { "Unsupported consumer variant attributes" }
+        val jsTarget = KotlinJsTarget.find(variant.platform)
+        require(variant.attributes.all { (key, value) ->
+            variant.platform == "jvm" && key == JVM_TARGET_VERSION_ATTRIBUTE || jsTarget?.variantAttributes?.get(key) == value
+        }) { "Unsupported consumer variant attributes" }
+        require(jsTarget == null || variant.usage in setOf("kotlin-api", "kotlin-runtime")) { "JS/Wasm resolution requires Kotlin API/runtime usage" }
         require(variant.platform != "common" || variant.usage == "kotlin-metadata") { "Common resolution requires kotlin-metadata usage" }
         variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]?.let(::supportedJvmTarget)
         require(repositories.size in 1..32 && repositories.map { it.id }.distinct().size == repositories.size)
@@ -184,7 +188,7 @@ class MavenResolver(
                         val path = file.string("url")
                         require(path.matches(Regex("[A-Za-z0-9_.-]+")) && path !in setOf(".", "..")) { "Unsupported artifact URL" }
                         require(variant.platform != "common" || path.endsWith(".jar")) { "Common metadata requires a metadata JAR" }
-                        require(NativeTarget.find(variant.platform) == null || path.endsWith(".klib")) { "Native variant requires a KLIB" }
+                        require(NativeTarget.find(variant.platform) == null && jsTarget == null || path.endsWith(".klib")) { "Kotlin IR variant requires a KLIB" }
                         val url = found.url.substringBeforeLast('/') + "/" + path
                         val expected = Digest(file.string("sha256"), file.getValue("size").longValue())
                         require(expected.sizeBytes <= maxArtifactBytes) { "Artifact exceeds byte bound" }
@@ -325,7 +329,8 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
     fun attribute(key: String) = a[key]?.stringValue()
     if (attribute("org.gradle.category") != if (platform) "platform" else "library") return false
     val nativeTarget = NativeTarget.find(request.platform)
-    val type = if (nativeTarget != null) "native" else request.platform
+    val jsTarget = KotlinJsTarget.find(request.platform)
+    val type = if (nativeTarget != null) "native" else jsTarget?.platformType ?: request.platform
     if (attribute("org.gradle.usage") != request.usage) return false
     if (!platform && attribute("org.jetbrains.kotlin.platform.type") != type) {
         // Java publications need not carry Kotlin's platform attribute. Require the explicit Java
@@ -337,14 +342,16 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
     if (nativeTarget != null && attribute("org.jetbrains.kotlin.native.target") == null) {
         require(v.items("files").isEmpty() && v.items("dependencies").isEmpty() && v["available-at"] == null) { "Native binary variant lacks target" }
     }
+    if (!platform && jsTarget != null && jsTarget.variantAttributes.any { (key, value) -> attribute(key) != value }) return false
     val supported = setOf("artifactType", "org.gradle.category", "org.gradle.usage", "org.gradle.jvm.environment", "org.gradle.libraryelements", "org.gradle.dependency.bundling", "org.jetbrains.kotlin.platform.type", "org.jetbrains.kotlin.native.target", "org.jetbrains.kotlin.klib.packaging") +
-        if (type == "jvm") setOf(JVM_TARGET_VERSION_ATTRIBUTE) else emptySet()
+        (if (type == "jvm") setOf(JVM_TARGET_VERSION_ATTRIBUTE) else emptySet()) + jsTarget?.variantAttributes.orEmpty().keys
     require(a.keys.all { it in supported }) { "Unsupported variant attributes: ${a.keys - supported}" }
     require(attribute("org.gradle.jvm.environment") in setOf(null, if (type == "jvm") "standard-jvm" else "non-jvm")) { "Unsupported JVM environment" }
     require(attribute("org.gradle.libraryelements") in setOf(null, if (type in setOf("jvm", "common")) "jar" else "klib")) { "Unsupported library elements" }
     require(attribute("org.jetbrains.kotlin.klib.packaging") in setOf(null, "packed")) { "Unsupported klib packaging" }
-    require(attribute("artifactType") in setOf(null, if (type == "native") "org.jetbrains.kotlin.klib" else "jar")) { "Unsupported artifact type" }
+    require(attribute("artifactType") in setOf(null, if (type in setOf("native", "js", "wasm")) "org.jetbrains.kotlin.klib" else "jar")) { "Unsupported artifact type" }
     require(attribute("org.gradle.dependency.bundling") in setOf(null, "external")) { "Unsupported bundling" }
+    if (jsTarget != null) require(attribute("org.jetbrains.kotlin.native.target") == null) { "Native target on a JS/Wasm variant" }
     if (type in setOf("jvm", "common")) require(attribute("org.jetbrains.kotlin.native.target") == null && attribute("org.jetbrains.kotlin.klib.packaging") == null) { "Native-only attributes on a $type variant" }
     a[JVM_TARGET_VERSION_ATTRIBUTE]?.let { value ->
         val producer = value.longValue()

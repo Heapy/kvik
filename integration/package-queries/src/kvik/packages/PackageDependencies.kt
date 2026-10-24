@@ -6,8 +6,9 @@ import kvik.resolution.*
 fun queryPackageDependencies(project: String, coordinate: Coordinate, variant: VariantRequest, repositories: List<Repository>,
                              pins: List<Coordinate>, transport: QueryTransport, parser: PomParser): JsonValue.Object {
     require(coordinate.toString().length <= 1024 && pins.size <= 256 && pins.all { it.toString().length <= 1024 }) { "Package query coordinate/pin bound exceeded" }
-    require(variant.platform == "jvm" || NativeTarget.find(variant.platform) != null) { "Unsupported query target" }
-    require(variant.usage in if (variant.platform == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api")) { "Unsupported target/usage" }
+    require(variant.platform == "jvm" || NativeTarget.find(variant.platform) != null || KotlinJsTarget.find(variant.platform) != null) { "Unsupported query target" }
+    require(variant.usage in if (variant.platform == "jvm") setOf("java-api", "java-runtime")
+        else if (KotlinJsTarget.find(variant.platform) != null) setOf("kotlin-api", "kotlin-runtime") else setOf("kotlin-api")) { "Unsupported target/usage" }
     val query = obj("project" to project.json(), "coordinate" to coordinate.toString().json(),
         "repositories" to repositories.map { obj("id" to it.id.json(), "url" to it.url.json()) }.json(),
         "variant" to obj("platform" to variant.platform.json(), "usage" to variant.usage.json(), "attributes" to JsonValue.Object(variant.attributes.mapValues { it.value.json() })),

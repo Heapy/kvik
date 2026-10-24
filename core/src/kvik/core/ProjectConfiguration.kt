@@ -77,9 +77,9 @@ private fun parseModule(value: JsonValue): ModuleSpec {
     validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
     val names = sourceSets.map { it.name }.toSet()
     val targets = fields.getValue("targets").arrayValue().map { target ->
-        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts", "application", "nativeFramework", "abi"))
+        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts", "application", "nativeFramework", "abi", "jsTestSettings"))
         val name = entry.getValue("name").stringValue()
-        require(name == "jvm" || NativeTarget.find(name) != null) { "Unsupported target: $name" }
+        require(name == "jvm" || NativeTarget.find(name) != null || KotlinJsTarget.find(name) != null) { "Unsupported target: $name" }
         val main = entry.getValue("main").identifier()
         val test = entry.getValue("test").let { if (it == JsonValue.Null) null else it.identifier() }
         require(main in names && (test == null || test in names)) { "Unknown compilation source set in $id:$name" }
@@ -99,7 +99,7 @@ private fun parseModule(value: JsonValue): ModuleSpec {
         }
         TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings, entry["testCompilerOptions"]?.strings(), nativeSettings, nativeTimeouts,
             entry["application"]?.let(ApplicationSpec::fromJson), entry["nativeFramework"]?.let(NativeFrameworkSpec::fromJson),
-            entry["abi"]?.let(AbiSettings::fromJson))
+            entry["abi"]?.let(AbiSettings::fromJson), entry["jsTestSettings"]?.let(JsTestSettings::fromJson))
     }
     require(targets.isNotEmpty()) { "Module $id requires targets" }
     targets.map { it.name }.unique("target in $id")
@@ -127,7 +127,7 @@ private fun parseDependency(value: JsonValue): Dependency {
 internal fun parseCompilerPlugin(value: JsonValue): CompilerPluginSpec {
     val fields = value.fields(setOf("targets", "scopes", "options", "inputs"), setOf("module", "coordinate", "id", "compilerVersion", "pathOptions", "outputs"))
     val targets = fields.getValue("targets").strings().unique("plugin target")
-    require(targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Unsupported compiler-plugin target" }
+    require(targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unsupported compiler-plugin target" }
     return CompilerPluginSpec(fields["module"]?.identifier(), fields["coordinate"]?.stringValue()?.let(Coordinate::parse),
         targets.toSet(), fields.getValue("scopes").strings().unique("plugin scope").toSet(),
         fields.getValue("options").strings(), fields.getValue("inputs").paths().unique("plugin input"),

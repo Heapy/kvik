@@ -5,6 +5,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.compiler.jvm.*
 import kvik.compiler.native.*
+import kvik.compiler.js.*
 import kvik.compiler.ksp.*
 import kvik.library.*
 import kvik.abi.*
@@ -18,7 +19,8 @@ private val composition = digest("runtime")
 private val tools = mapOf("jvm" to listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith(::digest),
     "macosArm64" to listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest),
     "linuxX64" to listOf("native", "jdk", "system", "native-dependencies").associateWith(::digest)) +
-    listOf("iosArm64", "iosSimulatorArm64").associateWith { listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest) }
+    listOf("iosArm64", "iosSimulatorArm64").associateWith { listOf("native", "jdk", "sdk", "native-dependencies").associateWith(::digest) } +
+    listOf("js", "wasmJs").associateWith { listOf("jdk", "jvm-compiler", "jvm-worker", "junit", "node").associateWith(::digest) }
 private fun external(value: String) = Dependency.External(Coordinate.parse(value), exported = true)
 private fun source(name: String, directory: String, parents: List<String> = emptyList(), dependencies: List<Dependency> = emptyList(), resource: String? = null) =
     SourceSet(name, listOf(LogicalPath(directory)), listOfNotNull(resource?.let(::LogicalPath)), parents, dependencies)
@@ -68,6 +70,11 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
     return projectActionGraph(effective, lock(effective), files, composition, tools, request)
 }
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
+    "kvik-js-compiler-v1" -> JsCompilation.fromJson(action.parameters).let { compilation ->
+        if (compilation.includedLibrary == null) listOf(FileEntry(compilation.output, digest(salt)))
+        else listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.mjs"), digest(salt))) +
+            if (compilation.target == KotlinJsTarget.WASM_JS) listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.wasm"), digest("wasm:$salt"))) else emptyList()
+    }
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-documentation-native-stdlib-v1" -> listOf(FileEntry(LogicalPath("stdlib/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
@@ -1433,5 +1440,52 @@ class IosFrameworkGraphTest {
         assertContains(assertFails { graph(withResources, resourceFiles, request(target = target)) }.message.orEmpty(), "framework resources")
         assertFails { graph(config, files, request(ProjectMode.TEST, target)) }
         assertFails { graph(config, files, request(ProjectMode.APPLICATION, target)) }
+    }
+}
+
+class JsProjectGraphTest {
+    private fun fixture(target: String) = configuration(*listOf(base, app).map {
+        it.copy(targets = listOf(TargetSpec(target, "jvmMain", "jvmTest", emptyList())))
+    }.toTypedArray())
+
+    @Test fun jsAndWasmCompileLinkAndExecuteWithSeparateToolIdentities() {
+        for (target in KotlinJsTarget.entries) {
+            val result = graph(fixture(target.projectName), request = request(ProjectMode.TEST, target.projectName))
+            val actions = resolved(result)
+            val main = actions.getValue("app:${target.projectName}:main")
+            val compile = actions.getValue("app:${target.projectName}:test-compile")
+            val link = actions.getValue("app:${target.projectName}:test-link")
+            val test = actions.getValue("app:${target.projectName}:test")
+            assertEquals(setOf("app:${target.projectName}:test"), result.requestedChecks)
+            assertEquals("kvik-js-compiler-v1", main.implementation)
+            assertEquals(CachePolicy.LOCAL, main.cachePolicy)
+            assertEquals(setOf("jdk", "jvm-compiler", "jvm-worker", "junit"), main.toolchains.keys)
+            assertEquals(setOf("node"), test.toolchains.keys)
+            assertEquals(CachePolicy.NEVER, test.cachePolicy)
+            val selection = JsCompilation.fromJson(compile.parameters)
+            assertTrue(selection.sources.any { it.value == "src/app/common/Common.kt" })
+            assertTrue(selection.sources.any { it.value == "src/app/commonTest/Tests.kt" })
+            assertTrue(selection.libraries.contains(LogicalPath("modules/base/${target.projectName}/main.klib")))
+            assertFalse(selection.libraries.contains(LogicalPath("modules/app/${target.projectName}/main.klib")))
+            assertEquals(LogicalPath("tests.klib"), JsCompilation.fromJson(link.parameters).includedLibrary)
+            assertTrue(test.inputs.files.any { it.path.value == "tests/_kvik_test_app.mjs" })
+            assertTrue(test.inputs.files.any { it.path.value.startsWith("runtime/app/test/") })
+            if (target == KotlinJsTarget.WASM_JS) assertTrue(test.inputs.files.any { it.path.value == "tests/_kvik_test_app.wasm" })
+            val changed = resolved(result, "base:${target.projectName}:main")
+            assertNotEquals(compile.key(Sha256), changed.getValue("app:${target.projectName}:test-compile").key(Sha256))
+            assertNotEquals(link.key(Sha256), changed.getValue("app:${target.projectName}:test-link").key(Sha256))
+        }
+    }
+
+    @Test fun unavailableJsIntegrationsAndMissingNodeIdentityAreExplicitErrors() {
+        for (target in KotlinJsTarget.entries) {
+            val config = fixture(target.projectName)
+            for (mode in listOf(ProjectMode.PACKAGE, ProjectMode.ABI_DUMP, ProjectMode.DOCUMENTATION))
+                assertFails { graph(config, request = request(mode, target.projectName)) }
+            val effective = effectiveConfiguration(config)
+            assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition,
+                tools + (target.projectName to tools.getValue(target.projectName).filterKeys { it != "node" }),
+                request(ProjectMode.TEST, target.projectName)) }
+        }
     }
 }

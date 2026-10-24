@@ -50,6 +50,79 @@ private fun component(coordinate: String, dependencies: List<String> = emptyList
 private val smallEntries get() = component("example:root:1.0", listOf("example:leaf:1.0")) + component("example:leaf:1.0")
 
 class DependencyLocksTest {
+    @Test fun jsAndWasmDomainsPreserveUsageScopedPolicyAndJvmPluginHosts() {
+        val original = config(listOf("example:root:1.0"), listOf("example:test:1.0"))
+        val document = original.document.objectValue()
+        val module = document.getValue("modules").arrayValue().single().objectValue()
+        val targets = KotlinJsTarget.entries.map { target -> obj("name" to target.projectName.json(), "main" to "main".json(), "test" to "test".json(), "compilerOptions" to emptyList<JsonValue>().json()) }
+        val plugins = listOf(obj("coordinate" to "example:plugin:1.0".json(),
+            "targets" to listOf("js".json(), "wasmJs".json()).json(), "scopes" to listOf("main".json()).json(),
+            "options" to emptyList<JsonValue>().json(), "inputs" to emptyList<JsonValue>().json()))
+        val project = parseProjectConfiguration(JsonValue.Object(document + ("modules" to listOf(JsonValue.Object(module + mapOf(
+            "targets" to targets.json(), "compilerPlugins" to plugins.json()))).json())))
+        val jsRuntime = ResolutionDomain("sample", "js", "main", "kotlin-runtime")
+        val pinned = Coordinate.parse("example:root:2.0")
+        val policy = ResolverPolicy(scopedPins = listOf(ScopedPin(jsRuntime, pinned)))
+        val configuration = effectiveConfiguration(project, policy)
+        for (request in configuration.requests) {
+            assertEquals(request.domain, ResolutionDomain.fromJson(request.domain.toJson()))
+            if (request.domain.isHostTool) {
+                assertEquals("jvm", request.variant.platform)
+                assertEquals("java-runtime", request.variant.usage)
+                assertEquals(COMPILER_PLUGIN_JVM_HOST.toString(), request.variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE])
+            } else {
+                val target = KotlinJsTarget.require(request.domain.target)
+                assertEquals(request.domain.target, request.variant.platform)
+                assertEquals(request.domain.usage, request.variant.usage)
+                assertEquals(target.variantAttributes, request.variant.attributes)
+                assertEquals(if (request.domain == jsRuntime) listOf(pinned) else emptyList(), policy.pinsFor(request.domain))
+            }
+        }
+        assertEquals(4, configuration.requests.filter { it.domain.isHostTool }.map { it.domain }.distinct().size)
+        assertEquals(8, defaultDependencyScopes(project).size)
+        assertNotEquals(effectiveConfiguration(project).digest, configuration.digest)
+        val metadata = MetadataIdentity("$repo/example/root/1.0/root-1.0.module", Sha256.digest("metadata".encodeToByteArray()))
+        for (target in KotlinJsTarget.entries) {
+            val domain = ResolutionDomain("sample", target.projectName, "test", "kotlin-runtime")
+            val selection = LockedSelection(Coordinate.parse("example:root:1.0"), VariantRequest(target.projectName, domain.usage, target.variantAttributes), emptyList(), listOf(metadata))
+            val lock = DependencyLock(configuration.digest, listOf(ScopedSelection(domain, selection)))
+            assertEquals(lock, parseDependencyLock(lock.bytes()))
+            assertFails { ScopedSelection(domain, selection.copy(variant = selection.variant.copy(usage = "kotlin-api"))) }
+            assertFails { ScopedSelection(domain.copy(target = if (target == KotlinJsTarget.JS) "wasmJs" else "js"), selection) }
+        }
+        fun irComponent(coordinate: String): Map<String, ByteArray> {
+            val originalEntries = component(coordinate)
+            return originalEntries.map { (url, bytes) ->
+                if (url.endsWith(".jar")) url.removeSuffix(".jar") + ".klib" to bytes else {
+                    val metadata = parseJson(bytes.decodeToString()).objectValue()
+                    val variants = metadata.getValue("variants").arrayValue().flatMap { value ->
+                        val fields = value.objectValue()
+                        val usage = fields.getValue("name").stringValue().replace("java-", "kotlin-")
+                        KotlinJsTarget.entries.map { target -> JsonValue.Object(fields + mapOf(
+                            "name" to "${target.projectName}-$usage".json(),
+                            "attributes" to JsonValue.Object((mapOf("org.gradle.category" to "library", "org.gradle.usage" to usage,
+                                "org.jetbrains.kotlin.platform.type" to target.platformType) + target.variantAttributes).mapValues { it.value.json() }),
+                            "files" to fields.getValue("files").arrayValue().map { file ->
+                                val entry = file.objectValue()
+                                JsonValue.Object(entry + listOf("url", "name").associateWith { entry.getValue(it).stringValue().replace(".jar", ".klib").json() })
+                            }.json())) }
+                    }
+                    url to JsonValue.Object(metadata + ("variants" to variants.json())).canonical().encodeToByteArray()
+                }
+            }.toMap()
+        }
+        val entries = irComponent("example:root:1.0") + irComponent("example:root:2.0") + irComponent("example:test:1.0") + component("example:plugin:1.0")
+        val transport = MemoryTransport(entries)
+        val service = DependencyLocks(store(), NativePomParser())
+        val lock = service.resolve(configuration, transport)
+        assertEquals(lock, service.loadLocked(lock.bytes(), configuration))
+        assertTrue(lock.selections.filter { !it.domain.isHostTool }.flatMap { it.artifacts }.all { it.url.endsWith(".klib") })
+        assertTrue(lock.selections.filter { it.domain.isHostTool }.flatMap { it.artifacts }.all { it.url.endsWith(".jar") })
+        assertEquals(listOf("2.0"), lock.selections.filter { it.domain == jsRuntime }.flatMap { it.artifacts }.map { it.coordinate.version })
+        assertTrue(lock.selections.filter { it.domain != jsRuntime }.flatMap { it.artifacts }.all { it.coordinate.version == "1.0" })
+        assertFails { ResolutionDomain("sample", "wasmWasi", "main", "kotlin-api") }
+    }
+
     @Test fun onlyKspRuntimeAcceptsThePinnedLargeAnalysisJarAndAggregateBoundsRemain() {
         val coordinate = Coordinate.parse("com.google.devtools.ksp:symbol-processing-aa-embeddable:2.3.12")
         val bytes = NativeFiles.read("$ktc/com/google/devtools/ksp/symbol-processing-aa-embeddable/2.3.12/symbol-processing-aa-embeddable-2.3.12.jar", 128 * 1024 * 1024)

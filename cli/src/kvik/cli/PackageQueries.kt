@@ -85,13 +85,13 @@ internal fun packageCommand(args: List<String>): JsonValue.Object {
     else {
         val target = options.values["--target"] ?: error("Package dependencies requires --target")
         val usage = options.values["--usage"] ?: error("Package dependencies requires --usage")
-        require(target == "jvm" || NativeTarget.find(target) != null) { "Unsupported query target" }
+        require(target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) { "Unsupported query target" }
         val variant = if (target == "jvm") {
             val jvm = options.values["--jvm-target"]?.let { value -> require(value in setOf("11", "17", "21", "25")); value.toInt() } ?: DEFAULT_JVM_TARGET
             jvmVariantRequest(usage, jvm)
         } else {
-            require("--jvm-target" !in options.values) { "JVM target cannot be used for Native metadata" }
-            VariantRequest(target, usage, emptyMap())
+            require("--jvm-target" !in options.values) { "JVM bytecode target requires a JVM metadata query" }
+            VariantRequest(target, usage, KotlinJsTarget.find(target)?.variantAttributes.orEmpty())
         }
         val pins = options.repeats["--pin"].orEmpty().map(Coordinate::parse)
         ResolverPolicy(pins) // Conflicting pins are invalid arguments, not unsupported producer metadata.

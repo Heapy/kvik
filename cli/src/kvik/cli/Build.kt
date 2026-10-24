@@ -9,6 +9,7 @@ import kvik.application.*
 import kvik.cache.*
 import kvik.cache.remote.*
 import kvik.compiler.jvm.JvmActionExecutor
+import kvik.compiler.js.JsCompilerExecutor
 import kvik.compiler.jvm.JvmScriptExecutor
 import kvik.compiler.jvm.JvmScriptObservation
 import kvik.compiler.jvm.JvmScriptPhase
@@ -236,6 +237,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 else projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities, graphRequest)
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
+                    val js = if (toolTargets.any { KotlinJsTarget.find(it) != null })
+                        JsCompilerExecutor(run.runId, run.path, host, content, tools.jvmProvider(), tools.nodeProvider()) else null
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
                     val abi = AbiActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val nativeTargets = toolTargets.mapNotNull(NativeTarget::find)
@@ -262,6 +265,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-jvm-metadata-v1" -> jvm
                             "kvik-ksp-native-v1" -> ksp.getValue(NativeTarget.require(action.target))
                             "kvik-kotest-native-tests-v1" -> kotest
+                            "kvik-js-compiler-v1", "kvik-js-tests-v1" -> requireNotNull(js)
                             else -> when (action.target) {
                                 "jvm" -> jvm
                                 else -> native.getValue(NativeTarget.require(action.target))
@@ -308,6 +312,18 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         } ?: test }
                     }
                     fun observations() {
+                        for ((id, observation) in js?.observations.orEmpty()) if (seen.add(id)) {
+                            retain(id, obj("result" to observation.result.toJson(), "diagnostics" to observation.diagnostics.map { it.toJson() }.json(),
+                                "tests" to (observation.tests?.toJson() ?: JsonValue.Null), "directory" to observation.directory.json(),
+                                "logs" to NativeFiles.names(observation.directory).filter { it.endsWith(".stdout") || it.endsWith(".stderr") }
+                                    .map { "${observation.directory}/$it".json() }.json()))
+                            observation.diagnostics.forEach(journal::diagnostic)
+                            observation.tests?.let { report ->
+                                val tests = retainedTests(id, report.tests, observation.stdoutFile, observation.stderrFile)
+                                reports[id] = TestObservation(tests, report.counts, report.status)
+                                tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
+                            }
+                        }
                         for ((id, observation) in scripts.observations) if (seen.add(id)) {
                             retain(id, observation.toJson())
                             require(scriptFile != null && id == "script:${scriptFile.scriptName}:jvm:run") { "Unexpected script observation" }

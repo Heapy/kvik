@@ -10,12 +10,13 @@ import kvik.toolchains.*
 /** Explicit trusted installations; paths never participate in the portable action identity. */
 internal class BuildTools(path: String) {
     val document = parseJson(NativeFiles.read(path, 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
-    private val fields = document.fields(setOf("schemaVersion", "toolLock", "roots", "konanData", "compilerArtifacts"))
+    private val fields = document.fields(setOf("schemaVersion", "toolLock", "roots", "konanData", "compilerArtifacts"), setOf("node"))
     val lock: String
     val declaration: ToolchainDeclaration
     val roots: Map<ToolComponent, String>
     val data: String
     val artifacts: String
+    private val node: Pair<String, Digest>?
     init {
         fields.requireVersion()
         lock = fields.getValue("toolLock").canonical()
@@ -25,17 +26,24 @@ internal class BuildTools(path: String) {
         roots = components.associateWith { component -> paths.getValue(component.lockName).stringValue().also(NativeFiles::validateAbsolute) }
         data = fields.getValue("konanData").stringValue().also(NativeFiles::validateAbsolute)
         artifacts = fields.getValue("compilerArtifacts").stringValue().also(NativeFiles::validateAbsolute)
+        node = fields["node"]?.fields(setOf("root", "identity"))?.let {
+            it.getValue("root").stringValue().also(NativeFiles::validateAbsolute) to Digest.fromJson(it.getValue("identity"))
+        }
     }
 
     /** Validated desired identities authorize matching cached artifacts, not installed tool paths. */
     fun desiredIdentities(targets: Set<String>): Map<String, Map<String, Digest>> {
-        require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Unsupported tool targets" }
+        require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unsupported tool targets" }
         fun identity(component: ToolComponent) = declaration.components.getValue(component)
         val result = mutableMapOf<String, Map<String, Digest>>()
-        if ("jvm" in targets) {
+        if ("jvm" in targets || targets.any { KotlinJsTarget.find(it) != null }) {
             val worker = verifiedRuntimeJvmWorker()
             result["jvm"] = mapOf("jdk" to identity(ToolComponent.JDK), "jvm-compiler" to worker.compiler,
                 "jvm-worker" to worker.identity, "junit" to worker.junitIdentity)
+            for (target in targets.filter { KotlinJsTarget.find(it) != null }) {
+                result[target] = result.getValue("jvm") + ("node" to requireNotNull(node) { "JS/Wasm tools require a pinned Node installation" }.second)
+            }
+            if ("jvm" !in targets) result.remove("jvm")
         }
         for (target in targets.mapNotNull(NativeTarget::find)) {
             val hostComponents = if (target.isApple)
@@ -68,6 +76,9 @@ internal class BuildTools(path: String) {
 
     fun jvmProvider() = InstalledJvmToolchainProvider(lock, roots, "${runtimeDirectory()}/jvm",
         Digest(runtimeJvmWorkerHash, runtimeJvmWorkerSize), artifacts)
+    fun nodeProvider() = requireNotNull(node) { "Supply node.root and node.identity in tools" }.let { (root, identity) ->
+        InstalledNodeToolchainProvider(root, identity)
+    }
     fun nativeProvider(target: NativeTarget = if (ToolComponent.SYSTEM in roots) NativeTarget.LINUX_X64 else NativeTarget.MACOS_ARM64) =
         InstalledNativeToolchainProvider(lock, roots, data, target)
 }
