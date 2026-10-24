@@ -1,0 +1,25 @@
+name: Linux host runtime
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Linux tools
+        run: docker build --platform linux/amd64 --tag kvik-linux-host tools/linux
+      - name: Build runtime and run JVM fixture
+        run: |
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/work/kvik" kvik-linux-host \
+            sh -ec 'python3 tools/linux/provision_system.py --system-root /usr
+                    python3 tools/linux/verify.py --pin-tools'

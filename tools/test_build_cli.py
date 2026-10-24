@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -13,6 +14,20 @@ import jsonschema
 from check_run_journal import check_run_journal
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap.pin_tools import native_target, tool_roots
+
+
+def installation_roots(java_home, konan_home, konan_data, developer_directory):
+    if native_target() == 'linux_x64':
+        return {name: str(path) for name, path in tool_roots(java_home, konan_home, konan_data).items()}
+    developer = developer_directory.resolve()
+    data = konan_data.resolve()
+    return dict(jdk=str(java_home.resolve()), kotlinNative=str(konan_home.resolve()),
+                llvm=str(data/'dependencies/llvm-21-aarch64-macos-essentials-97'),
+                libffi=str(data/'dependencies/libffi-3.3-1-macos-arm64'),
+                sdk=str((developer/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk').resolve()),
+                xcodeToolchain=str(developer/'Toolchains/XcodeDefault.xctoolchain'))
 
 
 def main():
@@ -84,13 +99,9 @@ class PassingTests {
              targets=[dict(name='jvm', main='main', test='tests', compilerOptions=[], testSettings=dict(classes=['fixture.PassingTests']))], compilerPlugins=[]),
     ])
     write('kvik.json', json.dumps(document))
-    developer = args.developer_directory.resolve()
     data = args.konan_data.resolve()
     installations = dict(schemaVersion=1, toolLock=json.loads((ROOT/'bootstrap/toolchains.lock.json').read_text()),
-        roots=dict(jdk=str(args.java_home.resolve()), kotlinNative=str(args.konan_home.resolve()),
-                   llvm=str(data/'dependencies/llvm-21-aarch64-macos-essentials-97'), libffi=str(data/'dependencies/libffi-3.3-1-macos-arm64'),
-                   sdk=str((developer/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk').resolve()),
-                   xcodeToolchain=str(developer/'Toolchains/XcodeDefault.xctoolchain')),
+        roots=installation_roots(args.java_home, args.konan_home, data, args.developer_directory),
         konanData=str(data), compilerArtifacts=str(artifact_cache))
     validate(installations, 'toolInstallation')
     write('tools.json', json.dumps(installations))
