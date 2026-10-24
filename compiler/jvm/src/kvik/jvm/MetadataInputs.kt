@@ -12,7 +12,7 @@ private const val METADATA_LIMIT = 64 * 1024 * 1024
 private const val PSM_PATH = "META-INF/kotlin-project-structure-metadata.json"
 
 /** Read only declared metadata; no target KLIB substitution, repositories or ambient classpath. */
-internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratch: Path, targets: Set<String>, minimumTargets: Int = 2): List<Path> {
+internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratch: Path, targets: Set<String>, minimumTargets: Int = 2, nativeStdlibPath: String? = null): List<Path> {
     require(targets.size >= minimumTargets && targets.all { it == "jvm" || NativeTarget.find(it) != null })
     return paths.flatMapIndexed { index, logical ->
         val path = workspace.path(logical)
@@ -20,7 +20,7 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
             val directory = workspace.classpath(logical) // Reject links/special children recursively.
             val manifest = directory.resolve("default/manifest")
             require(Files.isRegularFile(manifest) && Files.size(manifest) <= 1024 * 1024) { "Invalid/oversized metadata manifest" }
-            requireCommonManifest(Files.readAllBytes(manifest), targets)
+            requireCommonManifest(Files.readAllBytes(manifest), targets, allowNativeStdlib = logical == nativeStdlibPath)
             listOf(directory)
         } else {
             require(Files.isRegularFile(path) && (logical.endsWith(".jar") || logical.endsWith(".klib"))) { "Metadata input must be a root metadata JAR, KLIB or directory" }
@@ -61,11 +61,11 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
     }
 }
 
-private fun requireCommonManifest(bytes: ByteArray, targets: Set<String>) {
+private fun requireCommonManifest(bytes: ByteArray, targets: Set<String>, allowNativeStdlib: Boolean = false) {
     require(bytes.size <= 1024 * 1024) { "Metadata manifest exceeds 1 MiB" }
     val properties = Properties().apply { bytes.inputStream().use(::load) }
     require(properties.getProperty("unique_name")?.isNotBlank() == true && properties.getProperty("metadata_version") != null) { "Invalid common KLIB manifest" }
-    if (properties.getProperty("builtins_platform") == "NATIVE" && properties.getProperty("unique_name") == "stdlib" &&
+    if (allowNativeStdlib && properties.getProperty("builtins_platform") == "NATIVE" && properties.getProperty("unique_name") == "stdlib" &&
         targets.isNotEmpty() && targets.all { NativeTarget.find(it) != null }) {
         // Shared Native metadata needs genuine Native builtins. The graph supplies a verified,
         // digest-bound stdlib capture; no other platform KLIB is admitted as shared metadata.

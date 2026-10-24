@@ -119,7 +119,10 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
     val metadataScratch = if (metadata) Files.createTempDirectory(workspace.root, ".kvik-metadata-inputs-") else null
     val diagnostics = Collections.synchronizedList(mutableListOf<Diagnostic>())
     try {
-        val classpath = if (metadata) metadataClasspath(workspace, request.classpath, metadataScratch!!, request.metadataTargets)
+        val classpath = if (metadata) metadataClasspath(workspace, request.classpath, metadataScratch!!, request.metadataTargets,
+            // Only this graph-owned captured directory may supply Native builtins. Root metadata
+            // archives and arbitrary platform KLIBs retain strict common-manifest validation.
+            nativeStdlibPath = request.classpath.singleOrNull { it == "input/native-stdlib/shared" })
             else request.classpath.map(workspace::classpath)
         val outputRoots = if (bundle == null) emptyMap() else prepareOutputRoots(bundle,
             listOf(LogicalPath(request.outputDirectory)) + request.pluginApplications.flatMap { it.outputs })

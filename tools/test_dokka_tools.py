@@ -92,11 +92,11 @@ def main():
         jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, args.java_home/'bin/java', env, None, compile_worker)
         cp = os.pathsep.join(map(str, [case/'jvm/classes', artifacts['kotlin-build-tools-api-2.4.20.jar'], artifacts['kotlin-stdlib-2.4.20.jar']]))
         shared = case/'shared-native'; shared.mkdir()
-        shutil.copytree(args.konan_home/'klib/common/stdlib', shared/'stdlib')
+        shutil.copytree(args.konan_home/'klib/common/stdlib', shared/'input/native-stdlib/shared')
         (shared/'NativeToken.kt').write_text('package shared\n/** Shared Native-only public type. */\nclass NativeToken(val worker: kotlin.native.concurrent.Worker)\n')
         compiler_manifest = case/'jvm/compiler-manifest.json'
         request = dict(schemaVersion=1, requestId='shared-native', operation='metadata-compile', compiler=file_digest(compiler_manifest),
-            sources=['NativeToken.kt'], classpath=['stdlib'], pluginClasspath=[],
+            sources=['NativeToken.kt'], classpath=['input/native-stdlib/shared'], pluginClasspath=[],
             options=['-module-name', 'fixture:shared', '-language-version', '2.4', '-api-version', '2.4', '-Xmulti-platform'],
             outputDirectory='metadata', metadataTargets=['iosArm64','iosSimulatorArm64'])
         def metadata(label, selected, expected):
@@ -112,11 +112,13 @@ def main():
         assert list((shared/'metadata/default/linkdata').rglob('*.knm'))
         refused = metadata('mixed', dict(request, requestId='mixed', outputDirectory='mixed', metadataTargets=['jvm','iosArm64']), 1)
         assert 'Platform KLIB is not common metadata' in json.dumps(refused), refused
-        shutil.copytree(shared/'stdlib', shared/'invalid-stdlib')
-        manifest = shared/'invalid-stdlib/default/manifest'
+        shutil.copytree(shared/'input/native-stdlib/shared', shared/'untrusted-stdlib')
+        refused = metadata('untrusted', dict(request, requestId='untrusted', outputDirectory='untrusted', classpath=['untrusted-stdlib']), 1)
+        assert 'Platform KLIB is not common metadata' in json.dumps(refused), refused
+        manifest = shared/'input/native-stdlib/shared/default/manifest'
         lines = manifest.read_text().splitlines()
         manifest.write_text('\n'.join('native_targets=ios_arm64' if line.startswith('native_targets=') else line for line in lines)+'\n')
-        refused = metadata('unsupported', dict(request, requestId='unsupported', outputDirectory='unsupported', classpath=['invalid-stdlib']), 1)
+        refused = metadata('unsupported', dict(request, requestId='unsupported', outputDirectory='unsupported'), 1)
         assert 'complete metadata target set' in json.dumps(refused), refused
         native_source.write_text(native_source.read_text()+'\n/** Consumes actual shared metadata with a Native-only API. */\nfun sharedToken(): shared.NativeToken = TODO()\n')
         next(node for node in source_sets if node['sourceSetID']['sourceSetName']=='nativeMain')['classpath'].append(str(shared/'metadata'))
