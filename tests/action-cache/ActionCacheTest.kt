@@ -71,6 +71,20 @@ fun main(args: Array<String>) {
 
     entries += FileEntry(LogicalPath("out/A.class"), outputDigest)
     entries += FileEntry(LogicalPath("out/tool"), outputDigest, true)
+    // Deterministic verification reuses successful results; baseline drift must execute again.
+    val verification = action(kind = ActionKind.VERIFY)
+    val verifyDelegate = FakeExecutor { id, recipe -> good(id, recipe, entries) }
+    val verifyWrapper = LocalCachingActionExecutor(verifyDelegate, local, content)
+    check(complete(verifyWrapper, "verify-first", verification).status == ActionStatus.EXECUTED)
+    check(complete(verifyWrapper, "verify-hit", verification).status == ActionStatus.LOCAL_HIT)
+    check(verifyDelegate.starts == 1)
+    val changedBaseline = verification.copy(inputs = TreeManifest(listOf(FileEntry(LogicalPath("baseline.api"), seed))))
+    verifyDelegate.finish = { id, recipe -> ActionResult(id, recipe.key(Sha256), ActionStatus.FAILED, exitCode = 1) }
+    repeat(2) { check(complete(verifyWrapper, "verify-drift-$it", changedBaseline).status == ActionStatus.FAILED) }
+    check(verifyDelegate.starts == 3)
+    check(local.lookup(changedBaseline.key(Sha256)) == null)
+    println("PASS verification cache reuse, baseline invalidation and uncached drift")
+
     val path = content.blobPath(outputDigest)
     for (corrupt in listOf(false, true)) {
         NativeFiles.removeEntry(path)

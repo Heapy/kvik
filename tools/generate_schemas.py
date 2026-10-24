@@ -91,6 +91,8 @@ DEFS["applicationLaunch"]["allOf"] = [{
 }]
 DEFS["applicationLaunch"]["description"] = "Canonical UTF-8 metadata must additionally fit 256 KiB; paths must bind to the declared input tree."
 DEFS["target"] = object_({"name": enum(*PROJECT_TARGETS), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING), "nativeTestSettings": ref("nativeTestSettings"), "nativeTimeouts": ref("nativeTimeouts")}, optional=("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
+DEFS["abiSettings"] = object_({"baseline": PATH})
+DEFS["target"]["properties"]["abi"] = ref("abiSettings")
 DEFS["nativeFramework"] = object_({"baseName": {"type": "string", "minLength": 1, "maxLength": 128,
     "pattern": r"^[A-Za-z][A-Za-z0-9_]*$(?![\s\S])"}, "isStatic": BOOL}, optional=("isStatic",))
 DEFS["target"]["properties"]["application"] = ref("applicationSettings")
@@ -182,7 +184,7 @@ DEFS["standaloneScript"] = versioned({"name": SCRIPT_ID, "repositories": array(r
     **SCRIPT_COLLECTIONS, "script": ref("script")}, optional=("dependencyCatalog", "dependencyProfiles"))
 DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins, and the CLI must bind the selected .kt to an explicit source file."
 DEFS["action"] = versioned({
-    "implementation": STRING, "composition": ref("digest"), "kind": enum("compile", "generate", "link", "package", "test", "script", "publish", "benchmark", "server"),
+    "implementation": STRING, "composition": ref("digest"), "kind": enum("compile", "generate", "link", "package", "verify", "test", "script", "publish", "benchmark", "server"),
     "platform": mapping(STRING), "target": STRING, "toolchains": mapping(ref("digest")), "inputs": ref("tree"), "outputs": array(PATH, uniqueItems=True),
     "arguments": array(STRING), "environment": mapping(STRING), "parameters": ANY_OBJECT,
     "timeoutMillis": {"type": "integer", "minimum": 1}, "cachePolicy": enum("never", "local", "remote"),
@@ -214,6 +216,8 @@ DEFS["scriptResolutionDomain"]["allOf"] = [{"if": {"properties": {"purpose": {"c
     "then": {"properties": {"usage": {"const": "java-runtime"}}}}]
 DEFS["resolutionDomain"] = {"oneOf": [ref("moduleResolutionDomain"), ref("scriptResolutionDomain")]}
 DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
+    object_({"kind": {"const": "abi-check"}, "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
+        "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}),
     object_({"kind": {"const": "script"}, "name": SCRIPT_ID}), object_({"kind": {"const": "standalone-script"}})]}
 DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
 EXCLUSION_COORDINATE = {**COORDINATE, "maxLength": 1024, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
@@ -315,7 +319,7 @@ _darwin_installation["allOf"] = [
      "then": {"properties": {"roots": {"required": [name]}}},
      "else": {"properties": {"roots": {"not": {"required": [name]}}}}}
     for name in ("iosSdk", "iosSimulatorSdk")]
-DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1})})
+DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "abi", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1})})
 DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest")), "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"), "outputs": ref("tree"), "exitCode": nullable({"type": "integer"}), "diagnostic": nullable(STRING)})
 DEFS["actionResult"]["allOf"] = [{"if": {"properties": {"status": enum("executed", "local_hit", "remote_hit")}}, "then": {"properties": {"key": ref("digest"), "exitCode": {"const": 0}}}}]
 TEST_TEXT = {"type": "string", "maxLength": 8192}
@@ -336,6 +340,7 @@ DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, 
     "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
 DEFS["requestedCheck"] = {"oneOf": [
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:package$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
@@ -660,6 +665,27 @@ DEFS["actionCacheDecision"] = object_({"actionId": NONEMPTY, "key": ref("digest"
     "decision": enum("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error", "remote-hit", "remote-miss", "remote-error"), "detail": nullable(STRING)})
 DEFS["actionCacheDecision"]["allOf"] = [{"if": {"properties": {"decision": {"enum": ["local-error", "remote-error"]}}},
     "then": {"properties": {"detail": STRING}}, "else": {"properties": {"detail": {"type": "null"}}}}]
+ABI_SCOPE = {"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum(*PROJECT_TARGETS)}
+DEFS["abiExtraction"] = object_({**ABI_SCOPE, "artifact": PATH})
+DEFS["abiExtraction"]["allOf"] = [{"if": {"properties": {"target": enum(*NATIVE_TARGETS)}},
+    "then": {"properties": {"artifact": {"pattern": r"\.klib$(?![\s\S])"}}}}]
+DEFS["abiWorkerRequest"] = versioned({"requestId": {**NONEMPTY, "maxLength": 256}, "compiler": ref("digest"),
+    "extraction": ref("abiExtraction"), "inputs": {"allOf": [ref("tree"), {"properties": {"files": {
+        "minItems": 1, "maxItems": 100000, "items": {"properties": {"executable": {"const": False}}}}}}]}})
+DEFS["abiWorkerRequest"]["description"] = "Input paths must belong to the selected JVM directory, or contain exactly the selected Native KLIB; semantic validation binds these paths."
+DEFS["abiSnapshot"] = versioned({**ABI_SCOPE, "inputs": ref("digest"), "format": enum("bcv-jvm-v1", "bcv-klib-v1"),
+    "readerVersion": {"const": "0.18.1"}, "compilerVersion": {"const": "2.4.20"},
+    "api": {"type": "string", "maxLength": 8388608, "pattern": r"^(?:[^\r\u0000]*\n)?$(?![\s\S])"}})
+DEFS["abiSnapshot"]["allOf"] = [{"if": {"properties": {"target": {"const": "jvm"}}},
+    "then": {"properties": {"format": {"const": "bcv-jvm-v1"}}},
+    "else": {"properties": {"format": {"const": "bcv-klib-v1"}}}}]
+DEFS["abiSnapshot"]["description"] = "Exact public API text with LF line endings; semantic validation additionally limits UTF-8 to 8 MiB."
+DEFS["abiComparison"] = object_({**ABI_SCOPE, "snapshot": PATH, "baseline": PATH})
+DEFS["abiComparison"]["description"] = "Snapshot and baseline paths must be distinct."
+DEFS["abiReady"] = object_({**ABI_SCOPE,
+    "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):abi-dump$(?![\s\S])"},
+    "directory": ACTIVATION_PATH, "snapshot": ACTIVATION_PATH, "api": ACTIVATION_PATH})
+DEFS["abiReady"]["description"] = "A current candidate is available for review; the run may still fail its baseline comparison."
 DEFS["frameworkReady"] = object_({
     "module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum(*IOS_TARGETS),
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(iosArm64|iosSimulatorArm64):framework$(?![\s\S])"},
@@ -667,10 +693,11 @@ DEFS["frameworkReady"] = object_({
     "dSYM": nullable({"type": "string", "pattern": "^/"}), "isStatic": BOOL})
 DEFS["frameworkReady"]["allOf"] = [{"if": {"properties": {"isStatic": {"const": True}}},
     "then": {"properties": {"dSYM": {"type": "null"}}}, "else": {"properties": {"dSYM": {"type": "string"}}}}]
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready"), "payload": ANY_OBJECT})
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest")}),
     "framework-ready": ref("frameworkReady"),
+    "abi-ready": ref("abiReady"),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-cache-decision": ref("actionCacheDecision"),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),

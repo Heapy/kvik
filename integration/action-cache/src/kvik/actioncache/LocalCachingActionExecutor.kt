@@ -36,7 +36,7 @@ class LocalCachingActionExecutor(
         startCached(runId, actionId, action, lookup = false)
 
     private fun startCached(runId: String, actionId: String, action: ActionSpec, lookup: Boolean): RunningAction {
-        if (action.cachePolicy == CachePolicy.NEVER || action.kind !in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE)) {
+        if (action.cachePolicy == CachePolicy.NEVER || action.kind !in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE, ActionKind.VERIFY)) {
             cacheDecision(ActionCacheDecision(actionId, action.key(Sha256),
                 if (action.cachePolicy == CachePolicy.NEVER) "disabled-by-policy" else "unsupported-action-kind"))
             return delegate.start(runId, actionId, action)

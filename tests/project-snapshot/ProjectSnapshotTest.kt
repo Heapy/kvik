@@ -65,7 +65,7 @@ class ProjectSnapshotTest {
         assertFalse(build.inputs.files.any { it.path.value.startsWith("api/") })
         val selection = SnapshotSelection.AbiCheck(setOf("library"), setOf("jvm"))
         assertEquals(selection, SnapshotSelection.fromJson(selection.toJson()))
-        assertIs<SnapshotCapture.Indeterminate>(f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection))
+        assertFails { f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection) }
         NativeFiles.ensureDirectory("${f.root}/api")
         write("${f.root}/api/library.jvm.api", "public class Library\n")
         val checked = assertIs<SnapshotCapture.Captured>(f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection)).snapshot

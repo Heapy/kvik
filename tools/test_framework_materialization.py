@@ -24,7 +24,7 @@ def main():
         DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer', LANG='C', LC_ALL='C', TZ='UTC', KONAN_USE_INTERNAL_SERVER='0')
     sources = [path for folder in ('core/src', 'cache/src', 'tests/framework-materialization')
                for path in sorted((ROOT/folder).rglob('*.kt'))]
-    sources.append(ROOT/'cli/src/kvik/cli/Frameworks.kt')
+    sources += [ROOT/'cli/src/kvik/cli/Frameworks.kt', ROOT/'cli/src/kvik/cli/Abi.kt']
     subprocess.run(files_interop_command(ROOT, args.konan_home, output), cwd=ROOT, env=environment, check=True, timeout=120)
     subprocess.run([str(args.konan_home/'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64',
         '-Xoverride-konan-properties=airplaneMode=true', '-generate-test-runner', '-o', str(output/'unit.kexe'),

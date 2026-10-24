@@ -79,6 +79,24 @@ class RunEvidenceTest {
         }
     }
 
+    @Test fun abiChecksRoundTripCachedSuccessAndPreserveComparisonFailure() {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64")) {
+            for (mode in listOf("abi-dump", "abi-check")) {
+                val check = "app:$target:$mode"
+                fun run(status: ActionStatus) = aggregate(checks = setOf(check), terminals = mapOf(check to "main"),
+                    dependencies = graph - "tests", actions = listOf(result("base"), result("main", status)), reports = emptyMap())
+                val passed = run(ActionStatus.LOCAL_HIT)
+                assertEquals(ExitStatus.SUCCESS, passed.exitStatus)
+                assertEquals(setOf(check), passed.record.completedChecks)
+                assertEquals(passed.record, verificationRecordFromJson(passed.record.toJson()))
+                val failed = run(ActionStatus.FAILED)
+                assertEquals(VerificationStatus.FAILED, failed.record.status)
+                assertTrue(failed.record.completedChecks.isEmpty())
+                assertEquals(failed.record, verificationRecordFromJson(failed.record.toJson()))
+            }
+        }
+    }
+
     @Test fun emptyOrPartialSetupNeverProvesChecks() {
         for (checks in listOf(setOf("app:jvm:test"), setOf("app:jvm:build"))) {
             val evidence = aggregate(checks, emptyMap(), emptyMap(), emptyList(), emptyMap())

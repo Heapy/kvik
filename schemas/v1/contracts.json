@@ -445,6 +445,9 @@
         "nativeTimeouts": {
           "$ref": "#/$defs/nativeTimeouts"
         },
+        "abi": {
+          "$ref": "#/$defs/abiSettings"
+        },
         "application": {
           "$ref": "#/$defs/applicationSettings"
         },
@@ -611,6 +614,20 @@
           }
         }
       ]
+    },
+    "abiSettings": {
+      "type": "object",
+      "properties": {
+        "baseline": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        }
+      },
+      "required": [
+        "baseline"
+      ],
+      "additionalProperties": false
     },
     "nativeFramework": {
       "type": "object",
@@ -1529,6 +1546,7 @@
             "generate",
             "link",
             "package",
+            "verify",
             "test",
             "script",
             "publish",
@@ -2091,6 +2109,44 @@
           },
           "required": [
             "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "abi-check"
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 1000,
+              "uniqueItems": true
+            },
+            "targets": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "jvm",
+                  "macosArm64",
+                  "linuxX64",
+                  "iosArm64",
+                  "iosSimulatorArm64"
+                ]
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "kind",
+            "modules",
+            "targets"
           ],
           "additionalProperties": false
         },
@@ -3727,6 +3783,7 @@
           "enum": [
             "configuration",
             "compilation",
+            "abi",
             "test",
             "toolchain",
             "cache",
@@ -4216,6 +4273,10 @@
     },
     "requestedCheck": {
       "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\\s\\S])"
+        },
         {
           "type": "string",
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:common:package$(?![\\s\\S])"
@@ -8400,6 +8461,269 @@
         }
       ]
     },
+    "abiExtraction": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64",
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
+          ]
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "artifact"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "enum": [
+                  "macosArm64",
+                  "linuxX64",
+                  "iosArm64",
+                  "iosSimulatorArm64"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "artifact": {
+                "pattern": "\\.klib$(?![\\s\\S])"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "abiWorkerRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 256
+        },
+        "compiler": {
+          "$ref": "#/$defs/digest"
+        },
+        "extraction": {
+          "$ref": "#/$defs/abiExtraction"
+        },
+        "inputs": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/tree"
+            },
+            {
+              "properties": {
+                "files": {
+                  "minItems": 1,
+                  "maxItems": 100000,
+                  "items": {
+                    "properties": {
+                      "executable": {
+                        "const": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "compiler",
+        "extraction",
+        "inputs"
+      ],
+      "additionalProperties": false,
+      "description": "Input paths must belong to the selected JVM directory, or contain exactly the selected Native KLIB; semantic validation binds these paths."
+    },
+    "abiSnapshot": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64",
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
+          ]
+        },
+        "inputs": {
+          "$ref": "#/$defs/digest"
+        },
+        "format": {
+          "enum": [
+            "bcv-jvm-v1",
+            "bcv-klib-v1"
+          ]
+        },
+        "readerVersion": {
+          "const": "0.18.1"
+        },
+        "compilerVersion": {
+          "const": "2.4.20"
+        },
+        "api": {
+          "type": "string",
+          "maxLength": 8388608,
+          "pattern": "^(?:[^\\r\\u0000]*\\n)?$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "module",
+        "target",
+        "inputs",
+        "format",
+        "readerVersion",
+        "compilerVersion",
+        "api"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "const": "jvm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "format": {
+                "const": "bcv-jvm-v1"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "format": {
+                "const": "bcv-klib-v1"
+              }
+            }
+          }
+        }
+      ],
+      "description": "Exact public API text with LF line endings; semantic validation additionally limits UTF-8 to 8 MiB."
+    },
+    "abiComparison": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64",
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
+          ]
+        },
+        "snapshot": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "baseline": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "snapshot",
+        "baseline"
+      ],
+      "additionalProperties": false,
+      "description": "Snapshot and baseline paths must be distinct."
+    },
+    "abiReady": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "macosArm64",
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
+          ]
+        },
+        "actionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):abi-dump$(?![\\s\\S])"
+        },
+        "directory": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        },
+        "snapshot": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        },
+        "api": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "actionId",
+        "directory",
+        "snapshot",
+        "api"
+      ],
+      "additionalProperties": false,
+      "description": "A current candidate is available for review; the run may still fail its baseline comparison."
+    },
     "frameworkReady": {
       "type": "object",
       "properties": {
@@ -8502,7 +8826,8 @@
             "application-prepared",
             "application-started",
             "application-finished",
-            "framework-ready"
+            "framework-ready",
+            "abi-ready"
           ]
         },
         "payload": {
@@ -8562,6 +8887,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/frameworkReady"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "abi-ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/abiReady"
               }
             }
           }

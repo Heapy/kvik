@@ -29,7 +29,7 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, resolve, check-lock, build, test, package-library, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, help
+            Commands: runtime-info, inspect, resolve, check-lock, build, test, package-library, abi-dump, abi-check, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
@@ -43,6 +43,7 @@ private fun command(args: Array<String>) {
             Script inspection: inspect-script with the same selector and --tools PATH (read-only; no execution)
             Standalone companions: FILE.kvik.json and default FILE.kvik.lock.json alongside FILE.kt; no nearby-project discovery
             Libraries: package-library plus build options; selected modules and ordinary dependencies require publication coordinates
+            ABI: abi-dump or abi-check plus build options; check requires target abi.baseline, dump never updates it
             Applications: prepare-application or run-application plus build options; select exactly one module and target
             Prepared replay: run-prepared --run PATH --descriptor DIGEST_JSON (requires current successful preparation)
             Application mode requires one application module/target; r reloads, t runs fresh tests without changing app mode.
@@ -79,6 +80,8 @@ private fun command(args: Array<String>) {
         }
         "resolve", "check-lock" -> println(dependencyCommand(args.drop(1), updateRequested = args[0] == "resolve").canonical())
         "package-library" -> exitProcess(libraryPackageCommand(args.drop(1)).code)
+        "abi-dump" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.ABI_DUMP).status.code)
+        "abi-check" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.ABI_CHECK).status.code)
         "build", "test" -> exitProcess(buildCommand(args.drop(1), test = args[0] == "test").code)
         "run-script" -> exitProcess(runScriptCommand(args.drop(1)))
         "inspect-script" -> println(inspectScriptCommand(args.drop(1)).canonical())

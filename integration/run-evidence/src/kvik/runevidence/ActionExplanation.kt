@@ -31,7 +31,7 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
         require(Digest.fromJson(fields.getValue("key")) == result.key && event.sequence < finished.sequence) { "Cache decision differs from action identity/order" }
         val choice = fields.getValue("decision").stringValue()
         require(action != null) { "Cache decision requires a resolved recipe" }
-        val eligible = action.kind in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE)
+        val eligible = action.kind in setOf(ActionKind.COMPILE, ActionKind.GENERATE, ActionKind.LINK, ActionKind.PACKAGE, ActionKind.VERIFY)
         require(when (choice) {
             "disabled-by-policy" -> action.cachePolicy == CachePolicy.NEVER
             "unsupported-action-kind" -> action.cachePolicy != CachePolicy.NEVER && !eligible
