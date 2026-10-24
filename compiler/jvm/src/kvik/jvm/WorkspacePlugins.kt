@@ -6,8 +6,7 @@ import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipFile
-import org.jetbrains.kotlin.buildtools.api.arguments.CompilerPlugin
-import org.jetbrains.kotlin.buildtools.api.arguments.CompilerPluginOption
+import java.util.ServiceLoader
 
 /** Check on the real action filesystem, including case and Unicode aliases, before plugin code loads. */
 internal fun prepareOutputRoots(staging: Path, logical: List<LogicalPath>): Map<LogicalPath, Path> {
@@ -27,12 +26,6 @@ internal fun prepareOutputRoots(staging: Path, logical: List<LogicalPath>): Map<
 }
 
 internal data class PreparedWorkspacePlugin(val id: String, val classpath: List<Path>, val options: List<String>)
-
-internal fun workspacePlugins(request: WorkerRequest, workspace: Workspace, outputs: Map<LogicalPath, Path>, compilerLoader: ClassLoader,
-                              compilerArtifacts: List<Path>): List<CompilerPlugin> =
-    validatedWorkspacePlugins(request.pluginApplications, request.classpath.map(workspace::classpath), workspace, outputs,
-        compilerLoader, compilerArtifacts).map { plugin -> CompilerPlugin(plugin.id, plugin.classpath,
-            plugin.options.map { CompilerPluginOption(it.substringBefore('='), it.substringAfter('=')) }, emptySet()) }
 
 /** Native hosts authorize the pinned JVM API dependency while loading their own verified parent API. */
 internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>, consumerClasspath: List<Path>, workspace: Workspace,
@@ -102,3 +95,36 @@ internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>,
     }
     PreparedWorkspacePlugin(application.id, classpath, options)
 }
+
+/** The private registrar forwards typed values directly, keeping the original loader alive through compilation. */
+internal fun <T> withTypedWorkspacePlugin(plugin: PreparedWorkspacePlugin, compilerLoader: ClassLoader,
+    workspace: Workspace, operation: (Path) -> T): T =
+    URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader).use { pluginLoader ->
+        val registrarType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar")
+        val processorType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor")
+        val registrars = ServiceLoader.load(registrarType, pluginLoader).toList()
+        val processors = ServiceLoader.load(processorType, pluginLoader).toList()
+        require(registrars.size == 1 && processors.size <= 1) { "Validated plugin services changed" }
+        val valueType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CliOptionValue")
+        val values = plugin.options.map { value -> valueType.getConstructor(String::class.java, String::class.java, String::class.java)
+            .newInstance(plugin.id, value.substringBefore('='), value.substringAfter('=')) }
+        val bridgeType = compilerLoader.loadClass("kvik.jvm.NativeTypedPlugin")
+        val worker = Path.of(PreparedWorkspacePlugin::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()
+        require(Path.of(bridgeType.protectionDomain.codeSource.location.toURI()).toRealPath() == worker) {
+            "Typed plugin adapter did not originate from the verified worker bundle"
+        }
+        val directory = Files.createTempDirectory(workspace.root, ".kvik-plugin-service-")
+        var bound = false
+        try {
+            val descriptor = directory.resolve("META-INF/services/" + registrarType.name)
+            Files.createDirectories(descriptor.parent)
+            Files.writeString(descriptor, bridgeType.name + "\n")
+            bridgeType.getMethod("bind", registrarType, processorType, List::class.java)
+                .invoke(null, registrars.single(), processors.singleOrNull(), values)
+            bound = true
+            operation(directory)
+        } finally {
+            try { if (bound) bridgeType.getMethod("clear").invoke(null) }
+            finally { workspace.removeTree(directory) }
+        }
+    }

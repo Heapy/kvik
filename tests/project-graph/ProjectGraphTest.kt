@@ -96,6 +96,64 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun sharedPublishedPluginUsesLockedJvmHostArtifactForMetadata() {
+        val plugin = CompilerPluginSpec(null, Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20"),
+            setOf("jvm", "macosArm64"), setOf("main"), emptyList(), emptyList())
+        val config = configuration(published(base, false).copy(compilerPlugins = listOf(plugin)), published(app, false))
+        val plan = graph(config, request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE))
+        val metadata = plan.nodes.single { it.id == "base:common:metadata" }.resolve(emptyMap())
+        val compilation = JvmMetadataCompilation.fromJson(metadata.parameters)
+        assertEquals(1, compilation.plugins.size)
+        assertTrue(compilation.plugins.single() in metadata.inputs.files.map { it.path })
+        assertTrue(compilation.plugins.none { it in compilation.classpath })
+        val jvm = JvmCompilation.fromJson(plan.nodes.single { it.id == "base:jvm:main" }.resolve(emptyMap()).parameters)
+        assertEquals(jvm.plugins, compilation.plugins)
+    }
+
+    @Test fun commonMetadataUsesSharedPluginHostClosureAndExcludesReportsFromDependencies() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("jvm", "macosArm64"), setOf("main"),
+            listOf("mode=first"), listOf(LogicalPath("config.txt")), "example.plugin", "2.4.20",
+            listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val producer = module("producer", listOf(Dependency.Module("runtime", DependencyScopeKind.RUNTIME)))
+        val runtime = module("runtime", listOf(external("g:host-runtime:1")))
+        val extra = listOf("producer", "runtime").flatMap { id -> listOf("common/Common.kt", "jvm/Actual.kt", "resources/META-INF/services/Registrar")
+            .map { FileEntry(LogicalPath("$id/$it"), digest("$id/$it")) } }
+        val files = TreeManifest(snapshot().files + extra + FileEntry(LogicalPath("config.txt"), digest("config")))
+        fun plan(selected: CompilerPluginSpec = plugin, snapshot: TreeManifest = files) = graph(configuration(
+            published(base, false), producer, runtime, published(app, false).copy(compilerPlugins = listOf(selected))), snapshot,
+            ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE))
+        fun node(selected: CompilerPluginSpec = plugin, snapshot: TreeManifest = files) = plan(selected, snapshot).nodes.single { it.id == "app:common:metadata" }
+        fun results(node: ActionNode) = node.dependencies.associateWith { id -> ActionResult(id, digest(id), ActionStatus.EXECUTED,
+            TreeManifest(if (id == "base:common:metadata") listOf(
+                FileEntry(LogicalPath("metadata/default/manifest"), digest("common")),
+                FileEntry(LogicalPath("plugins/example.plugin/report/generated.txt"), digest("report")))
+            else listOf(FileEntry(LogicalPath("classes/Producer.class"), digest(id)))), 0) }
+        val common = node()
+        assertEquals(setOf("base:common:metadata", "producer:jvm:main", "runtime:jvm:main"), common.dependencies)
+        val inputs = results(common)
+        val action = common.resolve(inputs)
+        val compilation = JvmMetadataCompilation.fromJson(action.parameters)
+        val application = compilation.pluginApplications.single()
+        assertEquals(plugin.options, application.options)
+        assertTrue(application.classpath.any { "runtime/classes" in it.value })
+        assertTrue(application.classpath.none { it in compilation.classpath })
+        assertTrue(action.inputs.files.any { it.path.value == "plugin-inputs/example.plugin/config.txt" })
+        assertFalse(action.inputs.files.any { it.path.value.endsWith("generated.txt") })
+        assertEquals(listOf(LogicalPath("metadata"), LogicalPath("plugins/example.plugin/report")), action.outputs)
+        for (id in listOf("producer:jvm:main", "runtime:jvm:main")) {
+            val changed = inputs.getValue(id).copy(outputs = TreeManifest(listOf(FileEntry(LogicalPath("classes/Producer.class"), digest("changed")))))
+            assertNotEquals(action.key(Sha256), common.resolve(inputs + (id to changed)).key(Sha256))
+        }
+        val changedInput = TreeManifest(files.files.map { if (it.path.value == "config.txt") it.copy(digest = digest("changed")) else it })
+        assertNotEquals(action.key(Sha256), node(snapshot = changedInput).resolve(inputs).key(Sha256))
+        assertNotEquals(action.key(Sha256), node(plugin.copy(options = listOf("mode=second"))).resolve(inputs).key(Sha256))
+        for (selected in listOf(plugin.copy(targets = setOf("jvm")), plugin.copy(targets = setOf("macosArm64")), plugin.copy(scopes = setOf("test")))) {
+            val excluded = node(selected)
+            assertEquals(setOf("base:common:metadata"), excluded.dependencies)
+            assertTrue(JvmMetadataCompilation.fromJson(excluded.resolve(results(excluded)).parameters).pluginApplications.isEmpty())
+        }
+    }
+
     @Test fun multiplatformPackagingCompilesSharedMetadataAndGatesTargetChecksOnTheRoot() {
         val config = configuration(published(base, false), published(app, false))
         val plan = graph(config, request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE))

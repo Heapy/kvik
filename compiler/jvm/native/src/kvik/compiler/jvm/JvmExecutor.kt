@@ -109,7 +109,8 @@ class JvmActionExecutor(
                 staged(compilation.sources), staged(compilation.classpath) + languageRuntime, staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}",
                 compilation.pluginApplications.map(::stagedPlugin)).toJson()
             else if (metadata != null) WorkerRequest(requestId, "metadata-compile", expected.toolchains.getValue("jvm-compiler"),
-                staged(metadata.sources), staged(metadata.classpath), emptyList(), metadata.options("input/"), "output/${metadata.output.value}", metadataTargets = metadata.targets).toJson()
+                staged(metadata.sources), staged(metadata.classpath), staged(metadata.plugins), metadata.options("input/"), "output/${metadata.output.value}",
+                metadata.pluginApplications.map(::stagedPlugin), metadataTargets = metadata.targets).toJson()
             else obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json(),
                 "classpath" to staged(selection!!.classpath).map { it.json() }.json(), "testClasses" to selection.classes.map { it.json() }.json(), "engines" to selection.engines.map { it.json() }.json())
             writeJvmFile("$directory/request.json", request.canonical().encodeToByteArray())

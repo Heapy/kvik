@@ -8428,12 +8428,6 @@
           },
           "then": {
             "properties": {
-              "pluginClasspath": {
-                "maxItems": 0
-              },
-              "pluginApplications": {
-                "maxItems": 0
-              },
               "metadataTargets": {
                 "minItems": 2,
                 "maxItems": 2

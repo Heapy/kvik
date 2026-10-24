@@ -125,7 +125,12 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
             listOf(LogicalPath(request.outputDirectory)) + request.pluginApplications.flatMap { it.outputs })
         for (output in request.pluginApplications.flatMap { it.outputs }) if (Files.exists(workspace.path(output.value, false)))
             reject("KVIK_OUTPUT_EXISTS", "Plugin output already exists: ${output.value}")
-        val toolchains = KotlinToolchains.loadImplementation(distribution.classpath)
+        val typedWorkspacePlugin = request.pluginApplications.isNotEmpty()
+        // The compiler parent must share the bound registrar class with plugin discovery. The
+        // worker location is already part of the action's verified worker identity.
+        val implementation = distribution.classpath + if (typedWorkspacePlugin)
+            listOf(Path.of(PreparedWorkspacePlugin::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()) else emptyList()
+        val toolchains = KotlinToolchains.loadImplementation(implementation)
         if (toolchains.getCompilerVersion() != "2.4.20") reject("KVIK_COMPILER_IDENTITY", "Loaded compiler version does not match manifest")
         val builder: BaseCompilationOperation.Builder = if (metadata) {
             val common = toolchains.getToolchain(KotlinMetadataPlatformToolchain::class.java)
@@ -145,8 +150,6 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
         }
         if (plugins.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
             listOf(CompilerPlugin(SERIALIZATION_ID, plugins, emptyList(), emptySet()))
-        if (request.pluginApplications.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
-            workspacePlugins(request, workspace, outputRoots, toolchains.javaClass.classLoader, distribution.classpath)
         builder[BaseCompilationOperation.COMPILER_MESSAGE_RENDERER] = object : CompilerMessageRenderer {
             override fun render(severity: CompilerMessageRenderer.Severity, message: String, location: CompilerMessageRenderer.SourceLocation?): String {
                 if (severity == CompilerMessageRenderer.Severity.ERROR || severity == CompilerMessageRenderer.Severity.WARNING) {
@@ -167,9 +170,20 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
             override fun debug(msg: String) = Unit
             override fun lifecycle(msg: String) { System.err.println(msg) }
         }
-        val result = toolchains.createBuildSession().use { session ->
+        fun execute() = toolchains.createBuildSession().use { session ->
             session.executeOperation(builder.build(), toolchains.createInProcessExecutionPolicy(), logger)
         }
+        val result = if (typedWorkspacePlugin) {
+            val plugin = validatedWorkspacePlugins(request.pluginApplications,
+                // Keep original archive paths in alias checks after metadata extraction.
+                classpath + request.classpath.map(workspace::path), workspace, outputRoots,
+                toolchains.javaClass.classLoader, distribution.classpath).single()
+            withTypedWorkspacePlugin(plugin, toolchains.javaClass.classLoader, workspace) { service ->
+                builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
+                    listOf(CompilerPlugin(plugin.id, listOf(service), emptyList(), emptySet()))
+                execute()
+            }
+        } else execute()
         if (result == CompilationResult.COMPILATION_SUCCESS) {
             if (bundle != null) Files.walk(bundle).use { paths ->
                 val declared = request.pluginApplications.flatMap { it.outputs }.map(outputRoots::getValue)

@@ -30,7 +30,7 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
         validator('workerRequest').validate(request)
         for targets in ([], ['jvm'], ['jvm', 'jvm'], ['jvm', 'iosArm64']):
             self.assertFalse(validator('workerRequest').is_valid({**request, 'metadataTargets': targets}))
-        self.assertFalse(validator('workerRequest').is_valid({**request, 'pluginClasspath': ['plugin.jar']}))
+        validator('workerRequest').validate({**request, 'pluginClasspath': ['plugin.jar']})
         self.assertFalse(validator('workerRequest').is_valid({**request, 'operation': 'jvm-compile'}))
 
     def test_optional_strict_declaration_and_exact_coordinates(self):

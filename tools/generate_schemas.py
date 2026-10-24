@@ -648,7 +648,7 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
 DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum("jvm", "macosArm64"), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
 DEFS["workerRequest"]["allOf"] = [{"if": {"required": ["pluginApplications"], "properties": {"pluginApplications": {"minItems": 1}}}, "then": {"properties": {"pluginClasspath": {"maxItems": 0}}}}]
 DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-compile"}}},
-    "then": {"properties": {"pluginClasspath": {"maxItems": 0}, "pluginApplications": {"maxItems": 0}, "metadataTargets": {"minItems": 2, "maxItems": 2}}},
+    "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": 2}}},
     "else": {"properties": {"metadataTargets": {"maxItems": 0}}}})
 
 DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success", "compilation-error", "infrastructure-error", "cancelled"), "exitCode": {"type": "integer"}, "diagnostics": array(ref("diagnostic"))})

@@ -21,6 +21,8 @@ def main():
     parser.add_argument('--konan-home', required=True, type=Path)
     parser.add_argument('--gradle', required=True, type=Path)
     parser.add_argument('--ktc', required=True, type=Path, help='Pinned Kotlin Toolchain wrapper to copy into the consumer fixture')
+    parser.add_argument('--workspace-plugin', action='store_true', help='Build a workspace plugin and apply it to common/JVM/Native production code')
+    parser.add_argument('--resolved-fixture', type=Path, help='Reuse the dependency lock and store from an identical previously resolved fixture')
     parser.add_argument('--artifact-cache', type=Path, default=Path('/Users/yoda/dev/pet/kvik/.kvik/tool-artifacts'))
     args = parser.parse_args()
     destination = ROOT / '.kvik/tests/library-package-cli'
@@ -52,6 +54,25 @@ def main():
     write(project/'library/common/Library.kt', 'package fixture\nexpect fun platformNumber(): Int\nfun answer(): Value = Value(platformNumber() + base().amount)\n')
     for platform in ('jvm', 'native'):
         write(project/'library'/platform/'Actual.kt', 'package fixture\nactual fun platformNumber(): Int = 40\n')
+    plugin_options = ['value=first,comma\nsecond=literal\rthird\u2028fourth', 'value=second=literal']
+    if args.workspace_plugin:
+        fixture = ROOT/'tests/workspace-plugins/fixture'
+        shutil.copytree(fixture, project/'plugin-fixture')
+        std = dict(coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.20', exported=True)
+        for name, directory, dependencies in [
+            ('private', 'private', []), ('helper', 'helper', [dict(module='private')]), ('runtime', 'runtime', []),
+            ('producer', 'plugin', [dict(module='helper'), dict(module='runtime', scope='runtime'),
+                                    dict(coordinate='org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20')])]:
+            modules.append(dict(id=name, sourceSets=[source('main', [std, *dependencies], ['plugin-fixture/'+directory],
+                resources=['plugin-fixture/resources'] if name == 'producer' else [])],
+                targets=[dict(name='jvm', main='main', test=None, compilerOptions=['-jvm-target=25'])], compilerPlugins=[]))
+        modules[0]['compilerPlugins'] = [dict(module='producer', id='fixture.rewrite', compilerVersion='2.4.20',
+            targets=['jvm', 'macosArm64'], scopes=['main'], options=plugin_options,
+            inputs=['plugin-fixture/message.txt', 'plugin-fixture/ancillary.txt'], outputs=['report'],
+            pathOptions=[dict(name='messageFile', kind='input-file', path='plugin-fixture/message.txt'),
+                         dict(name='reportDirectory', kind='output-directory', path='report')])]
+        with (project/'base/common/Base.kt').open('a') as source_file:
+            source_file.write('fun transformed(): String = "PLUGIN_MARKER"\n')
     json_file(project/'kvik.json', dict(schemaVersion=1, name='packageFixture', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=modules))
     native_data = Path.home()/'.konan'
     developer = Path('/Applications/Xcode.app/Contents/Developer')
@@ -69,7 +90,14 @@ def main():
         print('PASS '+label, flush=True)
         return (case/f'{label}.log').read_text()
     shared = ['--project', project/'kvik.json', '--store', case/'store']
-    run('resolve', [args.runtime, 'resolve', *shared])
+    if args.resolved_fixture:
+        previous = args.resolved_fixture.resolve()
+        assert json.loads((previous/'project/kvik.json').read_text()) == json.loads((project/'kvik.json').read_text()), 'Resolved fixture configuration differs'
+        shutil.copy2(previous/'project/kvik.lock.json', project/'kvik.lock.json')
+        shutil.copytree(previous/'store', case/'store')
+        print('Reusing resolved dependency lock and store; package runs offline', flush=True)
+    else:
+        run('resolve', [args.runtime, 'resolve', *shared])
     build = [args.runtime, 'package-library', *shared, '--tools', project/'tools.json', '--runs', case/'runs', '--module', 'library',
              '--target', 'jvm', '--target', 'macosArm64', '--offline']
     def package(label):
@@ -88,6 +116,14 @@ def main():
     def contents(directory):
         return {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.rglob('*') if p.is_file()}
     assert contents(repository) == contents(second_repo)
+    if args.workspace_plugin:
+        for action_id in ('base:common:metadata', 'base:jvm:main', 'base:macosArm64:main'):
+            action = next(a for a in record['actions'] if a['actionId'] == action_id)
+            report = next(f for f in action['outputs']['files'] if f['path'] == 'plugins/fixture.rewrite/report/result.txt')
+            identity = report['digest']
+            data = (case/'store/blobs'/f'{identity["hash"]}-{identity["sizeBytes"]}').read_bytes()
+            expected = 'helper:v1:hello:runtime\n' + '|'.join(option.split('=', 1)[1] for option in plugin_options)
+            assert data == expected.encode(), (action_id, data)
     for name in ('base', 'library'):
         for target, ext in [('jvm', 'jar'), ('macosarm64', 'klib')]:
             artifact = f'{name}-{target}'
@@ -131,6 +167,8 @@ def main():
     run('pom-consumer', [args.gradle, '--no-daemon', '--no-watch-fs', '--console=plain', '-PpomOnly', 'run'], cwd=consumer)
     # Native target artifacts are usable libraries, not just files with a .klib suffix.
     write(case/'NativeConsumer.kt', 'fun main() { check(fixture.answer().amount == 42); println("Native publication consumed") }\n')
+    if args.workspace_plugin:
+        write(case/'NativeConsumer.kt', 'fun main() { check(fixture.answer().amount == 42); check(fixture.transformed() == "helper:v1:hello:runtime") }\n')
     native_args = [args.konan_home/'bin/konanc', case/'NativeConsumer.kt', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-o', case/'consumer']
     for name in ('base', 'library'):
         native_args += ['-library', repository/f'dev/kvik/fixture/{name}-macosarm64/1.0/{name}-macosarm64-1.0.klib']
@@ -149,6 +187,7 @@ def main():
             assert psm['isPublishedAsRoot'] == 'true'
             assert any(path.startswith('commonMain/') and path.endswith('/manifest') for path in jar.namelist())
             assert not any(path.endswith('.class') for path in jar.namelist())
+            assert not any(path.startswith('plugins/') for path in jar.namelist())
     kmp = case/'gradle-kmp-consumer'
     write(kmp/'settings.gradle', "pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }\nrootProject.name = 'kmp-consumer'\n")
     write(kmp/'gradle.properties', 'kotlin.compiler.execution.strategy=in-process\nkotlin.native.disableCompilerDaemon=true\norg.gradle.workers.max=1\n')
@@ -158,6 +197,9 @@ def main():
           "commonTest.dependencies { implementation kotlin('test') } } }\n")
     common_source = 'package consumer\nfun consumed(): fixture.Value = fixture.answer()\n'
     common_test = 'package consumer\nimport kotlin.test.Test\nimport kotlin.test.assertEquals\nclass ConsumerTest { @Test fun publishedApi() { assertEquals(42, consumed().amount) } }\n'
+    if args.workspace_plugin:
+        common_test = common_test.replace('assertEquals(42, consumed().amount)',
+            'assertEquals(42, consumed().amount); assertEquals("helper:v1:hello:runtime", fixture.transformed())')
     write(kmp/'src/commonMain/kotlin/Consumer.kt', common_source)
     write(kmp/'src/commonTest/kotlin/ConsumerTest.kt', common_test)
     run('gradle-kmp-consumer', [args.gradle, '--no-daemon', '--no-watch-fs', '--console=plain',

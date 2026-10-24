@@ -441,10 +441,12 @@ private class Builder(
 
     private fun commonOutputs(results: Map<String, ActionResult>, module: String, prefix: String): List<FileEntry> {
         val outputs = results.getValue(commonMetadataId(module)).outputs.files
-        require(outputs.isNotEmpty() && outputs.all { it.path.value.startsWith("metadata/") && !it.executable }) {
+        require(outputs.all { it.path.value.startsWith("metadata/") || it.path.value.startsWith("plugins/") }) {
             "Invalid common metadata output: $module"
         }
-        return outputs.map { it.copy(path = LogicalPath(prefix + "/" + it.path.value.removePrefix("metadata/"))) }
+        val metadata = outputs.filter { it.path.value.startsWith("metadata/") }
+        require(metadata.isNotEmpty() && metadata.none { it.executable }) { "Missing or executable common metadata: $module" }
+        return metadata.map { it.copy(path = LogicalPath(prefix + "/" + it.path.value.removePrefix("metadata/"))) }
     }
 
     private fun ensureCommonMetadata(module: String): String {
@@ -453,7 +455,9 @@ private class Builder(
         val spec = modules.getValue(module)
         val publication = spec.publication ?: error("Common library dependency requires publication: $module")
         require(spec.targets.map { it.name }.toSet() == setOf("jvm", "macosArm64")) { "Root publication requires JVM and macosArm64: $module" }
-        require(spec.compilerPlugins.none { "main" in it.scopes }) { "Common metadata compiler plugin support is not implemented: $module" }
+        // Common declarations use only a plugin enabled for both platforms. The metadata
+        // compiler is JVM-hosted, so it reuses that plugin's locked JVM host dependency domain.
+        val applyPlugin = selectedPlugins(module, "jvm", "main").singleOrNull()?.targets?.contains("macosArm64") == true
         val shared = commonPublicationSourceSets(spec)
         require(shared.isNotEmpty()) { "Root publication requires shared main source sets: $module" }
         val sources = shared.flatMap { set -> set.directories.flatMap { directory ->
@@ -465,16 +469,22 @@ private class Builder(
         } }.sortedBy { it.path.value }
         require(sources.isNotEmpty() && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
         val dependencies = commonPublicationDependencyClosure(project, module).modules
-        val edges = dependencies.map(::ensureCommonMetadata).toSet()
+        val pluginDependencies = if (applyPlugin) pluginModules(module, "jvm", "main") else emptyList()
+        pluginDependencies.forEach { ensureMain(it, "jvm") }
+        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") }
         val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
+        val plugin = if (applyPlugin) plugins(module, "jvm", "main") else emptyList()
+        require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val settings = spec.targets.map { compilerOptions(module, it.name, it.compilerOptions) }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
+            val workspace = if (applyPlugin) workspacePlugin(module, "jvm", "main", results) else WorkspacePlugin(emptyList(), emptyList())
             jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", sources.map { it.path },
                 dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),
                 optIns = settings.flatMap { it.optIns }.distinct().sorted(), explicitApi = settings.any { it.explicitApi },
-                warningsAsErrors = settings.any { it.warningsAsErrors }), merge(sources, dependencyFiles, artifacts), composition, tools.getValue("jvm"))
+                warningsAsErrors = settings.any { it.warningsAsErrors }, plugins = plugin.map { it.path }, pluginApplications = workspace.applications),
+                merge(sources, dependencyFiles, artifacts, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         return id
     }

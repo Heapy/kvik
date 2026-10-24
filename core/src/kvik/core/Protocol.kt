@@ -151,7 +151,6 @@ data class WorkerRequest(
     init {
         require(metadataTargets == if (operation == "metadata-compile") setOf("jvm", "macosArm64") else emptySet()) { "Unsupported metadata target intersection" }
         require(requestId.isNotBlank() && operation in setOf("jvm-compile", "metadata-compile") && sources.isNotEmpty())
-        require(operation != "metadata-compile" || pluginClasspath.isEmpty() && pluginApplications.isEmpty()) { "Common metadata compiler plugins are not supported" }
         require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || pluginClasspath.isEmpty())) { "Only one compiler plugin representation/application is supported" }
     }
     fun toJson(): JsonValue = obj(

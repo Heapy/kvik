@@ -90,12 +90,19 @@ data class JvmMetadataCompilation(
     val explicitApi: Boolean = false,
     val warningsAsErrors: Boolean = false,
     val targets: Set<String> = setOf("jvm", "macosArm64"),
+    val plugins: List<LogicalPath> = emptyList(),
+    val pluginApplications: List<JvmPluginApplication> = emptyList(),
 ) {
     init {
         require(targets == setOf("jvm", "macosArm64")) { "Metadata compilation supports the JVM/Native shared intersection" }
         require(module.matches(Regex("[A-Za-z0-9_.:-]+"))) { "Invalid metadata module name" }
         require(sources.isNotEmpty() && sources.all { it.value.endsWith(".kt") })
-        for (paths in listOf(sources, classpath)) require(paths.distinct().size == paths.size && paths.none { ':' in it.value })
+        for (paths in listOf(sources, classpath, plugins)) require(paths.distinct().size == paths.size && paths.none { ':' in it.value })
+        require(plugins.size <= 1 && plugins.all { it.value.endsWith(".jar") && it !in classpath })
+        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
+        require(pluginApplications.all { plugin -> plugin.classpath.none { it in classpath } && plugin.outputs.none { pathsOverlap(it, output) } }) {
+            "Plugin paths overlap metadata classpath/output"
+        }
         require(optIns.distinct().size == optIns.size && optIns.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")) })
     }
     fun options(prefix: String = ""): List<String> = buildList {
@@ -108,14 +115,20 @@ data class JvmMetadataCompilation(
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "sources" to sources.jsonPaths(),
         "classpath" to classpath.jsonPaths(), "output" to output.value.json(), "optIns" to optIns.map { it.json() }.json(),
-        "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json(), "targets" to targets.sorted().map { it.json() }.json())
+        "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json(), "targets" to targets.sorted().map { it.json() }.json()).let {
+            val published = if (plugins.isEmpty()) it else JsonValue.Object(it.values + ("plugins" to plugins.jsonPaths()))
+            if (pluginApplications.isEmpty()) published else JsonValue.Object(published.values +
+                ("pluginApplications" to pluginApplications.map { plugin -> plugin.toJson() }.json()))
+        }
     companion object {
         fun fromJson(value: JsonValue): JvmMetadataCompilation {
-            val d = value.fields(setOf("module", "sources", "classpath", "output", "optIns", "explicitApi", "warningsAsErrors", "targets"))
+            val d = value.fields(setOf("module", "sources", "classpath", "output", "optIns", "explicitApi", "warningsAsErrors", "targets"), setOf("plugins", "pluginApplications"))
             return JvmMetadataCompilation(d.getValue("module").stringValue(), d.paths("sources"), d.paths("classpath"),
                 LogicalPath(d.getValue("output").stringValue()), d.getValue("optIns").arrayValue().map(JsonValue::stringValue),
                 d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(),
-                d.getValue("targets").arrayValue().map(JsonValue::stringValue).also { require(it.distinct().size == it.size) }.toSet())
+                d.getValue("targets").arrayValue().map(JsonValue::stringValue).also { require(it.distinct().size == it.size) }.toSet(),
+                d["plugins"]?.arrayValue()?.map { LogicalPath(it.stringValue()) } ?: emptyList(),
+                d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
         }
     }
 }
@@ -127,8 +140,13 @@ fun jvmMetadataCompileAction(compilation: JvmMetadataCompilation, inputs: TreeMa
     for (path in compilation.classpath) require(inputs.files.any {
         it.path == path && (path.value.endsWith(".klib") || path.value.endsWith(".jar")) || it.path.value.startsWith(path.value + "/")
     }) { "Undeclared metadata KLIB/directory: ${path.value}" }
+    require(compilation.plugins.all { path -> inputs.files.any { it.path == path } }) { "Undeclared metadata plugin" }
+    compilation.pluginApplications.forEach { plugin ->
+        declaredClasspath(plugin.classpath, inputs)
+        require(plugin.inputs.all { input -> inputs.files.any { it.path == input } }) { "Undeclared compiler plugin input" }
+    }
     return ActionSpec("kvik-jvm-metadata-v1", composition, ActionKind.COMPILE, hostPlatform, "common", toolchains.toMap(),
-        TreeManifest(inputs.files.toList()), listOf(compilation.output), listOf("kvik.jvm.CompilerWorkerKt") + compilation.options(),
+        TreeManifest(inputs.files.toList()), listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs }, listOf("kvik.jvm.CompilerWorkerKt") + compilation.options(),
         workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 

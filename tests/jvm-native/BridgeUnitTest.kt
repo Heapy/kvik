@@ -29,10 +29,38 @@ class BridgeUnitTest {
         val request = WorkerRequest("metadata", "metadata-compile", digest, listOf("Common.kt"), listOf("common.klib"), emptyList(), compilation.options(), "commonMain")
         assertEquals(request, WorkerRequest.fromJson(request.toJson()))
         assertEquals(request, WorkerRequest.fromJson(JsonValue.Object(request.toJson().objectValue() - "metadataTargets")))
-        assertFails { request.copy(pluginClasspath = listOf("plugin.jar")) }
+        val withPlugin = request.copy(pluginClasspath = listOf("plugin.jar"))
+        assertEquals(withPlugin, WorkerRequest.fromJson(withPlugin.toJson()))
         assertFails { request.copy(metadataTargets = setOf("jvm")) }
         val ordinary = WorkerRequest("jvm", "jvm-compile", digest, listOf("A.kt"), emptyList(), emptyList(), emptyList(), "classes")
         assertFalse("metadataTargets" in ordinary.toJson().objectValue())
+    }
+
+    @Test fun metadataPluginInputsOptionsAndOutputsAreBoundToTheAction() {
+        val plugin = JvmPluginApplication("example.plugin", "2.4.20", listOf(LogicalPath("plugin.jar")),
+            listOf("mode=first"), listOf(LogicalPath("config.txt")),
+            listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val compilation = JvmMetadataCompilation("fixture:common", listOf(LogicalPath("A.kt")),
+            listOf(LogicalPath("library.klib")), LogicalPath("metadata"), pluginApplications = listOf(plugin))
+        val inputs = TreeManifest(listOf("A.kt", "library.klib", "plugin.jar", "config.txt").map { FileEntry(LogicalPath(it), digest) })
+        val tools = jvmIdentities.associateWith { digest }
+        fun action(value: JvmMetadataCompilation = compilation, files: TreeManifest = inputs) =
+            jvmMetadataCompileAction(value, files, digest, tools)
+        assertEquals(compilation, JvmMetadataCompilation.fromJson(compilation.toJson()))
+        assertEquals(listOf(LogicalPath("metadata"), LogicalPath("report")), action().outputs)
+        val changed = plugin.copy(options = listOf("mode=second"))
+        assertNotEquals(action().key(Sha256), action(compilation.copy(pluginApplications = listOf(changed))).key(Sha256))
+        for (path in listOf("plugin.jar", "config.txt")) {
+            assertNotEquals(action().key(Sha256), action(files = TreeManifest(inputs.files.map {
+                if (it.path.value == path) it.copy(digest = Sha256.digest(path.encodeToByteArray())) else it
+            })).key(Sha256))
+            assertFails { action(files = TreeManifest(inputs.files.filter { it.path.value != path })) }
+        }
+        assertFails { compilation.copy(plugins = listOf(LogicalPath("plugin.jar"))) }
+        val overlapping = plugin.copy(outputs = listOf(LogicalPath("metadata/report")),
+            pathOptions = listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("metadata/report"))))
+        assertFails { compilation.copy(pluginApplications = listOf(overlapping)) }
+        assertFails { compilation.copy(pluginApplications = listOf(plugin.copy(classpath = listOf(LogicalPath("library.klib"))))) }
     }
 
     @Test fun metadataWorkerUsesOwnedCompileBoundaryAndCommonDiagnostics() {
@@ -43,8 +71,12 @@ class BridgeUnitTest {
         val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
         val provider = JvmToolchainProvider { requested -> JvmToolchainLayout(requested, "/tool/java", "/tool/classes", "/tool/api.jar", "/tool/std.jar", "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json") }
         val bytes = store.put("expect class A".encodeToByteArray())
-        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("A.kt"), bytes), FileEntry(LogicalPath("stdlib-all.jar"), bytes)))
-        val compilation = JvmMetadataCompilation("fixture:common", listOf(LogicalPath("A.kt")), listOf(LogicalPath("stdlib-all.jar")), LogicalPath("commonMain"))
+        val inputs = TreeManifest(listOf("A.kt", "stdlib-all.jar", "plugin.jar", "config.txt").map { FileEntry(LogicalPath(it), bytes) })
+        val plugin = JvmPluginApplication("example.plugin", "2.4.20", listOf(LogicalPath("plugin.jar")), emptyList(),
+            listOf(LogicalPath("config.txt")), listOf(PluginPathOption("configuration", PluginPathKind.INPUT_FILE, LogicalPath("config.txt")),
+                PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val compilation = JvmMetadataCompilation("fixture:common", listOf(LogicalPath("A.kt")), listOf(LogicalPath("stdlib-all.jar")),
+            LogicalPath("commonMain"), pluginApplications = listOf(plugin))
         val action = jvmMetadataCompileAction(compilation, inputs, digest, identities)
         for (variant in listOf("success", "compiler-error", "extra-output", "cancel")) {
             var closed = false
@@ -59,11 +91,18 @@ class BridgeUnitTest {
                     assertEquals(setOf("jvm", "macosArm64"), worker.metadataTargets)
                     assertEquals(listOf("input/stdlib-all.jar"), worker.classpath)
                     assertEquals(listOf("input/A.kt"), worker.sources)
+                    val application = worker.pluginApplications.single()
+                    assertEquals(listOf(LogicalPath("input/plugin.jar")), application.classpath)
+                    assertEquals(listOf(LogicalPath("input/config.txt")), application.inputs)
+                    assertEquals(listOf(LogicalPath("output/report")), application.outputs)
+                    assertEquals(listOf("input/config.txt", "output/report"), application.pathOptions.map { it.path.value })
                     val failed = variant == "compiler-error"
                     val diagnostics = if (failed) listOf(Diagnostic("KVIK_COMPILATION_ERROR", DiagnosticCategory.COMPILATION, "bad source", path = "input/A.kt")) else emptyList()
                     writeJvmFile("$directory/result.json", WorkerResult(worker.requestId, if (failed) WorkerStatus.COMPILATION_ERROR else WorkerStatus.SUCCESS, if (failed) 1 else 0, diagnostics).toJson().canonical().encodeToByteArray())
                     mkdirJvm("$directory/output/commonMain")
                     writeJvmFile("$directory/output/commonMain/manifest", byteArrayOf(1))
+                    mkdirJvm("$directory/output/report")
+                    writeJvmFile("$directory/output/report/result.txt", byteArrayOf(2))
                     if (variant == "extra-output") writeJvmFile("$directory/output/extra", byteArrayOf(1))
                     return object : OwnedProcess {
                         override fun poll() = ProcessResult(if (failed) 1 else 0)
