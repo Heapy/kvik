@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
+from tool_installation_roots import host_native_target, installation_roots
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,12 +20,17 @@ def main():
     parser.add_argument('--runtime', required=True, type=Path)
     parser.add_argument('--java-home', required=True, type=Path)
     parser.add_argument('--konan-home', required=True, type=Path)
+    parser.add_argument('--konan-data', type=Path, default=Path.home()/'.konan')
+    parser.add_argument('--developer-directory', type=Path, default=Path('/Applications/Xcode.app/Contents/Developer'))
     parser.add_argument('--gradle', required=True, type=Path)
     parser.add_argument('--ktc', required=True, type=Path, help='Pinned Kotlin Toolchain wrapper to copy into the consumer fixture')
     parser.add_argument('--workspace-plugin', action='store_true', help='Build a workspace plugin and apply it to common/JVM/Native production code')
     parser.add_argument('--resolved-fixture', type=Path, help='Reuse the dependency lock and store from an identical previously resolved fixture')
-    parser.add_argument('--artifact-cache', type=Path, default=Path('/Users/yoda/dev/pet/kvik/.kvik/tool-artifacts'))
+    parser.add_argument('--artifact-cache', type=Path, default=ROOT/'.kvik/tool-artifacts')
     args = parser.parse_args()
+    native_target = host_native_target()
+    native_compiler_target = {'macosArm64': 'macos_arm64', 'linuxX64': 'linux_x64'}[native_target]
+    native_suffix = native_target.lower()
     destination = ROOT / '.kvik/tests/library-package-cli'
     destination.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=destination)).resolve()
@@ -46,7 +52,7 @@ def main():
             source('jvmMain', [dict(coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.20', exported=True)], [name+'/jvm'], ['commonMain'], [name+'/resources']),
             source('nativeMain', [], [name+'/native'], ['commonMain']),
         ], targets=[dict(name=target, main=main, test=None, compilerOptions=['-jvm-target=11'] if target == 'jvm' else [])
-                    for target, main in [('jvm', 'jvmMain'), ('macosArm64', 'nativeMain')]]))
+                    for target, main in [('jvm', 'jvmMain'), (native_target, 'nativeMain')]]))
         for directory in ('jvm', 'native'):
             (project/name/directory).mkdir(parents=True)
         write(project/name/'resources'/f'{name}.txt', name+' resource\n')
@@ -67,21 +73,24 @@ def main():
                 resources=['plugin-fixture/resources'] if name == 'producer' else [])],
                 targets=[dict(name='jvm', main='main', test=None, compilerOptions=['-jvm-target=25'])], compilerPlugins=[]))
         modules[0]['compilerPlugins'] = [dict(module='producer', id='fixture.rewrite', compilerVersion='2.4.20',
-            targets=['jvm', 'macosArm64'], scopes=['main'], options=plugin_options,
+            targets=['jvm', native_target], scopes=['main'], options=plugin_options,
             inputs=['plugin-fixture/message.txt', 'plugin-fixture/ancillary.txt'], outputs=['report'],
             pathOptions=[dict(name='messageFile', kind='input-file', path='plugin-fixture/message.txt'),
                          dict(name='reportDirectory', kind='output-directory', path='report')])]
         with (project/'base/common/Base.kt').open('a') as source_file:
             source_file.write('fun transformed(): String = "PLUGIN_MARKER"\n')
     json_file(project/'kvik.json', dict(schemaVersion=1, name='packageFixture', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=modules))
-    native_data = Path.home()/'.konan'
-    developer = Path('/Applications/Xcode.app/Contents/Developer')
+    native_data = args.konan_data.resolve()
+    developer = args.developer_directory.resolve()
     json_file(project/'tools.json', dict(schemaVersion=1, toolLock=json.loads((ROOT/'bootstrap/toolchains.lock.json').read_text()),
-        roots=dict(jdk=str(args.java_home.resolve()), kotlinNative=str(args.konan_home.resolve()),
-            llvm=str(native_data/'dependencies/llvm-21-aarch64-macos-essentials-97'), libffi=str(native_data/'dependencies/libffi-3.3-1-macos-arm64'),
-            sdk=str((developer/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk').resolve()), xcodeToolchain=str(developer/'Toolchains/XcodeDefault.xctoolchain')),
+        roots=installation_roots(args.java_home, args.konan_home, native_data, developer),
         konanData=str(native_data), compilerArtifacts=str(args.artifact_cache.resolve())))
-    env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KONAN_USE_COMPILER_SERVER='false', DEVELOPER_DIR=str(developer))
+    env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KONAN_USE_COMPILER_SERVER='false', KONAN_DATA_DIR=str(native_data))
+    if native_target == 'macosArm64':
+        env['DEVELOPER_DIR'] = str(developer)
+    else:
+        env.pop('DEVELOPER_DIR', None)
+        env.pop('SDKROOT', None)
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     def run(label, command, expected=0, cwd=case, timeout=600, extra_env=None):
         with (case/f'{label}.log').open('wb') as log:
@@ -99,12 +108,12 @@ def main():
     else:
         run('resolve', [args.runtime, 'resolve', *shared])
     build = [args.runtime, 'package-library', *shared, '--tools', project/'tools.json', '--runs', case/'runs', '--module', 'library',
-             '--target', 'jvm', '--target', 'macosArm64', '--offline']
+             '--target', 'jvm', '--target', native_target, '--offline']
     def package(label):
         events = [json.loads(line) for line in run(label, build).splitlines()]
         record = next(event['payload'] for event in events if event.get('type') == 'run-finished')
         assert record['status'] == 'passed' and record['freshnessAtCompletion'] == 'current', record
-        assert set(record['completedChecks']) == {'library:jvm:package', 'library:macosArm64:package', 'library:common:package'}
+        assert set(record['completedChecks']) == {'library:jvm:package', f'library:{native_target}:package', 'library:common:package'}
         root = case/'runs'/record['runId']/'library'
         assert root.is_dir()
         return record, root
@@ -117,7 +126,7 @@ def main():
         return {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.rglob('*') if p.is_file()}
     assert contents(repository) == contents(second_repo)
     if args.workspace_plugin:
-        for action_id in ('base:common:metadata', 'base:jvm:main', 'base:macosArm64:main'):
+        for action_id in ('base:common:metadata', 'base:jvm:main', f'base:{native_target}:main'):
             action = next(a for a in record['actions'] if a['actionId'] == action_id)
             report = next(f for f in action['outputs']['files'] if f['path'] == 'plugins/fixture.rewrite/report/result.txt')
             identity = report['digest']
@@ -125,7 +134,7 @@ def main():
             expected = 'helper:v1:hello:runtime\n' + '|'.join(option.split('=', 1)[1] for option in plugin_options)
             assert data == expected.encode(), (action_id, data)
     for name in ('base', 'library'):
-        for target, ext in [('jvm', 'jar'), ('macosarm64', 'klib')]:
+        for target, ext in [('jvm', 'jar'), (native_suffix, 'klib')]:
             artifact = f'{name}-{target}'
             version_dir = repository/'dev/kvik/fixture'/artifact/'1.0'
             binary = version_dir/f'{artifact}-1.0.{ext}'
@@ -169,9 +178,9 @@ def main():
     write(case/'NativeConsumer.kt', 'fun main() { check(fixture.answer().amount == 42); println("Native publication consumed") }\n')
     if args.workspace_plugin:
         write(case/'NativeConsumer.kt', 'fun main() { check(fixture.answer().amount == 42); check(fixture.transformed() == "helper:v1:hello:runtime") }\n')
-    native_args = [args.konan_home/'bin/konanc', case/'NativeConsumer.kt', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-o', case/'consumer']
+    native_args = [args.konan_home/'bin/konanc', case/'NativeConsumer.kt', '-target', native_compiler_target, '-Xoverride-konan-properties=airplaneMode=true', '-o', case/'consumer']
     for name in ('base', 'library'):
-        native_args += ['-library', repository/f'dev/kvik/fixture/{name}-macosarm64/1.0/{name}-macosarm64-1.0.klib']
+        native_args += ['-library', repository/f'dev/kvik/fixture/{name}-{native_suffix}/1.0/{name}-{native_suffix}-1.0.klib']
     run('native-consumer-compile', native_args)
     run('native-consumer', [case/'consumer.kexe'])
     # Genuine common metadata must be readable by both Kotlin consumers, including an API type
@@ -193,7 +202,7 @@ def main():
     write(kmp/'gradle.properties', 'kotlin.compiler.execution.strategy=in-process\nkotlin.native.disableCompilerDaemon=true\norg.gradle.workers.max=1\n')
     write(kmp/'build.gradle', "plugins { id 'org.jetbrains.kotlin.multiplatform' version '2.4.20' }\n"
           "repositories { maven { url = uri(" + repr(str(repository)) + ") }; mavenCentral() }\n"
-          "kotlin { jvm(); macosArm64(); sourceSets { commonMain.dependencies { api 'dev.kvik.fixture:library:1.0' }; "
+          "kotlin { jvm(); " + native_target + "(); sourceSets { commonMain.dependencies { api 'dev.kvik.fixture:library:1.0' }; "
           "commonTest.dependencies { implementation kotlin('test') } } }\n")
     common_source = 'package consumer\nfun consumed(): fixture.Value = fixture.answer()\n'
     common_test = 'package consumer\nimport kotlin.test.Test\nimport kotlin.test.assertEquals\nclass ConsumerTest { @Test fun publishedApi() { assertEquals(42, consumed().amount) } }\n'
@@ -203,9 +212,9 @@ def main():
     write(kmp/'src/commonMain/kotlin/Consumer.kt', common_source)
     write(kmp/'src/commonTest/kotlin/ConsumerTest.kt', common_test)
     run('gradle-kmp-consumer', [args.gradle, '--no-daemon', '--no-watch-fs', '--console=plain',
-                              'compileCommonMainKotlinMetadata', 'jvmTest', 'macosArm64Test'], cwd=kmp, timeout=900)
+                              'compileCommonMainKotlinMetadata', 'jvmTest', native_target+'Test'], cwd=kmp, timeout=900)
     ktc = case/'ktc-consumer'
-    write(ktc/'module.yaml', "product:\n  type: kmp/lib\n  platforms: [jvm, macosArm64]\n"
+    write(ktc/'module.yaml', "product:\n  type: kmp/lib\n  platforms: [jvm, " + native_target + "]\n"
           "repositories:\n  - mavenLocal\n"
           "dependencies:\n  - dev.kvik.fixture:library:1.0: exported\n"
           "settings:\n  kotlin:\n    version: 2.4.20\n  jvm:\n    jdk:\n      version: 25\n      selectionMode: javaHome\n")
