@@ -98,6 +98,37 @@ Assessments describe the recorded run and do not change its success or failure.
 This requires Kode's `log --claim-values-as-text` support; cached declarations
 are required for offline builds and queries of runs that include assessments.
 
+`resolve` and `check-lock` accept the same source flags. Revision-backed `resolve`
+returns a proposal with `changed` and `transaction`; it populates the local
+dependency cache without publishing a revision. Pass `--replace-project FILE`
+to resolve an edited configuration and include both configuration and lock changes
+in one proposal. The file is read once and its exact bytes are embedded in the
+proposal. Existing executable modes are preserved. An unchanged result has
+`changed: false` and `transaction: null`.
+A valid replacement can also repair a malformed or invalid stored configuration.
+
+Apply a changed proposal explicitly, choosing the destination reference:
+
+```sh
+./kvik --no-build -- resolve --kode /absolute/bin/kode --kode-home /absolute/kode-store \
+  --source-project library --revision main --project sub/kvik.json \
+  --lock locks/dependencies.json --store /absolute/cache \
+  --replace-project /absolute/edited-kvik.json > proposal.json
+jq '.transaction.operations' proposal.json > operations.json
+/absolute/bin/kode --home /absolute/kode-store tx library \
+  --base "$(jq -r '.transaction.base' proposal.json)" --ref main \
+  --expect-head "$(jq -r '.transaction.expectHead' proposal.json)" \
+  --intent "$(jq -r '.transaction.intent' proposal.json)" --ops operations.json
+```
+
+The proposal pins the base and expected head to the selected immutable revision,
+with native blob guards for each edited file. A concurrent head change causes a
+conflict; resolve again against the new head or apply to an explicit branch.
+`check-lock` validates the selected revision's lock and cached dependencies.
+As with local resolution, `resolve --offline` performs this check without
+proposing an update. Offline checks need a full revision ID and previously cached
+configuration, lock and dependencies; `--replace-project` requires online resolve.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).

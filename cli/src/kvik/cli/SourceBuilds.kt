@@ -9,14 +9,41 @@ import kvik.execution.platform.*
 import kotlinx.cinterop.*
 import platform.posix.*
 
+internal class CapturedSourceConfiguration(val root: String, val name: LogicalPath, val bytes: ByteArray)
+
 internal class PreparedSourceProject(
-    val project: ProjectFile,
+    val configuration: CapturedSourceConfiguration,
     val options: KodeProjectOptions,
     val reference: SourceReference,
     val namespace: Digest,
     val claims: RevisionClaims,
     private val resolved: ResolvedSourceSnapshot,
 ) {
+    val project: ProjectFile by lazy {
+        ProjectFile(configuration.root, configuration.name, configuration.bytes,
+            parseProjectConfiguration(parseJson(configuration.bytes.decodeToString(throwOnInvalidSequence = true))))
+    }
+
+    fun revisionPath(path: LogicalPath): LogicalPath =
+        LogicalPath(if (reference.root.isEmpty()) path.value else "${reference.root}/${path.value}")
+
+    fun entry(path: LogicalPath): SourceFileEntry? {
+        val absolute = revisionPath(path)
+        require(absolute !in resolved.manifest.directories) { "Source file path is a directory: ${absolute.value}" }
+        require(resolved.manifest.files.none { absolute.value.startsWith("${it.path.value}/") }) {
+            "Source file path has a file as parent: ${absolute.value}"
+        }
+        return resolved.manifest.files.singleOrNull { it.path == absolute }
+    }
+
+    fun read(entry: SourceFileEntry, store: String, maxBytes: Int): ByteArray {
+        require(entry.blob.sizeBytes <= maxBytes) { "Source file exceeds byte limit: ${entry.path.value}" }
+        val bytes = resolved.knownDigest(entry.blob)?.let(ReadOnlySourceContent(store)::get)
+            ?: resolved.fetch(entry.blob, maxBytes, ::sourceCheckpoint) ?: error("Source file is unavailable: ${entry.path.value}")
+        resolved.verify(entry.blob, bytes, ::sourceCheckpoint)
+        return bytes
+    }
+
     fun capture(content: ContentStore, lockPath: LogicalPath, selection: SnapshotSelection, checkpoint: () -> Unit): ProjectInputSnapshot =
         captureResolved(resolved, reference.root, project.name, lockPath, selection, content, checkpoint)
 }
@@ -70,21 +97,31 @@ internal fun <T> withSourceWorkspace(block: (String) -> T): T {
 }
 
 internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: BuildOptions, block: (PreparedSourceProject) -> T): T {
-    sourceCheckpoint()
-    val configuration = LogicalPath(options.project.project)
-    LogicalPath(options.project.lock)
     val root = currentDirectory()
     val store = projectPath(root, options.project.store)
     val runs = projectPath(root, options.runs)
     val tools = projectPath(root, options.tools)
     for (output in listOf(store, runs)) for (input in listOf(source.home, source.executable, tools))
         require(!pathsPhysicallyOverlap(output, input)) { "Source build output overlaps provider or tool configuration: $input" }
+    return withPreparedSourceProject(source, options.project, loadClaims = true, block = block)
+}
+
+internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: ProjectOptions,
+                                          loadClaims: Boolean = false, validateConfiguration: Boolean = true,
+                                          block: (PreparedSourceProject) -> T): T {
+    sourceCheckpoint()
+    val configuration = LogicalPath(options.project)
+    LogicalPath(options.lock)
+    val root = currentDirectory()
+    val store = projectPath(root, options.store)
+    for (input in listOf(source.home, source.executable))
+        require(!pathsPhysicallyOverlap(store, input)) { "Source cache overlaps provider: $input" }
     val namespace = Sha256.digest(obj("provider" to "kode".json(), "executable" to source.executable.json(), "home" to source.home.json(),
         "git" to "/usr/bin/git".json()))
     val cache = NativeKodeSourceCache("$store/source-provider", namespace)
     fun consume(resolved: ResolvedSourceSnapshot): T {
         val reference = SourceReference(resolved.provenance, configuration.value.substringBeforeLast('/', ""), resolved.manifest.digest)
-        try { return block(prepareResolvedSource(source, root, store, namespace, configuration, resolved)) }
+        try { return block(prepareResolvedSource(source, root, store, namespace, configuration, resolved, loadClaims, validateConfiguration)) }
         catch (failure: RunStreamFailure) { throw failure }
         catch (failure: CliFailure) {
             throw CliFailure(failure.code, failure.category, failure.message ?: "Source build failed", failure.exitStatus,
@@ -97,7 +134,7 @@ internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: 
                 failure.message ?: "Invalid source project configuration", ExitStatus.INVALID_CONFIGURATION, reference)
         }
     }
-    if (options.project.offline) {
+    if (options.offline) {
         val resolved = KodeSourceProvider(KodeTransport { _, _, _ -> error("Offline source transport is forbidden") },
             cache, offline = true).resolve(SourceSelector(source.project, source.revision), ::sourceCheckpoint)
         return consume(resolved)
@@ -110,7 +147,8 @@ internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: 
 }
 
 private fun prepareResolvedSource(source: KodeProjectOptions, root: String, store: String, namespace: Digest,
-                                  configuration: LogicalPath, resolved: ResolvedSourceSnapshot): PreparedSourceProject {
+                                  configuration: LogicalPath, resolved: ResolvedSourceSnapshot,
+                                  loadClaims: Boolean, validateConfiguration: Boolean): PreparedSourceProject {
     val directory = configuration.value.substringBeforeLast('/', "")
     val reference = SourceReference(resolved.provenance, directory, resolved.manifest.digest)
     try {
@@ -120,10 +158,12 @@ private fun prepareResolvedSource(source: KodeProjectOptions, root: String, stor
         val bytes = cached ?: resolved.fetch(entry.blob, 4 * 1024 * 1024, ::sourceCheckpoint) ?: error("Source configuration is unavailable")
         require(bytes.size.toLong() == entry.blob.sizeBytes)
         resolved.verify(entry.blob, bytes, ::sourceCheckpoint)
-        val parsed = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
         sourceCheckpoint()
-        return PreparedSourceProject(ProjectFile(root, LogicalPath(configuration.value.substringAfterLast('/')), bytes, parsed),
-            source, reference, namespace, resolved.claims(::sourceCheckpoint), resolved)
+        return PreparedSourceProject(CapturedSourceConfiguration(root, LogicalPath(configuration.value.substringAfterLast('/')), bytes),
+            source, reference, namespace, if (loadClaims) resolved.claims(::sourceCheckpoint) else RevisionClaims(emptyMap()), resolved).also {
+                // Replacements may repair invalid configuration; its original bytes still carry the native blob guard.
+                if (validateConfiguration) it.project
+            }
     } catch (failure: CliFailure) { throw failure }
     catch (failure: Exception) { throw CliFailure("KVIK_SOURCE_INPUT", DiagnosticCategory.CONFIGURATION,
         failure.message ?: "Cannot capture source revision", ExitStatus.INVALID_CONFIGURATION, reference) }

@@ -10035,6 +10035,89 @@
         ]
       }
     },
+    "kodeWriteProposal": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "const": "write"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "expectBlob": {
+          "oneOf": [
+            {
+              "const": "none"
+            },
+            {
+              "type": "string",
+              "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          ]
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "expectBlob",
+        "executable",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "kodeTransactionProposal": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "expectHead": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "intent": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "operations": {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "operations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/kodeWriteProposal"
+              },
+              "minItems": 1,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "operations"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "base",
+        "expectHead",
+        "intent",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
     "dependencyResolution": {
       "type": "object",
       "properties": {
@@ -10070,6 +10153,22 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9223372036854775807
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "transaction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/kodeTransactionProposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -10082,7 +10181,69 @@
         "artifacts",
         "metadata"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "operation": {
+                "const": "resolve"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "changed",
+              "transaction"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "changed"
+                  ]
+                },
+                {
+                  "required": [
+                    "transaction"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "changed"
+            ],
+            "properties": {
+              "changed": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "transaction": {
+                "$ref": "#/$defs/kodeTransactionProposal"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "transaction": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "scriptOrigin": {
       "type": "object",

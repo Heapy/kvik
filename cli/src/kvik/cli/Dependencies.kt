@@ -79,7 +79,13 @@ private fun publishLock(configurationPath: String, configurationBytes: ByteArray
 }
 
 internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): JsonValue {
-    val options = projectOptions(args, lockOptions = true)
+    val (source, remaining) = sourceProjectOptions(args)
+    val (replacement, projectArgs) = replacementProjectOption(remaining)
+    val options = projectOptions(projectArgs, lockOptions = true)
+    require(replacement == null || source != null && updateRequested && !options.offline) {
+        "--replace-project requires online resolve with a source revision"
+    }
+    if (source != null) return sourceDependencyCommand(source, options, updateRequested, replacement)
     val project = readProject(options.project)
     val effective = effectiveConfiguration(project.configuration, options.resolverPolicy())
     return dependencyOperation(options, project.root, project.path, project.bytes, effective, updateRequested)

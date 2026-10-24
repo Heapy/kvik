@@ -761,7 +761,22 @@ DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref(
     optional=("source", "sourceRoot", "sourceManifest"))
 DEFS["inspection"]["dependentRequired"] = {key: [other for other in ("source", "sourceRoot", "sourceManifest") if other != key]
     for key in ("source", "sourceRoot", "sourceManifest")}
-DEFS["dependencyResolution"] = versioned({"operation": enum("resolve", "check-lock"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "lockPath": STRING, "selections": INT, "artifacts": INT, "metadata": INT})
+KODE_REVISION = {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}
+DEFS["kodeWriteProposal"] = object_({"op": {"const": "write"}, "path": PATH,
+    "expectBlob": {"oneOf": [{"const": "none"}, KODE_REVISION]}, "executable": BOOL, "content": STRING})
+DEFS["kodeTransactionProposal"] = object_({"base": KODE_REVISION, "expectHead": KODE_REVISION, "intent": NONEMPTY,
+    "operations": versioned({"operations": array(ref("kodeWriteProposal"), minItems=1, maxItems=2)})})
+DEFS["dependencyResolution"] = versioned({"operation": enum("resolve", "check-lock"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "lockPath": STRING, "selections": INT, "artifacts": INT, "metadata": INT,
+    "source": ref("sourceReference"), "changed": BOOL, "transaction": nullable(ref("kodeTransactionProposal"))},
+    optional=("source", "changed", "transaction"))
+DEFS["dependencyResolution"]["allOf"] = [
+    {"if": {"required": ["source"], "properties": {"operation": {"const": "resolve"}}},
+     "then": {"required": ["changed", "transaction"]},
+     "else": {"not": {"anyOf": [{"required": ["changed"]}, {"required": ["transaction"]}]}}},
+    {"if": {"required": ["changed"], "properties": {"changed": {"const": True}}},
+     "then": {"properties": {"transaction": ref("kodeTransactionProposal")}},
+     "else": {"properties": {"transaction": {"type": "null"}}}},
+]
 DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
 DEFS["scriptInspection"] = versioned({
     "kind": {"const": "script-inspection"}, "script": SCRIPT_ID, "configurationPath": STRING,

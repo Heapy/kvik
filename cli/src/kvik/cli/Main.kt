@@ -37,6 +37,7 @@ private fun command(args: Array<String>) {
             Lock options: --lock PATH --store PATH --offline
             Revision inspection: inspect --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF [--project LOGICAL_PATH]
             Revision build/test: same source flags plus build options; --lock is relative to the configuration directory; --offline requires a cached immutable revision
+            Revision locks: resolve/check-lock accept source flags; resolve returns a guarded Kode transaction; --replace-project FILE includes configuration changes
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64 (repeatable) --tools PATH
             Test execution: jvm or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking
             Execution: --runs PATH --jobs N --memory-mib N
