@@ -7,6 +7,7 @@ import platform.posix.*
 import kotlin.test.*
 import kvik.cache.NativeFiles
 import kvik.compilertools.*
+import kvik.compiler.native.environment
 import kvik.core.*
 import kvik.toolchains.*
 
@@ -174,6 +175,70 @@ class CancellationTest {
         assertTrue(assertFails { provider.verified(identities) }.message.orEmpty().contains("not already extracted"))
         NativeFiles.removeEntry(marker); put(marker, bytes)
         assertEquals(expected, provider.verified(identities))
+    }
+
+    private fun appleInstallations(root: String): Pair<Map<ToolComponent, String>, String> {
+        val (hostRoots, hostLock) = installations(root)
+        val developer = hostRoots.getValue(ToolComponent.XCODE_TOOLCHAIN).removeSuffix("/Toolchains/XcodeDefault.xctoolchain")
+        val extra = listOf(Triple(ToolComponent.IOS_SDK, "iPhoneOS", "iphoneos"),
+            Triple(ToolComponent.IOS_SIMULATOR_SDK, "iPhoneSimulator", "iphonesimulator")).associate { (component, name, platform) ->
+            val path = "$developer/Platforms/$name.platform/Developer/SDKs/$name.sdk"
+            put("$path/SDKSettings.json", obj("Version" to "27.1".json(), "CanonicalName" to "${platform}27.1".json(),
+                "DefaultProperties" to obj("PLATFORM_NAME" to platform.json()),
+                "SupportedTargets" to obj(platform to obj())).canonical().encodeToByteArray())
+            put("$path/header.h", platform.encodeToByteArray())
+            component to path
+        }
+        val lock = parseJson(hostLock).objectValue()
+        val components = lock.getValue("components").objectValue() + extra.map { (component, path) ->
+            component.lockName to inventory(path).digest.toJson()
+        }
+        return (hostRoots + extra) to JsonValue.Object(lock + ("components" to JsonValue.Object(components))).canonical()
+    }
+
+    @Test fun selectedIosSdkDoesNotInspectUnusedSdkRootsButStillRequiresExactDeclaration() = fixture { root ->
+        if (nativeHost().first != "Darwin") return@fixture
+        val (roots, lock) = appleInstallations(root)
+        val verifier = InstalledToolchainVerifier()
+        val selected = toolComponentsFor("Darwin", "arm64") - ToolComponent.SDK + ToolComponent.IOS_SDK
+        val expected = verifier.verifySelected(lock, roots, selected)[ToolComponent.IOS_SDK].digest
+        NativeFiles.removeTree(roots.getValue(ToolComponent.SDK))
+        NativeFiles.removeTree(roots.getValue(ToolComponent.IOS_SIMULATOR_SDK))
+        assertEquals(expected, verifier.verifySelected(lock, roots, selected)[ToolComponent.IOS_SDK].digest)
+        assertFails { verifier.verify(lock, roots) }
+        assertFails { verifier.verifySelected(lock, roots - ToolComponent.SDK, selected) }
+        assertFails { verifier.verifySelected(lock, roots, selected + ToolComponent.SYSTEM) }
+        assertFails { verifier.verifySelected(lock, roots, emptySet()) }
+        assertEquals(parseToolchainDeclaration(lock).components.getValue(ToolComponent.JDK),
+            verifier.verifyJdk(lock, roots.getValue(ToolComponent.JDK)).digest)
+        cancelAtRepresentativeBoundaries { checkpoint -> verifier.verifySelected(lock, roots, selected, checkpoint) }
+    }
+
+    @Test fun appleProvidersBindTargetSdkAndDeveloperDirectory() = fixture { root ->
+        if (nativeHost().first != "Darwin") return@fixture
+        val (roots, lock) = appleInstallations(root)
+        val declared = parseToolchainDeclaration(lock).components
+        for (target in listOf(NativeTarget.MACOS_ARM64, NativeTarget.IOS_ARM64, NativeTarget.IOS_SIMULATOR_ARM64)) {
+            val sdk = appleSdkComponent(target)
+            val identities = mapOf("native" to declared.getValue(ToolComponent.KOTLIN_NATIVE), "jdk" to declared.getValue(ToolComponent.JDK),
+                "sdk" to declared.getValue(sdk), "native-dependencies" to kvik.compiler.native.nativeDependenciesIdentity(
+                    declared.getValue(ToolComponent.LLVM), declared.getValue(ToolComponent.LIBFFI), declared.getValue(ToolComponent.XCODE_TOOLCHAIN)))
+            val layout = InstalledNativeToolchainProvider(lock, roots, "$root/data", target).verified(identities)
+            assertEquals(target, layout.target)
+            assertEquals(roots.getValue(sdk), layout.sdk)
+            assertEquals("$root/Xcode/Contents/Developer", layout.developerDirectory)
+            assertEquals(layout.sdk, layout.environment().getValue("SDKROOT"))
+            assertEquals(layout.developerDirectory, layout.environment().getValue("DEVELOPER_DIR"))
+            if (target.isIos) {
+                val other = if (sdk == ToolComponent.IOS_SDK) ToolComponent.IOS_SIMULATOR_SDK else ToolComponent.IOS_SDK
+                assertFails { InstalledNativeToolchainProvider(lock, roots + (sdk to roots.getValue(other)), "$root/data", target).verified(identities) }
+                val copied = "$root/copied-${sdk.lockName}"
+                NativeFiles.ensureDirectory(copied)
+                for (name in NativeFiles.names(roots.getValue(sdk))) put("$copied/$name", NativeFiles.read("${roots.getValue(sdk)}/$name", 1024 * 1024))
+                assertTrue(assertFails { InstalledNativeToolchainProvider(lock, roots + (sdk to copied), "$root/data", target).verified(identities) }
+                    .message.orEmpty().contains("selected Xcode"))
+            }
+        }
     }
 
     @Test fun workerBundleAndJvmProviderPropagateCancellationThroughCompilerJars() = fixture { root ->

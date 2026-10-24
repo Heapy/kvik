@@ -26,6 +26,28 @@ class ToolDeclarationTest {
         }
     }
 
+    @Test fun optionalIosDeclarationsAndPlatformSettingsAreStrict() {
+        val json = lock()
+        val extra = mapOf("iosSdk" to Sha256.digest("device".encodeToByteArray()).toJson(),
+            "iosSimulatorSdk" to Sha256.digest("simulator".encodeToByteArray()).toJson())
+        val expanded = JsonValue.Object(json.values + ("components" to JsonValue.Object(json.values.getValue("components").objectValue() + extra)))
+        if (nativeHost().first == "Darwin") {
+            assertEquals(toolComponentsFor("Darwin", "arm64") + setOf(ToolComponent.IOS_SDK, ToolComponent.IOS_SIMULATOR_SDK),
+                parseToolchainDeclaration(expanded.canonical()).components.keys)
+        } else assertFails { parseToolchainDeclaration(expanded.canonical()) }
+        fun settings(platform: String, version: String = "27.1") = obj("Version" to version.json(),
+            "CanonicalName" to "$platform$version".json(), "DefaultProperties" to obj("PLATFORM_NAME" to platform.json()),
+            "SupportedTargets" to obj(platform to obj())).canonical().encodeToByteArray()
+        validateSdkSettings(ToolComponent.IOS_SDK, settings("iphoneos"), "unused")
+        validateSdkSettings(ToolComponent.IOS_SIMULATOR_SDK, settings("iphonesimulator"), "unused")
+        assertFails { validateSdkSettings(ToolComponent.IOS_SDK, settings("iphonesimulator"), "unused") }
+        assertFails { validateSdkSettings(ToolComponent.IOS_SIMULATOR_SDK, settings("iphoneos"), "unused") }
+        for (version in listOf("", "latest", "27.1\n")) {
+            assertFails { validateSdkSettings(ToolComponent.IOS_SDK, settings("iphoneos", version), "unused") }
+        }
+        assertFails { validateSdkSettings(ToolComponent.IOS_SDK, obj("Version" to "27.1".json()).canonical().encodeToByteArray(), "unused") }
+    }
+
     @Test fun declarationRejectsWrongHostVersionShapeAndDigestInsteadOfAcceptingOpaquePins() {
         val json = lock()
         fun changed(name: String, value: JsonValue) = JsonValue.Object(json.values + (name to value)).canonical()

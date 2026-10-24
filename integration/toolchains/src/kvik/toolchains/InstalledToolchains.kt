@@ -8,7 +8,8 @@ import kvik.core.*
 
 enum class ToolComponent(val lockName: String) {
     JDK("jdk"), KOTLIN_NATIVE("kotlinNative"), LLVM("llvm"), LIBFFI("libffi"), SDK("sdk"), XCODE_TOOLCHAIN("xcodeToolchain"),
-    NATIVE_TOOLCHAIN("nativeToolchain"), SYSTEM("system")
+    NATIVE_TOOLCHAIN("nativeToolchain"), SYSTEM("system"),
+    IOS_SDK("iosSdk"), IOS_SIMULATOR_SDK("iosSimulatorSdk")
 }
 
 data class ToolHost(val os: String, val architecture: String, val release: String, val sdk: String)
@@ -20,6 +21,13 @@ fun toolComponentsFor(os: String, architecture: String): Set<ToolComponent> {
         "Linux" to "x86_64" -> shared + setOf(ToolComponent.NATIVE_TOOLCHAIN, ToolComponent.SYSTEM)
         else -> error("Unsupported toolchain host: $os/$architecture")
     }
+}
+
+fun appleSdkComponent(target: NativeTarget): ToolComponent = when (target) {
+    NativeTarget.MACOS_ARM64 -> ToolComponent.SDK
+    NativeTarget.IOS_ARM64 -> ToolComponent.IOS_SDK
+    NativeTarget.IOS_SIMULATOR_ARM64 -> ToolComponent.IOS_SIMULATOR_SDK
+    NativeTarget.LINUX_X64 -> error("Linux does not consume an Apple SDK")
 }
 
 /** Created only by successful verification, and valid only while the caller keeps this root stable. */
@@ -38,20 +46,27 @@ class VerifiedToolchains internal constructor(
 
 /** No memoization: each call re-reads every regular file in the requested installations. */
 class InstalledToolchainVerifier(private val limits: InventoryLimits = InventoryLimits()) {
-    fun verify(lockJson: String, roots: Map<ToolComponent, String>, checkpoint: () -> Unit = {}): VerifiedToolchains {
+    fun verify(lockJson: String, roots: Map<ToolComponent, String>, checkpoint: () -> Unit = {}): VerifiedToolchains =
+        verifySelected(lockJson, roots, roots.keys, checkpoint)
+
+    /** All declared roots must be supplied, but only consumed components are physically inspected. */
+    fun verifySelected(lockJson: String, roots: Map<ToolComponent, String>, components: Set<ToolComponent>,
+                       checkpoint: () -> Unit = {}): VerifiedToolchains {
         checkpoint()
+        val selected = components.toSet()
+        val paths = roots.toMap()
         val lock = parseToolchainDeclaration(lockJson)
         checkpoint()
-        require(roots.keys == lock.components.keys) { "Explicit roots for all host tool components are required" }
+        require(paths.keys == lock.components.keys) { "Explicit roots for all declared tool components are required" }
+        require(selected.isNotEmpty() && lock.components.keys.containsAll(selected)) { "Selected tool components must be declared" }
         val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
-        for (component in lock.components.keys) {
-            val captured = captureInventory(roots.getValue(component), limits, component == ToolComponent.SDK, checkpoint)
+        for (component in lock.components.keys.filter { it in selected }) {
+            val sdkComponent = component in setOf(ToolComponent.SDK, ToolComponent.IOS_SDK, ToolComponent.IOS_SIMULATOR_SDK)
+            val captured = captureInventory(paths.getValue(component), limits, sdkComponent, checkpoint)
             require(captured.summary.digest == lock.components.getValue(component)) { "Tool inventory mismatch: ${component.lockName}; expected ${lock.components.getValue(component)}, actual ${captured.summary.digest}" }
-            if (component == ToolComponent.SDK) {
+            if (sdkComponent) {
                 val settings = captured.sdkSettings ?: throw ToolchainVerificationFailure("Unsupported SDK host data: regular SDKSettings.json is required")
-                val sdk = parseJson(settings.decodeToString(throwOnInvalidSequence = true)).objectValue()["Version"]?.stringValue()
-                    ?: throw ToolchainVerificationFailure("Unsupported SDK host data: SDKSettings.json Version is required")
-                require(sdk.isNotBlank() && sdk == lock.host.sdk) { "Tool lock SDK version does not match verified SDKSettings.json: $sdk" }
+                validateSdkSettings(component, settings, lock.host.sdk)
             }
             verified[component] = VerifiedToolComponent(captured.root, captured.summary)
         }
@@ -99,8 +114,9 @@ fun parseToolchainDeclaration(lockJson: String): ToolchainDeclaration {
     val required = toolComponentsFor(expectedHost.os, expectedHost.architecture)
     if (expectedHost.os == "Linux") require(expectedHost.sdk.isEmpty()) { "Linux host must not declare an Apple SDK" }
     else require(expectedHost.sdk.isNotBlank()) { "Darwin tool lock must declare its SDK version" }
-    val components = lock.getValue("components").fields(required.map { it.lockName }.toSet())
-    val expected = required.associateWith { Digest.fromJson(components.getValue(it.lockName)) }
+    val optional = if (expectedHost.os == "Darwin") setOf(ToolComponent.IOS_SDK, ToolComponent.IOS_SIMULATOR_SDK) else emptySet()
+    val components = lock.getValue("components").fields(required.map { it.lockName }.toSet(), optional.map { it.lockName }.toSet())
+    val expected = (required + optional.filter { it.lockName in components }).associateWith { Digest.fromJson(components.getValue(it.lockName)) }
     return ToolchainDeclaration(expectedHost, kotlinVersion, expected)
 }
 
@@ -108,4 +124,25 @@ internal fun nativeHost(): Triple<String, String, String> = memScoped {
     val host = alloc<utsname>()
     if (uname(host.ptr) != 0) ioFailure("uname")
     Triple(host.sysname.toKString(), host.machine.toKString(), host.release.toKString())
+}
+
+internal fun validateSdkSettings(component: ToolComponent, bytes: ByteArray, macosVersion: String) {
+    val settings = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).objectValue()
+    val version = settings["Version"]?.stringValue()
+        ?: throw ToolchainVerificationFailure("Unsupported SDK host data: SDKSettings.json Version is required")
+    if (component == ToolComponent.SDK) {
+        require(version.isNotBlank() && version == macosVersion) { "Tool lock SDK version does not match verified SDKSettings.json: $version" }
+    } else {
+        val platform = when (component) {
+            ToolComponent.IOS_SDK -> "iphoneos"
+            ToolComponent.IOS_SIMULATOR_SDK -> "iphonesimulator"
+            else -> error("Not an SDK component")
+        }
+        require(version.matches(Regex("[0-9]+(?:\\.[0-9]+){1,2}"))) { "Invalid Apple target SDK version" }
+        require(settings["CanonicalName"]?.stringValue() == platform + version &&
+            settings["DefaultProperties"]?.objectValue()?.get("PLATFORM_NAME")?.stringValue() == platform &&
+            settings["SupportedTargets"]?.objectValue()?.containsKey(platform) == true) {
+            "SDKSettings.json does not describe the required $platform platform"
+        }
+    }
 }
