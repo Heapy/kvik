@@ -8,6 +8,8 @@ import kvik.compiler.ksp.KspNativeCompilation
 import kvik.compiler.ksp.kotestGeneratedLauncher
 import kvik.compiler.ksp.kspNativeAction
 import kvik.compiler.native.adaptKotestLauncher
+import kvik.compiler.sqldelight.SqlDelightGeneration
+import kvik.compiler.sqldelight.sqlDelightAction
 import kvik.core.*
 import kvik.runevidence.explainRetainedAction
 
@@ -30,22 +32,50 @@ internal fun materializeBspGeneratedSources(
             .decodeToString(throwOnInvalidSequence = true))
         val action = explainRetainedAction(record, events, result.actionId, retained).values.getValue("action")
         val fields = action.objectValue()
-        require(fields.getValue("implementation").stringValue() == "kvik-ksp-native-v1") { "Unsupported generated source producer" }
-        val compilation = KspNativeCompilation.fromJson(fields.getValue("parameters"))
-        require(compilation.module == target.module && compilation.target.projectName == target.target)
-        val expected = kspNativeAction(compilation, TreeManifest.fromJson(fields.getValue("inputs")), record.composition,
-            fields.getValue("toolchains").objectValue().mapValues { Digest.fromJson(it.value) }, fields.getValue("timeoutMillis").longValue())
-        require(expected.toJson() == action && expected.key(Sha256) == result.key) { "Generated source action differs from the supported contract" }
-        val output = result.outputs.files.single()
-        require(output.path == kotestGeneratedLauncher && !output.executable && output.digest.sizeBytes in 1..1024 * 1024) {
-            "Unsupported generated source output"
+        val inputs = TreeManifest.fromJson(fields.getValue("inputs"))
+        val toolchains = fields.getValue("toolchains").objectValue().mapValues { Digest.fromJson(it.value) }
+        val timeout = fields.getValue("timeoutMillis").longValue()
+        val implementation = fields.getValue("implementation").stringValue()
+        val expected = when (implementation) {
+            "kvik-ksp-native-v1" -> {
+                val compilation = KspNativeCompilation.fromJson(fields.getValue("parameters"))
+                require(compilation.module == target.module && compilation.target.projectName == target.target)
+                val output = result.outputs.files.single()
+                require(output.path == kotestGeneratedLauncher && !output.executable && output.digest.sizeBytes in 1..1024 * 1024) {
+                    "Unsupported KSP generated source output"
+                }
+                kspNativeAction(compilation, inputs, record.composition, toolchains, timeout)
+            }
+            "kvik-sqldelight-v1" -> {
+                val generation = SqlDelightGeneration.fromJson(fields.getValue("parameters"))
+                val module = model.inspection.project.project.modules.single { it.id == target.module }
+                require(generation.module == target.module && target.target == "jvm" && target.compilation == "main" &&
+                    generation.settings == module.sqlDelight) { "SQLDelight generation differs from imported configuration" }
+                require(result.outputs.files.size <= 10_000 && result.outputs.files.all {
+                    !it.executable && it.path.value.startsWith("${generation.output.value}/") &&
+                        it.path.value.endsWith(".kt") && it.digest.sizeBytes <= 8L * 1024 * 1024
+                } && result.outputs.files.sumOf { it.digest.sizeBytes } <= 64L * 1024 * 1024) {
+                    "Unsupported SQLDelight generated source output"
+                }
+                require(generation.sources.isEmpty() == result.outputs.files.isEmpty()) {
+                    "SQLDelight output does not match SQL source inventory"
+                }
+                sqlDelightAction(generation, inputs, record.composition, toolchains, timeout)
+            }
+            else -> error("Unsupported generated source producer")
         }
-        val content = NativeContentStore(store, maxBlobBytes = 1024 * 1024)
-        val bytes = content.get(output.digest) ?: error("Generated source content is unavailable")
-        adaptKotestLauncher(bytes.decodeToString(throwOnInvalidSequence = true))
+        require(expected.toJson() == action && expected.key(Sha256) == result.key) { "Generated source action differs from the supported contract" }
+        val sources = generated.getOrPut(target) { mutableListOf() }
+        if (result.outputs.files.isEmpty()) continue
+        val content = NativeContentStore(store, maxBlobBytes = 8 * 1024 * 1024)
+        for (output in result.outputs.files) {
+            val bytes = content.get(output.digest) ?: error("Generated source content is unavailable")
+            val source = bytes.decodeToString(throwOnInvalidSequence = true)
+            if (implementation == "kvik-ksp-native-v1") adaptKotestLauncher(source)
+        }
         val directory = "$childDirectory/generated-$name"
         NativeOutputTrees(content).materialize(result.outputs, directory)
-        generated.getOrPut(target) { mutableListOf() } += BspGeneratedSources(directory, result.actionId,
+        sources += BspGeneratedSources(directory, result.actionId,
             checkNotNull(result.key), result.outputs)
     }
     return generated

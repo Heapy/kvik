@@ -94,8 +94,12 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
 
     private fun launch(state: Pending) {
         val target = state.waiting.removeFirst()
-        clearGeneratedDiagnostics(state.model, target, state)
-        if (state.model.replaceGeneratedSources(target, emptyList())) targetsChanged(listOf(target.uri to 2))
+        val owners = state.model.generatedSourceOwners(target,
+            runtime = state.applicationRun || state.request.method == "buildTarget/test", classpath = state.classpathQuery)
+        targetsChanged(owners.mapNotNull { owner ->
+            clearGeneratedDiagnostics(state.model, owner, state)
+            if (state.model.replaceGeneratedSources(owner, emptyList())) owner.uri to 2 else null
+        })
         val project = readProject(options.project.project)
         require(effectiveConfiguration(project.configuration, options.project.resolverPolicy()).digest == state.model.inspection.configuration) {
             "Project configuration changed during BSP build; reload before retrying"

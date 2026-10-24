@@ -115,19 +115,22 @@ run; later builds do not overwrite them. Failed or stale prerequisites produce a
 error instead of a partial classpath. Preparation records use `classpath-main` or
 `classpath-test` checks and do not claim that the requested sources compiled.
 
-After compiling Native Kotest tests, `buildTarget/sources` also returns the KSP
-launcher as a generated Kotlin file. `buildTarget/inverseSources` maps it to the
-owning test target. The `kvik-generated-source` metadata identifies its producer,
+After compiling Native Kotest tests or SQLDelight JVM modules, `buildTarget/sources`
+also returns the generated Kotlin files. `buildTarget/inverseSources` maps the KSP
+launcher to its test target and SQLDelight files to their main target. The
+`kvik-generated-source` metadata identifies each file's producer,
 action key, logical path and content digest. Files are restored from verified cache
 content into a retained directory for that build, including when generation succeeds
 but downstream compilation fails. Later builds use separate directories.
 
 The connection sends `buildTarget/didChange` when generated sources change or the
-project is reloaded. A new build clears the selected target's previous generated
-mapping; failed or cancelled generation does not restore it. Reload starts with
-declared sources only. Source queries do not run generators: compile the test
-target to populate them. This currently covers the pinned Native Kotest/KSP
-adapter; additional generators need explicit source-output contracts.
+project is reloaded. A new build clears previous generated mappings for its
+generator owners, including prerequisite modules and a test target's main module;
+failed or cancelled generation does not restore them. Deleting the last SQL input
+removes that module's generated mapping. Reload starts with declared sources only.
+Source queries do not run generators: compile the owning target or a target that
+needs it to populate them. This covers the pinned Native Kotest/KSP and SQLDelight
+adapters; additional generators need explicit source-output contracts.
 The exposed launcher is the original KSP output. Diagnostics referring to the
 Native adapter's rewritten `prepared/kotest.kt` currently remain log messages.
 
@@ -811,7 +814,7 @@ Place `.sq` files under package directories inside `sourceDirectory`, and declar
 
 Builds compile the embedded worker once into the shared cache, generate Kotlin in a separate owned JVM, and compile the generated sources alongside ordinary main sources. A module may contain only generated main Kotlin. SQL edits and database settings invalidate generation; unchanged worker compilation and unrelated modules retain their cached results. SQL inputs participate in snapshots, file ownership queries and affected-check selection. Documentation generation includes the generated API. The generator runs without a daemon and supports foreground cancellation. Both preparation actions currently use the local action cache.
 
-This adapter supports one database per module, consumed only by JVM main. Migrations (`.sqm`), schema database inputs (`.db`), asynchronous generation, and the upstream optimistic-lock annotator are not supported. SQLDelight generated sources are not yet exposed by BSP source queries. See the runnable [SQLite fixture](tests/sqldelight-cli) and [CLI test](tools/test_sqldelight_cli.py). Third-party license and attribution are in [licenses/SQLDelight-NOTICE.txt](licenses/SQLDelight-NOTICE.txt).
+This adapter supports one database per module, consumed only by JVM main. Migrations (`.sqm`), schema database inputs (`.db`), asynchronous generation, and the upstream optimistic-lock annotator are not supported. BSP source queries expose generated Kotlin after compilation, including generation restored from cache. See the runnable [SQLite fixture](tests/sqldelight-cli) and [CLI test](tools/test_sqldelight_cli.py). Third-party license and attribution are in [licenses/SQLDelight-NOTICE.txt](licenses/SQLDelight-NOTICE.txt).
 
 Native targets can set `nativeTimeouts`, for example `{"linkMillis": 600000}` for a large test executable. Optional `compileMillis` and `linkMillis` values are integer milliseconds from 1 to 3,600,000; omitted phases retain their 180,000 ms limits. These settings affect compiler actions, while KSP and test execution keep their separate budgets. A compiler timeout reports `KVIK_NATIVE_TIMEOUT` with the phase and configured limit; partial outputs are not cached. See [Native timeout settings and checks](docs/evidence/k08-native-timeouts.md).
 
