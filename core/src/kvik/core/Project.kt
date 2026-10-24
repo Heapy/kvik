@@ -86,6 +86,7 @@ data class TargetSpec(
     val nativeTimeouts: NativeTimeouts? = null,
     val application: ApplicationSpec? = null,
     val nativeFramework: NativeFrameworkSpec? = null,
+    val abi: AbiSettings? = null,
 ) {
     init {
         require(NativeTarget.find(name)?.isIos != true || test == null) { "iOS test execution requires simulator/device support; only compilation and linking are supported" }

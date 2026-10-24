@@ -56,7 +56,7 @@ data class TreeManifest(val files: List<FileEntry>) {
 }
 
 enum class CachePolicy { NEVER, LOCAL, REMOTE }
-enum class ActionKind { COMPILE, GENERATE, LINK, PACKAGE, TEST, SCRIPT, PUBLISH, BENCHMARK, SERVER }
+enum class ActionKind { COMPILE, GENERATE, LINK, PACKAGE, VERIFY, TEST, SCRIPT, PUBLISH, BENCHMARK, SERVER }
 
 /** Resolved inputs include artifacts from prerequisites. Construct only after they succeed. */
 data class ActionSpec(

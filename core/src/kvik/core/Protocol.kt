@@ -1,6 +1,6 @@
 package kvik.core
 
-enum class DiagnosticCategory { CONFIGURATION, COMPILATION, TEST, TOOLCHAIN, CACHE, INFRASTRUCTURE, CANCELLATION }
+enum class DiagnosticCategory { CONFIGURATION, COMPILATION, ABI, TEST, TOOLCHAIN, CACHE, INFRASTRUCTURE, CANCELLATION }
 
 data class Diagnostic(
     val code: String,

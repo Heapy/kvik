@@ -74,7 +74,7 @@ private fun parseModule(value: JsonValue): ModuleSpec {
     validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
     val names = sourceSets.map { it.name }.toSet()
     val targets = fields.getValue("targets").arrayValue().map { target ->
-        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts", "application", "nativeFramework"))
+        val entry = target.fields(setOf("name", "main", "test", "compilerOptions"), setOf("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts", "application", "nativeFramework", "abi"))
         val name = entry.getValue("name").stringValue()
         require(name == "jvm" || NativeTarget.find(name) != null) { "Unsupported target: $name" }
         val main = entry.getValue("main").identifier()
@@ -95,7 +95,8 @@ private fun parseModule(value: JsonValue): ModuleSpec {
             NativeTimeouts(timeouts["compileMillis"]?.longValue(), timeouts["linkMillis"]?.longValue())
         }
         TargetSpec(name, main, test, entry.getValue("compilerOptions").strings(), settings, entry["testCompilerOptions"]?.strings(), nativeSettings, nativeTimeouts,
-            entry["application"]?.let(ApplicationSpec::fromJson), entry["nativeFramework"]?.let(NativeFrameworkSpec::fromJson))
+            entry["application"]?.let(ApplicationSpec::fromJson), entry["nativeFramework"]?.let(NativeFrameworkSpec::fromJson),
+            entry["abi"]?.let(AbiSettings::fromJson))
     }
     require(targets.isNotEmpty()) { "Module $id requires targets" }
     targets.map { it.name }.unique("target in $id")
