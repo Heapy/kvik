@@ -178,7 +178,8 @@ private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
         require(':' !in inputs) { "JVM bundle directory cannot contain the classpath separator ':'" }
         val tools = BuildTools(checked.metadata.getValue("toolsPath").stringValue())
         val java = tools.verifiedJavaExecutable(record.toolchains.getValue("jvm:jdk")) {
-            check(kvik_interrupt_requested() == 0) { "Application JDK verification cancelled" }
+            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_APPLICATION_CANCELLED",
+                DiagnosticCategory.CANCELLATION, "Application JDK verification cancelled", ExitStatus.CANCELLED)
         }
         // JDK hashing can be lengthy: source/config/lock and desired pins must still match after it.
         val after = checkRun(directory)
