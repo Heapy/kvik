@@ -27,13 +27,13 @@ data class NativeToolchainLayout(val compiler: String, val javaHome: String, val
     val nativeHome: String = compiler.substringBeforeLast('/').substringBeforeLast('/').ifEmpty { "/" },
     val target: NativeTarget = NativeTarget.MACOS_ARM64) {
     init {
-        require(target == NativeTarget.MACOS_ARM64 || sdk.isEmpty() && developerDirectory.isEmpty())
-        require((listOf(compiler, javaHome, dependencies, nativeHome) + if (target == NativeTarget.MACOS_ARM64) listOf(sdk, developerDirectory) else emptyList()).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
+        require(target.isApple || sdk.isEmpty() && developerDirectory.isEmpty())
+        require((listOf(compiler, javaHome, dependencies, nativeHome) + if (target.isApple) listOf(sdk, developerDirectory) else emptyList()).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
 }
 
 /** Physical tool paths are supplied only by the verified provider, never inherited from the host. */
 fun NativeToolchainLayout.environment(): Map<String, String> = mapOf("JAVA_HOME" to javaHome, "KONAN_DATA_DIR" to dependencies) +
-    if (target == NativeTarget.MACOS_ARM64) mapOf("SDKROOT" to sdk, "DEVELOPER_DIR" to developerDirectory) else emptyMap()
+    if (target.isApple) mapOf("SDKROOT" to sdk, "DEVELOPER_DIR" to developerDirectory) else emptyMap()
 
 data class NativeActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: NativeTestReport? = null, val stdout: String, val stderr: String, val directory: String)
 
@@ -53,7 +53,7 @@ class NativeCompilerExecutor(
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
         val target = NativeTarget.require(action.target)
-        require(action.platform == target.platform)
+        require(action.platform == target.executionPlatform)
         val compile = if (action.implementation == "kvik-native-compiler-v1") NativeCompilation.fromJson(action.parameters) else null
         val module: String
         val executable: LogicalPath?
@@ -204,8 +204,12 @@ class NativeCompilerExecutor(
                 }
                 var outputs = TreeManifest(emptyList())
                 if (status == ActionStatus.EXECUTED) {
-                    outputs = trees.capture("$directory/output")
-                    if (outputs.files.any { file -> action.outputs.none { file.path == it || file.path.value.startsWith(it.value + "/") } } || action.outputs.any { root -> outputs.files.none { it.path == root || it.path.value.startsWith(root.value + "/") } }) {
+                    if (compile?.produce == NativeOutput.FRAMEWORK) {
+                        try { requireNativeFrameworkOutput(compile, "$directory/output") }
+                        catch (failure: Exception) { status = ActionStatus.FAILED; diagnostic = failure.message ?: "Invalid Native framework output" }
+                    }
+                    if (status == ActionStatus.EXECUTED) outputs = trees.capture("$directory/output")
+                    if (status == ActionStatus.EXECUTED && (outputs.files.any { file -> action.outputs.none { file.path == it || file.path.value.startsWith(it.value + "/") } } || action.outputs.any { root -> outputs.files.none { it.path == root || it.path.value.startsWith(root.value + "/") } })) {
                         status = ActionStatus.FAILED; diagnostic = "Native compiler did not produce exactly the declared outputs"; outputs = TreeManifest(emptyList())
                     }
                 }

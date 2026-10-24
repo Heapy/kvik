@@ -62,6 +62,6 @@ fun kspNativeAction(compilation: KspNativeCompilation, inputs: TreeManifest, com
     val paths = inputs.files.map { it.path }.toSet()
     require((compilation.sources + compilation.libraries + compilation.runtimeClasspath + compilation.processorClasspath).all { it in paths }) { "Undeclared KSP input" }
     require(toolchains.keys == compilation.target.toolIdentityNames) { "Complete Native/JDK tool identities required for KSP" }
-    return ActionSpec("kvik-ksp-native-v1", composition, ActionKind.GENERATE, compilation.target.platform, compilation.target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
+    return ActionSpec("kvik-ksp-native-v1", composition, ActionKind.GENERATE, compilation.target.executionPlatform, compilation.target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("generated")), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0", "TZ" to "UTC"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
