@@ -56,6 +56,16 @@ class LinuxBootstrapTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 launcher.validate_options(['-target', 'linux_x64', '-entry', 'kvik.cli.main'])
 
+    def test_native_linker_receives_library_not_compiler_driver_thread_flag(self):
+        definition = (ROOT / 'execution/platform/process.def').read_text()
+        options = next(line.split('=', 1)[1].split() for line in definition.splitlines()
+                       if line.startswith('linkerOpts.linux'))
+        self.assertIn('-lpthread', options)
+        self.assertNotIn('-pthread', options)
+        with host():
+            _, _, compile_flags = native_libraries.c_toolchain(pin_tools.tool_roots('/jdk', '/native', '/konan'))
+            self.assertIn('-pthread', compile_flags)
+
     def test_all_linux_native_recipes_use_system_headers_and_host_target(self):
         commands = []
         with host():
