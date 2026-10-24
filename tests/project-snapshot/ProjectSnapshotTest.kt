@@ -58,6 +58,24 @@ private class Fixture {
 private inline fun fixture(block: (Fixture) -> Unit) { val f = Fixture(); try { block(f) } finally { f.close() } }
 
 class ProjectSnapshotTest {
+    @Test fun sqlDirectoryAdditionEditAndDeletionInvalidateSnapshot() = fixture { f ->
+        val generator = SqlDelightSpec("main", LogicalPath("sql"), "sample.db", "Database")
+        write("${f.root}/kvik.json", document().replace("\"id\":\"library\"",
+            "\"id\":\"library\",\"sqlDelight\":${generator.toJson().canonical()}"))
+        val absent = f.capture()
+        NativeFiles.ensureDirectory("${f.root}/sql")
+        write("${f.root}/sql/Query.sq", "CREATE TABLE item(id INTEGER PRIMARY KEY);")
+        assertEquals(Freshness.STALE, f.snapshotter.freshness(absent))
+        val first = f.capture()
+        assertTrue(first.inputs.files.any { it.path.value == "sql/Query.sq" })
+        write("${f.root}/sql/Query.sq", "CREATE TABLE item(id INTEGER PRIMARY KEY, name TEXT);")
+        assertEquals(Freshness.STALE, f.snapshotter.freshness(first))
+        val edited = f.capture()
+        NativeFiles.removeTree("${f.root}/sql")
+        assertEquals(Freshness.STALE, f.snapshotter.freshness(edited))
+        assertFalse(f.capture().inputs.files.any { it.path.value.startsWith("sql/") })
+    }
+
     @Test fun documentationIncludesAreScopedInputsAndInvalidateRetainedDocs() = fixture { f ->
         write("${f.root}/kvik.json", document().replace("\"id\":\"library\"",
             "\"id\":\"library\",\"documentation\":{\"includes\":[\"Module.md\"]}"))

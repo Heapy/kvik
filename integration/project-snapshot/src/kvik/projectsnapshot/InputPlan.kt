@@ -95,7 +95,7 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
         require(selection.targets.all { target -> module.targets.any { it.name == target } }) { "Missing documentation target in $id" }
         requireNotNull(module.documentation) { "Declare documentation settings for $id before generating documentation" }.includes
     } else emptyList()
-    return plan(sources.flatMap { it.directories + it.resources }, plugins.flatMap { it.inputs } + baselines + documentation,
+    return plan(sources.flatMap { it.directories + it.resources } + selected.mapNotNull { it.sqlDelight?.sourceDirectory }, plugins.flatMap { it.inputs } + baselines + documentation,
         scripts.flatMap { it.declaration.sources + it.declaration.resources })
 }
 

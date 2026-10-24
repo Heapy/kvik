@@ -19,6 +19,7 @@ import kvik.compiler.jvm.portableJvmCompilation
 import kvik.compiler.native.NativeCompilerExecutor
 import kvik.compiler.native.KotestNativeExecutor
 import kvik.compiler.ksp.KspNativeExecutor
+import kvik.compiler.sqldelight.SqlDelightExecutor
 import kvik.core.*
 import kvik.execution.*
 import kvik.execution.platform.*
@@ -259,6 +260,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     "Desired tools changed after verification selection", ExitStatus.INCOMPLETE)
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
+                if (effective.requests.any { it.domain.purpose == "sqldelight-compiler" })
+                    sqlDelightWorkerSources().values.forEach { content.put(it.encodeToByteArray()) }
                 graph = if (scriptFile != null)
                     scriptActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities.getValue("jvm"), ScriptGraphRequest(scriptFile.scriptName, scriptArguments))
                 else if (sessionCache != null) sessionCache.graph(effective, lock, snapshot.inputs, snapshot.fingerprint, snapshot.lockBytes,
@@ -280,6 +283,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider(target))
                     }
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content)
+                    val sqlDelight = SqlDelightExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val benchmarks = JvmBenchmarkExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val classpath = JvmClasspathExecutor(content)
                     val application = ApplicationBundleExecutor(content)
@@ -289,6 +293,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
                             "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
+                            "kvik-sqldelight-v1" -> sqlDelight
                             "kvik-jvm-script-v1" -> scripts
                             "kvik-jvm-classpath-v1" -> classpath
                             "kvik-jvm-benchmark-harness-v1", "kvik-jvm-benchmark-v1" -> benchmarks
@@ -345,6 +350,10 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         } ?: test }
                     }
                     fun observations() {
+                        for ((id, observation) in sqlDelight.observations) if (seen.add(id)) {
+                            retain(id, observation.toJson())
+                            observation.diagnostics.forEach { journal.diagnostic(it.copy(actionId = id, module = it.module ?: id.substringBefore(':'), target = "jvm")) }
+                        }
                         for ((id, observation) in benchmarks.observations) if (seen.add(id)) {
                             retain(id, observation.toJson())
                             observation.diagnostics.forEach { journal.diagnostic(it.copy(actionId = id, module = it.module ?: id.substringBefore(':'), target = "jvm")) }

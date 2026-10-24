@@ -1,0 +1,14 @@
+The embedded SQLDelight environment and worker in core/src/kvik/core/SqlDelightWorkerSources.kt
+are adapted from ktc-sqldelight, commit 6b016567802f6db11981dd80f1f6298cfb737499,
+Copyright 2026 Ruslan Ibrahimau, licensed under the Apache License, Version 2.0.
+
+ktc-sqldelight was extracted from Heapy/kotgent, commit
+7095623e2d8f0d7e17c9a9031b95f2518eb1adbd, licensed under Apache License 2.0.
+
+SqlDelightEnvironment.kt was adapted from the SQLDelight 2.3.2 Gradle plugin,
+Copyright (C) 2017 Square, Inc., licensed under Apache License 2.0.
+
+Kvik modifications: standalone invocation-owned worker, confined output writers,
+structured diagnostics, explicit SQLite 3.38 dialect, and generated source capture.
+The optimistic-lock annotator is omitted because it is not available in the
+Gradle-free core artifact. See SQLDelight-Apache-2.0.txt for the license.

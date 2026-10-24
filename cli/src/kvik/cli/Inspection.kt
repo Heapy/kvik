@@ -94,7 +94,9 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             origin("sourceSet:${module.id}:${sourceSet.name}", "/modules/$moduleIndex/sourceSets/$index")
             val targets = module.targets.filter { target -> sourceSet in sourceSetClosure(module, listOfNotNull(target.main, target.test)) }.map { it.name }
             val owner = Owner(module.id, sourceSet.name, targets)
-            for (directory in (sourceSet.directories + sourceSet.resources).distinct()) {
+            val generated = module.sqlDelight?.takeIf { it.sourceSet == sourceSet.name }
+            if (generated != null) origin("generator:${module.id}:sqldelight", "/modules/$moduleIndex/sqlDelight")
+            for (directory in (sourceSet.directories + sourceSet.resources + listOfNotNull(generated?.sourceDirectory)).distinct()) {
                 filesBelow(directory).forEach { owners.getOrPut(it) { mutableListOf() }.add(owner) }
             }
         }
@@ -113,6 +115,6 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
                 entries.map { it.sourceSet }.distinct().sorted(), entries.flatMap { it.targets }.distinct().sorted(),
                 tags.getValue(path).tags.sorted())
         }, origins = origins,
-        capabilities = listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "jvm-benchmarks", "verification"),
+        capabilities = listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "jvm-benchmarks", "sqldelight-generation", "verification"),
     )
 }

@@ -66,7 +66,7 @@ internal fun viewCommand(args: List<String>): JsonValue {
             val files = paths.toSet()
             // A source/resource directory must not alias a file, even when its leaf is absent.
             val directories = prepared.project.configuration.project.modules.flatMap { module ->
-                module.sourceSets.flatMap { it.directories + it.resources }
+                module.sourceSets.flatMap { it.directories + it.resources } + listOfNotNull(module.sqlDelight?.sourceDirectory)
             }.distinct()
             for (directory in directories) {
                 sourceCheckpoint()

@@ -20,7 +20,7 @@ defs={
  'metadata':obj(url=text,digest=ref('digest')),
  'artifact':obj(coordinate=coordinate,variant=text,repository=text,url=text,digest=ref('digest')),
  'variant':obj(platform=enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs','common'),usage=text,attributes={'type':'object','additionalProperties':text}),
- 'domain':obj(module=text,target=enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor')),
+ 'domain':obj(module=text,target=enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor','sqldelight-compiler')),
  'diagnostic':obj(code=text,message=text,source=nullable(text)),
  'source':obj(repository=text,url=text,kind=enum('metadata','artifact'),digest=nullable(ref('digest')),observedAt=nullable(time),cache=enum('network','cache','locked','none'),status=enum('found','not-found','missing','corrupt','error'),freshness=freshness,latest=nullable(text),release=nullable(text),lastUpdated=nullable(text)),
  'requirement':obj(coordinate=coordinate,semantics=enum('requires','prefers','pom-effective','redirect','constraint','explicit-exclusion')),
@@ -30,13 +30,14 @@ defs={
  'path':obj(root=coordinate,node=text,nodes=arr(text,1024),edges=arr(nonnegative,1024)),
  'graph':obj(variant=ref('variant'),roots=arr(ref('root'),256),nodes=arr(ref('node'),1024),edges=arr(ref('edge'),8192),paths=arr(ref('path'),4096),pathPolicy=enum('shortest-per-root-node'),truncated=boolean,artifactVerification=enum('verified')),
  'version':obj(version=text,channel=channel,repositories=arr(text,32)),
- 'declaration':obj(module=text,sourceSet=nullable(text),kind=enum('external','module','compiler-plugin','ksp-runtime','symbol-processor'),coordinate=nullable(coordinate),dependencyModule=nullable(text),scope=enum('compile','runtime'),exported=boolean,targets=arr(text,32),compilations=arr(enum('main','test'),2)),
+ 'declaration':obj(module=text,sourceSet=nullable(text),kind=enum('external','module','compiler-plugin','ksp-runtime','symbol-processor','sqldelight-compiler'),coordinate=nullable(coordinate),dependencyModule=nullable(text),scope=enum('compile','runtime'),exported=boolean,targets=arr(text,32),compilations=arr(enum('main','test'),2)),
  'scopedGraph':obj(domain=ref('domain'),graph=ref('graph')),
  'versionQuery':obj(project=text,coordinate=package,repositories=arr(ref('repository'),32),channel=enum('all','stable','prerelease'),limit={'type':'integer','minimum':1,'maximum':200},cursor=nullable(text),mode=mode),
  'packageQuery':obj(project=text,coordinate=coordinate,repositories=arr(ref('repository'),32),variant=ref('variant'),pins=arr(coordinate,256),mode=mode),
  'projectQuery':obj(project=text,lock=text,store=text,modules=arr(text,1024),targets=arr(enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs'),7),compilation=nullable(enum('main','test')),usage=nullable(enum('java-api','java-runtime','kotlin-api','kotlin-runtime'))),
 }
 script_id={'type':'string','maxLength':128,'pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END}
+defs['domain']['allOf']=[{'if':{'properties':{'purpose':{'const':'sqldelight-compiler'}}},'then':{'properties':{'target':{'const':'jvm'},'compilation':{'const':'main'},'usage':{'const':'java-runtime'}}}}]
 defs['moduleDomain']=defs['domain']
 defs['scriptDomain']=obj(script=script_id,target={'const':'jvm'},compilation={'const':'script'},usage=enum('java-api','java-runtime'),purpose=enum('dependencies','compiler-plugin'))
 defs['scriptDomain']['allOf']=[{'if':{'properties':{'purpose':{'const':'compiler-plugin'}}},'then':{'properties':{'usage':{'const':'java-runtime'}}}}]

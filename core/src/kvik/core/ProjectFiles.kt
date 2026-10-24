@@ -128,6 +128,10 @@ fun projectFileTagRules(configuration: ProjectConfiguration, configurationPath: 
                 plugin.scopes.map { "scope:${if (it == "main") "production" else it}" }
             plugin.inputs.forEach { add(it, tags, directory = true, inclusive = true) }
         }
+        module.sqlDelight?.let { generator ->
+            add(generator.sourceDirectory, setOf(moduleTag, "sourceSet:${generator.sourceSet}", "kind:generator-input",
+                "generator:sqldelight") + compilationTags[generator.sourceSet].orEmpty(), directory = true)
+        }
         module.documentation?.includes?.forEach {
             add(it, setOf(moduleTag, "kind:documentation"), directory = true, inclusive = true)
         }

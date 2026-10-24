@@ -887,7 +887,8 @@
             "dependencies",
             "compiler-plugin",
             "ksp-runtime",
-            "symbol-processor"
+            "symbol-processor",
+            "sqldelight-compiler"
           ]
         }
       },
@@ -898,7 +899,31 @@
         "usage",
         "purpose"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "sqldelight-compiler"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "const": "jvm"
+              },
+              "compilation": {
+                "const": "main"
+              },
+              "usage": {
+                "const": "java-runtime"
+              }
+            }
+          }
+        }
+      ]
     },
     "scriptDomain": {
       "type": "object",
@@ -978,7 +1003,8 @@
             "module",
             "compiler-plugin",
             "ksp-runtime",
-            "symbol-processor"
+            "symbol-processor",
+            "sqldelight-compiler"
           ]
         },
         "coordinate": {

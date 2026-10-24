@@ -1580,6 +1580,72 @@
       "additionalProperties": false,
       "description": "Semantic validation additionally limits total distribution size to 256 MiB."
     },
+    "sqlDelight": {
+      "type": "object",
+      "properties": {
+        "sourceSet": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "sourceDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "packageName": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?![\\s\\S])"
+        },
+        "className": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?![\\s\\S])",
+          "not": {
+            "enum": [
+              "as",
+              "break",
+              "class",
+              "continue",
+              "do",
+              "else",
+              "false",
+              "for",
+              "fun",
+              "if",
+              "in",
+              "interface",
+              "is",
+              "null",
+              "object",
+              "package",
+              "return",
+              "super",
+              "this",
+              "throw",
+              "true",
+              "try",
+              "typealias",
+              "typeof",
+              "val",
+              "var",
+              "when",
+              "while",
+              "_"
+            ]
+          }
+        },
+        "version": {
+          "const": "2.3.2"
+        }
+      },
+      "required": [
+        "sourceSet",
+        "sourceDirectory",
+        "packageName",
+        "className"
+      ],
+      "additionalProperties": false,
+      "$comment": "Runtime validation rejects Kotlin keyword package segments and requires the source set to be consumed only by JVM main."
+    },
     "module": {
       "type": "object",
       "properties": {
@@ -1612,6 +1678,9 @@
         },
         "documentation": {
           "$ref": "#/$defs/documentationSettings"
+        },
+        "sqlDelight": {
+          "$ref": "#/$defs/sqlDelight"
         }
       },
       "required": [
@@ -2503,7 +2572,8 @@
             "dependencies",
             "compiler-plugin",
             "ksp-runtime",
-            "symbol-processor"
+            "symbol-processor",
+            "sqldelight-compiler"
           ]
         }
       },
@@ -2523,7 +2593,8 @@
                 "enum": [
                   "compiler-plugin",
                   "ksp-runtime",
-                  "symbol-processor"
+                  "symbol-processor",
+                  "sqldelight-compiler"
                 ]
               }
             }
@@ -2779,6 +2850,25 @@
                   "dependencies",
                   "compiler-plugin"
                 ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "sqldelight-compiler"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "const": "jvm"
+              },
+              "compilation": {
+                "const": "main"
               }
             }
           }

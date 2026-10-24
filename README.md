@@ -796,6 +796,23 @@ replacement and compiled-source handoff gate is still being validated.
 
 Dependencies default to private compile dependencies. Set `exported: true` when a dependency belongs on consuming modules' compile classpaths; use `scope: "runtime"` for runtime-only dependencies. Runtime closures include private dependencies. Target `testCompilerOptions` optionally replaces `compilerOptions` for test compilation, so production-only settings such as strict explicit API need not apply to tests. Omission preserves inheritance; an empty list explicitly selects default test options.
 
+SQLDelight 2.3.2 can generate a synchronous SQLite 3.38 database for a JVM main source set. Add this optional module property:
+
+```json
+"sqlDelight": {
+  "sourceSet": "jvmMain",
+  "sourceDirectory": "src/main/sqldelight",
+  "packageName": "example.database",
+  "className": "Database"
+}
+```
+
+Place `.sq` files under package directories inside `sourceDirectory`, and declare `app.cash.sqldelight:runtime:2.3.2` as a normal main dependency. For JVM SQLite execution, declare `app.cash.sqldelight:sqlite-driver:2.3.2` in the consuming main or test source set. Run `resolve` after adding or changing the generator configuration. The compiler tools get their own `sqldelight-compiler` lock domain; they do not enter the application's classpath.
+
+Builds compile the embedded worker once into the shared cache, generate Kotlin in a separate owned JVM, and compile the generated sources alongside ordinary main sources. A module may contain only generated main Kotlin. SQL edits and database settings invalidate generation; unchanged worker compilation and unrelated modules retain their cached results. SQL inputs participate in snapshots, file ownership queries and affected-check selection. The generator runs without a daemon and supports foreground cancellation. Both preparation actions currently use the local action cache.
+
+This adapter supports one database per module, consumed only by JVM main. Migrations (`.sqm`), schema database inputs (`.db`), asynchronous generation, and the upstream optimistic-lock annotator are not supported. SQLDelight generated sources are not yet exposed by BSP source queries. See the runnable [SQLite fixture](tests/sqldelight-cli) and [CLI test](tools/test_sqldelight_cli.py). Third-party license and attribution are in [licenses/SQLDelight-NOTICE.txt](licenses/SQLDelight-NOTICE.txt).
+
 Native targets can set `nativeTimeouts`, for example `{"linkMillis": 600000}` for a large test executable. Optional `compileMillis` and `linkMillis` values are integer milliseconds from 1 to 3,600,000; omitted phases retain their 180,000 ms limits. These settings affect compiler actions, while KSP and test execution keep their separate budgets. A compiler timeout reports `KVIK_NATIVE_TIMEOUT` with the phase and configured limit; partial outputs are not cached. See [Native timeout settings and checks](docs/evidence/k08-native-timeouts.md).
 
 Native `compilerOptions` also accept `-Xreturn-value-checker=check|full` and `-Xname-based-destructuring=only-syntax|name-mismatch|complete` (choose one value per option). They apply to source compilation, participate in cache identity and follow the ordinary `testCompilerOptions` inheritance rules. JVM, shared metadata and KSP adapters currently reject these settings explicitly.

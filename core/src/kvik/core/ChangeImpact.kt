@@ -71,7 +71,7 @@ fun selectAffectedChecks(
 
     fun matches(path: LogicalPath, root: LogicalPath): Boolean = path == root || path.value.startsWith(root.value + "/")
     val knownRoots = configuration.project.modules.flatMap { module ->
-        module.sourceSets.flatMap { it.directories + it.resources } + module.compilerPlugins.flatMap { it.inputs }
+        module.sourceSets.flatMap { it.directories + it.resources } + module.compilerPlugins.flatMap { it.inputs } + listOfNotNull(module.sqlDelight?.sourceDirectory)
     }.toSet()
     val knownExact = configuration.project.modules.flatMap { module -> module.targets.mapNotNull { it.abi?.baseline } }.toSet()
     val effectiveFullReasons = fullReasons.toMutableSet()
@@ -89,6 +89,7 @@ fun selectAffectedChecks(
             ?: throw IllegalArgumentException("Missing dependency tests ${module.id}:${compilation.target}")
         val sources = sourceSetClosure(module, listOf(root))
         val roots = sources.flatMap { it.directories + it.resources }.toMutableSet()
+        module.sqlDelight?.takeIf { generator -> sources.any { it.name == generator.sourceSet } }?.let { roots += it.sourceDirectory }
         val dependencies = sources.flatMap { it.dependencies }.filterIsInstance<Dependency.Module>().map {
             ImpactCompilation(it.module, compilation.target, "main")
         }.toMutableSet()

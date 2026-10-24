@@ -182,9 +182,17 @@ DEFS["documentationDistribution"] = versioned({"version": {"const": "2.2.0"}, "a
         "path": enum(*DOKKA_JARS), "executable": {"const": False}, "digest": {"properties": {"sizeBytes": {"minimum": 1, "maximum": 134217728}}}}},
         "allOf": [{"contains": {"properties": {"path": {"const": name}}}} for name in DOKKA_JARS]}}}]}})
 DEFS["documentationDistribution"]["description"] = "Semantic validation additionally limits total distribution size to 256 MiB."
+SQLDELIGHT_IDENTIFIER = {"type": "string", "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(?![\s\S])", "not": {"enum": [
+    "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in", "interface", "is", "null", "object", "package",
+    "return", "super", "this", "throw", "true", "try", "typealias", "typeof", "val", "var", "when", "while", "_"]}}
+DEFS["sqlDelight"] = object_({"sourceSet": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "sourceDirectory": PATH,
+    "packageName": {"type": "string", "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?![\s\S])"},
+    "className": SQLDELIGHT_IDENTIFIER, "version": {"const": "2.3.2"}}, optional=("version",))
+DEFS["sqlDelight"]["$comment"] = "Runtime validation rejects Kotlin keyword package segments and requires the source set to be consumed only by JVM main."
 DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1),
     "compilerPlugins": array(ref("compilerPlugin")), "publication": ref("libraryPublication")}, optional=("publication",))
 DEFS["module"]["properties"]["documentation"] = ref("documentationSettings")
+DEFS["module"]["properties"]["sqlDelight"] = ref("sqlDelight")
 DEFS["module"]["allOf"] = [{"if": {"required": ["publication"]},
     "then": {"properties": {"targets": {"items": {"properties": {"name": enum(*JVM_NATIVE_TARGETS)}, "not": {"required": ["application"]}}}}}}]
 DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate emitted root or derived target publication coordinates across modules."
@@ -255,9 +263,9 @@ DEFS["artifact"] = object_({"coordinate": COORDINATE, "variant": NONEMPTY, "repo
 DEFS["metadata"] = object_({"url": STRING, "digest": ref("digest")})
 DEFS["variant"] = object_({"platform": enum("common", *PROJECT_TARGETS), "usage": STRING, "attributes": mapping(STRING)})
 DEFS["selection"] = object_({"requested": COORDINATE, "variant": ref("variant"), "artifacts": array(ref("artifact")), "metadata": array(ref("metadata"))})
-DEFS["resolutionDomain"] = object_({"module": ID, "target": enum("common", *PROJECT_TARGETS), "compilation": enum("main", "test"), "usage": enum("java-api", "java-runtime", "kotlin-api", "kotlin-runtime", "kotlin-metadata"), "purpose": enum("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")})
+DEFS["resolutionDomain"] = object_({"module": ID, "target": enum("common", *PROJECT_TARGETS), "compilation": enum("main", "test"), "usage": enum("java-api", "java-runtime", "kotlin-api", "kotlin-runtime", "kotlin-metadata"), "purpose": enum("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor", "sqldelight-compiler")})
 DEFS["resolutionDomain"]["allOf"] = [
-    {"if": {"properties": {"purpose": enum("compiler-plugin", "ksp-runtime", "symbol-processor")}},
+    {"if": {"properties": {"purpose": enum("compiler-plugin", "ksp-runtime", "symbol-processor", "sqldelight-compiler")}},
      "then": {"properties": {"usage": {"const": "java-runtime"}}}},
     *[{"if": {"properties": {"purpose": {"const": "dependencies"}, "target": {"const": target}}},
        "then": {"properties": {"usage": enum(*usages)}}}
@@ -269,6 +277,8 @@ DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"purpose": enum(
     "then": {"properties": {"target": enum("macosArm64", "linuxX64"), "compilation": {"const": "test"}}}})
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"target": enum(*IOS_TARGETS)}},
     "then": {"properties": {"compilation": {"const": "main"}, "purpose": enum("dependencies", "compiler-plugin")}}})
+DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"purpose": {"const": "sqldelight-compiler"}}},
+    "then": {"properties": {"target": {"const": "jvm"}, "compilation": {"const": "main"}}}})
 # Additive consumer union: legacy module wire bytes are unchanged.
 DEFS["moduleResolutionDomain"] = DEFS["resolutionDomain"]
 DEFS["scriptResolutionDomain"] = object_({"script": SCRIPT_ID, "target": {"const": "jvm"}, "compilation": {"const": "script"},
