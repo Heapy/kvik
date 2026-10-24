@@ -745,7 +745,13 @@ DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"cons
 
 DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success", "compilation-error", "infrastructure-error", "cancelled"), "exitCode": {"type": "integer"}, "diagnostics": array(ref("diagnostic"))})
 DEFS["workerResult"]["allOf"] = [{"if": {"properties": {"status": {"const": "success"}}}, "then": {"properties": {"exitCode": {"const": 0}}}, "else": {"properties": {"exitCode": {"not": {"const": 0}}}}}]
-DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING)})
+SOURCE_IDENTITY = {"type": "string", "minLength": 1, "maxLength": 4096, "not": {"pattern": r"[\u0000-\u001f\u007f]"}}
+DEFS["sourceProvenance"] = versioned({key: SOURCE_IDENTITY for key in ("provider", "project", "revision", "tree")})
+DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
+    "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest")},
+    optional=("source", "sourceRoot", "sourceManifest"))
+DEFS["inspection"]["dependentRequired"] = {key: [other for other in ("source", "sourceRoot", "sourceManifest") if other != key]
+    for key in ("source", "sourceRoot", "sourceManifest")}
 DEFS["dependencyResolution"] = versioned({"operation": enum("resolve", "check-lock"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "lockPath": STRING, "selections": INT, "artifacts": INT, "metadata": INT})
 DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
 DEFS["scriptInspection"] = versioned({

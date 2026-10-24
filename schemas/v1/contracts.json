@@ -9750,6 +9750,54 @@
         }
       ]
     },
+    "sourceProvenance": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "tree": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "provider",
+        "project",
+        "revision",
+        "tree"
+      ],
+      "additionalProperties": false
+    },
     "inspection": {
       "type": "object",
       "properties": {
@@ -9831,6 +9879,24 @@
           "items": {
             "type": "string"
           }
+        },
+        "source": {
+          "$ref": "#/$defs/sourceProvenance"
+        },
+        "sourceRoot": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            }
+          ]
+        },
+        "sourceManifest": {
+          "$ref": "#/$defs/digest"
         }
       },
       "required": [
@@ -9842,7 +9908,21 @@
         "origins",
         "capabilities"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "source": [
+          "sourceRoot",
+          "sourceManifest"
+        ],
+        "sourceRoot": [
+          "source",
+          "sourceManifest"
+        ],
+        "sourceManifest": [
+          "source",
+          "sourceRoot"
+        ]
+      }
     },
     "dependencyResolution": {
       "type": "object",

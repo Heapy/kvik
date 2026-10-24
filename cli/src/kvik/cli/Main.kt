@@ -34,6 +34,7 @@ private fun command(args: Array<String>) {
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline
+            Revision inspection: inspect --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF [--project LOGICAL_PATH]
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64 (repeatable) --tools PATH
             Test execution: jvm or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking
             Execution: --runs PATH --jobs N --memory-mib N
@@ -76,8 +77,7 @@ private fun command(args: Array<String>) {
         "packages" -> exitProcess(printPackageQuery(packageCommand(args.drop(1))).code)
         "dependencies" -> exitProcess(printPackageQuery(projectDependenciesCommand(args.drop(1))).code)
         "inspect" -> {
-            val options = projectOptions(args.drop(1), lockOptions = false)
-            println(inspectProject(options.project, options.resolverPolicy()).canonical())
+            println(inspectCommand(args.drop(1)).canonical())
         }
         "resolve", "check-lock" -> println(dependencyCommand(args.drop(1), updateRequested = args[0] == "resolve").canonical())
         "package-library" -> exitProcess(libraryPackageCommand(args.drop(1)).code)
