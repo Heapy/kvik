@@ -161,6 +161,37 @@ def main():
             ask(setup); ask(verify)
             passed('Trusted malformed compiler manifests still reject unknown/version/unsafe/duplicate/empty/oversized fields')
 
+            # Documentation manifests are bundled; optional jar installations are not needed for desired/execution identities.
+            documentation = {'schemaVersion': 1, 'version': '2.2.0', 'artifacts': {'schemaVersion': 1, 'files': [
+                {'path': name, 'digest': digest(name.encode()), 'executable': False} for name in sorted([
+                    'dokka-cli-2.2.0.jar', 'dokka-base-2.2.0.jar', 'analysis-kotlin-symbols-2.2.0.jar',
+                    'kotlinx-html-jvm-0.8.0.jar', 'freemarker-2.3.31.jar'])]}}
+            doc_bytes = canonical(documentation); doc_path = bundle/'documentation-manifest.json'; doc_path.write_bytes(doc_bytes)
+            doc_manifest = copy.deepcopy(manifest)
+            doc_manifest['documentationManifest'] = {'path': doc_path.name, 'digest': digest(doc_bytes), 'executable': False}
+            doc_manifest['worker'] = digest(canonical({'schemaVersion': 1, 'implementation': 'kvik-jvm-worker-bundle-v1',
+                'workerTree': digest(canonical(tree)), 'jacocoVersion': '0.8.14', 'documentationManifest': digest(doc_bytes),
+                **{name: manifest[name]['digest'] for name in ('api', 'stdlib', 'junit', 'jacocoAgent', 'jacocoCli')}}))
+            doc_manifest_bytes = canonical(doc_manifest); (bundle/'manifest.json').write_bytes(doc_manifest_bytes)
+            doc_setup = dict(setup, expectedBundle=digest(doc_manifest_bytes), artifacts=str(fixture/'missing-all-jars'))
+            doc_ids = dict(identities, **{'jvm-worker': doc_manifest['worker']})
+            ask(doc_setup)
+            restored = ask(dict(op='execution', identities=doc_ids))['value']
+            assert restored['documentationManifest'] == str(doc_path) and restored['documentationIdentity'] == digest(doc_bytes)
+            bundled = ask(dict(op='bundle', bundle=str(bundle), expectedBundle=digest(doc_manifest_bytes)))['value']
+            assert bundled['documentation'] == documentation and bundled['documentationIdentity'] == digest(doc_bytes)
+            ask(dict(verify, identities=doc_ids), ok=False)  # Fresh compile still needs compiler jars.
+            stamp = doc_path.stat(); doc_path.write_bytes(b'!' + doc_bytes[1:]); os.utime(doc_path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            ask(dict(op='execution', identities=doc_ids), ok=False)
+            doc_path.write_bytes(doc_bytes)
+            # Fresh execution still verifies the complete JDK inventory.
+            java.write_bytes(b'changed JDK')
+            ask(dict(op='execution', identities=doc_ids), ok=False)
+            java.write_bytes(b'fixture java'); java.chmod(0o755)
+            ask(dict(op='execution', identities=doc_ids))
+            passed('Bundled documentation identity survives absent jars, detects manifest changes and still freshly verifies JDK')
+            doc_path.unlink(); (bundle/'manifest.json').write_bytes(manifest_bytes); ask(setup); ask(verify)
+
             if args.fixtures_only:
                 print('SKIP installed provider/BTA fixture: --fixtures-only', flush=True)
             else:

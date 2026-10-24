@@ -24,7 +24,7 @@ def artifact_digest(artifact):
 
 def read_lock(root):
     lock = read_json(root / "bootstrap/jvm-artifacts.lock.json")
-    if (not isinstance(lock, dict) or set(lock) != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
+    if (not isinstance(lock, dict) or set(lock) - {"documentationArtifacts"} != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
             or type(lock["schemaVersion"]) is not int or lock["schemaVersion"] != 1 or lock["kotlinVersion"] != "2.4.20"
             or lock["jacocoVersion"] != "0.8.14"
             or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 17):
@@ -33,6 +33,14 @@ def read_lock(root):
         "org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.20", "org.ow2.asm:asm:9.10.1", "org.ow2.asm:asm-tree:9.10.1"}
     if not required_reader.issubset({a.get("coordinate") for a in lock["compilerArtifacts"] if isinstance(a, dict)}):
         raise ValueError("Missing pinned ABI reader component")
+    if "documentationArtifacts" in lock:
+        docs = lock["documentationArtifacts"]
+        expected = {"org.jetbrains.dokka:dokka-cli:2.2.0", "org.jetbrains.dokka:dokka-base:2.2.0",
+            "org.jetbrains.dokka:analysis-kotlin-symbols:2.2.0", "org.jetbrains.kotlinx:kotlinx-html-jvm:0.8.0",
+            "org.freemarker:freemarker:2.3.31"}
+        if (not isinstance(docs, list) or len(docs) != 5 or
+                {a.get("coordinate") for a in docs if isinstance(a, dict)} != expected):
+            raise ValueError("Unsupported documentation artifact distribution")
     artifacts = all_artifacts(lock)
     for item in artifacts:
         if (not isinstance(item, dict) or set(item) != {"coordinate", "filename", "url", "sha256", "size"} | ({"classifier"} if item is lock["jacocoAgent"] or item is lock["jacocoCli"] else set())
@@ -60,11 +68,49 @@ def read_lock(root):
     for role, name, classifier in (("jacocoAgent", "org.jacoco.agent", "runtime"), ("jacocoCli", "org.jacoco.cli", "nodeps")):
         if lock[role]["coordinate"] != f"org.jacoco:{name}:{lock['jacocoVersion']}" or lock[role]["classifier"] != classifier:
             raise ValueError("Unsupported JaCoCo artifact")
+    if "documentationArtifacts" in lock:
+        documentation_distribution(lock)  # Shared core shape and aggregate size bound.
     return lock
 
 
 def all_artifacts(lock):
-    return [*lock["compilerArtifacts"], lock["testPlatform"], lock["serializationPlugin"], lock["jacocoAgent"], lock["jacocoCli"]]
+    return [*lock["compilerArtifacts"], lock["testPlatform"], lock["serializationPlugin"], lock["jacocoAgent"], lock["jacocoCli"], *lock.get("documentationArtifacts", [])]
+
+
+def documentation_distribution(lock):
+    distribution = {"schemaVersion": 1, "version": "2.2.0", "artifacts": {"schemaVersion": 1, "files": [
+        {"path": item["filename"], "digest": artifact_digest(item), "executable": False}
+        for item in sorted(lock["documentationArtifacts"], key=lambda item: item["filename"])]}}
+    validate_documentation_distribution(distribution)
+    return distribution
+
+
+def validate_documentation_distribution(value):
+    names = {"dokka-cli-2.2.0.jar", "dokka-base-2.2.0.jar", "analysis-kotlin-symbols-2.2.0.jar",
+             "kotlinx-html-jvm-0.8.0.jar", "freemarker-2.3.31.jar"}
+    if (not isinstance(value, dict) or set(value) != {"schemaVersion", "version", "artifacts"}
+            or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1 or value["version"] != "2.2.0"):
+        raise ValueError("Unsupported documentation manifest")
+    tree = value["artifacts"]
+    if (not isinstance(tree, dict) or set(tree) != {"schemaVersion", "files"}
+            or type(tree["schemaVersion"]) is not int or tree["schemaVersion"] != 1
+            or not isinstance(tree["files"], list) or len(tree["files"]) != 5):
+        raise ValueError("Invalid documentation manifest artifacts")
+    found = set(); total = 0
+    for entry in tree["files"]:
+        if (not isinstance(entry, dict) or set(entry) != {"path", "digest", "executable"}
+                or not isinstance(entry["path"], str) or entry["path"] not in names or entry["path"] in found or entry["executable"] is not False):
+            raise ValueError("Invalid documentation manifest artifact")
+        d = entry["digest"]
+        if (not isinstance(d, dict) or set(d) != {"hash", "sizeBytes"}
+                or not isinstance(d["hash"], str) or not re.fullmatch(r"[0-9a-f]{64}", d["hash"])
+                or type(d["sizeBytes"]) is not int or not 0 < d["sizeBytes"] <= 128 * 1024 * 1024):
+            raise ValueError("Invalid documentation artifact digest")
+        found.add(entry["path"]); total += d["sizeBytes"]
+    if [entry["path"] for entry in tree["files"]] != sorted(names):
+        raise ValueError("Documentation manifest artifacts must be sorted")
+    if total > 256 * 1024 * 1024:
+        raise ValueError("Documentation distribution exceeds 256 MiB")
 
 
 def compiler_artifact(lock, name):
@@ -171,13 +217,15 @@ def tree_manifest(directory):
     return tree
 
 
-def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None, jacoco_version=None):
+def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None, jacoco_version=None, documentation_manifest=None):
     identity = {"schemaVersion": 1, "implementation": "kvik-jvm-worker-bundle-v1",
         "workerTree": digest(canonical(tree)), "api": api, "stdlib": stdlib, "junit": junit}
     if any(value is not None for value in (jacoco_agent, jacoco_cli, jacoco_version)):
         if jacoco_agent is None or jacoco_cli is None or jacoco_version != "0.8.14":
             raise ValueError("Incomplete or unsupported JaCoCo worker identity")
         identity.update(jacocoAgent=jacoco_agent, jacocoCli=jacoco_cli, jacocoVersion=jacoco_version)
+    if documentation_manifest is not None:
+        identity["documentationManifest"] = documentation_manifest
     return digest(canonical(identity))
 
 
@@ -212,8 +260,13 @@ def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, 
         "serializationPlugin": artifact_digest(lock["serializationPlugin"])}
     (bundle / "compiler-manifest.json").write_bytes(canonical(distribution))
     manifest["compilerManifest"] = {"path": "compiler-manifest.json", "digest": digest(canonical(distribution)), "executable": False}
+    if "documentationArtifacts" in lock:
+        data = canonical(documentation_distribution(lock))
+        (bundle / "documentation-manifest.json").write_bytes(data)
+        manifest["documentationManifest"] = {"path": "documentation-manifest.json", "digest": digest(data), "executable": False}
     manifest["worker"] = worker_identity(manifest["classes"], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
-        manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"])
+        manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"],
+        manifest.get("documentationManifest", {}).get("digest"))
     (bundle / "manifest.json").write_bytes(canonical(manifest))
     return digest(canonical(manifest))
 
@@ -226,28 +279,36 @@ def verify_bundle(directory, expected):
     if digest(data) != expected:
         raise ValueError("JVM worker bundle manifest differs from runtime")
     manifest = parse_json(data.decode("utf-8", errors="strict"))
-    if (not isinstance(manifest, dict) or set(manifest) != {"schemaVersion", "classes", "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"}
+    if (not isinstance(manifest, dict) or set(manifest) - {"documentationManifest"} != {"schemaVersion", "classes", "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"}
             or type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 1 or manifest["jacocoVersion"] != "0.8.14"):
         raise ValueError("Unsupported JVM worker bundle")
     if tree_manifest(bundle / "classes") != manifest["classes"]:
         raise ValueError("JVM worker classes differ from runtime")
     files = set()
-    for role in ("api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli"):
+    roles = ["api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli"] + (["documentationManifest"] if "documentationManifest" in manifest else [])
+    for role in roles:
         entry = manifest[role]
         if (not isinstance(entry, dict) or set(entry) != {"path", "digest", "executable"} or entry["executable"] is not False
-                or not isinstance(entry["path"], str) or not re.fullmatch(r"lib/[A-Za-z0-9][A-Za-z0-9_.-]*\.jar" if role != "compilerManifest" else r"compiler-manifest\.json", entry["path"])):
+                or not isinstance(entry["path"], str) or not re.fullmatch(r"lib/[A-Za-z0-9][A-Za-z0-9_.-]*\.jar" if role not in ("compilerManifest", "documentationManifest") else (r"compiler-manifest\.json" if role == "compilerManifest" else r"documentation-manifest\.json"), entry["path"])):
             raise ValueError("Invalid worker bundle entry")
         path = bundle / entry["path"]
         if not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_mode & 0o111 or file_digest(path) != entry["digest"]:
             raise ValueError("Worker bundle artifact differs from runtime")
         files.add(entry["path"])
-    if len(files) != 6 or {p.name for p in (bundle / "lib").iterdir()} != {p.split('/')[1] for p in files if p.startswith('lib/')}:
+    if len(files) != len(roles) or {p.name for p in (bundle / "lib").iterdir()} != {p.split('/')[1] for p in files if p.startswith('lib/')}:
         raise ValueError("Unexpected worker bundle libraries")
-    if {p.name for p in bundle.iterdir()} != {"classes", "lib", "manifest.json", "compiler-manifest.json"}:
+    if {p.name for p in bundle.iterdir()} != {"classes", "lib", "manifest.json", "compiler-manifest.json"} | ({"documentation-manifest.json"} if "documentationManifest" in manifest else set()):
         raise ValueError("Unexpected worker bundle entries")
     if manifest["worker"] != worker_identity(manifest["classes"], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
-        manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"]):
+        manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"],
+        manifest.get("documentationManifest", {}).get("digest")):
         raise ValueError("Worker identity differs from bundle")
+    if "documentationManifest" in manifest:
+        data = read_regular(bundle / "documentation-manifest.json", 1024 * 1024)
+        document = parse_json(data.decode("utf-8", errors="strict"))
+        validate_documentation_distribution(document)
+        if canonical(document) != data:
+            raise ValueError("Documentation manifest must be canonical")
     return manifest
 
 

@@ -22,20 +22,26 @@ fun main() {
                 "setup" -> {
                     val roots = request.getValue("roots").objectValue()
                     provider = InstalledJvmToolchainProvider(request.getValue("toolLock").canonical(),
-                        ToolComponent.entries.associateWith { roots.getValue(it.lockName).stringValue() },
+                        ToolComponent.entries.filter { it.lockName in roots }.associateWith { roots.getValue(it.lockName).stringValue() },
                         request.getValue("bundle").stringValue(), Digest.fromJson(request.getValue("expectedBundle")),
                         request.getValue("artifacts").stringValue())
                     "ready".json()
                 }
                 "bundle" -> {
                     val bundle = verifyJvmWorkerBundle(request.getValue("bundle").stringValue(), Digest.fromJson(request.getValue("expectedBundle")))
-                    obj("worker" to bundle.identity.toJson(), "compiler" to bundle.compiler.toJson(), "junit" to bundle.junitIdentity.toJson())
+                    obj("worker" to bundle.identity.toJson(), "compiler" to bundle.compiler.toJson(), "junit" to bundle.junitIdentity.toJson(),
+                        "documentation" to (bundle.documentation?.toJson() ?: JsonValue.Null),
+                        "documentationIdentity" to (bundle.documentationIdentity?.toJson() ?: JsonValue.Null))
                 }
-                "verify", "compile" -> {
-                    val layout = checkNotNull(provider).verified(request.getValue("identities").objectValue().mapValues { Digest.fromJson(it.value) })
+                "verify", "compile", "execution" -> {
+                    val identities = request.getValue("identities").objectValue().mapValues { Digest.fromJson(it.value) }
+                    val layout = if (request.getValue("op").stringValue() == "execution") checkNotNull(provider).verifiedExecution(identities) {}
+                        else checkNotNull(provider).verified(identities)
                     if (request.getValue("op").stringValue() == "compile") compile(layout, request)
                     obj("identities" to JsonValue.Object(layout.identities.mapValues { it.value.toJson() }), "java" to layout.javaExecutable.json(),
                         "classes" to layout.workerClasses.json(), "artifacts" to layout.compilerArtifacts.json(),
+                        "documentationManifest" to (layout.documentationManifest?.json() ?: JsonValue.Null),
+                        "documentationIdentity" to (layout.documentationIdentity?.toJson() ?: JsonValue.Null),
                         "jacocoAgent" to checkNotNull(layout.jacocoAgent).json(), "jacocoCli" to checkNotNull(layout.jacocoCli).json(),
                         "jacocoAgentIdentity" to checkNotNull(layout.jacocoAgentIdentity).toJson(), "jacocoCliIdentity" to checkNotNull(layout.jacocoCliIdentity).toJson())
                 }

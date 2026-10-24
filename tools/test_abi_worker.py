@@ -34,7 +34,7 @@ def main():
             result = subprocess.run(list(map(str, command)), env=env, stdout=stdout, stderr=stderr, timeout=240)
         assert result.returncode == expected, (label, result.returncode, (case/(label+'.stderr')).read_text())
     lock = jvm_worker.read_lock(ROOT)
-    assert len(lock['compilerArtifacts']) == 17 and len(jvm_worker.all_artifacts(lock)) == 21
+    assert len(lock['compilerArtifacts']) == 17 and len(jvm_worker.all_artifacts(lock)) == 26
     artifacts = jvm_worker.acquire(lock, args.artifacts, True)
     jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, env, None,
         lambda command, environment, log: run('compile-worker', command))

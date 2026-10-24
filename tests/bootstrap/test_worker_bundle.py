@@ -75,8 +75,10 @@ class ArtifactBoundaryTest(unittest.TestCase):
     def test_artifact_lock_rejects_ambiguous_and_unlocked_sources(self):
         valid = jvm_worker.read_lock(ROOT)
         self.assertEqual(17, len(valid["compilerArtifacts"]))
-        self.assertEqual(21, len(jvm_worker.all_artifacts(valid)))
+        self.assertEqual(26, len(jvm_worker.all_artifacts(valid)))
         for change in [lambda x: x.update(schemaVersion=True),
+                       lambda x: x.update(documentationArtifacts=[]),
+                       lambda x: x["documentationArtifacts"][0].update(coordinate="org.jetbrains.dokka:dokka-cli:2.1.0"),
                        lambda x: x["compilerArtifacts"].pop(),
                        lambda x: x["compilerArtifacts"][-1].update(coordinate="org.ow2.asm:asm-tree:9.9"),
                        lambda x: x.update(jacocoVersion="0.8.13"),
@@ -114,7 +116,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
     def test_jacoco_bundle_roles_are_verified_and_only_cli_enters_compilation_classpath(self):
         lock = copy.deepcopy(jvm_worker.read_lock(ROOT))
         libraries = jvm_worker.libraries(lock)
-        self.assertEqual(["jvm-runtime:runtime", "jvm-runtime:nodeps"], [a["variant"] for a in libraries[-2:]])
+        self.assertEqual(["jvm-runtime:runtime", "jvm-runtime:nodeps"], [a["variant"] for a in libraries if a["coordinate"].startswith("org.jacoco:")])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             cache = root / "artifacts"; cache.mkdir()
@@ -134,6 +136,20 @@ class ArtifactBoundaryTest(unittest.TestCase):
                 compile_fixture, source_files=[source])
             bundle = jvm_worker.verify_bundle(runtime, expected)
             self.assertEqual("0.8.14", bundle["jacocoVersion"])
+            documentation = jvm_worker.documentation_distribution(lock)
+            self.assertEqual(digest(canonical(documentation)), bundle["documentationManifest"]["digest"])
+            for item in lock["documentationArtifacts"]:
+                self.assertNotIn(str(artifacts[item["filename"]]), commands[0][commands[0].index("-cp") + 1])
+                self.assertNotIn(str(artifacts[item["filename"]]), commands[0][commands[0].index("-classpath") + 1])
+                artifacts[item["filename"]].unlink()
+            # Runtime restore requires the manifest, not physically installed documentation jars.
+            jvm_worker.verify_bundle(runtime, expected)
+            doc_path = runtime / "jvm/documentation-manifest.json"
+            original_doc = doc_path.read_bytes(); stamp = doc_path.stat()
+            doc_path.write_bytes(b"!" + original_doc[1:]); os.utime(doc_path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            with self.assertRaisesRegex(ValueError, "differs from runtime"):
+                jvm_worker.verify_bundle(runtime, expected)
+            doc_path.write_bytes(original_doc)
             for role in ("jacocoAgent", "jacocoCli"):
                 self.assertEqual(jvm_worker.artifact_digest(lock[role]), bundle[role]["digest"])
                 self.assertNotIn(str(artifacts[lock[role]["filename"]]), commands[0][commands[0].index("-cp") + 1])
@@ -155,6 +171,33 @@ class ArtifactBoundaryTest(unittest.TestCase):
                 invalid = copy.deepcopy(bundle); mutate(invalid)
                 encoded = canonical(invalid); (runtime / "jvm/manifest.json").write_bytes(encoded)
                 with self.assertRaises(ValueError): jvm_worker.verify_bundle(runtime, digest(encoded))
+
+    def test_documentation_manifest_rejects_noncanonical_order_and_invalid_paths(self):
+        document = jvm_worker.documentation_distribution(jvm_worker.read_lock(ROOT))
+        for mutate in (lambda value: value["artifacts"]["files"].reverse(),
+                       lambda value: value["artifacts"]["files"][0].update(path=[])):
+            invalid = copy.deepcopy(document); mutate(invalid)
+            with self.assertRaises(ValueError): jvm_worker.validate_documentation_distribution(invalid)
+
+    def test_legacy_lock_and_bundle_without_documentation_manifest_remain_valid(self):
+        lock = jvm_worker.read_lock(ROOT)
+        lock.pop("documentationArtifacts")
+        with patch.object(jvm_worker, "read_json", return_value=lock):
+            self.assertEqual(lock, jvm_worker.read_lock(ROOT))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); artifacts = {}
+            for item in jvm_worker.all_artifacts(lock):
+                data = item["filename"].encode(); item.update(sha256=digest(data)["hash"], size=len(data))
+                path = root/item["filename"]; path.write_bytes(data); artifacts[path.name] = path
+            source = root/"Fixture.kt"; source.write_text("// fixture")
+            def compile_fixture(argv, environment, log):
+                (Path(argv[argv.index("-d")+1])/"Fixture.class").write_bytes(b"fixture")
+            expected = jvm_worker.build_bundle(root, root, "unused", lock, artifacts, "/java", {}, None,
+                compile_fixture, source_files=[source])
+            bundle = jvm_worker.verify_bundle(root, expected)
+            self.assertNotIn("documentationManifest", bundle)
+            self.assertEqual(jvm_worker.worker_identity(bundle["classes"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")],
+                bundle["jacocoAgent"]["digest"], bundle["jacocoCli"]["digest"], bundle["jacocoVersion"]), bundle["worker"])
 
 
 def main():

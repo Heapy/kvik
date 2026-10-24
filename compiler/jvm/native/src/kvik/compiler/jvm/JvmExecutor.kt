@@ -32,13 +32,16 @@ data class JvmToolchainLayout(
     val jacocoCli: String? = null,
     val jacocoAgentIdentity: Digest? = null,
     val jacocoCliIdentity: Digest? = null,
+    val documentationManifest: String? = null,
+    val documentationIdentity: Digest? = null,
 ) {
     init {
         require(identities.keys == jvmIdentities)
+        require((documentationManifest == null) == (documentationIdentity == null)) { "Documentation manifest and identity must be supplied together" }
         require(listOf(jacocoAgent, jacocoCli, jacocoAgentIdentity, jacocoCliIdentity).all { it == null } ||
             jacocoAgent != null && jacocoCli != null && jacocoAgentIdentity != null && jacocoCliIdentity != null) { "JaCoCo layout must supply both verified artifacts and identities" }
         require(jacocoAgent == null || '=' !in jacocoAgent) { "JaCoCo agent path cannot contain the agent option separator" }
-        require((listOf(javaExecutable, workerClasses, btaApiJar, stdlibJar, junitJar, compilerArtifacts, compilerManifest) + listOfNotNull(jacocoAgent, jacocoCli)).all {
+        require((listOf(javaExecutable, workerClasses, btaApiJar, stdlibJar, junitJar, compilerArtifacts, compilerManifest) + listOfNotNull(jacocoAgent, jacocoCli, documentationManifest)).all {
             it.startsWith('/') && it.split('/').drop(1).none { part -> part.isEmpty() || part == "." || part == ".." } && it.none { char -> char.isISOControl() || char == ':' }
         }) { "Tool paths must be absolute physical paths without classpath separators" }
     }

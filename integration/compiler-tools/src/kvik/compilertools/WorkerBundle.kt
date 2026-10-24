@@ -19,7 +19,11 @@ class VerifiedJvmWorkerBundle internal constructor(
     val jacocoCli: String,
     val jacocoAgentIdentity: Digest,
     val jacocoCliIdentity: Digest,
-)
+    val documentationManifest: String? = null,
+    val documentation: DocumentationDistribution? = null,
+) {
+    val documentationIdentity: Digest? get() = documentation?.identity
+}
 
 /** Caller supplies the trusted manifest digest and a physical, stable bundle root. No discovery. */
 fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: () -> Unit = {}): VerifiedJvmWorkerBundle {
@@ -27,17 +31,18 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: ()
     NativeFiles.ensureDirectory(root, create = false)
     NativeFiles.ensureDirectory("$root/classes", create = false)
     NativeFiles.ensureDirectory("$root/lib", create = false)
-    require(CompilerFiles.names(root, checkpoint).toSet() == setOf("classes", "lib", "manifest.json", "compiler-manifest.json")) {
-        "Unexpected JVM worker bundle entries"
-    }
     val bytes = NativeFiles.read("$root/manifest.json", 1024 * 1024)
     checkpoint()
     require(Sha256.digest(bytes) == expectedManifest) {
         "JVM worker manifest differs from the compiled runtime composition"
     }
     val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(
-        setOf("schemaVersion", "classes", "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"))
+        setOf("schemaVersion", "classes", "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"), setOf("documentationManifest"))
     fields.requireVersion()
+    require(CompilerFiles.names(root, checkpoint).toSet() == setOf("classes", "lib", "manifest.json", "compiler-manifest.json") +
+        if ("documentationManifest" in fields) setOf("documentation-manifest.json") else emptySet()) {
+        "Unexpected JVM worker bundle entries"
+    }
     require(fields.getValue("jacocoVersion").stringValue() == "0.8.14") { "Unsupported JaCoCo bundle version" }
     checkpoint()
     val expectedTree = TreeManifest.fromJson(fields.getValue("classes"))
@@ -67,29 +72,39 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: ()
     }
     visit("$root/classes", "", 0)
     require(TreeManifest(actual).toJson() == expectedTree.toJson()) { "JVM worker classes differ from the compiled runtime composition" }
-    val entries = listOf("api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli").associateWith { role ->
+    val roles = listOf("api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli") +
+        if ("documentationManifest" in fields) listOf("documentationManifest") else emptyList()
+    val entries = roles.associateWith { role ->
         checkpoint()
         val entry = FileEntry.fromJson(fields.getValue(role))
         val path = entry.path.value
         require(!entry.executable && if (role == "compilerManifest") path == "compiler-manifest.json"
+            else if (role == "documentationManifest") path == "documentation-manifest.json"
             else path.matches(Regex("lib/[A-Za-z0-9][A-Za-z0-9_.-]*\\.jar"))) { "Invalid JVM worker artifact path" }
         val info = NativeFiles.info("$root/$path") ?: error("Missing JVM worker artifact")
         require(NativeFiles.regular(info) && info.mode and 73 == 0 &&
             CompilerFiles.digest("$root/$path", 8 * 1024 * 1024L, checkpoint) == entry.digest) { "JVM worker artifact differs from the compiled runtime composition" }
         entry
     }
-    require(entries.values.map { it.path }.distinct().size == 6) { "Duplicate JVM worker artifact" }
-    require(CompilerFiles.names("$root/lib", checkpoint).toSet() == entries.filterKeys { it != "compilerManifest" }.values.map { it.path.value.substringAfter('/') }.toSet()) {
+    require(entries.values.map { it.path }.distinct().size == roles.size) { "Duplicate JVM worker artifact" }
+    require(CompilerFiles.names("$root/lib", checkpoint).toSet() == entries.values.filter { it.path.value.startsWith("lib/") }.map { it.path.value.substringAfter('/') }.toSet()) {
         "Unexpected JVM worker libraries"
+    }
+    val documentation = entries["documentationManifest"]?.let { entry ->
+        val document = DocumentationDistribution.fromJson(parseJson(NativeFiles.read("$root/${entry.path.value}", 1024 * 1024)
+            .decodeToString(throwOnInvalidSequence = true)))
+        require(document.identity == entry.digest) { "Documentation manifest is not the pinned canonical document" }
+        document
     }
     val identity = jvmWorkerIdentity(Sha256.digest(expectedTree.toJson()), entries.getValue("api").digest,
         entries.getValue("stdlib").digest, entries.getValue("junit").digest,
-        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, fields.getValue("jacocoVersion").stringValue())
+        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, fields.getValue("jacocoVersion").stringValue(), entries["documentationManifest"]?.digest)
     require(identity == Digest.fromJson(fields.getValue("worker"))) { "JVM worker identity differs from bundle" }
     checkpoint()
     fun path(role: String) = "$root/${entries.getValue(role).path.value}"
     return VerifiedJvmWorkerBundle("$root/classes", path("api"), path("stdlib"), path("junit"), path("compilerManifest"),
         entries.getValue("compilerManifest").digest, identity, entries.getValue("junit").digest,
         fields.getValue("jacocoVersion").stringValue(), path("jacocoAgent"), path("jacocoCli"),
-        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest)
+        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest,
+        entries["documentationManifest"]?.let { "$root/${it.path.value}" }, documentation)
 }

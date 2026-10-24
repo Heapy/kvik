@@ -152,5 +152,42 @@
     "url": "https://repo.maven.apache.org/maven2/org/jacoco/org.jacoco.cli/0.8.14/org.jacoco.cli-0.8.14-nodeps.jar",
     "sha256": "811c7f8c6b358c5d68a8973cfa867f6892be7a671b697a4b13c4b447e6daf75c",
     "size": 607951
-  }
+  },
+  "documentationArtifacts": [
+    {
+      "coordinate": "org.jetbrains.dokka:dokka-cli:2.2.0",
+      "filename": "dokka-cli-2.2.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/dokka/dokka-cli/2.2.0/dokka-cli-2.2.0.jar",
+      "sha256": "b8c8aba823c0ac0e173af52abf2808aa692809a40b79f63828798bb77518324a",
+      "size": 11688849
+    },
+    {
+      "coordinate": "org.jetbrains.dokka:dokka-base:2.2.0",
+      "filename": "dokka-base-2.2.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/dokka/dokka-base/2.2.0/dokka-base-2.2.0.jar",
+      "sha256": "721c5a1647dc49d1680d884350b438a039b2426aec65b696baee8e5aeb6442f5",
+      "size": 1860621
+    },
+    {
+      "coordinate": "org.jetbrains.dokka:analysis-kotlin-symbols:2.2.0",
+      "filename": "analysis-kotlin-symbols-2.2.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/dokka/analysis-kotlin-symbols/2.2.0/analysis-kotlin-symbols-2.2.0.jar",
+      "sha256": "31b4eabf7436083ae33200da6be7203675fb1fcdcd34d2f394f55e822dac8f0f",
+      "size": 91928601
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-html-jvm:0.8.0",
+      "filename": "kotlinx-html-jvm-0.8.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-html-jvm/0.8.0/kotlinx-html-jvm-0.8.0.jar",
+      "sha256": "712184b0733445f05d2bea8051330c73de3abd9b393be0af304b77b7cee12f14",
+      "size": 796175
+    },
+    {
+      "coordinate": "org.freemarker:freemarker:2.3.31",
+      "filename": "freemarker-2.3.31.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/freemarker/freemarker/2.3.31/freemarker-2.3.31.jar",
+      "sha256": "68ecb4c5aa4934b7b50c38b0e495d7589e52dfb9d28b964ac2008b72090bfaae",
+      "size": 1715750
+    }
+  ]
 }
