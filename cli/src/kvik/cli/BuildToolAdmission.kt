@@ -3,7 +3,7 @@ package kvik.cli
 
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
-import kvik.core.Digest
+import kvik.core.*
 import platform.posix.usleep
 
 /** One invocation's admission receipts, never tool layouts or a cache of per-action verification.
@@ -62,4 +62,15 @@ internal class BuildToolAdmission(
         checkpoint()
         check(complete) { "Tool verification failed during admission" }
     }
+}
+
+internal data class BuildCompletion(val status: VerificationStatus, val exitStatus: ExitStatus)
+
+/** Admission may make a successful/incomplete run incomplete; it cannot erase observed failure. */
+internal fun buildCompletion(observed: VerificationStatus, setupFailure: ExitStatus?, cancelled: Boolean): BuildCompletion = when {
+    cancelled || observed == VerificationStatus.CANCELLED -> BuildCompletion(VerificationStatus.CANCELLED, ExitStatus.CANCELLED)
+    observed == VerificationStatus.FAILED -> BuildCompletion(VerificationStatus.FAILED, ExitStatus.FAILED)
+    setupFailure != null -> BuildCompletion(if (setupFailure == ExitStatus.INCOMPLETE) VerificationStatus.INCOMPLETE else VerificationStatus.FAILED, setupFailure)
+    observed == VerificationStatus.INCOMPLETE -> BuildCompletion(VerificationStatus.INCOMPLETE, ExitStatus.INCOMPLETE)
+    else -> BuildCompletion(VerificationStatus.PASSED, ExitStatus.SUCCESS)
 }

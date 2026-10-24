@@ -343,12 +343,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             reproduction, fresh, cancelled)
         // Setup/journal-independent runtime errors are actual failures even when no action could start.
         cancelled = cancelled || kvik_interrupt_requested() != 0
-        var record = when {
-            cancelled -> evidence.record.copy(status = VerificationStatus.CANCELLED)
-            failedSetup && failureExit == ExitStatus.INCOMPLETE -> evidence.record.copy(status = VerificationStatus.INCOMPLETE)
-            failedSetup -> evidence.record.copy(status = VerificationStatus.FAILED)
-            else -> evidence.record
-        }
+        var record = evidence.record.copy(status = buildCompletion(evidence.record.status,
+            if (failedSetup) failureExit else null, cancelled).status)
         var prepared: PreparedRun? = null
         if (mode == ProjectMode.APPLICATION && record.status == VerificationStatus.PASSED) {
             try {
@@ -401,15 +397,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             "journal" to Sha256.digest(NativeFiles.read("${run.path}/events.jsonl", 16 * 1024 * 1024)).toJson()).canonical().encodeToByteArray())
         NativeFiles.syncDirectory(run.path)
         println(finished.toJson().canonical())
-        val status = when {
-            cancelled -> ExitStatus.CANCELLED
-            failedSetup -> failureExit
-            record.status == VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
-            else -> evidence.exitStatus
-        }
+        val status = buildCompletion(evidence.record.status,
+            if (failedSetup) failureExit else if (record.status == VerificationStatus.INCOMPLETE) ExitStatus.INCOMPLETE else null,
+            cancelled || record.status == VerificationStatus.CANCELLED).exitStatus
         val scriptExit = if (scriptFile == null) status.code else when {
-            cancelled -> ExitStatus.CANCELLED.code
-            failedSetup -> failureExit.code
+            status == ExitStatus.CANCELLED -> ExitStatus.CANCELLED.code
+            failedSetup -> status.code
             scriptObservation?.phase == JvmScriptPhase.MAIN_DISCOVERY -> ExitStatus.INVALID_CONFIGURATION.code
             scriptObservation?.processResult?.cancelled == true || scriptObservation?.cancelRequested == true -> ExitStatus.CANCELLED.code
             scriptObservation?.processResult?.timedOut == true -> 124
