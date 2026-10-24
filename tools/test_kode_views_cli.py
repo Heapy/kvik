@@ -120,6 +120,26 @@ def main():
         view = save(production, 'production')
         tree = store('tree', 'fixture', '--rev', base, '--view', view)
         assert {e['path'] for e in tree['entries']} == paths(production)
+        page = store('tree-page', 'fixture', '--rev', base, '--view', view, '--limit', '2')
+        paged = list(page['entries'])
+        while page['nextCursor'] is not None:
+            page = store('tree-page', 'fixture', '--rev', base, '--view', view,
+                         '--limit', '2', '--cursor', page['nextCursor'])
+            paged.extend(page['entries'])
+        assert page['complete'] and len(paged) == len(paths(production))
+        assert {entry['path'] for entry in paged} == paths(production)
+        request = save(dict(schemaVersion=1, revision=base, reads=[
+            dict(path='sub/common/Common.kt', startLine=1, endLine=1, before=2, after=2),
+            dict(path='sub/jvm/Main.kt')]), 'reads')
+        batch = store('read-batch', 'fixture', '--rev', base, '--view', view, '--reads', request)
+        assert batch['revision'] == base
+        assert [entry['path'] for entry in batch['files']] == ['sub/common/Common.kt', 'sub/jvm/Main.kt']
+        assert batch['files'][0]['content'] == files['sub/common/Common.kt'].rstrip('\n')
+        hidden_request = save(dict(schemaVersion=1, reads=[dict(path='sub/common/Common.kt'),
+                                                          dict(path='sub/test/Test.kt')]), 'hidden-reads')
+        denied = store('read-batch', 'fixture', '--rev', base, '--view', view,
+                       '--reads', hidden_request, expected=1)
+        assert denied.stdout == b''
         visible = store('read', 'fixture', 'sub/common/Common.kt', '--rev', base, '--view', view, '--raw', raw=True)
         assert visible.stdout.decode() == files['sub/common/Common.kt']
         for suffix in ([], ['--raw']):
@@ -173,7 +193,7 @@ def main():
         invalid['modules'][0]['sourceSets'][0]['directories'] = ['notes.txt/missing']
         bad = tx(base, {'sub/kvik.json': json.dumps(invalid)})
         export(bad, 'production', expected=2)
-        print('PASS derived tags, pinned projections, offline export, full-tree merges and hidden conflicts')
+        print('PASS derived tags, pinned projections, bounded reads/pages, offline export, full-tree merges and hidden conflicts')
 
 
 if __name__ == '__main__':

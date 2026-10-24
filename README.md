@@ -163,6 +163,37 @@ trees and reports every conflict, with `hiddenConflicts` identifying paths outsi
 the projection. View filters are not edit permissions. Offline view export needs
 a cached immutable inventory and configuration; it does not need source-file bytes.
 
+For several source windows in one call, pass a request file to Kode:
+
+```json
+{"schemaVersion":1,"reads":[
+  {"path":"sub/src/Main.kt","startLine":40,"endLine":60,"before":3,"after":3},
+  {"path":"sub/test/MainTest.kt","startLine":1,"endLine":80}
+]}
+```
+
+```sh
+/absolute/bin/kode --home /absolute/kode-store read-batch library \
+  --rev IMMUTABLE_REVISION --reads reads.json
+/absolute/bin/kode --home /absolute/kode-store tree-page library \
+  --rev IMMUTABLE_REVISION --limit 100
+```
+
+Both commands accept `--view FILE`. Batch reads preserve request order and return
+each file's blob identity, requested range, actual context range and total lines.
+Missing, hidden, binary or oversized files fail the whole request. Each file's
+`next` value is a ready-to-use request document for the next window; it includes
+the immutable revision. Defaults are 200 lines and no context. Limits are 128
+windows, 1,000 requested lines per window, 100 context lines on either side,
+8 MiB per file, 32 MiB of unique file bytes and 16 MiB of response JSON.
+
+`tree-page` returns up to `--limit` entries (default 200, maximum 1,000), `total`,
+`complete` and `nextCursor`. Pass the returned cursor string as `--cursor` for the
+next page. Cursors bind the project, revision, path prefix and view; a moving
+reference or changed filter is rejected. Use the returned immutable revision to
+continue the original snapshot. Tree pages reduce returned data; the current
+implementation still scans the full tree internally.
+
 Kode can propose a text-first identifier rename in `.kt` and `.kts` sources:
 
 ```sh
