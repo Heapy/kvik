@@ -97,6 +97,7 @@ def main():
             sdk = tools['roots']['iosSimulatorSdk' if simulator else 'iosSdk']
             triple = 'arm64-apple-ios15.0' + ('-simulator' if simulator else '')
             result = subprocess.run(['xcrun', 'swiftc', '-typecheck', '-target', triple, '-sdk', sdk,
+                '-module-cache-path', str(project/'.swift-module-cache'),
                 '-F', str(Path(item['framework']).parent), str(project/'Consumer.swift')],
                 capture_output=True, text=True, timeout=90)
             assert result.returncode == 0, result.stdout + result.stderr

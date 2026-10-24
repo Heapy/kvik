@@ -60,6 +60,25 @@ class RunEvidenceTest {
             actions = listOf(result("main", ActionStatus.LOCAL_HIT)), reports = emptyMap()).exitStatus)
     }
 
+    @Test fun iosBuildAndPackageResultsRoundTripWithoutClaimingTestOrApplicationExecution() {
+        for (target in listOf("iosArm64", "iosSimulatorArm64")) {
+            for (mode in listOf("build", "package")) {
+                val check = "app:$target:$mode"
+                val evidence = aggregate(checks = setOf(check), terminals = mapOf(check to "main"),
+                    dependencies = graph - "tests", actions = listOf(result("main", ActionStatus.LOCAL_HIT), result("base")),
+                    reports = emptyMap())
+                assertEquals(ExitStatus.SUCCESS, evidence.exitStatus)
+                assertEquals(setOf(check), evidence.record.completedChecks)
+                assertEquals(evidence.record, verificationRecordFromJson(evidence.record.toJson()))
+                assertTrue(evidence.record.tests.isEmpty())
+            }
+            for (mode in listOf("test", "application")) assertFailsWith<IllegalArgumentException> {
+                aggregate(checks = setOf("app:$target:$mode"), terminals = emptyMap(), dependencies = emptyMap(),
+                    actions = emptyList(), reports = emptyMap())
+            }
+        }
+    }
+
     @Test fun emptyOrPartialSetupNeverProvesChecks() {
         for (checks in listOf(setOf("app:jvm:test"), setOf("app:jvm:build"))) {
             val evidence = aggregate(checks, emptyMap(), emptyMap(), emptyList(), emptyMap())
