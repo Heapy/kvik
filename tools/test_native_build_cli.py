@@ -124,6 +124,26 @@ class AnswerTest {
     assert {action['actionId']: action['key'] for action in cold['actions']} == {action['actionId']: action['key'] for action in repeated['actions']}
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':test') else 'local_hit') for action in repeated['actions'])
     check_run_journal(executable, run, validate)
+    original_tools = (project/'tools.json').read_bytes()
+    unavailable = json.loads(original_tools)
+    unavailable['roots'] = {key: str(project/'.kvik/absent-tools'/key) for key in unavailable['roots']}
+    unavailable['konanData'] = str(project/'.kvik/absent-tools/data')
+    unavailable['compilerArtifacts'] = str(project/'.kvik/absent-tools/compiler-artifacts')
+    try:
+        write('tools.json', json.dumps(unavailable))
+        cached, run = invoke('cached-test-without-installations')
+        assert {a['actionId']: a['key'] for a in cached['actions']} == {a['actionId']: a['key'] for a in repeated['actions']}
+        assert all(a['status'] == ('executed' if a['actionId'].endswith(':test') else 'local_hit') for a in cached['actions'])
+        current = subprocess.run([str(executable), 'verification', '--run', str(run)], capture_output=True,
+                                 text=True, timeout=90)
+        write('cached-without-installations-query.json', current.stdout)
+        write('cached-without-installations-query.stderr.log', current.stderr)
+        assert current.returncode == 0, current.stdout + current.stderr
+        value = json.loads(current.stdout)
+        validate(value, 'verificationQuery')
+        assert value['freshness'] == 'current'
+    finally:
+        (project/'tools.json').write_bytes(original_tools)
     write('consumer/test/Tests.kt', test_source.replace('assertEquals(42,', 'assertEquals(43,'))
     query = subprocess.run([str(executable), 'verification', '--run', str(run)], capture_output=True, text=True, timeout=90)
     write('stale-query.json', query.stdout)

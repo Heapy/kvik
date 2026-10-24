@@ -94,7 +94,7 @@ class PassingTests {
     environment = dict(os.environ)
     environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     summaries = []
-    def invoke(label, command, extra=(), expected=0):
+    def invoke(label, command, extra=(), expected=0, status='passed'):
         arguments = [str(executable), command, '--project', str(project/'kvik.json'), *extra]
         if command in ('build', 'test'):
             arguments += ['--tools', str(project/'tools.json'), '--module', 'consumer', '--target', 'jvm', '--offline']
@@ -110,13 +110,18 @@ class PassingTests {
             assert values[0]['type'] == 'run-started' and values[-1]['type'] == 'run-finished'
             record = values[-1]['payload']
             validate(record, 'verification')
-            assert record['status'] == 'passed' and record['freshnessAtCompletion'] == 'current'
+            assert record['status'] == status and record['freshnessAtCompletion'] == 'current'
             run = project/'.kvik/runs'/record['runId']
             assert json.loads((run/'verification.json').read_text()) == record
             assert (run/'events.jsonl').read_text() == result.stdout
             if command == 'test':
-                assert record['testCounts']['executed'] == 1 and record['testCounts']['discoveryComplete']
-                assert len(list(run.glob('kvik-run-*/effects.txt'))) == 1
+                if status == 'passed':
+                    assert record['testCounts']['executed'] == 1 and record['testCounts']['discoveryComplete']
+                    assert len(list(run.glob('kvik-run-*/effects.txt'))) == 1
+                else:
+                    assert record['testCounts']['executed'] == 0
+                    assert not list(run.glob('kvik-run-*/effects.txt'))
+                    assert not list(run.glob('kvik-run-*/worker.stdout')), 'JDK verification must precede worker launch'
             summaries.append(dict(label=label, seconds=time.monotonic()-started, run=str(run), actions=record['actions']))
             print('PASS', label, round(summaries[-1]['seconds'], 3), 'seconds', flush=True)
             return record
@@ -131,9 +136,35 @@ class PassingTests {
     assert {action['actionId']: action['key'] for action in first['actions']} == {action['actionId']: action['key'] for action in repeated['actions']}
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':test') else 'local_hit') for action in repeated['actions'])
     check_run_journal(executable, Path(summaries[-1]['run']), validate)
+    original_tools = (project/'tools.json').read_bytes()
+    unavailable = json.loads(original_tools)
+    unavailable['roots'] = {key: (value if key == 'jdk' else str(project/'.kvik/absent-tools'/key))
+                            for key, value in unavailable['roots'].items()}
+    unavailable['konanData'] = str(project/'.kvik/absent-tools/data')
+    unavailable['compilerArtifacts'] = str(project/'.kvik/absent-tools/compiler-artifacts')
+    try:
+        write('tools.json', json.dumps(unavailable))
+        cached = invoke('cached-test-without-compilers', 'test')
+        assert {a['actionId']: a['key'] for a in cached['actions']} == {a['actionId']: a['key'] for a in repeated['actions']}
+        assert all(a['status'] == ('executed' if a['actionId'].endswith(':test') else 'local_hit') for a in cached['actions'])
+        last_run = summaries[-1]['run']
+        current = subprocess.run([str(executable), 'verification', '--run', last_run], capture_output=True,
+                                 text=True, timeout=90, env=environment)
+        write('cached-without-compilers-query.json', current.stdout)
+        write('cached-without-compilers-query.stderr.log', current.stderr)
+        assert current.returncode == 0, current.stdout + current.stderr
+        query = json.loads(current.stdout)
+        validate(query, 'verificationQuery')
+        assert query['freshness'] == 'current'
+        unavailable['roots']['jdk'] = str(project/'.kvik/absent-tools/jdk')
+        write('tools.json', json.dumps(unavailable))
+        refused = invoke('cached-test-missing-jdk', 'test', expected=1, status='failed')
+        assert all(a['status'] == ('failed' if a['actionId'].endswith(':test') else 'local_hit') for a in refused['actions'])
+        assert any(unavailable['roots']['jdk'] in (a.get('diagnostic') or '') for a in refused['actions'])
+    finally:
+        (project/'tools.json').write_bytes(original_tools)
     # Source changes invalidate retained evidence even after the process exits.
     write('library/common/New.kt', 'package fixture\nfun added() = 1\n')
-    last_run = summaries[-1]['run']
     queried = subprocess.run([str(executable), 'verification', '--run', last_run], capture_output=True, text=True, timeout=90, env=environment)
     assert queried.returncode == 3, queried.stdout + queried.stderr
     query = json.loads(queried.stdout)
