@@ -68,7 +68,7 @@ class PomModelTest {
         val dependency = "<dependencies>" + dep("b", "<version>\${alias}</version>") + "</dependencies>"
         val harmless = "<profiles><profile><id>build</id><activation><jdk>[17,)</jdk></activation><properties><compiler>17</compiler></properties><build/></profile></profiles>"
         assertEquals("1", model(dependency, property + harmless).dependencies(runtime).single().version)
-        for (influence in listOf("<properties><v>2</v></properties>", "<dependencies/>", "<dependencyManagement/>", "<repositories/>")) {
+        for (influence in listOf("<properties><v>2</v></properties>", "<dependencyManagement/>", "<repositories/>")) {
             assertFails { model(dependency, property + "<profiles><profile><id>unsafe</id>$influence</profile></profiles>") }
         }
         for (bad in listOf("\${undefined}", "\${env.HOME}", "\${settings.localRepository}")) {

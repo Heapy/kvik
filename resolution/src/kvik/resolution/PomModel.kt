@@ -56,11 +56,37 @@ private fun coordinate(fields: Map<String, PomNode>): Coordinate {
 }
 
 internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordinate) -> PomNode): EffectivePom {
+    // Parent and BOM models share one bounded loader. Every consulted POM goes through the
+    // resolver callback once, so imported metadata participates in lock identity and replay.
+    val loaded = mutableMapOf(coordinate to root)
+    val complete = mutableMapOf<Coordinate, EffectivePom>()
+    val importing = mutableSetOf<Coordinate>()
+    fun model(requested: Coordinate): PomNode = loaded.getOrPut(requested) {
+        require(loaded.size < 256) { "POM parent/import model bound exceeded" }
+        parent(requested)
+    }
+    fun build(requested: Coordinate, document: PomNode): EffectivePom {
+        complete[requested]?.let { return it }
+        require(importing.add(requested)) { "POM dependency-management import cycle: $requested" }
+        require(importing.size <= 16) { "POM import depth exceeded" }
+        try {
+            return buildEffectivePom(requested, document, ::model, { imported ->
+                val bom = model(imported)
+                require(bom.value("packaging") == "pom") { "Imported BOM must have POM packaging" }
+                build(imported, bom)
+            }, importing.size).also { complete[requested] = it }
+        } finally { importing.remove(requested) }
+    }
+    return build(coordinate, root)
+}
+
+private fun buildEffectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordinate) -> PomNode,
+                              imported: (Coordinate) -> EffectivePom, importDepth: Int): EffectivePom {
     val ancestry = mutableListOf<Pair<Coordinate, PomNode>>()
     val active = mutableSetOf<Coordinate>()
     fun load(expected: Coordinate, model: PomNode) {
         require(active.add(expected)) { "Parent POM ancestry cycle: $expected" }
-        require(active.size <= 16) { "Parent POM ancestry depth exceeded" }
+        require(active.size + importDepth - 1 <= 16) { "Parent/import POM ancestry depth exceeded" }
         require(model.name == "project" && model.value("modelVersion") == "4.0.0") { "Unsupported POM model" }
         val allowed = setOf("modelVersion", "parent", "groupId", "artifactId", "version", "packaging", "dependencies", "dependencyManagement", "name", "description", "url", "licenses", "developers", "contributors", "scm", "organization", "issueManagement", "ciManagement", "inceptionYear", "properties", "build", "distributionManagement", "modules", "profiles", "reporting", "mailingLists", "prerequisites", "repositories")
         val unsupported = model.children.map { it.name }.filter { it !in allowed }.distinct().sorted()
@@ -92,6 +118,7 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
 
     val properties = linkedMapOf<String, String>()
     val profileProperties = mutableSetOf<String>()
+    val profileDependencies = mutableListOf<PomNode>()
     for ((owner, model) in ancestry) {
         model.child("properties")?.let { props ->
             props.children.forEach { property ->
@@ -106,10 +133,11 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
         model.child("profiles")?.let { profiles ->
             require(profiles.children.all { it.name == "profile" }) { "Invalid POM profiles" }
             for (profile in profiles.children) {
-                val unsupported = profile.children.map { it.name }.filter { it !in setOf("id", "activation", "build", "reporting", "modules", "properties") }.distinct().sorted()
+                val unsupported = profile.children.map { it.name }.filter { it !in setOf("id", "activation", "build", "reporting", "modules", "properties", "dependencies") }.distinct().sorted()
                 require(unsupported.isEmpty()) { "Resolution-affecting POM profile fields unsupported: ${unsupported.joinToString()}" }
                 profile.children.forEach { profile.child(it.name) }
                 profile.child("properties")?.children?.forEach { profileProperties += it.name }
+                profile.child("dependencies")?.let { profileDependencies += it }
             }
         }
     }
@@ -147,7 +175,6 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
         val managed = model.child("dependencyManagement")
         require(managed == null || managed.children.all { it.name == "dependencies" }) { "Unsupported dependencyManagement fields" }
         for (fields in declarations(managed?.child("dependencies"))) {
-            require(fields.scalar("scope") != "import") { "POM management imports unsupported" }
             val key = dependencyKey(fields, literal = false)
             management.getOrPut(key) { fields }
         }
@@ -165,9 +192,37 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
         }
         return result
     }
-    val effectiveManagement = expanded(management.values)
-    require(effectiveManagement.values.none { it.scalar("scope") == "import" }) { "POM management imports unsupported" }
-    return EffectivePom(root.value("packaging") ?: "jar", expanded(dependencies.values).values.toList(), effectiveManagement)
+    val managementDeclarations = expanded(management.values)
+    require(managementDeclarations.size <= 10000) { "POM dependency-management entry bound exceeded" }
+    // Maven inherits child/parent entries before importing BOMs. Explicit management wins
+    // regardless of XML order, then the first imported definition wins among BOMs.
+    val effectiveManagement = managementDeclarations.filterValues { it.scalar("scope") != "import" }.toMutableMap()
+    for (fields in managementDeclarations.values.filter { it.scalar("scope") == "import" }) {
+        require(fields.keys == setOf("groupId", "artifactId", "version", "type", "scope") && fields.scalar("type") == "pom") {
+            "BOM import requires exactly a POM coordinate and import scope"
+        }
+        val bom = Coordinate(fields.scalar("groupId")!!, fields.scalar("artifactId")!!, fields.scalar("version")!!)
+        require(!bom.version.lowercase().endsWith("-snapshot") && bom.version.lowercase() !in setOf("latest", "release") &&
+            !bom.version.lowercase().startsWith("latest.")) { "Mutable BOM version unsupported" }
+        for ((key, value) in imported(bom).management) effectiveManagement.getOrPut(key) { value }
+        require(effectiveManagement.size <= 10000) { "POM dependency-management entry bound exceeded" }
+    }
+    val effectiveDependencies = expanded(dependencies.values)
+    for (profile in profileDependencies) for (raw in declarations(profile)) {
+        // A profile-local test dependency is harmless only if it cannot replace an inherited
+        // or local consumer dependency. No activation condition is guessed from this host.
+        require(raw.scalar("scope") == "test") { "Resolution-affecting POM profile dependency unsupported" }
+        val identityFields = raw.filterKeys { it in setOf("groupId", "artifactId", "type", "classifier") }
+            .mapValues { (_, field) -> field.copy(text = interpolate(field.text)) }
+        val key = dependencyKey(identityFields)
+        effectiveDependencies[key]?.let { existing ->
+            val effective = (effectiveManagement[key].orEmpty() - "optional") + existing
+            require(effective.scalar("scope") in setOf("test", "provided") || effective.scalar("optional") == "true") {
+                "POM profile test dependency can override a consumer dependency: $key"
+            }
+        }
+    }
+    return EffectivePom(root.value("packaging") ?: "jar", effectiveDependencies.values.toList(), effectiveManagement)
 }
 
 /** Snapshot versions are rejected by the resolver, so literal release-disabled repositories
