@@ -9624,6 +9624,409 @@
         }
       ]
     },
+    "configurationEditOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-dependency"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "sourceSet": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "dependency": {
+              "$ref": "#/$defs/dependency"
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "sourceSet",
+            "dependency"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-dependency-version"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "sourceSet": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "package": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "sourceSet",
+            "package",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-dependency"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "sourceSet": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "selector": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "package": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    }
+                  },
+                  "required": [
+                    "package"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "module": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                    }
+                  },
+                  "required": [
+                    "module"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "sourceSet",
+            "selector"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-target"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "target": {
+              "$ref": "#/$defs/target"
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "target"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-target"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "target": {
+              "enum": [
+                "jvm",
+                "macosArm64",
+                "linuxX64",
+                "iosArm64",
+                "iosSimulatorArm64"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "target"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "configurationEdits": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/configurationEditOperation"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "configurationValidation": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "configuration-validation"
+        },
+        "status": {
+          "const": "valid"
+        },
+        "configurationFile": {
+          "$ref": "#/$defs/digest"
+        },
+        "effectiveConfiguration": {
+          "$ref": "#/$defs/digest"
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          }
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sourceReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "status",
+        "configurationFile",
+        "effectiveConfiguration",
+        "modules",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "configurationEditPlan": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "configuration-edit-plan"
+        },
+        "root": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "lock": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "store": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "pins": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+              }
+            },
+            "scopedPins": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "\\S"
+              }
+            },
+            "metadataExclusions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/scopedMetadataExclusion"
+              }
+            }
+          },
+          "required": [
+            "pins",
+            "scopedPins",
+            "metadataExclusions"
+          ],
+          "additionalProperties": false
+        },
+        "edits": {
+          "$ref": "#/$defs/configurationEdits"
+        },
+        "effectiveConfiguration": {
+          "$ref": "#/$defs/digest"
+        },
+        "configuration": {
+          "type": "object",
+          "properties": {
+            "before": {
+              "$ref": "#/$defs/digest"
+            },
+            "after": {
+              "$ref": "#/$defs/digest"
+            },
+            "beforeContent": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "before",
+            "after",
+            "beforeContent",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        "dependencyLock": {
+          "type": "object",
+          "properties": {
+            "before": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after": {
+              "$ref": "#/$defs/digest"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "before",
+            "after",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "root",
+        "project",
+        "lock",
+        "store",
+        "policy",
+        "edits",
+        "effectiveConfiguration",
+        "configuration",
+        "dependencyLock"
+      ],
+      "additionalProperties": false
+    },
+    "configurationEditResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "configuration-edit-result"
+        },
+        "plan": {
+          "$ref": "#/$defs/digest"
+        },
+        "status": {
+          "enum": [
+            "applied",
+            "unchanged",
+            "recovered"
+          ]
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLock": {
+          "$ref": "#/$defs/digest"
+        },
+        "directory": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "plan",
+        "status",
+        "configuration",
+        "dependencyLock",
+        "directory"
+      ],
+      "additionalProperties": false
+    },
     "affectedCheckSelection": {
       "type": "object",
       "properties": {
@@ -10773,6 +11176,154 @@
         "selections",
         "artifacts",
         "metadata"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "operation": {
+                "const": "resolve"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "changed",
+              "transaction"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "changed"
+                  ]
+                },
+                {
+                  "required": [
+                    "transaction"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "changed"
+            ],
+            "properties": {
+              "changed": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "transaction": {
+                "$ref": "#/$defs/kodeTransactionProposal"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "transaction": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "configurationSourceEditPlan": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "operation": {
+          "enum": [
+            "resolve",
+            "check-lock"
+          ]
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLock": {
+          "$ref": "#/$defs/digest"
+        },
+        "lockPath": {
+          "type": "string"
+        },
+        "selections": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "artifacts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "metadata": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "transaction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/kodeTransactionProposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "configuration-edit-source-plan"
+        },
+        "edits": {
+          "$ref": "#/$defs/configurationEdits"
+        },
+        "configurationFile": {
+          "$ref": "#/$defs/digest"
+        },
+        "proposedConfiguration": {
+          "$ref": "#/$defs/project"
+        },
+        "proposedConfigurationFile": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "operation",
+        "configuration",
+        "dependencyLock",
+        "lockPath",
+        "selections",
+        "artifacts",
+        "metadata",
+        "source",
+        "kind",
+        "edits",
+        "configurationFile",
+        "proposedConfiguration",
+        "proposedConfigurationFile"
       ],
       "additionalProperties": false,
       "allOf": [

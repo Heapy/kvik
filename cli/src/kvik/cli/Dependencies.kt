@@ -14,7 +14,7 @@ import platform.posix.*
 private const val LOCK_LIMIT = 16 * 1024 * 1024
 private const val PUBLICATION_LOCK = ".kvik-dependency-publication.lock"
 
-private fun sameEntry(left: String, right: String): Boolean = memScoped {
+internal fun sameEntry(left: String, right: String): Boolean = memScoped {
     val a = alloc<stat>()
     val b = alloc<stat>()
     if (lstat(left, a.ptr) != 0) { if (errno == ENOENT) return false; NativeFiles.fail("lstat $left") }
@@ -54,12 +54,15 @@ private fun existingLock(path: String): Digest? {
     return Sha256.digest(NativeFiles.read(path, LOCK_LIMIT))
 }
 
+internal fun <T> withDependencyPublicationLock(destination: String, action: () -> T): T =
+    NativeFiles.withLock("${destination.substringBeforeLast('/')}/$PUBLICATION_LOCK", action)
+
 /** Only explicit resolve publishes. Concurrent edits are checked under a persistent publication lock. */
 private fun publishLock(configurationPath: String, configurationBytes: ByteArray, destination: String, previous: Digest?, bytes: ByteArray) {
     val parent = destination.substringBeforeLast('/')
     // One persistent inode per destination directory also coordinates different projects
     // and case/Unicode aliases of the same destination filename.
-    NativeFiles.withLock("$parent/$PUBLICATION_LOCK") {
+    withDependencyPublicationLock(destination) {
         require(!sameEntry(destination, configurationPath)) { "Dependency lock cannot overwrite project configuration through a path alias" }
         if (existingLock(destination) != previous || !NativeFiles.read(configurationPath, 4 * 1024 * 1024).contentEquals(configurationBytes)) {
             throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, "Project or dependency lock changed during resolution; retry", ExitStatus.INCOMPLETE)
@@ -95,7 +98,11 @@ internal fun dependencyOperation(options: ProjectOptions, root: String, configur
                                  effective: EffectiveConfiguration, updateRequested: Boolean): JsonValue {
     val destination = projectPath(root, options.lock)
     val store = projectPath(root, options.store)
-    require(destination.substringAfterLast('/').lowercase() != PUBLICATION_LOCK) { "Dependency lock cannot replace its publication coordination file" }
+    require(destination.substringAfterLast('/').lowercase() !in setOf(PUBLICATION_LOCK, ".kvik-configuration-publication.lock")) { "Dependency lock cannot replace its publication coordination file" }
+    for (coordination in listOf("${configurationPath.substringBeforeLast('/')}/.kvik-configuration-publication.lock",
+        "${destination.substringBeforeLast('/')}/$PUBLICATION_LOCK")) require(!pathsPhysicallyOverlap(destination, coordination)) {
+        "Dependency lock cannot replace a publication coordination file through a path alias"
+    }
     require(destination != configurationPath && !sameEntry(destination, configurationPath)) { "Dependency lock cannot overwrite project configuration through a path alias" }
     require(lockOutsideStore(destination, store)) { "Dependency lock must be outside the content store" }
     val update = updateRequested && !options.offline

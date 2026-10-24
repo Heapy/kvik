@@ -26,7 +26,8 @@ internal fun replacementProjectOption(args: List<String>): Pair<String?, List<St
 
 /** Resolving a revision changes only local caches. Publication is an explicit Kode transaction. */
 internal fun sourceDependencyCommand(source: KodeProjectOptions, options: ProjectOptions,
-                                     updateRequested: Boolean, replacement: String?): JsonValue {
+                                     updateRequested: Boolean, replacement: String?, configurationEdit: JsonValue? = null): JsonValue {
+    require(replacement == null || configurationEdit == null) { "Select replacement or structured configuration edits" }
     val store = projectPath(currentDirectory(), options.store)
     val replacementPath = replacement?.let { projectPath(currentDirectory(), it) }
     if (replacementPath != null) require(!pathsPhysicallyOverlap(store, replacementPath)) {
@@ -43,9 +44,20 @@ internal fun sourceDependencyCommand(source: KodeProjectOptions, options: Projec
             val previous = prepared.entry(lockPath)
             val update = updateRequested && !options.offline
             // Capture the replacement once. The proposal embeds these exact bytes, never a mutable local path.
-            val bytes = replacementPath?.let { NativeFiles.read(it, 4 * 1024 * 1024) } ?: project.bytes
-            val configuration = if (replacementPath == null) prepared.project.configuration
+            val transformed = configurationEdit?.let { editProjectConfiguration(prepared.project.configuration, it) }
+            val bytes = if (transformed != null && transformed.document != prepared.project.configuration.document)
+                (transformed.document.canonical() + "\n").encodeToByteArray()
+                else replacementPath?.let { NativeFiles.read(it, 4 * 1024 * 1024) } ?: project.bytes
+            val configuration = transformed ?: if (replacementPath == null) prepared.project.configuration
                 else parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+            require(bytes.size <= 4 * 1024 * 1024) { "Edited source configuration exceeds 4 MiB" }
+            if (configurationEdit != null) {
+                for (candidate in listOf(prepared.project.configuration, configuration)) {
+                    require(configurationEditInputs(candidate).paths.none { input ->
+                        input == lockPath || input.value.startsWith("${lockPath.value}/") || lockPath.value.startsWith("${input.value}/")
+                    }) { "Configuration edit lock overlaps a declared source input" }
+                }
+            }
             val effective = effectiveConfiguration(configuration, options.resolverPolicy())
             val oldLock = previous?.let { prepared.read(it, store, 16 * 1024 * 1024) }
             val content = if (options.offline) null else NativeContentStore(store, maxBlobBytes = maxOf(effective.maxArtifactBytes, 16 * 1024 * 1024))
@@ -95,13 +107,18 @@ internal fun sourceDependencyCommand(source: KodeProjectOptions, options: Projec
                 "lockPath" to prepared.revisionPath(lockPath).value.json(),
                 "selections" to lock.selections.size.json(), "artifacts" to lock.selections.flatMap { it.artifacts }.map { it.digest }.distinct().size.json(),
                 "metadata" to lock.selections.flatMap { it.metadata }.map { it.digest }.distinct().size.json())
-            if (!update) result else JsonValue.Object(result.objectValue() + mapOf(
+            val proposal = if (!update) result else JsonValue.Object(result.objectValue() + mapOf(
                 "changed" to operations.isNotEmpty().json(),
                 "transaction" to if (operations.isEmpty()) JsonValue.Null else obj(
                     "base" to prepared.reference.provenance.revision.json(),
                     "expectHead" to prepared.reference.provenance.revision.json(),
-                    "intent" to (if (replacement == null) "Update dependency lock" else "Update project configuration and dependency lock").json(),
+                    "intent" to (if (replacement == null && configurationEdit == null) "Update dependency lock" else "Update project configuration and dependency lock").json(),
                     "operations" to obj("schemaVersion" to 1.json(), "operations" to operations.json()))))
+            if (configurationEdit == null) proposal else JsonValue.Object(proposal.values + mapOf(
+                "kind" to "configuration-edit-source-plan".json(), "edits" to configurationEdit,
+                "configurationFile" to Sha256.digest(project.bytes).toJson(),
+                "proposedConfiguration" to configuration.document,
+                "proposedConfigurationFile" to Sha256.digest(bytes).toJson()))
         }
     } finally { kvik_interrupt_restore() }
 }

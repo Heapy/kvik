@@ -19,6 +19,83 @@ With tools matching the explicitly provisioned host lock:
 
 `resolve` explicitly publishes `kvik.lock.json` and fills `.kvik/cache` relative to the project. `--store` selects a shared content store, `--lock` selects a lockfile, and repeated `--pin group:artifact:version` options declare resolver policy. Supply the same pins to inspection and lock checks. `check-lock` verifies the lock and cached artifacts without downloading or repairing anything. `resolve --offline` also performs only that check; the launcher's `--offline` propagates to dependency commands. Publication uses a persistent `.kvik-dependency-publication.lock` in the destination directory and rejects configuration/lock changes observed during resolution. See [CLI dependency evidence](docs/evidence/k09-dependency-cli.md).
 
+### Configuration changes
+
+`config validate` parses the configuration and validates the project graph and
+resolver policy. It does not check a dependency lock or contact repositories.
+`config plan` applies a batch of structured edits in memory, validates the resulting
+project, and resolves its dependency lock. It returns the proposed configuration
+and lock contents with digests of the original files; the original files stay
+unchanged. Dependency resolution may populate the content store.
+
+```sh
+./kvik --no-build -- config validate --project /absolute/project/kvik.json
+./kvik --no-build -- config plan --project /absolute/project/kvik.json \
+  --edits edits.json > configuration-plan.json
+# Inspect configuration.content and dependencyLock.content before applying.
+./kvik --no-build -- config apply --plan configuration-plan.json
+```
+
+An edit batch has `schemaVersion: 1` and one to 128 `operations`, for example:
+
+```json
+{
+  "schemaVersion": 1,
+  "operations": [
+    {"op": "set-dependency-version", "module": "app", "sourceSet": "main",
+     "package": "org.jetbrains.kotlinx:kotlinx-coroutines-core", "version": "1.10.2"},
+    {"op": "set-target", "module": "app",
+     "target": {"name": "jvm", "main": "main", "test": "test", "compilerOptions": ["-Werror"]}}
+  ]
+}
+```
+
+The operations are:
+
+- `set-dependency`: supply `module`, `sourceSet`, and a complete `dependency`
+  object from the project schema. Adds or replaces by package or workspace-module
+  identity, rejecting ambiguous duplicates.
+- `set-dependency-version`: supply `module`, `sourceSet`, `package` (`group:artifact`),
+  and `version`. Updates one existing external dependency, preserving scope and export settings.
+- `remove-dependency`: supply `module`, `sourceSet`, and `selector`, either
+  `{"package":"group:artifact"}` or `{"module":"library"}`. Requires one match.
+- `set-target`: supply `module` and a complete `target` object. Adds or replaces
+  by target name.
+- `remove-target`: supply `module` and `target` (the target name). Requires an existing target.
+
+The entire batch must produce a valid project; coordinated edits can temporarily
+invalidate the graph between operations. Unrelated authoring fields are preserved.
+Changed JSON is canonicalized, so formatting may change. The version in the example
+is illustrative; `packages versions` lists repository versions before choosing one.
+The edit and result schemas are in [contracts.json](schemas/v1/contracts.json), under
+`configurationEdits`, `configurationValidation`, `configurationEditPlan`,
+`configurationEditResult`, and `configurationSourceEditPlan`.
+
+Planning accepts the usual `--store`, `--lock`, and resolver policy options. A local
+lock must be inside the configuration directory, separate from source inputs and
+the content store. `--offline` requires an existing lock compatible with the edited
+configuration; it cannot resolve new dependencies. Applying a plan uses its recorded
+paths and policy, verifies cached dependencies without network access, and rejects
+changed configuration or lock bytes with `KVIK_EDIT_CONFLICT` (exit 3).
+
+Local application serializes cooperating Kvik publishers and retains an intent in
+`.kvik/configuration-edits`. The two files are replaced individually, so readers
+can briefly see a mismatched pair; normal lock validation rejects that pair.
+After interruption, repeat `config apply` with the same plan to finish publication.
+A repeated completed application returns `unchanged`. If another editor changes
+either file during recovery, application refuses to overwrite it; inspect the files
+and plan again. External editors do not take Kvik's locks, so they are checked
+before each replacement but are not excluded for the entire operation. There is
+no automatic rollback over another editor's changes.
+
+`config validate` and `config plan` also accept the revision source flags
+`--kode`, `--kode-home`, `--source-project`, and `--revision`. A revision-backed
+plan returns a Kode transaction with head and blob preconditions, using the same
+explicit `kode tx` workflow described below for revision-backed `resolve`.
+It publishes configuration and lock together in one revision. Local `config apply`
+accepts local file plans only. An offline revision plan checks lock compatibility
+and does not propose a transaction.
+
 Package queries return versioned JSON for agents:
 
 ```sh

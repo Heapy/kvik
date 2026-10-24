@@ -1,0 +1,101 @@
+package kvik.core
+
+/**
+ * Apply an atomic, declarative edit batch to the authoring document without reserializing its model.
+ * Unrelated fields and omitted defaults remain exactly as authored. Operation envelopes and lookup
+ * identities are checked immediately; the existing project parser validates the final document once,
+ * so coordinated edits may pass through temporarily invalid dependency/target graphs.
+ */
+fun editProjectConfiguration(configuration: ProjectConfiguration, edits: JsonValue): ProjectConfiguration {
+    val batch = edits.fields(setOf("schemaVersion", "operations"))
+    batch.requireVersion()
+    val operations = batch.getValue("operations").arrayValue()
+    require(operations.size in 1..128) { "Configuration edits require 1 to 128 operations" }
+    var document = configuration.document
+    for (operation in operations) {
+        val name = operation.objectValue().getValue("op").stringValue()
+        val fields = operation.fields(when (name) {
+            "set-dependency" -> setOf("op", "module", "sourceSet", "dependency")
+            "set-dependency-version" -> setOf("op", "module", "sourceSet", "package", "version")
+            "remove-dependency" -> setOf("op", "module", "sourceSet", "selector")
+            "set-target", "remove-target" -> setOf("op", "module", "target")
+            else -> throw IllegalArgumentException("Unknown configuration edit operation: $name")
+        })
+        val moduleId = fields.getValue("module").stringValue()
+        val modules = document.values.getValue("modules").arrayValue().toMutableList()
+        val moduleIndex = editIndex(modules, "id", moduleId, "module")
+        val module = modules[moduleIndex].objectValue()
+        val changedModule = if (name == "set-target" || name == "remove-target") {
+            val target = fields.getValue("target")
+            val targetName = if (name == "set-target") target.objectValue().getValue("name").stringValue() else target.stringValue()
+            val targets = module.getValue("targets").arrayValue().toMutableList()
+            val found = targets.indices.filter { targets[it].objectValue().getValue("name").stringValue() == targetName }
+            require(found.size <= 1) { "Ambiguous target $moduleId:$targetName" }
+            if (name == "remove-target") {
+                require(found.size == 1) { "Unknown target $moduleId:$targetName" }
+                targets.removeAt(found.single())
+            } else if (found.isEmpty()) targets += target else targets[found.single()] = target
+            JsonValue.Object(module + ("targets" to targets.json()))
+        } else {
+            val sourceName = fields.getValue("sourceSet").stringValue()
+            val sourceSets = module.getValue("sourceSets").arrayValue().toMutableList()
+            val sourceIndex = editIndex(sourceSets, "name", sourceName, "source set in $moduleId")
+            val source = sourceSets[sourceIndex].objectValue()
+            val dependencies = source.getValue("dependencies").arrayValue().toMutableList()
+            val key = when (name) {
+                "set-dependency" -> editDependencyKey(fields.getValue("dependency"))
+                "set-dependency-version" -> editPackageKey(fields.getValue("package").stringValue())
+                else -> {
+                    val selector = fields.getValue("selector").fields(emptySet(), setOf("package", "module"))
+                    require(selector.size == 1) { "Dependency selector requires exactly one package or module" }
+                    selector["package"]?.let { editPackageKey(it.stringValue()) }
+                        ?: EditDependencyKey("module", selector.getValue("module").stringValue())
+                }
+            }
+            val found = dependencies.indices.filter { editDependencyKey(dependencies[it]) == key }
+            require(found.size <= 1) { "Ambiguous dependency ${key.value} in $moduleId:$sourceName" }
+            when (name) {
+                "set-dependency" -> if (found.isEmpty()) dependencies += fields.getValue("dependency")
+                    else dependencies[found.single()] = fields.getValue("dependency")
+                "set-dependency-version" -> {
+                    require(found.size == 1) { "Unknown dependency ${key.value} in $moduleId:$sourceName" }
+                    val coordinate = Coordinate.parse("${key.value}:${fields.getValue("version").stringValue()}")
+                    dependencies[found.single()] = JsonValue.Object(dependencies[found.single()].objectValue() +
+                        ("coordinate" to coordinate.toString().json()))
+                }
+                "remove-dependency" -> {
+                    require(found.size == 1) { "Unknown dependency ${key.value} in $moduleId:$sourceName" }
+                    dependencies.removeAt(found.single())
+                }
+            }
+            sourceSets[sourceIndex] = JsonValue.Object(source + ("dependencies" to dependencies.json()))
+            JsonValue.Object(module + ("sourceSets" to sourceSets.json()))
+        }
+        modules[moduleIndex] = changedModule
+        document = JsonValue.Object(document.values + ("modules" to modules.json()))
+    }
+    require(document.canonical().encodeToByteArray().size <= 4 * 1024 * 1024) { "Edited project configuration exceeds 4 MiB" }
+    return parseProjectConfiguration(document)
+}
+
+private data class EditDependencyKey(val kind: String, val value: String)
+
+private fun editDependencyKey(value: JsonValue): EditDependencyKey {
+    val fields = value.objectValue()
+    require(("coordinate" in fields) != ("module" in fields)) { "Dependency requires exactly one module or coordinate identity" }
+    return fields["coordinate"]?.let {
+        val coordinate = Coordinate.parse(it.stringValue())
+        EditDependencyKey("package", "${coordinate.group}:${coordinate.name}")
+    } ?: EditDependencyKey("module", fields.getValue("module").stringValue())
+}
+
+private fun editPackageKey(value: String): EditDependencyKey {
+    val coordinate = Coordinate.parse("$value:0")
+    return EditDependencyKey("package", "${coordinate.group}:${coordinate.name}")
+}
+
+private fun editIndex(values: List<JsonValue>, field: String, identity: String, label: String): Int {
+    val found = values.indices.filter { values[it].objectValue().getValue(field).stringValue() == identity }
+    require(found.size == 1) { if (found.isEmpty()) "Unknown $label: $identity" else "Ambiguous $label: $identity" }
+    return found.single()
+}

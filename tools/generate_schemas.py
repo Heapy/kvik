@@ -729,6 +729,25 @@ DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] 
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
+DEFS["configurationEditOperation"] = {"oneOf": [
+    object_({"op": {"const": "set-dependency"}, "module": ID, "sourceSet": ID, "dependency": ref("dependency")}),
+    object_({"op": {"const": "set-dependency-version"}, "module": ID, "sourceSet": ID, "package": NONEMPTY, "version": NONEMPTY}),
+    object_({"op": {"const": "remove-dependency"}, "module": ID, "sourceSet": ID,
+        "selector": {"oneOf": [object_({"package": NONEMPTY}), object_({"module": ID})]}}),
+    object_({"op": {"const": "set-target"}, "module": ID, "target": ref("target")}),
+    object_({"op": {"const": "remove-target"}, "module": ID, "target": enum(*PROJECT_TARGETS)}),
+]}
+DEFS["configurationEdits"] = versioned({"operations": array(ref("configurationEditOperation"), minItems=1, maxItems=128)})
+DEFS["configurationValidation"] = versioned({"kind": {"const": "configuration-validation"}, "status": {"const": "valid"},
+    "configurationFile": ref("digest"), "effectiveConfiguration": ref("digest"), "modules": array(ID), "source": nullable(ref("sourceReference"))})
+DEFS["configurationEditPlan"] = versioned({"kind": {"const": "configuration-edit-plan"}, "root": NONEMPTY, "project": PATH, "lock": PATH, "store": NONEMPTY,
+    "policy": object_({"pins": array(COORDINATE), "scopedPins": array(NONEMPTY), "metadataExclusions": array(ref("scopedMetadataExclusion"))}),
+    "edits": ref("configurationEdits"), "effectiveConfiguration": ref("digest"),
+    "configuration": object_({"before": ref("digest"), "after": ref("digest"), "beforeContent": STRING, "content": STRING}),
+    "dependencyLock": object_({"before": nullable(ref("digest")), "after": ref("digest"), "content": STRING}),
+})
+DEFS["configurationEditResult"] = versioned({"kind": {"const": "configuration-edit-result"}, "plan": ref("digest"),
+    "status": enum("applied", "unchanged", "recovered"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "directory": NONEMPTY})
 DEFS["affectedCheckSelection"] = versioned({
     "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
     "selectedChecks": array(ref("requestedCheck"), uniqueItems=True),
@@ -838,6 +857,13 @@ DEFS["dependencyResolution"]["allOf"] = [
      "then": {"properties": {"transaction": ref("kodeTransactionProposal")}},
      "else": {"properties": {"transaction": {"type": "null"}}}},
 ]
+DEFS["configurationSourceEditPlan"] = {**DEFS["dependencyResolution"],
+    "properties": {**DEFS["dependencyResolution"]["properties"], "kind": {"const": "configuration-edit-source-plan"},
+        "edits": ref("configurationEdits"), "configurationFile": ref("digest"),
+        "proposedConfiguration": ref("project"), "proposedConfigurationFile": ref("digest")},
+    "required": DEFS["dependencyResolution"]["required"] + ["source", "kind", "edits", "configurationFile", "proposedConfiguration", "proposedConfigurationFile"],
+}
+
 DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
 DEFS["scriptInspection"] = versioned({
     "kind": {"const": "script-inspection"}, "script": SCRIPT_ID, "configurationPath": STRING,
