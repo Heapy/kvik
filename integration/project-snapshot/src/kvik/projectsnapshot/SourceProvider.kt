@@ -11,20 +11,6 @@ data class SourceSelector(val project: String, val selector: String) {
     init { opaqueSourceValue(project); opaqueSourceValue(selector) }
 }
 
-/** Provider-native IDs are provenance, never Kvik content digests or portable action identity. */
-data class SourceProvenance(val provider: String, val project: String, val revision: String, val tree: String) {
-    init { listOf(provider, project, revision, tree).forEach(::opaqueSourceValue) }
-    fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "provider" to provider.json(),
-        "project" to project.json(), "revision" to revision.json(), "tree" to tree.json())
-    companion object {
-        fun fromJson(value: JsonValue): SourceProvenance {
-            val fields = value.fields(setOf("schemaVersion", "provider", "project", "revision", "tree")); fields.requireVersion()
-            return SourceProvenance(fields.getValue("provider").stringValue(), fields.getValue("project").stringValue(),
-                fields.getValue("revision").stringValue(), fields.getValue("tree").stringValue())
-        }
-    }
-}
-
 /** An opaque provider-native reference. Its bytes are authenticated by the resolved provider, not by its spelling. */
 data class SourceBlob(val identity: String, val sizeBytes: Long) {
     init {

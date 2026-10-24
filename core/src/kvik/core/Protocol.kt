@@ -12,6 +12,7 @@ data class Diagnostic(
     val path: String? = null,
     val line: Int? = null,
     val column: Int? = null,
+    val source: SourceReference? = null,
 ) {
     init {
         require(code.matches(Regex("KVIK_[A-Z0-9_]+")))
@@ -22,12 +23,13 @@ data class Diagnostic(
         "code" to code.json(), "category" to category.name.lowercase().json(), "message" to message.json(),
         "actionId" to actionId.jsonOrNull(), "module" to module.jsonOrNull(), "target" to target.jsonOrNull(),
         "path" to path.jsonOrNull(), "line" to (line?.json() ?: JsonValue.Null), "column" to (column?.json() ?: JsonValue.Null),
-    )
+    ).let { if (source == null) it else JsonValue.Object(it.values + ("source" to source.toJson())) }
     companion object {
-        fun fromJson(value: JsonValue): Diagnostic = value.fields(setOf("code", "category", "message", "actionId", "module", "target", "path", "line", "column")).let {
+        fun fromJson(value: JsonValue): Diagnostic = value.fields(setOf("code", "category", "message", "actionId", "module", "target", "path", "line", "column"), setOf("source")).let {
             Diagnostic(it.getValue("code").stringValue(), enumValueOf<DiagnosticCategory>(it.getValue("category").stringValue().uppercase()),
                 it.getValue("message").stringValue(), it.getValue("actionId").nullableString(), it.getValue("module").nullableString(),
-                it.getValue("target").nullableString(), it.getValue("path").nullableString(), it.getValue("line").nullablePositiveInt(), it.getValue("column").nullablePositiveInt())
+                it.getValue("target").nullableString(), it.getValue("path").nullableString(), it.getValue("line").nullablePositiveInt(), it.getValue("column").nullablePositiveInt(),
+                it["source"]?.let(SourceReference::fromJson))
         }
     }
 }
@@ -95,6 +97,7 @@ data class VerificationRecord(
     val status: VerificationStatus,
     val freshnessAtCompletion: Freshness,
     val reproduction: List<String>,
+    val source: SourceReference? = null,
 ) {
     init {
         require(runId.isNotBlank() && requestedChecks.isNotEmpty() && reproduction.isNotEmpty())
@@ -123,7 +126,7 @@ data class VerificationRecord(
         "actions" to actions.map { it.toJson() }.json(), "tests" to tests.map { it.toJson() }.json(), "testCounts" to testCounts.toJson(),
         "status" to status.name.lowercase().json(), "freshnessAtCompletion" to freshnessAtCompletion.name.lowercase().json(),
         "reproduction" to reproduction.map { it.json() }.json(),
-    )
+    ).let { if (source == null) it else JsonValue.Object(it.values + ("source" to source.toJson())) }
 }
 
 /** Complete manifest includes source directory inventories, configuration and lockfiles. */

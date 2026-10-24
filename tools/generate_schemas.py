@@ -343,7 +343,7 @@ _darwin_installation["allOf"] = [
      "then": {"properties": {"roots": {"required": [name]}}},
      "else": {"properties": {"roots": {"not": {"required": [name]}}}}}
     for name in ("iosSdk", "iosSimulatorSdk")]
-DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "abi", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1})})
+DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "abi", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1}), "source": ref("sourceReference")}, optional=("source",))
 DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest")), "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"), "outputs": ref("tree"), "exitCode": nullable({"type": "integer"}), "diagnostic": nullable(STRING)})
 DEFS["actionResult"]["allOf"] = [{"if": {"properties": {"status": enum("executed", "local_hit", "remote_hit")}}, "then": {"properties": {"key": ref("digest"), "exitCode": {"const": 0}}}}]
 TEST_TEXT = {"type": "string", "maxLength": 8192}
@@ -369,7 +369,7 @@ DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
-DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1)})
+DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1), "source": ref("sourceReference")}, optional=("source",))
 REPORT_STATUS = enum("passed", "failed", "incomplete", "cancelled")
 DEFS["testAttemptCounts"] = object_({name: INT for name in ("known", "passed", "failed", "skipped", "testsWithUnknownAttempts")})
 DEFS["testReportNotice"] = object_({"code": NONEMPTY, "message": STRING, "check": nullable(ref("requestedCheck"))})
@@ -723,7 +723,7 @@ DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] 
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
-    "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest")}),
+    "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest"), "source": ref("sourceReference")}, optional=("source",)),
     "framework-ready": ref("frameworkReady"),
     "abi-ready": ref("abiReady"),
     "documentation-ready": ref("documentationReady"),
@@ -747,6 +747,7 @@ DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success",
 DEFS["workerResult"]["allOf"] = [{"if": {"properties": {"status": {"const": "success"}}}, "then": {"properties": {"exitCode": {"const": 0}}}, "else": {"properties": {"exitCode": {"not": {"const": 0}}}}}]
 SOURCE_IDENTITY = {"type": "string", "minLength": 1, "maxLength": 4096, "not": {"pattern": r"[\u0000-\u001f\u007f]"}}
 DEFS["sourceProvenance"] = versioned({key: SOURCE_IDENTITY for key in ("provider", "project", "revision", "tree")})
+DEFS["sourceReference"] = versioned({"provenance": ref("sourceProvenance"), "root": {"anyOf": [{"const": ""}, PATH]}, "manifest": ref("digest")})
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
     "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest")},
     optional=("source", "sourceRoot", "sourceManifest"))

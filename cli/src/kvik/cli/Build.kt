@@ -27,7 +27,8 @@ import kvik.projectsnapshot.*
 import kvik.runevidence.*
 import platform.posix.usleep
 
-private class RunJournal(private val runId: String, directory: String) : AutoCloseable {
+private class RunJournal(private val runId: String, directory: String, private val projectPaths: Set<String>,
+                         private val source: SourceReference? = null) : AutoCloseable {
     private val disk = NativeEventJournal("$directory/events.jsonl")
     private var sequence = 0L
     init { NativeFiles.syncDirectory(directory) }
@@ -37,15 +38,31 @@ private class RunJournal(private val runId: String, directory: String) : AutoClo
         if (publishStdout) println(event.toJson().canonical())
         return event
     }
-    fun diagnostic(value: Diagnostic) { emit("diagnostic", value.toJson() as JsonValue.Object) }
+    fun diagnostic(value: Diagnostic) {
+        // Project graphs stage original sources under src/<logical path>. Adapters report
+        // action-relative paths; public diagnostics address the captured project instead.
+        val logical = value.path?.takeIf { value.category == DiagnosticCategory.COMPILATION && it.startsWith("src/") }
+            ?.removePrefix("src/")?.takeIf { it in projectPaths }
+        emit("diagnostic", value.copy(path = logical ?: value.path, source = source ?: value.source).toJson() as JsonValue.Object)
+    }
     override fun close() = disk.close()
 }
 
 internal data class PreparedRun(val directory: String, val descriptor: Digest)
 internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null, val exitCode: Int = status.code)
 
-internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
-    executeBuild(args, if (test) ProjectMode.TEST else ProjectMode.BUILD).status
+internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
+    val (source, remaining) = sourceProjectOptions(args)
+    val mode = if (test) ProjectMode.TEST else ProjectMode.BUILD
+    if (source == null) return executeBuild(remaining, mode).status
+    val options = buildOptions(remaining)
+    check(kvik_interrupt_install() == 0) { "Cannot install source build interruption handlers" }
+    try {
+        return withPreparedSourceProject(source, options) { prepared ->
+            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared).status
+        }
+    } finally { kvik_interrupt_restore() }
+}
 
 internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null): BuildOutcome =
     executeBuildOptions(buildOptions(args), mode, ownInterrupts, sessionCache = sessionCache)
@@ -56,7 +73,7 @@ internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile): Build
 
 private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInterrupts: Boolean,
                                 scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList(),
-                                sessionCache: BuildSessionCache? = null): BuildOutcome {
+                                sessionCache: BuildSessionCache? = null, sourceProject: PreparedSourceProject? = null): BuildOutcome {
     val test = mode == ProjectMode.TEST
     require(!options.coverage || test && scriptFile == null && options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
@@ -71,7 +88,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.ABI_CHECK -> "abi-check"
         ProjectMode.DOCUMENTATION -> "docs"
     }
-    val project = if (scriptFile == null) {
+    val project = sourceProject?.project ?: if (scriptFile == null) {
         if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
     } else null
     val root = scriptFile?.root ?: checkNotNull(project).root
@@ -83,7 +100,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         else -> SnapshotSelection.Project
     }
     val storePath = projectPath(root, options.project.store)
-    val lockPath = projectPath(root, options.project.lock)
+    val lockPath = if (sourceProject == null) projectPath(root, options.project.lock) else LogicalPath(options.project.lock).value
     val toolsPath = projectPath(root, options.tools)
     val remotePath = options.remoteCache?.let { projectPath(root, it) }
     val remoteConfiguration = remotePath?.let(RemoteCacheConfiguration::read)
@@ -93,15 +110,22 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
     // against the captured configuration below, since the project may change meanwhile.
     val initialEffective = scriptFile?.effective(policy) ?: effectiveConfiguration(checkNotNull(project).configuration, policy)
-    if (scriptFile == null) requireDisjointStore(checkNotNull(project), storePath, lockPath, toolsPath, selection)
-    else requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
+    if (scriptFile == null && sourceProject == null) requireDisjointStore(checkNotNull(project), storePath, lockPath, toolsPath, selection)
+    else if (scriptFile != null) requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
     val content = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes)
-    val snapshots = if (sessionCache == null) NativeProjectSnapshotter(root, content)
+    if (sourceProject != null) content.put(sourceBytes)
+    val snapshots = if (sourceProject != null) null else if (sessionCache == null) NativeProjectSnapshotter(root, content)
         else NativeProjectSnapshotter(root, content, parseConfiguration = sessionCache::configuration)
-    val snapshot = when (val captured = snapshots.capture(name, lockPath, Sha256.digest(sourceBytes), selection)) {
+    val snapshot = if (sourceProject != null) try {
+        sourceProject.capture(content, LogicalPath(lockPath), selection, ::sourceCheckpoint)
+    } catch (failure: CliFailure) { throw failure }
+    catch (failure: Exception) { throw CliFailure("KVIK_SOURCE_INPUT", DiagnosticCategory.CONFIGURATION,
+        failure.message ?: "Cannot capture source revision", ExitStatus.INVALID_CONFIGURATION, sourceProject.reference) }
+    else when (val captured = checkNotNull(snapshots).capture(name, lockPath, Sha256.digest(sourceBytes), selection)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
+    fun inputFreshness(): Freshness = if (sourceProject != null) Freshness.CURRENT else checkNotNull(snapshots).freshness(snapshot)
     val effective = if (selection == SnapshotSelection.StandaloneScript) effectiveConfiguration(snapshot.standaloneConfiguration, policy)
         else effectiveConfiguration(snapshot.configuration, policy)
     scriptFile?.primary?.let { source ->
@@ -130,7 +154,10 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val run = NativeRunDirectory(runsPath)
     NativeFiles.syncDirectory(runsPath)
     val composition = Digest(runtimeComposition, runtimeCompositionSize)
-    val selector = if (scriptFile == null) listOf("--project", checkNotNull(project).path)
+    val selector = if (sourceProject != null) listOf("--kode", sourceProject.options.executable, "--kode-home", sourceProject.options.home,
+        "--source-project", sourceProject.reference.provenance.project, "--revision", sourceProject.reference.provenance.revision,
+        "--project", (sourceProject.reference.root.takeIf { it.isNotEmpty() }?.plus("/") ?: "") + name.value)
+        else if (scriptFile == null) listOf("--project", checkNotNull(project).path)
         else scriptFile.primary?.let { listOf("--file", "$root/${it.value}") } ?: listOf(scriptFile.scriptName, "--project", scriptFile.path)
     val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) + selector + listOf(
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
@@ -147,7 +174,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         "configurationPath" to name.value.json(), "lockPath" to lockPath.json(), "toolsPath" to toolsPath.json(),
         "targets" to options.targets.sorted().map { it.json() }.json(),
         "toolTargets" to toolTargets.sorted().map { it.json() }.json())
-    val selectedMetadata = if (selection == SnapshotSelection.Project) runMetadata else JsonValue.Object(runMetadata.values + ("inputSelection" to selection.toJson()))
+    val sourceMetadata = if (sourceProject == null) runMetadata else JsonValue.Object(runMetadata.values + mapOf(
+        "source" to sourceProject.reference.toJson(), "sourceCache" to obj("store" to storePath.json(), "namespace" to sourceProject.namespace.toJson())))
+    val selectedMetadata = if (selection == SnapshotSelection.Project) sourceMetadata else JsonValue.Object(sourceMetadata.values + ("inputSelection" to selection.toJson()))
     NativeFiles.writeNew("${run.path}/run.json", selectedMetadata.canonical().encodeToByteArray())
     NativeFiles.writeNew("${run.path}/inputs.json", snapshot.inputs.toJson().canonical().encodeToByteArray())
     NativeFiles.writeNew("${run.path}/configuration.json", snapshot.configurationBytes)
@@ -156,7 +185,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     NativeFiles.ensureDirectory("${run.path}/actions")
     NativeFiles.ensureDirectory("${run.path}/observations")
     NativeFiles.syncDirectory(run.path)
-    val journal = RunJournal(run.runId, run.path)
+    val journal = RunJournal(run.runId, run.path, snapshot.inputs.files.map { it.path.value }.toSet(), sourceProject?.reference)
     var graph: ProjectActionGraph? = null
     var toolIdentities = emptyMap<String, Map<String, Digest>>()
     var results = emptyList<ActionResult>()
@@ -168,7 +197,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     var began = false
     try {
         if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
-        journal.emit("run-started", obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson()))
+        val started = obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson())
+        journal.emit("run-started", if (sourceProject == null) started else JsonValue.Object(started.values + ("source" to sourceProject.reference.toJson())))
         began = true
         try {
             toolIdentities = tools.desiredIdentities(toolTargets)
@@ -346,7 +376,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 if (toolIdentities.isEmpty()) DiagnosticCategory.TOOLCHAIN else if (graph == null) DiagnosticCategory.CONFIGURATION else DiagnosticCategory.INFRASTRUCTURE,
                 failure.message ?: "Build failed"))
         }
-        val fresh = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+        val fresh = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
         cancelled = cancelled || kvik_interrupt_requested() != 0
         val dependencies = graph?.nodes?.associate { it.id to it.dependencies } ?: emptyMap()
         for (result in results) if (result.status == ActionStatus.CANCELLED) {
@@ -358,7 +388,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             reproduction, fresh, cancelled)
         // Setup/journal-independent runtime errors are actual failures even when no action could start.
         cancelled = cancelled || kvik_interrupt_requested() != 0
-        var record = evidence.record.copy(status = buildCompletion(evidence.record.status,
+        var record = evidence.record.copy(source = sourceProject?.reference, status = buildCompletion(evidence.record.status,
             if (failedSetup) failureExit else null, cancelled).status)
         var prepared: PreparedRun? = null
         if (mode in setOf(ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK) && !cancelled &&
@@ -370,7 +400,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             if (candidates.isNotEmpty()) try {
                 var current = Freshness.INDETERMINATE
                 val exposed = materializeAbiCandidates(record, candidates, content, run.path) {
-                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
                     cancelled = kvik_interrupt_requested() != 0
                     !cancelled && current == Freshness.CURRENT
                 }
@@ -393,7 +423,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             try {
                 var current = Freshness.INDETERMINATE
                 val exposed = materializeDocumentation(record, selections, content, run.path) {
-                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
                     cancelled = kvik_interrupt_requested() != 0
                     !cancelled && current == Freshness.CURRENT
                 }
@@ -419,7 +449,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             if (frameworks.isNotEmpty()) try {
                 var current = Freshness.INDETERMINATE
                 val exposed = materializeFrameworks(record, frameworks, content, run.path) {
-                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
                     cancelled = kvik_interrupt_requested() != 0
                     !cancelled && current == Freshness.CURRENT
                 }
@@ -440,7 +470,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         if (mode == ProjectMode.APPLICATION && record.status == VerificationStatus.PASSED) {
             try {
                 val descriptor = materializePreparedApplication(record, content, run.path)
-                val current = snapshots.freshness(snapshot)
+                val current = inputFreshness()
                 cancelled = kvik_interrupt_requested() != 0
                 if (cancelled || current != Freshness.CURRENT) {
                     record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
@@ -463,7 +493,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             try {
                 var current = Freshness.INDETERMINATE
                 val exposed = materializeLibraryPackages(record, content, run.path) {
-                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
                     cancelled = kvik_interrupt_requested() != 0
                     !cancelled && current == Freshness.CURRENT
                 }

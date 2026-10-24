@@ -29,20 +29,25 @@ internal fun checkRun(directory: String): CheckedRun {
     NativeFiles.ensureDirectory(directory, create = false)
     fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
     val record = verificationRecordFromJson(document("verification.json"))
-    val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"), setOf("inputSelection", "toolTargets"))
+    val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"),
+        setOf("inputSelection", "toolTargets", "source", "sourceCache"))
     metadata.requireVersion()
     require(record.runId == directory.substringAfterLast('/')) { "Verification run identity does not match directory" }
     var current = Freshness.INDETERMINATE
     var reason: String? = null
     try {
         committedRunEvents(record, document("completion.json"), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
+        require((record.source != null) == ("source" in metadata) && (record.source != null) == ("sourceCache" in metadata)) {
+            "Run source metadata is missing or differs from verification"
+        }
         val store = object : ContentStore {
             override fun get(digest: Digest): ByteArray? = null
             override fun put(bytes: ByteArray): Digest = error("A verification query cannot publish content")
         }
-        val snapshots = NativeProjectSnapshotter(metadata.getValue("projectRoot").stringValue(), store)
-        fun fingerprint() = snapshots.currentFingerprint(LogicalPath(metadata.getValue("configurationPath").stringValue()), metadata.getValue("lockPath").stringValue(),
-            selection = metadata["inputSelection"]?.let(SnapshotSelection::fromJson) ?: SnapshotSelection.Project)
+        val snapshots = if (record.source == null) NativeProjectSnapshotter(metadata.getValue("projectRoot").stringValue(), store) else null
+        fun fingerprint() = record.source?.let { retainedSourceFingerprint(metadata, it) }
+            ?: checkNotNull(snapshots).currentFingerprint(LogicalPath(metadata.getValue("configurationPath").stringValue()), metadata.getValue("lockPath").stringValue(),
+                selection = metadata["inputSelection"]?.let(SnapshotSelection::fromJson) ?: SnapshotSelection.Project)
         current = freshness(record.inputSnapshot, fingerprint())
         when {
             current == Freshness.STALE -> reason = "Project configuration, dependency lock or declared source/resource inventory changed"

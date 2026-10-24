@@ -4156,6 +4156,9 @@
               "type": "null"
             }
           ]
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -4670,6 +4673,9 @@
             "type": "string"
           },
           "minItems": 1
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -9211,6 +9217,9 @@
                   },
                   "inputSnapshot": {
                     "$ref": "#/$defs/digest"
+                  },
+                  "source": {
+                    "$ref": "#/$defs/sourceReference"
                   }
                 },
                 "required": [
@@ -9795,6 +9804,39 @@
         "project",
         "revision",
         "tree"
+      ],
+      "additionalProperties": false
+    },
+    "sourceReference": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "provenance": {
+          "$ref": "#/$defs/sourceProvenance"
+        },
+        "root": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            }
+          ]
+        },
+        "manifest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "provenance",
+        "root",
+        "manifest"
       ],
       "additionalProperties": false
     },

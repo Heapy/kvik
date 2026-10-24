@@ -63,6 +63,27 @@ and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 Use the [coverage commands](docs/coverage.md) to capture JVM line coverage, generate retained reports, check thresholds, aggregate compatible test checks and export SonarQube coverage XML or unchanged JaCoCo reports.
 
+`inspect`, `build` and `test` can read an immutable project revision from Kode:
+
+```sh
+./kvik --no-build -- test --kode /absolute/bin/kode --kode-home /absolute/kode-store \
+  --source-project library --revision main --project sub/kvik.json \
+  --lock locks/dependencies.json --store /absolute/cache --runs /absolute/runs \
+  --tools /absolute/tools.json --module library --target jvm
+```
+
+The reference resolves once; later edits to `main` do not change the run's inputs.
+`--project` is relative to the revision root, and `--lock` is relative to the
+configuration directory. Relative tool, cache and run paths use the invocation
+directory. Build/test do not write source revisions. Equivalent local and stored
+inputs share eligible compilation results; tests still run on each request.
+
+Results and diagnostics include the immutable revision and project root. Use a
+full revision ID with `--offline` to rebuild from cached source content, locked
+dependencies and installed tools. Missing or corrupt source content causes a
+failure. `verification --run PATH` checks the recorded revision using cached
+source content without starting Kode; unavailable content yields `indeterminate`.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).

@@ -4,7 +4,8 @@ package kvik.cli
 import kvik.core.*
 import kotlin.system.exitProcess
 
-class CliFailure(val code: String, val category: DiagnosticCategory, message: String, val exitStatus: ExitStatus = ExitStatus.FAILED) : Exception(message)
+class CliFailure(val code: String, val category: DiagnosticCategory, message: String, val exitStatus: ExitStatus = ExitStatus.FAILED,
+                 val source: SourceReference? = null) : Exception(message)
 internal class RunStreamFailure(message: String, val exitStatus: ExitStatus = ExitStatus.FAILED) : Exception(message)
 
 fun main(args: Array<String>) {
@@ -20,7 +21,7 @@ fun main(args: Array<String>) {
         println(obj("schemaVersion" to CONTRACT_VERSION.json(), "diagnostic" to Diagnostic(
             if (failure is CliFailure) failure.code else if (runtime) "KVIK_RUNTIME_INTEGRITY" else "KVIK_INVALID_PROJECT",
             if (failure is CliFailure) failure.category else if (runtime) DiagnosticCategory.TOOLCHAIN else DiagnosticCategory.CONFIGURATION,
-            failure.message ?: "Invalid project configuration").toJson()).canonical())
+            failure.message ?: "Invalid project configuration", source = (failure as? CliFailure)?.source).toJson()).canonical())
         exitProcess(if (failure is CliFailure) failure.exitStatus.code else ExitStatus.INVALID_CONFIGURATION.code)
     }
 }
@@ -35,6 +36,7 @@ private fun command(args: Array<String>) {
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline
             Revision inspection: inspect --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF [--project LOGICAL_PATH]
+            Revision build/test: same source flags plus build options; --lock is relative to the configuration directory; --offline requires a cached immutable revision
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64 (repeatable) --tools PATH
             Test execution: jvm or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking
             Execution: --runs PATH --jobs N --memory-mib N
