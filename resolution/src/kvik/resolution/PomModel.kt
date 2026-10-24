@@ -62,9 +62,16 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
         require(active.add(expected)) { "Parent POM ancestry cycle: $expected" }
         require(active.size <= 16) { "Parent POM ancestry depth exceeded" }
         require(model.name == "project" && model.value("modelVersion") == "4.0.0") { "Unsupported POM model" }
-        val allowed = setOf("modelVersion", "parent", "groupId", "artifactId", "version", "packaging", "dependencies", "dependencyManagement", "name", "description", "url", "licenses", "developers", "contributors", "scm", "organization", "issueManagement", "ciManagement", "inceptionYear", "properties", "build", "distributionManagement", "modules", "profiles", "reporting", "mailingLists")
-        require(model.children.all { it.name in allowed }) { "Unsupported POM semantics (repositories or unknown model fields)" }
+        val allowed = setOf("modelVersion", "parent", "groupId", "artifactId", "version", "packaging", "dependencies", "dependencyManagement", "name", "description", "url", "licenses", "developers", "contributors", "scm", "organization", "issueManagement", "ciManagement", "inceptionYear", "properties", "build", "distributionManagement", "modules", "profiles", "reporting", "mailingLists", "prerequisites", "repositories")
+        val unsupported = model.children.map { it.name }.filter { it !in allowed }.distinct().sorted()
+        require(unsupported.isEmpty()) { "Unsupported POM fields for $expected: ${unsupported.joinToString()}" }
         model.children.forEach { model.child(it.name) } // Duplicate model fields are never merged implicitly.
+        // Maven prerequisites constrain the producer build, never the published dependency closure.
+        model.child("prerequisites")?.let { prerequisites ->
+            require(prerequisites.children.all { it.name == "maven" }) { "Unsupported POM prerequisites for $expected" }
+            prerequisites.value("maven")
+        }
+        model.child("repositories")?.let { validateInactiveRepositories(expected, it) }
         require(model.child("distributionManagement")?.child("relocation") == null) { "POM relocation unsupported" }
         val inherited = model.child("parent")?.let { p ->
             require(p.children.all { it.name in setOf("groupId", "artifactId", "version", "relativePath") }) { "Unsupported parent POM fields" }
@@ -85,17 +92,22 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
 
     val properties = linkedMapOf<String, String>()
     val profileProperties = mutableSetOf<String>()
-    for ((_, model) in ancestry) {
+    for ((owner, model) in ancestry) {
         model.child("properties")?.let { props ->
             props.children.forEach { property ->
-                require(property.children.isEmpty() && props.children.count { it.name == property.name } == 1) { "Invalid/duplicate POM property" }
+                // Some published parents repeat producer properties verbatim. Equal scalar
+                // values are unambiguous; conflicting duplicates still fail closed.
+                require(property.children.isEmpty() && props.children.filter { it.name == property.name }.all {
+                    it.children.isEmpty() && it.text == property.text
+                }) { "Invalid/conflicting POM property for $owner: ${property.name}" }
                 if (property.name != "project.directory" || model === root) properties[property.name] = property.text
             }
         }
         model.child("profiles")?.let { profiles ->
             require(profiles.children.all { it.name == "profile" }) { "Invalid POM profiles" }
             for (profile in profiles.children) {
-                require(profile.children.all { it.name in setOf("id", "activation", "build", "reporting", "modules", "properties") }) { "Resolution-affecting POM profile unsupported" }
+                val unsupported = profile.children.map { it.name }.filter { it !in setOf("id", "activation", "build", "reporting", "modules", "properties") }.distinct().sorted()
+                require(unsupported.isEmpty()) { "Resolution-affecting POM profile fields unsupported: ${unsupported.joinToString()}" }
                 profile.children.forEach { profile.child(it.name) }
                 profile.child("properties")?.children?.forEach { profileProperties += it.name }
             }
@@ -156,4 +168,40 @@ internal fun effectivePom(coordinate: Coordinate, root: PomNode, parent: (Coordi
     val effectiveManagement = expanded(management.values)
     require(effectiveManagement.values.none { it.scalar("scope") == "import" }) { "POM management imports unsupported" }
     return EffectivePom(root.value("packaging") ?: "jar", expanded(dependencies.values).values.toList(), effectiveManagement)
+}
+
+/** Snapshot versions are rejected by the resolver, so literal release-disabled repositories
+ * cannot supply any supported dependency or parent. Never inherit URLs from published POMs.
+ * All other repository semantics remain unsupported, including profile activation and property
+ * interpolation that could turn release resolution back on.
+ */
+private fun validateInactiveRepositories(coordinate: Coordinate, repositories: PomNode) {
+    fun check(condition: Boolean, detail: String) = require(condition) { "Unsupported POM repositories for $coordinate: $detail" }
+    check(repositories.text.isEmpty() && repositories.children.all { it.name == "repository" }, "expected repository elements")
+    val ids = mutableSetOf<String>()
+    for (repository in repositories.children) {
+        val allowed = setOf("id", "name", "url", "layout", "releases", "snapshots")
+        val unsupported = repository.children.map { it.name }.filter { it !in allowed }.distinct().sorted()
+        check(unsupported.isEmpty(), "unknown fields ${unsupported.joinToString()}")
+        repository.children.forEach { repository.child(it.name) }
+        for (field in listOf("id", "name", "url", "layout")) {
+            val value = repository.value(field)
+            check(value == null || '$' !in value, "repository $field must be literal")
+        }
+        val id = repository.value("id")
+        check(!id.isNullOrBlank() && ids.add(id), "missing or duplicate repository id")
+        check(!repository.value("url").isNullOrBlank(), "missing repository URL")
+        check(repository.value("layout") in setOf(null, "default"), "unsupported repository layout")
+        for (kind in listOf("releases", "snapshots")) {
+            repository.child(kind)?.let { policy ->
+                check(policy.text.isEmpty() && policy.children.all { it.name in setOf("enabled", "updatePolicy", "checksumPolicy") }, "unknown $kind policy fields")
+                policy.children.forEach { policy.child(it.name) }
+                check(policy.value("enabled") in setOf(null, "true", "false"), "$kind enabled must be literal true or false")
+                val update = policy.value("updatePolicy")
+                check(update in setOf(null, "always", "daily", "never") || update?.matches(Regex("interval:[0-9]+")) == true, "unsupported $kind updatePolicy")
+                check(policy.value("checksumPolicy") in setOf(null, "ignore", "warn", "fail"), "unsupported $kind checksumPolicy")
+            }
+        }
+        check(repository.child("releases")?.value("enabled") == "false", "repository $id must explicitly disable releases")
+    }
 }

@@ -77,6 +77,42 @@ class PomModelTest {
         assertFails { model(dependency, "<properties><alias>\${v}</alias><v>\${alias}</v></properties>") }
     }
 
+    @Test fun producerPrerequisitesAndSnapshotOnlyRepositoriesDoNotChangeReleaseClosure() {
+        val dependency = "<dependencies>" + dep("b", "<version>1</version>") + "</dependencies>"
+        val repository = "<repositories><repository><id>snapshots</id><url>http://example.test/snapshots</url>" +
+            "<releases><enabled>false</enabled></releases><snapshots><enabled>true</enabled></snapshots></repository></repositories>"
+        assertEquals(listOf(Coordinate("example", "b", "1")), model(dependency,
+            "<prerequisites><maven>3.0.1</maven></prerequisites>$repository").dependencies(runtime))
+        assertTrue(model("", "<repositories/>").dependencies(runtime).isEmpty())
+        for (invalid in listOf(
+            repository.replace("<releases><enabled>false</enabled></releases>", ""),
+            repository.replace("<enabled>false</enabled>", "<enabled>true</enabled>"),
+            repository.replace("<enabled>false</enabled>", "<enabled>\${release.enabled}</enabled>"),
+            repository.replace("<enabled>false</enabled>", "<enabled>False</enabled>"),
+            repository.replace("<enabled>false</enabled>", "<enabled>false</enabled><enabled>false</enabled>"),
+            repository.replace("</releases>", "<unknown/></releases>"),
+            repository.replace("</repository>", "<unknown/></repository>"),
+            repository.replace("</repository>", "<layout>legacy</layout></repository>"),
+            repository.replace("</repository>", "<id>duplicate</id></repository>"),
+            repository.replace("<snapshots><enabled>true</enabled></snapshots>", "<snapshots><enabled>\${snapshots}</enabled></snapshots>"),
+        )) assertFails { model(dependency, invalid) }
+        // Repository policies inside profiles still require activation semantics, even if
+        // the apparent policy is release-disabled. No profiles are silently activated.
+        assertFails { model(dependency, "<profiles><profile><id>snapshots</id>$repository</profile></profiles>") }
+        val failure = assertFails { model("", "<unknownModelField/>") }
+        assertTrue(failure.message.orEmpty().contains("example:parent:1"))
+        assertTrue(failure.message.orEmpty().contains("unknownModelField"))
+    }
+
+    @Test fun identicalScalarPropertyDuplicatesAreUnambiguousButConflictsAreRejected() {
+        val dependency = "<dependencies>" + dep("b", "<version>\${v}</version>") + "</dependencies>"
+        assertEquals("2", model(dependency, "<properties><v>2</v><v>2</v></properties>").dependencies(runtime).single().version)
+        for (properties in listOf("<v>1</v><v>2</v>", "<v>2</v><v><nested>2</nested></v>")) {
+            val failure = assertFails { model(dependency, "<properties>$properties</properties>") }
+            assertTrue(failure.message.orEmpty().contains("example:parent:1: v"))
+        }
+    }
+
     @Test fun parentIdentityCyclesDepthPackagingAndRelativePathsFailClosed() {
         assertFails { effectivePom(child, pom("child", parentRef())) { pom("wrong", "<packaging>pom</packaging>") } }
         assertFails { effectivePom(child, pom("child", parentRef())) { pom("parent") } }

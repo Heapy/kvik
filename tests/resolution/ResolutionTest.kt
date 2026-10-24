@@ -412,7 +412,7 @@ class ResolutionTest {
         assertFailsWith<IllegalStateException> { parser.parse("<!DOCTYPE project [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><project>&x;</project>".encodeToByteArray()) }
         assertFailsWith<IllegalStateException> { parser.parse("<project>".encodeToByteArray()) }
         val base = "<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version>%s</project>"
-        for (unsupported in listOf("<parent/>", "<profiles><profile><dependencies/></profile></profiles>", "<repositories/>", "<groupId>duplicate</groupId>")) {
+        for (unsupported in listOf("<parent/>", "<profiles><profile><dependencies/></profile></profiles>", "<repositories><repository><id>releases</id><url>https://example.test/releases</url></repository></repositories>", "<groupId>duplicate</groupId>")) {
             val bytes = base.replace("%s", unsupported).encodeToByteArray()
             assertFails { MavenResolver(MemoryTransport(mapOf("${repo.url}/example/a/1.0/a-1.0.pom" to bytes)), parser).resolve(example, jvm, listOf(repo)) }
         }
