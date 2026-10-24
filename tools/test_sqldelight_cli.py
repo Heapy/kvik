@@ -120,7 +120,9 @@ def main():
     sql.unlink()
     write('data/src/Marker.kt', 'package fixture\nclass Marker\n')
     deleted, _ = run('deleted-last-sql-with-ordinary-kotlin')
-    assert status(deleted, 'data:jvm:sqldelight') == status(deleted, 'data:jvm:main') == 'executed'
+    for name in ('data:jvm:sqldelight', 'data:jvm:main'):
+        assert status(deleted, name) in ('executed', 'local_hit')
+        assert deleted[name]['key'] != options[name]['key'], name
     assert status(deleted, 'plain:jvm:main') == 'local_hit'
     assert deleted['data:jvm:sqldelight']['outputs']['files'] == []
     assert [entry['path'] for entry in deleted['data:jvm:main']['outputs']['files'] if entry['path'].endswith('.class')] == ['classes/fixture/Marker.class']
