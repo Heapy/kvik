@@ -1,3 +1,6 @@
 # Preserve upstream bytes: metadata digests include CRLF where publishers use it.
 *.pom -text
 *.module -text
+
+# Published JMH parent POMs retain upstream trailing spaces and CRLF verbatim.
+jmh/*.pom -whitespace
