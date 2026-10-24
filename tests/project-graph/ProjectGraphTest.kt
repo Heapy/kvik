@@ -8,6 +8,7 @@ import kvik.compiler.native.*
 import kvik.compiler.ksp.*
 import kvik.library.*
 import kvik.abi.*
+import kvik.documentation.*
 import kotlin.test.*
 import kotlinx.cinterop.*
 import platform.posix.*
@@ -39,7 +40,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
                 t.nativeTimeouts.compileMillis?.let { put("compileMillis", it.json()) }; t.nativeTimeouts.linkMillis?.let { put("linkMillis", it.json()) }
             }))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
-                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()).let { value -> if (m.publication == null) value else JsonValue.Object(value.objectValue() + ("publication" to obj("coordinate" to m.publication.coordinate.toString().json()))) } }.json()))
+                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()).let { value -> if (m.documentation == null) value else JsonValue.Object(value.values + ("documentation" to m.documentation.toJson())) }.let { value -> if (m.publication == null) value else JsonValue.Object(value.objectValue() + ("publication" to obj("coordinate" to m.publication.coordinate.toString().json()))) } }.json()))
 }
 private val base = module("base", listOf(external("g:stdlib:1")))
 private val app = module("app", listOf(Dependency.Module("base"), external("g:library:1")))
@@ -51,7 +52,7 @@ private fun snapshot(): TreeManifest = TreeManifest(listOf("base", "app").flatMa
 private fun artifact(name: String, target: String, usage: String): LockedArtifact {
     val plugin = name.startsWith("org.jetbrains.kotlin:")
     val coordinate = Coordinate.parse(name)
-    val extension = if (target == "jvm") "jar" else "klib"
+    val extension = if (target in setOf("jvm", "common")) "jar" else "klib"
     return LockedArtifact(coordinate, usage, "central", "https://repo.maven.apache.org/maven2/${coordinate.name}.$extension", digest("$name:$target${if(plugin) ":plugin" else ""}"))
 }
 /** These model a previously verified lock; K09 locking tests independently exercise metadata/CAS proof. */
@@ -68,6 +69,8 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
 }
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
+    "kvik-documentation-native-stdlib-v1" -> listOf(FileEntry(LogicalPath("stdlib/default/manifest"), digest(salt)))
+    "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
     "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).let { compilation ->
         listOf(FileEntry(compilation.output, digest(salt), true)) + if (compilation.target == NativeTarget.MACOS_ARM64)
@@ -103,6 +106,117 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun documentationCombinesSourcesAndUsesOnlyDependencyArtifactsWithoutPublication() {
+        val settings = DocumentationSettings(includes = listOf(LogicalPath("Module.md")))
+        val config = configuration(base, app.copy(documentation = settings))
+        val files = TreeManifest(snapshot().files + FileEntry(LogicalPath("Module.md"), digest("module docs")))
+        val request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.DOCUMENTATION)
+        val built = graph(config, files, request)
+        assertEquals(setOf("app:common:documentation"), built.requestedChecks)
+        assertEquals(built.requestedChecks, projectRequestedChecks(request))
+        assertEquals(setOf("jvm", "macosArm64"), projectToolTargets(config.project, request))
+        assertFalse(built.nodes.any { it.id.endsWith(":test") || it.id.endsWith(":framework") || it.id.endsWith(":package") })
+        val actions = resolved(built)
+        val action = actions.getValue("app:common:documentation")
+        assertEquals("kvik-dokka-html-v1", action.implementation)
+        val spec = DocumentationSpec.fromJson(action.parameters)
+        assertEquals(listOf("commonMain", "jvmMain", "nativeMain"), spec.sourceSets.map { it.name })
+        assertEquals(listOf("common", "jvm", "native"), spec.sourceSets.map { it.platform })
+        assertEquals(listOf("commonMain"), spec.sourceSets.single { it.name == "nativeMain" }.dependsOn)
+        assertTrue(action.inputs.files.any { it.path.value == "sources/commonMain/root0/Common.kt" })
+        assertTrue(action.inputs.files.any { it.path.value.startsWith("modules/base/") })
+        assertFalse(action.inputs.files.any { it.path.value.startsWith("modules/app/") || "/commonTest/" in it.path.value })
+        assertContains(built.nodes.single { it.id == "app:common:documentation" }.dependencies, "app:macosArm64:main")
+        assertContains(built.nodes.single { it.id == "app:common:documentation" }.dependencies, "base:common:documentation-metadata-jvm-macosArm64")
+        val changed = resolved(graph(config, TreeManifest(snapshot().files + FileEntry(LogicalPath("Module.md"), digest("new docs"))), request))
+        assertNotEquals(action.key(Sha256), changed.getValue("app:common:documentation").key(Sha256))
+        actions.filterKeys { it != "app:common:documentation" }.forEach { (id, value) -> assertEquals(value.key(Sha256), changed.getValue(id).key(Sha256)) }
+    }
+
+    @Test fun documentationSingleTargetRetainsCommonRefinementAndOrdinaryJvmWorks() {
+        val configured = app.copy(documentation = DocumentationSettings())
+        val config = configuration(base, configured)
+        val request = request(ProjectMode.DOCUMENTATION)
+        val action = resolved(graph(config, snapshot(), request)).getValue("app:common:documentation")
+        val spec = DocumentationSpec.fromJson(action.parameters)
+        assertEquals(setOf("jvm"), spec.targets)
+        assertEquals(listOf("common", "jvm"), spec.sourceSets.map { it.platform })
+        assertEquals(setOf("jvm", "macosArm64"), spec.sourceSets.first().supportingTargets)
+        assertEquals(listOf("commonMain"), spec.sourceSets.last().dependsOn)
+        val single = configured.copy(targets = configured.targets.filter { it.name == "jvm" }, sourceSets = configured.sourceSets.map { it.copy(dependencies = emptyList()) })
+        val ordinary = resolved(graph(configuration(single), snapshot(), request)).getValue("app:common:documentation")
+        assertTrue(DocumentationSpec.fromJson(ordinary.parameters).sourceSets.all { it.platform == "jvm" })
+    }
+
+    @Test fun documentationSharedNativeUsesMetadataIntersectionAndExactSupportingTargets() {
+        fun ios(module: ModuleSpec) = module.copy(targets = listOf(module.targets.first { it.name == "jvm" },
+            TargetSpec("iosArm64", "nativeMain", null, emptyList()), TargetSpec("iosSimulatorArm64", "nativeMain", null, emptyList())))
+        val config = configuration(ios(base), ios(app).copy(documentation = DocumentationSettings()))
+        val request = ProjectGraphRequest(setOf("app"), setOf("jvm", "iosArm64", "iosSimulatorArm64"), ProjectMode.DOCUMENTATION)
+        val built = graph(config, snapshot(), request)
+        val actions = resolved(built)
+        val spec = DocumentationSpec.fromJson(actions.getValue("app:common:documentation").parameters)
+        val native = spec.sourceSets.single { it.name == "nativeMain" }
+        assertEquals("native", native.platform)
+        assertEquals(setOf("iosArm64", "iosSimulatorArm64"), native.supportingTargets)
+        assertTrue(native.classpath.any { "documentation-metadata-iosArm64-iosSimulatorArm64" in it.value })
+        assertTrue(native.classpath.none { it.value.endsWith(".klib") })
+        assertTrue(native.classpath.any { it.value.startsWith("native-stdlib/") })
+        val metadata = JvmMetadataCompilation.fromJson(actions.getValue("base:common:documentation-metadata-iosArm64-iosSimulatorArm64").parameters)
+        assertEquals(native.supportingTargets, metadata.targets)
+        assertTrue(metadata.sources.any { it.value.contains("/native/") })
+        assertTrue(metadata.sources.none { it.value.contains("/jvm/") })
+        assertEquals(request.targets, spec.sourceSets.single { it.name == "commonMain" }.supportingTargets)
+    }
+
+    @Test fun documentationDependencyMetadataPreservesWorkspacePlugins() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("jvm", "macosArm64"), setOf("main"),
+            listOf("mode=first"), listOf(LogicalPath("config.txt")), "example.plugin", "2.4.20",
+            listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        val producer = module("producer")
+        val extra = listOf("common/Common.kt", "jvm/Actual.kt").map { FileEntry(LogicalPath("producer/$it"), digest(it)) }
+        val files = TreeManifest(snapshot().files + extra + FileEntry(LogicalPath("config.txt"), digest("config")))
+        fun plan(selected: CompilerPluginSpec = plugin, inputs: TreeManifest = files) = resolved(graph(configuration(
+            base.copy(compilerPlugins = listOf(selected)), producer, app.copy(documentation = DocumentationSettings())), inputs,
+            ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.DOCUMENTATION)))
+        val actions = plan()
+        val id = "base:common:documentation-metadata-jvm-macosArm64"
+        val action = actions.getValue(id)
+        val compilation = JvmMetadataCompilation.fromJson(action.parameters)
+        assertEquals(plugin.options, compilation.pluginApplications.single().options)
+        assertTrue(actions.containsKey("producer:jvm:main"))
+        assertTrue(action.inputs.files.any { it.path.value == "plugin-inputs/example.plugin/config.txt" })
+        assertNotEquals(action.key(Sha256), plan(plugin.copy(options = listOf("mode=second"))).getValue(id).key(Sha256))
+        val changed = TreeManifest(files.files.map { if (it.path.value == "config.txt") it.copy(digest = digest("changed")) else it })
+        assertNotEquals(action.key(Sha256), plan(inputs = changed).getValue(id).key(Sha256))
+        assertTrue(actions.getValue("app:common:documentation").inputs.files.none { it.path.value.startsWith("plugin-inputs/") })
+    }
+
+    @Test fun documentationEmptySharedRefinementDoesNotRequireAnEmptyMetadataCompilation() {
+        fun emptyShared(module: ModuleSpec) = module.copy(sourceSets = module.sourceSets.map {
+            if (it.name == "commonMain") it.copy(directories = emptyList()) else it
+        })
+        val config = configuration(emptyShared(base), emptyShared(app).copy(documentation = DocumentationSettings()))
+        val request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.DOCUMENTATION)
+        assertTrue(effectiveConfiguration(config).requests.any { it.domain.target == "common" })
+        val actions = resolved(graph(config, snapshot(), request))
+        assertTrue(actions.keys.none { ":documentation-metadata-" in it })
+        val action = actions.getValue("app:common:documentation")
+        val spec = DocumentationSpec.fromJson(action.parameters)
+        assertEquals("common", spec.sourceSets.first().platform)
+        assertTrue(action.inputs.files.none { it.path.value.startsWith("sources/commonMain/") })
+        assertTrue(spec.sourceSets.first().classpath.isNotEmpty())
+    }
+
+    @Test fun documentationOptInChangesOnlyExplicitCommonResolutionAndRequiresIncludes() {
+        val plain = configuration(module("app"))
+        assertTrue(effectiveConfiguration(plain).requests.none { it.domain.target == "common" })
+        assertFails { graph(plain, snapshot(), request(ProjectMode.DOCUMENTATION)) }
+        val config = configuration(module("app").copy(documentation = DocumentationSettings(includes = listOf(LogicalPath("missing.md")))))
+        assertTrue(effectiveConfiguration(config).requests.any { it.domain.target == "common" && it.coordinate.name == "kotlin-stdlib" })
+        assertFails { graph(config, snapshot(), request(ProjectMode.DOCUMENTATION)) }
+    }
+
     @Test fun abiChecksConsumeOnlyOwnMainAndBaselineChangesOnlyComparison() {
         for (target in listOf("jvm", "macosArm64", "iosArm64")) {
             val baseline = LogicalPath("api/$target.api")

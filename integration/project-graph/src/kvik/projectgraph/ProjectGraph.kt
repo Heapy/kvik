@@ -8,8 +8,9 @@ import kvik.compiler.ksp.*
 import kvik.application.applicationBundleAction
 import kvik.library.*
 import kvik.abi.*
+import kvik.documentation.*
 
-enum class ProjectMode { BUILD, TEST, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK }
+enum class ProjectMode { BUILD, TEST, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
 private fun ProjectMode.checkScope() = name.lowercase().replace('_', '-')
 data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
@@ -25,7 +26,7 @@ data class ProjectGraphRequest(
 data class ProjectActionGraph(val nodes: List<ActionNode>, val requestedChecks: Set<String>, val terminalActions: Map<String, String>)
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
-    request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.checkScope()}" } +
+    if (request.mode == ProjectMode.DOCUMENTATION) request.modules.map { "$it:common:documentation" }.toSet() else request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.checkScope()}" } +
         if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) listOf("$module:common:package") else emptyList()
     }.toSet()
 
@@ -34,7 +35,7 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
     val modules = project.modules.associateBy { it.id }
     val visited = mutableSetOf<List<String>>()
     val targets = request.targets.toMutableSet()
-    if (request.mode in setOf(ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK) ||
+    if (request.mode in setOf(ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK, ProjectMode.DOCUMENTATION) ||
         request.mode == ProjectMode.PACKAGE && request.targets.size > 1) targets += "jvm"
     fun visit(module: String, target: String, scope: String, runtime: Boolean) {
         if (!visited.add(listOf(module, target, scope, runtime.toString()))) return
@@ -118,6 +119,13 @@ private class Builder(
     }
 
     fun build(): ProjectActionGraph {
+        if (request.mode == ProjectMode.DOCUMENTATION) {
+            val terminals = request.modules.sorted().associate { module ->
+                val id = ensureDocumentation(module)
+                "$module:common:documentation" to id
+            }
+            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals)
+        }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
             ensureMain(module, target)
@@ -129,6 +137,7 @@ private class Builder(
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
                 ProjectMode.ABI_DUMP -> ensureAbiDump(module, target)
                 ProjectMode.ABI_CHECK -> ensureAbiCheck(module, target)
+                ProjectMode.DOCUMENTATION -> error("Documentation is a combined module action")
             }
         }
         if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) {
@@ -138,6 +147,139 @@ private class Builder(
             }
         }
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
+    }
+
+    private fun documentationMetadataHasSources(module: String, targets: Set<String>): Boolean =
+        documentationCommonSourceSets(modules.getValue(module), targets).any { set ->
+            set.directories.any { directory -> files.any { it.path.value.startsWith(directory.value + "/") } }
+        }
+
+    private fun documentationMetadataId(module: String, targets: Set<String>) = "$module:common:documentation-metadata-${targets.sorted().joinToString("-")}"
+
+    private fun documentationArtifacts(module: String, targets: Set<String>, includeStdlib: Boolean = true): List<FileEntry> {
+        val domain = ResolutionDomain(module, "common", "main", "kotlin-metadata")
+        require(domain in authorized) { "Documentation needs a locked common metadata domain: $module; run resolve" }
+        val stdlib = Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")
+        val roots = (documentationCommonDependencyClosure(project, module, targets).external + if (includeStdlib) listOf(stdlib) else emptyList()).distinct().filter { includeStdlib || it != stdlib }
+        return roots.flatMap { coordinate ->
+            selections[ResolutionRequest(coordinate, VariantRequest("common", "kotlin-metadata", emptyMap()), domain)]?.artifacts
+                ?: error("Missing documentation metadata: $module:$coordinate")
+        }.distinctBy { artifactPath(it, false) }.map { FileEntry(artifactPath(it, false), it.digest) }
+    }
+
+    private fun documentationMetadataOutputs(results: Map<String, ActionResult>, module: String, targets: Set<String>): List<FileEntry> {
+        val all = results.getValue(documentationMetadataId(module, targets)).outputs.files
+        require(all.all { it.path.value.startsWith("metadata/") || it.path.value.startsWith("plugins/") })
+        val output = all.filter { it.path.value.startsWith("metadata/") }
+        require(output.isNotEmpty() && output.all { !it.executable }) { "Invalid documentation dependency metadata" }
+        return output.map { it.copy(path = LogicalPath("modules/$module/documentation-metadata-${targets.sorted().joinToString("-")}/" + it.path.value.removePrefix("metadata/"))) }
+    }
+
+    private fun ensureDocumentationMetadata(module: String, targets: Set<String>): String {
+        val id = documentationMetadataId(module, targets)
+        if (id in nodes) return id
+        val spec = modules.getValue(module)
+        val sets = documentationCommonSourceSets(spec, targets)
+        require(sets.isNotEmpty()) { "Documentation dependency needs shared source sets: $module" }
+        val pluginTarget = if ("jvm" in targets) "jvm" else targets.sorted().first()
+        val applyPlugin = selectedPlugins(module, pluginTarget, "main").singleOrNull()?.targets?.containsAll(targets) == true
+        val source = sets.flatMap { set -> set.directories.flatMap { directory ->
+            require(files.none { it.path == directory }) { "Documentation source directory is a file" }
+            files.filter { it.path.value.startsWith(directory.value + "/") }.map {
+                require(it.path.value.endsWith(".kt")) { "Unsupported documentation dependency source" }
+                it.copy(path = LogicalPath("src/${it.path.value}"))
+            }
+        } }.distinct()
+        require(source.isNotEmpty()) { "No common documentation dependency sources: $module" }
+        val dependencies = documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) }
+        val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
+        pluginDependencies.forEach { ensureMain(it, "jvm") }
+        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
+        val artifacts = documentationArtifacts(module, targets)
+        val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
+        require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
+        val options = spec.targets.filter { it.name in targets }.map { compilerOptions(module, it.name, it.compilerOptions) }
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
+            val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
+            jvmMetadataCompileAction(JvmMetadataCompilation(module, source.map { it.path },
+                dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path }, LogicalPath("metadata"),
+                optIns = options.flatMap { it.optIns }.distinct().sorted(), explicitApi = options.any { it.explicitApi }, warningsAsErrors = options.any { it.warningsAsErrors },
+                targets = targets, plugins = plugin.map { it.path }, pluginApplications = workspace.applications),
+                merge(source, artifacts, dependencyFiles, plugin, workspace.entries), composition, tools.getValue("jvm"))
+        }
+        return id
+    }
+
+    private fun ensureDocumentation(module: String): String {
+        val spec = modules.getValue(module)
+        val settings = spec.documentation ?: error("Enable documentation for module $module with documentation: {}")
+        val selectedTargets = request.targets.sorted()
+        selectedTargets.forEach { ensureMain(module, it) }
+        val selectedSets = selectedTargets.flatMap { sourceSets(module, it, "main") }.distinctBy { it.name }
+        val reached = spec.targets.associate { it.name to sourceSets(module, it.name, "main").map { source -> source.name }.toSet() }
+        fun platform(set: SourceSet): String {
+            val families = reached.filterValues { set.name in it }.keys.map { if (it == "jvm") "jvm" else "native" }.toSet()
+            return families.singleOrNull() ?: "common"
+        }
+        val nativeStdlibIds = selectedTargets.filter { NativeTarget.find(it) != null }.associateWith { target ->
+            val id = "$module:$target:documentation-stdlib"
+            nodes[id] = ActionNode(id, emptySet()) { results ->
+                validateResults(results, emptySet())
+                documentationNativeStdlibAction(NativeTarget.require(target), composition, tools.getValue(target))
+            }
+            id
+        }
+        fun supporting(set: SourceSet) = reached.filterValues { set.name in it }.keys
+        val metadataTargets = selectedSets.filter { platform(it) == "common" || supporting(it).size > 1 }
+            .associate { it.name to supporting(it) }
+        val metadataGroups = metadataTargets.values.distinct()
+        val metadataDependencies = metadataGroups.associateWith { targets -> documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) } }
+        val metadataEdges = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.map { ensureDocumentationMetadata(it, targets) } }.toSet()
+        val metadataArtifacts = metadataGroups.associateWith { documentationArtifacts(module, it) }
+        val leafTargets = selectedSets.filter { it.name !in metadataTargets }.flatMap { supporting(it) }.filter { it in request.targets }.distinct()
+        val targetDependencies = leafTargets.associateWith { closure(module, it, "main").modules }
+        for ((target, dependencies) in targetDependencies) dependencies.forEach { ensureMain(it, target) }
+        val targetArtifacts = leafTargets.associateWith { artifactEntries(external(module, it, "main", if (it == "jvm") "java-api" else "kotlin-api"), it) }
+        val edges = selectedTargets.map { mainId(module, it) }.toSet() + metadataEdges + nativeStdlibIds.values +
+            targetDependencies.flatMap { (target, dependencies) -> dependencies.map { mainId(it, target) } }
+        val sources = selectedSets.flatMap { set -> set.directories.flatMapIndexed { index, directory ->
+            require(files.none { it.path == directory }) { "Documentation source directory is a file" }
+            files.filter { it.path.value.startsWith(directory.value + "/") }.map { entry ->
+                require(entry.path.value.endsWith(".kt")) { "Unsupported documentation source: ${entry.path.value}" }
+                entry.copy(path = LogicalPath("sources/${set.name}/root$index/" + entry.path.value.removePrefix(directory.value + "/")))
+            }
+        } }
+        val includes = settings.includes.map { path -> files.singleOrNull { it.path == path } ?: error("Missing documentation include: ${path.value}") }
+        val id = "$module:common:documentation"
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            val dependencyFiles = targetDependencies.flatMap { (target, dependencies) -> dependencies.flatMap { remap(results, it, target, "main") } }
+            val metadataFiles = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.flatMap { documentationMetadataOutputs(results, it, targets) } }
+            val stdlibFiles = nativeStdlibIds.flatMap { (target, id) -> results.getValue(id).outputs.files.also { entries ->
+                require(entries.isNotEmpty() && entries.all { it.path.value.startsWith("stdlib/") && !it.executable }) { "Invalid Native documentation stdlib output" }
+            }.map { it.copy(path = LogicalPath("native-stdlib/$target/" + it.path.value.removePrefix("stdlib/"))) } }
+            val sets = selectedSets.map { set ->
+                val kind = platform(set)
+                val targets = selectedTargets.filter { set.name in reached.getValue(it) }
+                val metadata = metadataTargets[set.name]
+                val classpath = if (metadata != null) metadataDependencies.getValue(metadata).map {
+                    LogicalPath("modules/$it/documentation-metadata-${metadata.sorted().joinToString("-")}")
+                } + (if (kind == "native") documentationArtifacts(module, metadata, includeStdlib = false) else metadataArtifacts.getValue(metadata)).map { it.path }
+                    else targets.flatMap { target -> targetDependencies.getValue(target).map { modulePath(it, target, "main") } + targetArtifacts.getValue(target).map { it.path } }.distinct()
+                // Identical per-target stdlib captures share one classpath root; incompatible trees are never merged.
+                val stdlibs = if (kind == "native") targets.filter { it in nativeStdlibIds }.distinctBy { target ->
+                    results.getValue(nativeStdlibIds.getValue(target)).outputs.toJson().canonical()
+                }.map { LogicalPath("native-stdlib/$it") } else emptyList()
+                DocumentationSourceSet(set.name, kind, LogicalPath("sources/${set.name}"), (classpath + stdlibs).distinct(), set.dependsOn, supporting(set).toSet())
+            }
+            documentationAction(DocumentationSpec(module, request.targets, sets, settings),
+                merge(sources, includes, (dependencyFiles + metadataFiles + stdlibFiles + metadataArtifacts.values.flatten() + targetArtifacts.values.flatten()).filter { file ->
+                    sets.any { source -> source.classpath.any { file.path == it || file.path.value.startsWith(it.value + "/") } }
+                }), composition, tools.getValue("jvm"))
+        }
+        return id
     }
 
     private fun ensureAbiDump(module: String, target: String): String {

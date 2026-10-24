@@ -35,6 +35,7 @@ def main():
                                    'integration/project-snapshot/src', 'tests/session-coordinator')
                for p in sorted((ROOT / directory).rglob('*.kt'))]
     sources += [ROOT / name for name in (
+        'compiler/documentation/src/kvik/documentation/DocumentationActions.kt', 'compiler/abi/src/kvik/abi/AbiActions.kt',
         'cache/src/kvik/cache/NativeFiles.kt', 'cli/src/kvik/cli/BuildSessionCache.kt', 'cli/src/kvik/cli/SessionOperationClient.kt',
         'integration/foreground/src/kvik/foreground/SessionOperations.kt',
         'resolution/src/kvik/resolution/MavenResolver.kt', 'resolution/src/kvik/resolution/PomModel.kt',
