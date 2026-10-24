@@ -200,4 +200,117 @@ class ChangeImpactTests {
         assertEquals(listOf("z/src/A.kt", "z/src/Z.kt"), fields.getValue("changedPaths").arrayValue().map { it.stringValue() })
         assertEquals(listOf("changed:z/src/A.kt", "changed:z/src/Z.kt"), first.reasons.getValue("z:jvm:test"))
     }
+
+    private val allKinds = setOf("build", "test", "abi-check")
+    private fun withAbi(module: ModuleSpec, tests: Boolean = true): ModuleSpec = module.copy(targets = module.targets.map {
+        it.copy(test = if (tests) it.test else null, abi = AbiSettings(path("api/${module.id}/${it.name}.api")))
+    })
+    private fun mixedChecks(modules: Set<String>, targets: Set<String> = jvm, kinds: Set<String> = allKinds) =
+        modules.flatMap { module -> targets.flatMap { target -> kinds.map { "$module:$target:$it" } } }.toSet()
+    private fun mixed(config: ProjectConfiguration, modules: Set<String>, vararg paths: String, targets: Set<String> = jvm,
+                      kinds: Set<String> = allKinds, completed: Set<String> = mixedChecks(modules, targets, kinds), full: Set<String> = emptySet()) =
+        selectAffectedChecks(config, modules, targets, kinds, paths.map(::path).toSet(), completed, full)
+
+    @Test fun mixedChecksPropagateMainSourcesButKeepTestsOutOfMainAndAbiClosures() {
+        val config = configuration(withAbi(module("library")), withAbi(module("app", listOf(Dependency.Module("library")))))
+        val modules = setOf("library", "app")
+        assertEquals(mixedChecks(modules), mixed(config, modules, "library/src/Api.kt").selected)
+        assertEquals(mixedChecks(modules), mixed(config, modules, "library/resources/data.json").selected)
+        assertEquals(setOf("library:jvm:test"), mixed(config, modules, "library/test/Test.kt").selected)
+        assertEquals(setOf("app:jvm:test"), mixed(config, modules, "app/test-resources/test.json").selected)
+    }
+
+    @Test fun abiBaselineChangesSelectOnlyOwningAbiCheckAndAreKnownToTestOnlySelection() {
+        val config = configuration(withAbi(module("library")), withAbi(module("app", listOf(Dependency.Module("library")))))
+        val modules = setOf("library", "app")
+        val selection = mixed(config, modules, "api/library/jvm.api")
+        assertEquals(setOf("library:jvm:abi-check"), selection.selected)
+        assertEquals(listOf("changed:api/library/jvm.api"), selection.reasons.getValue("library:jvm:abi-check"))
+        assertTrue(selection.fullReasons.isEmpty())
+        assertTrue(selected(config, modules, "api/library/jvm.api").selected.isEmpty())
+        assertTrue(mixed(config, modules, "api/library/jvm.api", kinds = setOf("build")).selected.isEmpty())
+        assertTrue(mixed(config, setOf("app"), "api/library/jvm.api").selected.isEmpty())
+        val descendant = mixed(config, modules, "api/library/jvm.api/not-a-baseline")
+        assertEquals(descendant.requested, descendant.selected)
+        assertEquals(setOf("unknown-path:api/library/jvm.api/not-a-baseline"), descendant.fullReasons)
+    }
+
+    @Test fun abiFileDoesNotOverrideAnIndependentDeclaredResourceInput() {
+        val library = withAbi(module("library")).let { module -> module.copy(targets = module.targets.map {
+            it.copy(abi = AbiSettings(path("library/resources/baseline.api")))
+        }) }
+        val config = configuration(library, withAbi(module("app", listOf(Dependency.Module("library")))))
+        val modules = setOf("library", "app")
+        assertEquals(mixedChecks(modules), mixed(config, modules, "library/resources/baseline.api").selected)
+    }
+
+    @Test fun buildAndAbiChecksDoNotRequireTestDeclarations() {
+        val config = configuration(withAbi(module("library"), tests = false))
+        val kinds = setOf("build", "abi-check")
+        assertEquals(mixedChecks(setOf("library"), kinds = kinds),
+            mixed(config, setOf("library"), "library/src/Main.kt", kinds = kinds).selected)
+        assertEquals(setOf("library:jvm:abi-check"),
+            mixed(config, setOf("library"), "api/library/jvm.api", kinds = kinds).selected)
+        assertTrue(mixed(config, setOf("library"), kinds = kinds).selected.isEmpty())
+        assertFailsWith<IllegalArgumentException> { mixed(config, setOf("library"), kinds = setOf("test")) }
+        val plain = configuration(module("plain").let { it.copy(targets = it.targets.map { target -> target.copy(test = null) }) })
+        assertEquals(setOf("plain:jvm:build"), mixed(plain, setOf("plain"), "plain/src/Main.kt", kinds = setOf("build")).selected)
+    }
+
+    @Test fun mixedChecksPreserveTargetPartitionsAndPerTargetExactAbiInputs() {
+        val library = ModuleSpec("library", listOf(
+            source("common", "common"), source("jvmMain", "jvm", listOf("common")),
+            source("nativeMain", "native", listOf("common")), source("jvmTest", "jvm-test"), source("nativeTest", "native-test")),
+            listOf(TargetSpec("jvm", "jvmMain", "jvmTest", emptyList(), abi = AbiSettings(path("api/jvm.api"))),
+                TargetSpec("macosArm64", "nativeMain", "nativeTest", emptyList(), abi = AbiSettings(path("api/native.api")))), emptyList())
+        val config = configuration(library)
+        val targets = setOf("jvm", "macosArm64")
+        assertEquals(mixedChecks(setOf("library"), jvm), mixed(config, setOf("library"), "jvm/Main.kt", targets = targets).selected)
+        assertEquals(mixedChecks(setOf("library"), targets), mixed(config, setOf("library"), "common/Main.kt", targets = targets).selected)
+        assertEquals(setOf("library:macosArm64:test"), mixed(config, setOf("library"), "native-test/Test.kt", targets = targets).selected)
+        assertEquals(setOf("library:macosArm64:abi-check"), mixed(config, setOf("library"), "api/native.api", targets = targets).selected)
+    }
+
+    @Test fun mixedBuildAbiAndTestClosuresIncludeRuntimeAndPluginProducersAtTheirHostTarget() {
+        val runtime = module("runtime")
+        val producer = module("producer", listOf(Dependency.Module("runtime", DependencyScopeKind.RUNTIME)))
+        val testProducer = module("testProducer")
+        val app = withAbi(module("app", plugins = listOf(
+            plugin("producer", setOf("macosArm64")), plugin("testProducer", setOf("macosArm64"), scopes = setOf("test"))),
+            targets = setOf("macosArm64")))
+        val config = configuration(runtime, producer, testProducer, app)
+        val targets = setOf("macosArm64")
+        assertEquals(mixedChecks(setOf("app"), targets), mixed(config, setOf("app"), "runtime/src/Runtime.kt", targets = targets).selected)
+        assertEquals(setOf("app:macosArm64:test"), mixed(config, setOf("app"), "testProducer/src/Plugin.kt", targets = targets).selected)
+        assertTrue(mixed(config, setOf("app"), "producer/test/Test.kt", targets = targets).selected.isEmpty())
+        val ordinary = configuration(withAbi(module("consumer", listOf(Dependency.Module("runtime", DependencyScopeKind.RUNTIME)))), runtime)
+        assertEquals(mixedChecks(setOf("consumer")), mixed(ordinary, setOf("consumer"), "runtime/src/Runtime.kt").selected)
+    }
+
+    @Test fun mixedBaselineCoverageAndFullReasonsApplyToEachCheckIndependently() {
+        val config = configuration(withAbi(module("app")))
+        val result = mixed(config, setOf("app"), completed = setOf("app:jvm:test"))
+        assertEquals(setOf("app:jvm:build", "app:jvm:abi-check"), result.selected)
+        assertEquals(listOf("baseline-missing"), result.reasons.getValue("app:jvm:build"))
+        assertEquals(listOf("baseline-missing"), result.reasons.getValue("app:jvm:abi-check"))
+        val full = mixed(config, setOf("app"), full = setOf("config-changed"))
+        assertEquals(full.requested, full.selected)
+        assertTrue(full.reasons.values.all { it == listOf("full:config-changed") })
+        val legacy: AffectedTestSelection = selectAffectedTests(config, setOf("app"), jvm, emptySet(), setOf("app:jvm:test"))
+        val modern: AffectedCheckSelection = selectAffectedChecks(config, setOf("app"), jvm, setOf("test"), emptySet(), setOf("app:jvm:test"))
+        assertEquals(legacy, modern)
+    }
+
+    @Test fun unsupportedKindsAndMissingRequestedAbiSettingsFailExplicitly() {
+        val config = configuration(module("app"))
+        for (kinds in listOf(emptySet(), setOf("compile"), setOf("test", "verify"), setOf("abi-check"))) {
+            assertFailsWith<IllegalArgumentException> { mixed(config, setOf("app"), kinds = kinds) }
+        }
+        val complete = configuration(withAbi(module("app")))
+        val selection = mixed(complete, setOf("app"), "app/src/Main.kt")
+        val json = selection.toJson().values
+        assertEquals(listOf("app:jvm:abi-check", "app:jvm:build", "app:jvm:test"),
+            json.getValue("requestedChecks").arrayValue().map { it.stringValue() })
+        assertEquals(setOf("schemaVersion", "requestedChecks", "selectedChecks", "omittedChecks", "changedPaths", "reasons", "fullReasons"), json.keys)
+    }
 }

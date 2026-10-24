@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise content-based test selection and fresh execution through the native CLI."""
+"""Exercise content-based build/test/ABI selection and execution through the native CLI."""
 import argparse
 import copy
 import json
@@ -50,7 +50,7 @@ def main():
             dict(name='test', directories=[name + '/test'], resources=[], dependsOn=['main'],
                  dependencies=[dict(coordinate='org.junit.jupiter:junit-jupiter-api:5.13.4')]),
         ], targets=[dict(name='jvm', main='main', test='test', compilerOptions=[],
-                         testSettings=dict(classes=[name + '.Tests']))], compilerPlugins=[])
+                         testSettings=dict(classes=[name + '.Tests']), abi=dict(baseline='api/' + name + '.api'))], compilerPlugins=[])
 
     config = dict(schemaVersion=1, name='changeVerification', repositories=[
         dict(id='central', url='https://repo.maven.apache.org/maven2')],
@@ -226,7 +226,68 @@ class Tests {{ @Test fun works() {{ assertEquals(42, answer()) }} }}
     validate(race_result, 'changeVerificationResult')
     assert race_result['status'] == 'incomplete'
     assert set(race_result['omittedChecks']) == {'consumer:jvm:test', 'isolated:jvm:test'}
-    print('PASS change-aware selection, content deltas, conservative fallback, fresh tests and failure propagation')
+    # Mixed check groups bind exactly the same inputs, including all requested ABI baselines.
+    dumps = command('abi-dump', ['abi-dump', *common])
+    for event in dumps:
+        if event.get('type') == 'abi-ready':
+            payload = event['payload']
+            write('api/' + payload['module'] + '.api', Path(payload['api']).read_text())
+    mixed_flags = ('--check', 'build', '--check', 'test', '--check', 'abi-check')
+    mixed_expected = {name + ':jvm:' + kind for name in ('library', 'consumer', 'isolated')
+                      for kind in ('build', 'test', 'abi-check')}
+    mixed = result(verify('mixed-full', extra=('--full', *mixed_flags)))
+    assert mixed['status'] == 'passed' and set(mixed['freshChecks']) == mixed_expected
+    assert len(mixed['executionRuns']) == 3
+    mixed_runs = [Path(run['directory']) for run in mixed['executionRuns']]
+    snapshots = {json.dumps(json.loads((run / 'verification.json').read_text())['inputSnapshot'], sort_keys=True)
+                 for run in mixed_runs}
+    assert len(snapshots) == 1
+    for run in mixed_runs:
+        started = json.loads((run / 'events.jsonl').read_text().splitlines()[0])['payload']
+        assert started['inputSelection'] == dict(kind='abi-check', modules=['consumer', 'isolated', 'library'], targets=['jvm'])
+    composed_flags = (*mixed_flags, *[arg for run in mixed_runs for arg in ('--since', str(run))])
+    combined = result(verify('mixed-unchanged', extra=composed_flags))
+    assert combined['status'] == 'unchanged' and combined['executionRuns'] == []
+    assert combined['baselineRuns'] == list(map(str, mixed_runs))
+    assert combined['baselineRun'] == str(mixed_runs[0])
+    missing = selection(verify('mixed-missing-checks', mixed_runs[0], plan=True, extra=mixed_flags))
+    assert set(missing['selectedChecks']) == {check for check in mixed_expected if not check.endswith(':build')}
+
+    test_source.write_text(test_original + '// mixed test edit\n')
+    test_edit = selection(verify('mixed-test-edit', plan=True, extra=composed_flags))
+    assert set(test_edit['selectedChecks']) == {'library:jvm:test'}
+    test_source.write_text(test_original)
+    source.write_bytes(original.replace(b'AAA', b'BBB'))
+    source_edit = selection(verify('mixed-production-edit', plan=True, extra=composed_flags))
+    assert set(source_edit['selectedChecks']) == {check for check in mixed_expected if not check.startswith('isolated:')}
+    different = result(verify('mixed-different-snapshot', extra=('--full', *mixed_flags)))
+    assert different['status'] == 'passed'
+    source.write_bytes(original)
+    inconsistent = selection(verify('mixed-inconsistent-baselines', plan=True,
+        extra=(*composed_flags, '--since', different['executionRuns'][0]['directory'])))
+    assert set(inconsistent['selectedChecks']) == mixed_expected
+    assert 'baseline-snapshots-differ' in inconsistent['fullReasons']
+
+    abi = root / 'api/library.api'
+    abi_original = abi.read_text()
+    abi.write_text(abi_original.replace('answer', 'removedAnswer'))
+    abi_edit = selection(verify('mixed-abi-edit', plan=True, extra=composed_flags))
+    assert set(abi_edit['selectedChecks']) == {'library:jvm:abi-check'}
+    abi_failure = result(verify('mixed-abi-failure', extra=composed_flags, expected=1))
+    assert abi_failure['status'] == 'failed' and abi_failure['freshChecks'] == []
+    assert len(abi_failure['executionRuns']) == 1
+    abi.write_text(abi_original)
+
+    # Build/ABI verification remains usable for libraries that declare no tests.
+    for item in config['modules']:
+        item['targets'][0]['test'] = None
+        del item['targets'][0]['testSettings']
+    config_file.write_text(json.dumps(config))
+    command('resolve-no-tests', ['resolve', '--project', config_file, '--store', store])
+    no_tests = result(verify('build-abi-without-tests', extra=('--full', '--check', 'build', '--check', 'abi-check')))
+    assert no_tests['status'] == 'passed'
+    assert set(no_tests['freshChecks']) == {check for check in mixed_expected if not check.endswith(':test')}
+    print('PASS change-aware build/test/ABI selection, composed baselines, fresh tests and failure propagation')
 
 
 if __name__ == '__main__':

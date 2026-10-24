@@ -71,14 +71,24 @@ internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile): Build
     BuildOptions(options.forFile(file), emptySet(), setOf("jvm"), checkNotNull(options.tools), options.runs, options.budget),
     ProjectMode.BUILD, true, file, options.arguments)
 
-internal fun executeSelectedTestBuild(options: BuildOptions, snapshot: Digest,
-                                      tools: Map<String, Map<String, Digest>>): BuildOutcome =
-    executeBuildOptions(options, ProjectMode.TEST, ownInterrupts = false, expectedSnapshot = snapshot, expectedTools = tools)
+internal fun executeSelectedVerificationBuild(options: BuildOptions, mode: ProjectMode, snapshot: Digest,
+                                              selection: SnapshotSelection,
+                                              tools: Map<String, Map<String, Digest>>): BuildOutcome {
+    require(mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.ABI_CHECK)) { "Unsupported selected verification mode" }
+    require(selection == SnapshotSelection.Project || selection is SnapshotSelection.AbiCheck) { "Verification requires complete project inputs" }
+    if (mode == ProjectMode.ABI_CHECK) require(selection is SnapshotSelection.AbiCheck &&
+        selection.modules.containsAll(options.modules) && selection.targets.containsAll(options.targets)) {
+        "Verification snapshot must include every requested ABI baseline"
+    }
+    return executeBuildOptions(options, mode, ownInterrupts = false, expectedSnapshot = snapshot,
+        expectedTools = tools, selectionOverride = selection)
+}
 
 private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInterrupts: Boolean,
                                 scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList(),
                                 sessionCache: BuildSessionCache? = null, sourceProject: PreparedSourceProject? = null,
-                                expectedSnapshot: Digest? = null, expectedTools: Map<String, Map<String, Digest>>? = null): BuildOutcome {
+                                expectedSnapshot: Digest? = null, expectedTools: Map<String, Map<String, Digest>>? = null,
+                                selectionOverride: SnapshotSelection? = null): BuildOutcome {
     val test = mode == ProjectMode.TEST
     require(!options.coverage || test && scriptFile == null && options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
@@ -99,7 +109,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val root = scriptFile?.root ?: checkNotNull(project).root
     val name = scriptFile?.name ?: checkNotNull(project).name
     val sourceBytes = scriptFile?.bytes ?: checkNotNull(project).bytes
-    val selection = scriptFile?.selection ?: when (mode) {
+    val selection = selectionOverride ?: scriptFile?.selection ?: when (mode) {
         ProjectMode.ABI_CHECK -> SnapshotSelection.AbiCheck(options.modules, options.targets)
         ProjectMode.DOCUMENTATION -> SnapshotSelection.Documentation(options.modules, options.targets)
         else -> SnapshotSelection.Project
@@ -207,7 +217,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     try {
         if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
         val started = obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson(),
-            "inputManifest" to Sha256.digest(snapshot.inputs.toJson()).toJson(),
+            "inputManifest" to Sha256.digest(snapshot.inputs.toJson()).toJson(), "inputSelection" to selection.toJson(),
             "inputScope" to (if (selection == SnapshotSelection.Project) "project" else "partial").json())
         journal.emit("run-started", if (sourceProject == null) started else JsonValue.Object(started.values +
             ("source" to sourceProject.reference.toJson()) + sourceProject.retention?.let { mapOf("sourceRetention" to it.toJson()) }.orEmpty()))

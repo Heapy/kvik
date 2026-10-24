@@ -9260,6 +9260,9 @@
                       "partial"
                     ]
                   },
+                  "inputSelection": {
+                    "$ref": "#/$defs/snapshotSelection"
+                  },
                   "source": {
                     "$ref": "#/$defs/sourceReference"
                   },
@@ -9621,7 +9624,7 @@
         }
       ]
     },
-    "affectedTestSelection": {
+    "affectedCheckSelection": {
       "type": "object",
       "properties": {
         "schemaVersion": {
@@ -9689,6 +9692,9 @@
       ],
       "additionalProperties": false
     },
+    "affectedTestSelection": {
+      "$ref": "#/$defs/affectedCheckSelection"
+    },
     "changeVerificationPlan": {
       "type": "object",
       "properties": {
@@ -9730,6 +9736,15 @@
             "pattern": "\\S"
           }
         },
+        "baselineRuns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
+        },
         "kind": {
           "const": "verification-selection"
         },
@@ -9737,7 +9752,7 @@
           "const": "planned"
         },
         "selection": {
-          "$ref": "#/$defs/affectedTestSelection"
+          "$ref": "#/$defs/affectedCheckSelection"
         }
       },
       "required": [
@@ -9793,6 +9808,15 @@
             "type": "string",
             "pattern": "\\S"
           }
+        },
+        "baselineRuns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "uniqueItems": true,
+          "maxItems": 256
         },
         "kind": {
           "const": "change-verification"

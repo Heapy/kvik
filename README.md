@@ -101,7 +101,8 @@ and [CLI validation status](docs/evidence/k12-script-cli.md).
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
 
-Use `verify` to select module/target tests affected since a retained Kvik run:
+Use `verify` to select affected module/target checks since retained Kvik runs.
+Checks default to `test`; repeat `--check build|test|abi-check` to choose the scope:
 
 ```sh
 kvik verify --since /project/.kvik/runs/BASELINE_RUN \
@@ -117,27 +118,50 @@ and executable bits across the declared input inventories, including new,
 deleted and renamed files. Git staging and commit state do not affect selection.
 Production changes propagate through module dependencies and workspace compiler
 plugins; test-only changes affect their own consumers. Configuration, dependency
-lock, runtime or desired tool changes widen to all requested tests. Unknown input
+lock, runtime or desired tool changes widen to all requested checks. Unknown input
 ownership, damaged or older baselines without bound manifests also widen the
 selection. A check missing from the baseline's completed checks always runs.
 
-`--full` runs every requested module/target test and can be used without a
-baseline. `--plan-only` captures inputs and prints the selection without starting
+Repeat `--since` to combine completed checks from runs bound to the same input
+snapshot, input selection, configuration, lock, runtime and compatible tools.
+Runs from different snapshots force all requested checks. Mixed verification
+runs capture ABI baselines for every group, so their execution runs can be
+combined on the next invocation:
+
+```sh
+kvik verify --full --check build --check test --check abi-check \
+  --project /project/kvik.json --module library --target jvm --tools /project/tools.json
+kvik verify --since BUILD_RUN --since TEST_RUN --since ABI_RUN \
+  --check build --check test --check abi-check \
+  --project /project/kvik.json --module library --target jvm --tools /project/tools.json
+```
+
+An ABI baseline edit selects its own ABI check. Test source edits do not select
+build or ABI checks unless that source is also a declared production input.
+Build and ABI scopes can select modules without tests; ABI checks require
+configured baseline files.
+
+`--full` runs every requested check and can be used without a baseline.
+`--plan-only` captures inputs and prints the selection without starting
 compilers or tests. Ordinary `test` still runs every requested test; `verify`
 executes every selected test freshly, using normal compilation cache behavior.
-Its scope includes test compilation and generator prerequisites. ABI,
-documentation and script checks retain their separate commands.
+Its scope includes compilation and generator prerequisites. Build and ABI
+checks may reuse verified cache entries. Documentation and script checks retain
+their separate commands.
 
 The JSON stream starts with `kind: "verification-selection"`, follows with normal
 run events when executing, and ends with `kind: "change-verification"`.
 Planning alone prints only the selection. Results distinguish `selectedChecks`,
 `omittedChecks` and successfully completed `freshChecks`, with references to the
-execution runs. `unchanged` means no checks were selected; it does not describe a
+execution runs. For build and ABI, `freshChecks` means newly completed checks,
+including valid cache hits. `baselineRuns` lists all supplied baselines;
+`baselineRun` retains the first one for compatibility. `unchanged` means no checks
+were selected; it does not describe a
 fresh test run. Sources and desired tools are rechecked before and after
 execution; changes during verification produce an incomplete result.
 
 Selection and result records are retained under `.kvik/verification/` in the
-project. Test execution records stay in the usual run directory. These records
+project. Execution records stay in the usual run directory. These records
 describe the selected scope and observed inputs; they do not establish that
 undeclared external services or test fixtures are unchanged.
 

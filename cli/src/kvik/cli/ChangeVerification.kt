@@ -17,20 +17,28 @@ import kvik.projectsnapshot.*
 import kvik.runevidence.committedRunEvents
 import kvik.runevidence.verificationRecordFromJson
 
-private data class ChangeVerificationOptions(val build: BuildOptions, val baseline: String?, val full: Boolean, val planOnly: Boolean)
+private data class ChangeVerificationOptions(val build: BuildOptions, val baselines: List<String>, val checks: Set<String>, val full: Boolean, val planOnly: Boolean)
 
 private fun changeVerificationOptions(args: List<String>): ChangeVerificationOptions {
     val remaining = mutableListOf<String>()
-    var baseline: String? = null
+    val baselines = mutableListOf<String>()
+    val checks = linkedSetOf<String>()
     var full = false
     var planOnly = false
     var index = 0
     while (index < args.size) {
         when (val flag = args[index++]) {
             "--since" -> {
-                require(baseline == null) { "Duplicate --since" }
-                baseline = args.getOrNull(index++)?.takeIf { it.isNotBlank() && !it.startsWith("--") }
+                val baseline = args.getOrNull(index++)?.takeIf { it.isNotBlank() && !it.startsWith("--") }
                     ?: error("--since requires a retained Kvik run directory")
+                require(baseline !in baselines) { "Duplicate --since directory" }
+                require(baselines.size < 256) { "At most 256 baseline runs are supported" }
+                baselines += baseline
+            }
+            "--check" -> {
+                val kind = args.getOrNull(index++) ?: error("--check requires build, test or abi-check")
+                require(kind in setOf("build", "test", "abi-check")) { "Unsupported verification check: $kind" }
+                require(checks.add(kind)) { "Duplicate verification check: $kind" }
             }
             "--full" -> { require(!full) { "Duplicate --full" }; full = true }
             "--plan-only" -> { require(!planOnly) { "Duplicate --plan-only" }; planOnly = true }
@@ -41,16 +49,34 @@ private fun changeVerificationOptions(args: List<String>): ChangeVerificationOpt
             }
         }
     }
-    require(baseline != null || full) { "Use verify --since RUN_DIRECTORY or verify --full" }
-    return ChangeVerificationOptions(buildOptions(remaining), baseline, full, planOnly)
+    require(baselines.isNotEmpty() || full) { "Use verify --since RUN_DIRECTORY or verify --full" }
+    return ChangeVerificationOptions(buildOptions(remaining), baselines, checks.ifEmpty { setOf("test") }, full, planOnly)
 }
 
-private data class VerificationBaseline(val snapshot: Digest, val inputs: TreeManifest, val completed: Set<String>)
+private fun verificationMode(kind: String): ProjectMode = when (kind) {
+    "build" -> ProjectMode.BUILD
+    "test" -> ProjectMode.TEST
+    "abi-check" -> ProjectMode.ABI_CHECK
+    else -> error("Unsupported verification check: $kind")
+}
+
+private data class VerificationGroup(val mode: ProjectMode, val modules: Set<String>, val targets: Set<String>, val checks: Set<String>)
+
+/** Preserve graph parallelism without introducing unselected module/target pairs. */
+private fun verificationGroups(selected: Set<String>): List<VerificationGroup> = listOf("build", "test", "abi-check").flatMap { kind ->
+    val byTarget = selected.filter { it.substringAfterLast(':') == kind }.groupBy { it.split(':')[1] }
+    byTarget.entries.groupBy { entry -> entry.value.map { it.substringBefore(':') }.toSet() }
+        .entries.sortedBy { it.key.sorted().joinToString(":") }.map { (modules, entries) ->
+            VerificationGroup(verificationMode(kind), modules, entries.map { it.key }.toSet(), entries.flatMap { it.value }.toSet())
+        }
+}
+
+private data class VerificationBaseline(val snapshot: Digest, val manifest: Digest, val completed: Set<String>, val toolchains: Map<String, Digest>)
 
 /** The journal binds the retained input manifest. A raw inputs.json is never sufficient to omit a check. */
 private fun verificationBaseline(directory: String, root: String, configurationPath: LogicalPath,
                                  current: ProjectInputSnapshot, configuration: Digest, lock: Digest,
-                                 desired: Map<String, Map<String, Digest>>, fullReasons: MutableSet<String>): VerificationBaseline {
+                                 fullReasons: MutableSet<String>, retainInputs: (TreeManifest) -> Unit): VerificationBaseline {
     NativeFiles.ensureDirectory(directory, create = false)
     fun bytes(name: String) = NativeFiles.read("$directory/$name", 16 * 1024 * 1024)
     fun document(name: String) = parseJson(bytes(name).decodeToString(throwOnInvalidSequence = true))
@@ -63,14 +89,22 @@ private fun verificationBaseline(directory: String, root: String, configurationP
         "Baseline requested checks differ from completion"
     }
     require(record.source == null && "source" !in started) { "Source-provider baselines cannot narrow a local verification" }
-    require(started["inputScope"]?.stringValue() == "project") { "Baseline does not bind a complete project snapshot" }
+    val boundSelection = started["inputSelection"]?.let(SnapshotSelection::fromJson)
+        ?: SnapshotSelection.Project.takeIf { started["inputScope"]?.stringValue() == "project" }
+    require(boundSelection == current.selection) { "Baseline does not bind the same complete verification input selection" }
+    require(started["inputScope"]?.stringValue() == (if (boundSelection == SnapshotSelection.Project) "project" else "partial")) {
+        "Baseline input scope differs from its bound selection"
+    }
     val manifest = document("inputs.json")
-    require(started["inputManifest"]?.let(Digest::fromJson) == Sha256.digest(manifest)) { "Baseline input manifest is unbound or changed" }
+    val manifestDigest = Sha256.digest(manifest)
+    require(started["inputManifest"]?.let(Digest::fromJson) == manifestDigest) { "Baseline input manifest is unbound or changed" }
     val inputs = TreeManifest.fromJson(manifest)
     val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"),
         setOf("inputSelection", "toolTargets", "source", "sourceCache", "sourceRetention"))
     metadata.requireVersion()
-    require("source" !in metadata && "inputSelection" !in metadata) { "Partial/source-provider baselines cannot narrow verification" }
+    require("source" !in metadata && (metadata["inputSelection"]?.let(SnapshotSelection::fromJson) ?: SnapshotSelection.Project) == current.selection) {
+        "Baseline input selection metadata differs from its bound selection"
+    }
     if (metadata.getValue("projectRoot").stringValue() != root || metadata.getValue("configurationPath").stringValue() != configurationPath.value)
         fullReasons += "project-identity-changed"
     if (record.configuration != configuration) fullReasons += "configuration-changed"
@@ -78,18 +112,16 @@ private fun verificationBaseline(directory: String, root: String, configurationP
     if (!bytes("configuration.json").contentEquals(current.configurationBytes)) fullReasons += "configuration-bytes-changed"
     if (!bytes("dependency-lock.json").contentEquals(current.lockBytes)) fullReasons += "dependency-lock-bytes-changed"
     if (record.composition != Digest(runtimeComposition, runtimeCompositionSize)) fullReasons += "runtime-composition-changed"
-    for ((target, identities) in desired) for ((name, identity) in identities) {
-        if (record.toolchains["$target:$name"] != identity) fullReasons += "tool-identities-changed"
-    }
     if (record.freshnessAtCompletion != Freshness.CURRENT) fullReasons += "baseline-not-current-at-completion"
-    return VerificationBaseline(record.inputSnapshot, inputs,
-        if (record.freshnessAtCompletion == Freshness.CURRENT) record.completedChecks else emptySet())
+    retainInputs(inputs)
+    return VerificationBaseline(record.inputSnapshot, manifestDigest,
+        if (record.freshnessAtCompletion == Freshness.CURRENT) record.completedChecks else emptySet(), record.toolchains)
 }
 
 internal fun changeVerificationCommand(args: List<String>): ExitStatus {
     val parsed = changeVerificationOptions(args)
     val options = parsed.build
-    require(!options.coverage || options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
+    require(!options.coverage || "test" in parsed.checks && options.targets == setOf("jvm")) { "--coverage requires --check test and JVM-only execution" }
     check(kvik_interrupt_install() == 0) { "Cannot install verification interruption handlers" }
     try { return executeChangeVerification(parsed, options) }
     finally { kvik_interrupt_restore() }
@@ -103,45 +135,78 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     val toolsPath = projectPath(root, options.tools)
     val runsPath = projectPath(root, options.runs)
     val verificationPath = "$root/.kvik/verification"
-    requireDisjointStore(project, storePath, lockPath, toolsPath)
-    val inputPlan = projectInputPlan(project.configuration, SnapshotSelection.Project)
+    val inputSelection = if ("abi-check" in parsed.checks) SnapshotSelection.AbiCheck(options.modules, options.targets) else SnapshotSelection.Project
+    requireDisjointStore(project, storePath, lockPath, toolsPath, inputSelection)
+    val inputPlan = projectInputPlan(project.configuration, inputSelection)
     requireDisjointInputPath(root, project.path, inputPlan, verificationPath, listOf(lockPath, toolsPath))
     requireDisjointInputPath(root, project.path, inputPlan, runsPath, listOf(lockPath, toolsPath))
     val policy = options.project.resolverPolicy()
     val initial = effectiveConfiguration(project.configuration, policy)
     val content = NativeContentStore(storePath, maxBlobBytes = initial.maxArtifactBytes)
     val snapshots = NativeProjectSnapshotter(root, content)
-    val snapshot = when (val captured = snapshots.capture(project.name, lockPath, Sha256.digest(project.bytes), SnapshotSelection.Project)) {
+    val snapshot = when (val captured = snapshots.capture(project.name, lockPath, Sha256.digest(project.bytes), inputSelection)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
     val effective = effectiveConfiguration(snapshot.configuration, policy)
     val lock = DependencyLocks(content, kvik.resolution.NativePomParser()).loadLocked(snapshot.lockBytes, effective)
-    val toolTargets = projectToolTargets(snapshot.configuration.project, ProjectGraphRequest(options.modules, options.targets, ProjectMode.TEST))
+    val toolTargets = parsed.checks.flatMap { kind -> projectToolTargets(snapshot.configuration.project,
+        ProjectGraphRequest(options.modules, options.targets, verificationMode(kind))) }.toSet()
     val desired = BuildTools(toolsPath).desiredIdentities(toolTargets)
     val fullReasons = linkedSetOf<String>()
     if (parsed.full) fullReasons += "requested-full"
     if (options.coverage) fullReasons += "coverage-requested"
     var baselineFailure: String? = null
-    val baselineDirectory = parsed.baseline?.let { projectPath(currentDirectory(), it) }
-    val baseline = baselineDirectory?.let { directory ->
-        try { verificationBaseline(directory, root, project.name, snapshot, effective.digest, lock.digest, desired, fullReasons) }
+    val baselineDirectories = parsed.baselines.map { projectPath(currentDirectory(), it) }
+    require(baselineDirectories.distinct().size == baselineDirectories.size) { "Duplicate baseline directory" }
+    // All accepted baselines must bind the same manifest; keep only its first parsed inventory.
+    var baselineInputs: TreeManifest? = null
+    val baselines = baselineDirectories.mapNotNull { directory ->
+        try { verificationBaseline(directory, root, project.name, snapshot, effective.digest, lock.digest, fullReasons) { inputs ->
+            if (baselineInputs == null) baselineInputs = inputs
+        } }
         catch (failure: Exception) {
             fullReasons += "baseline-invalid"
             baselineFailure = failure.message ?: "Cannot validate baseline"
             null
         }
     }
-    val previous = baseline?.inputs?.files?.associateBy { it.path }.orEmpty()
+    val firstBaseline = baselines.firstOrNull()
+    val compatibleSnapshots = baselines.size == baselineDirectories.size && baselines.all {
+        it.snapshot == firstBaseline?.snapshot && it.manifest == firstBaseline?.manifest
+    }
+    if (!compatibleSnapshots) fullReasons += "baseline-snapshots-differ"
+    val baseline = firstBaseline.takeIf { compatibleSnapshots }
+    val completed = if (compatibleSnapshots) baselines.flatMap { it.completed }.toSet() else emptySet()
+    val recordedTools = mutableMapOf<String, Digest>()
+    for (candidate in baselines) for ((key, identity) in candidate.toolchains) {
+        if (recordedTools.put(key, identity)?.let { it != identity } == true) fullReasons += "baseline-tool-identities-conflict"
+    }
+    if (baselines.isNotEmpty()) {
+        for ((target, identities) in desired) for ((name, identity) in identities) {
+            if (recordedTools["$target:$name"] != identity) fullReasons += "tool-identities-changed"
+        }
+        // An unrelated run cannot supply a missing tool declaration for a completed check.
+        for (candidate in baselines) for (check in candidate.completed) {
+            val parts = check.split(':')
+            if (parts.size != 3 || parts[0] !in options.modules || parts[1] !in options.targets || parts[2] !in parsed.checks) continue
+            val required = projectToolTargets(snapshot.configuration.project,
+                ProjectGraphRequest(setOf(parts[0]), setOf(parts[1]), verificationMode(parts[2])))
+            for (target in required) for ((name, identity) in desired.getValue(target)) {
+                if (candidate.toolchains["$target:$name"] != identity) fullReasons += "baseline-check-tools-incomplete"
+            }
+        }
+    }
+    val previous = baselineInputs.takeIf { baseline != null }?.files?.associateBy { it.path }.orEmpty()
     val current = snapshot.inputs.files.associateBy { it.path }
     val changed = if (baseline == null) emptySet() else (previous.keys + current.keys).filter { previous[it] != current[it] }.toSet()
     if (baseline != null && baseline.snapshot != snapshot.fingerprint && changed.isEmpty() && fullReasons.isEmpty())
         fullReasons += "directory-inventory-changed"
-    val selection = selectAffectedTests(snapshot.configuration, options.modules, options.targets, changed,
-        baseline?.completed.orEmpty(), fullReasons)
+    val selection = selectAffectedChecks(snapshot.configuration, options.modules, options.targets, parsed.checks, changed,
+        completed, fullReasons)
     val limitations = listOf(
-        "Scope is selected module/target tests and their compilation/generator prerequisites; ABI, documentation and script checks are not requested.",
-        "Omitted checks were completed in the retained baseline; they are not fresh test executions.",
+        "Scope is explicitly selected build, test and ABI checks with their prerequisites; documentation and script checks are not requested.",
+        "Omitted checks were completed in compatible retained baselines. freshChecks records newly completed checks; build and ABI actions may use verified cache entries, while selected tests execute freshly.",
         "Changes are detected from declared file content, executable bits and directory inventories, regardless of Git staging state.",
         "Filesystem observations detect changes while observed; they do not provide an atomic snapshot or exclude ABA edits."
     )
@@ -154,7 +219,8 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     }
     val context = mapOf(
         "schemaVersion" to CONTRACT_VERSION.json(), "directory" to directory.path.json(),
-        "baselineRun" to (baselineDirectory?.json() ?: JsonValue.Null),
+        "baselineRun" to (baselineDirectories.firstOrNull()?.json() ?: JsonValue.Null),
+        "baselineRuns" to baselineDirectories.map { it.json() }.json(),
         "baselineSnapshot" to (baseline?.snapshot?.toJson() ?: JsonValue.Null),
         "inputSnapshot" to snapshot.fingerprint.toJson(), "limitations" to limitations.map { it.json() }.json()
     )
@@ -179,19 +245,20 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     }
     if (guard() && !parsed.planOnly) {
         status = if (selection.selected.isEmpty()) "unchanged" else "passed"
-        val groups = selection.selected.groupBy { it.split(':')[1] }.entries.sortedBy { it.key }
-        for ((target, checks) in groups) {
+        val groups = verificationGroups(selection.selected)
+        for (group in groups) {
+            val checks = group.checks
             if (!guard()) break
-            val groupOptions = options.copy(modules = checks.map { it.substringBefore(':') }.toSet(), targets = setOf(target))
+            val groupOptions = options.copy(modules = group.modules, targets = group.targets, coverage = options.coverage && group.mode == ProjectMode.TEST)
             try {
-                val outcome = executeSelectedTestBuild(groupOptions, snapshot.fingerprint, desired)
-                val runPath = requireNotNull(outcome.directory) { "Test execution did not retain a run directory" }
+                val outcome = executeSelectedVerificationBuild(groupOptions, group.mode, snapshot.fingerprint, inputSelection, desired)
+                val runPath = requireNotNull(outcome.directory) { "Verification execution did not retain a run directory" }
                 val record = verificationRecordFromJson(parseJson(NativeFiles.read("$runPath/verification.json", 16 * 1024 * 1024)
                     .decodeToString(throwOnInvalidSequence = true)))
                 committedRunEvents(record, parseJson(NativeFiles.read("$runPath/completion.json", 16 * 1024 * 1024)
                     .decodeToString(throwOnInvalidSequence = true)), NativeFiles.read("$runPath/events.jsonl", 16 * 1024 * 1024))
                 require(record.inputSnapshot == snapshot.fingerprint && record.requestedChecks == checks.toSet()) {
-                    "Test execution scope or inputs differ from selection"
+                    "Verification execution scope or inputs differ from selection"
                 }
                 val groupStatus = when (outcome.status) {
                     ExitStatus.SUCCESS -> "passed"
@@ -204,14 +271,14 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
                 if (record.freshnessAtCompletion == Freshness.CURRENT) fresh += record.completedChecks
                 when (outcome.status) {
                     ExitStatus.SUCCESS -> Unit
-                    ExitStatus.CANCELLED -> { status = "cancelled"; exitStatus = ExitStatus.CANCELLED; reason = "Test execution interrupted" }
-                    ExitStatus.FAILED -> if (status != "incomplete") { status = "failed"; exitStatus = ExitStatus.FAILED; reason = "Selected tests or prerequisites failed" }
-                    else -> { status = "incomplete"; exitStatus = outcome.status; reason = "Selected test execution was incomplete" }
+                    ExitStatus.CANCELLED -> { status = "cancelled"; exitStatus = ExitStatus.CANCELLED; reason = "Verification execution interrupted" }
+                    ExitStatus.FAILED -> if (status != "incomplete") { status = "failed"; exitStatus = ExitStatus.FAILED; reason = "Selected checks or prerequisites failed" }
+                    else -> { status = "incomplete"; exitStatus = outcome.status; reason = "Selected verification execution was incomplete" }
                 }
             } catch (failure: Exception) {
                 status = "incomplete"
                 exitStatus = ExitStatus.INCOMPLETE
-                reason = failure.message ?: "Cannot complete selected test execution"
+                reason = failure.message ?: "Cannot complete selected verification execution"
             }
             if (status == "cancelled" || !guard()) break
         }
