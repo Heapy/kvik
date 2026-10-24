@@ -13,7 +13,7 @@ private const val PSM_PATH = "META-INF/kotlin-project-structure-metadata.json"
 
 /** Read only declared metadata; no target KLIB substitution, repositories or ambient classpath. */
 internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratch: Path, targets: Set<String>, minimumTargets: Int = 2, nativeStdlibPath: String? = null): List<Path> {
-    require(targets.size >= minimumTargets && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+    require(targets.size >= minimumTargets && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
     return paths.flatMapIndexed { index, logical ->
         val path = workspace.path(logical)
         if (Files.isDirectory(path)) {
@@ -85,7 +85,7 @@ internal fun commonSourceSets(value: JsonValue, targets: Set<String> = setOf("jv
     fun variants(names: Set<String>): List<Set<String>> = variants.filter { it.getValue("name").stringValue() in names }.map {
         it.getValue("sourceSet").arrayValue().map(JsonValue::stringValue).also { names -> require(names.distinct().size == names.size) }.toSet()
     }
-    require(targets.size >= minimumTargets && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+    require(targets.size >= minimumTargets && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
     val selectedByTarget = targets.sorted().flatMap { target ->
         variants(setOf("${target}ApiElements", "${target}ApiElements-published")).ifEmpty {
             if (NativeTarget.find(target) != null) variants(setOf("nativeApiElements", "nativeApiElements-published")) else emptyList()

@@ -1751,7 +1751,9 @@
                         "macosArm64",
                         "linuxX64",
                         "iosArm64",
-                        "iosSimulatorArm64"
+                        "iosSimulatorArm64",
+                        "js",
+                        "wasmJs"
                       ]
                     }
                   },
@@ -5271,7 +5273,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests))$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|package))$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -11059,7 +11061,9 @@
               "macosArm64",
               "linuxX64",
               "iosArm64",
-              "iosSimulatorArm64"
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
             ]
           },
           "uniqueItems": true
@@ -11109,7 +11113,7 @@
             "properties": {
               "metadataTargets": {
                 "minItems": 2,
-                "maxItems": 5
+                "maxItems": 7
               }
             }
           },

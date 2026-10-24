@@ -201,7 +201,7 @@ DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minIte
 DEFS["module"]["properties"]["documentation"] = ref("documentationSettings")
 DEFS["module"]["properties"]["sqlDelight"] = ref("sqlDelight")
 DEFS["module"]["allOf"] = [{"if": {"required": ["publication"]},
-    "then": {"properties": {"targets": {"items": {"properties": {"name": enum(*JVM_NATIVE_TARGETS)}, "not": {"required": ["application"]}}}}}}]
+    "then": {"properties": {"targets": {"items": {"properties": {"name": enum(*PROJECT_TARGETS)}, "not": {"required": ["application"]}}}}}}]
 DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate emitted root or derived target publication coordinates across modules."
 DEFS["repository"] = object_({"id": ID, "url": {"type": "string", "pattern": "^https://"}})
 # Script declarations are distinct from module compilation selections. Older nonempty profile
@@ -427,7 +427,7 @@ DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests))$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|package))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1), "source": ref("sourceReference")}, optional=("source",))
@@ -852,10 +852,10 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "application-finished": object_({"preparationRun": NONEMPTY, "exitCode": {"type": "integer", "minimum": 0, "maximum": 255},
         "cancelled": BOOL, "timedOut": BOOL, "stdout": NONEMPTY, "stderr": NONEMPTY}),
 }.items()]
-DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum(*JVM_NATIVE_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
+DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum(*PROJECT_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
 DEFS["workerRequest"]["allOf"] = [{"if": {"required": ["pluginApplications"], "properties": {"pluginApplications": {"minItems": 1}}}, "then": {"properties": {"pluginClasspath": {"maxItems": 0}}}}]
 DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-compile"}}},
-    "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": len(JVM_NATIVE_TARGETS)}}},
+    "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": len(PROJECT_TARGETS)}}},
     "else": {"properties": {"metadataTargets": {"maxItems": 0}}}})
 
 DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success", "compilation-error", "infrastructure-error", "cancelled"), "exitCode": {"type": "integer"}, "diagnostics": array(ref("diagnostic"))})

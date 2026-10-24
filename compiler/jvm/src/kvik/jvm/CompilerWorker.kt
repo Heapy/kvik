@@ -142,6 +142,8 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
                 it.compilerArguments[MetadataArguments.CLASSPATH] = classpath
                 it.compilerArguments[MetadataArguments.X_TARGET_PLATFORM] = buildList {
                     if ("jvm" in request.metadataTargets) add(MetadataTargetPlatform.JVM)
+                    if ("js" in request.metadataTargets) add(MetadataTargetPlatform.JS)
+                    if ("wasmJs" in request.metadataTargets) add(MetadataTargetPlatform.WASM_JS)
                     if (request.metadataTargets.any { NativeTarget.find(it) != null }) add(MetadataTargetPlatform.NATIVE)
                 }
             }

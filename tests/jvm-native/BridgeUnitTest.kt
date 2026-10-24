@@ -59,6 +59,12 @@ class BridgeUnitTest {
         val withPlugin = request.copy(pluginClasspath = listOf("plugin.jar"))
         assertEquals(withPlugin, WorkerRequest.fromJson(withPlugin.toJson()))
         assertFails { request.copy(metadataTargets = setOf("jvm")) }
+        for (targets in listOf(setOf("js", "wasmJs"), setOf("jvm", "js", "wasmJs"))) {
+            assertEquals(targets, WorkerRequest.fromJson(request.copy(metadataTargets = targets).toJson()).metadataTargets)
+            val web = compilation.copy(targets = targets)
+            assertEquals(web, JvmMetadataCompilation.fromJson(web.toJson()))
+            assertNotEquals(action.key(Sha256), jvmMetadataCompileAction(web, inputs, digest, tools).key(Sha256))
+        }
         val ordinary = WorkerRequest("jvm", "jvm-compile", digest, listOf("A.kt"), emptyList(), emptyList(), emptyList(), "classes")
         assertFalse("metadataTargets" in ordinary.toJson().objectValue())
     }

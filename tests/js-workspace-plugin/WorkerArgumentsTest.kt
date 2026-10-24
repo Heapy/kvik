@@ -25,6 +25,8 @@ object WorkerArgumentsTest {
                 checks++
             }
             accept(base)
+            accept(base.map { if (it == "-Xir-module-name=module") "-Xir-module-name=org.example:library" else it })
+            reject(base.map { if (it == "-Xir-module-name=module") "-Xir-module-name=../outside" else it })
             accept(listOf("-Xwasm-target=wasm-js") + base, KotlinJsTarget.WASM_JS)
             accept(base + listOf("input/Common.kt", "-Xmulti-platform", "-Xcommon-sources=input/Common.kt", "-opt-in=example.Experimental", "-Werror", "-Xexplicit-api=strict"))
             accept(base.filterNot { it == "-libraries" || it == "input/stdlib.klib" }, libraries = emptyList())

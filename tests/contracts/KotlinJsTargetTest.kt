@@ -45,8 +45,9 @@ class KotlinJsTargetTest {
         for (target in KotlinJsTarget.entries) {
             assertFails { TargetSpec(target.projectName, "main", "test", emptyList(), testSettings = JvmTestSettings(emptyList())) }
             assertFails { TargetSpec(target.projectName, "main", null, emptyList(), abi = AbiSettings(LogicalPath("api.txt"))) }
-            assertFails { CompilerPluginSpec("plugin", null, setOf(target.projectName), setOf("main"), emptyList(), emptyList(),
-                id = "sample", compilerVersion = "2.4.20") }
+            val plugin = CompilerPluginSpec("plugin", null, setOf(target.projectName), setOf("main"), emptyList(), emptyList(),
+                id = "sample", compilerVersion = "2.4.20")
+            assertTrue(plugin.appliesTo(target.projectName, "test"))
         }
     }
 }

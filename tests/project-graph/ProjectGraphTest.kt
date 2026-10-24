@@ -406,13 +406,14 @@ class ProjectGraphTest {
         assertTrue(bundle.inputs.files.any { it.path.value.startsWith("runtime/runtime/main/") })
     }
 
-    @Test fun linuxRootMetadataUsesExactlyDeclaredTargetsIncludingNativeOnlyIntersection() {
-        for (selected in listOf(setOf("jvm", "linuxX64"), setOf("macosArm64", "linuxX64"), setOf("jvm", "macosArm64", "linuxX64"))) {
+    @Test fun rootMetadataUsesExactlyDeclaredNativeAndWebTargetIntersections() {
+        for (selected in listOf(setOf("jvm", "linuxX64"), setOf("macosArm64", "linuxX64"), setOf("jvm", "macosArm64", "linuxX64"), setOf("js", "wasmJs"), setOf("jvm", "js", "wasmJs"))) {
             fun forTargets(value: ModuleSpec): ModuleSpec = published(value, false).copy(
-                sourceSets = value.sourceSets.map { it.copy(resources = emptyList()) } + source("linuxMain", "${value.id}/linux", listOf("commonMain")),
+                sourceSets = value.sourceSets.map { it.copy(resources = emptyList()) } +
+                    listOf("linux", "js", "wasmJs").map { source("${it}Main", "${value.id}/$it", listOf("commonMain")) },
                 targets = selected.sorted().map { name ->
                     (if (name == "jvm") value.targets.first() else value.targets.last()).let {
-                        it.copy(name = name, main = if (name == "linuxX64") "linuxMain" else it.main)
+                        it.copy(name = name, main = if (name == "linuxX64") "linuxMain" else if (KotlinJsTarget.find(name) != null) "${name}Main" else it.main)
                     }
                 })
             val config = configuration(forTargets(base), forTargets(app))
@@ -1690,10 +1691,30 @@ class JsProjectGraphTest {
         }
     }
 
+    @Test fun packagesContainOnlyOwnKlibAndPublishApiDependencies() {
+        for (target in KotlinJsTarget.entries) {
+            fun library(value: ModuleSpec, resources: Boolean = false) = published(value, resources).copy(
+                sourceSets = value.sourceSets.map { it.copy(resources = if (resources) it.resources else emptyList()) },
+                targets = listOf(TargetSpec(target.projectName, "jvmMain", null, emptyList())))
+            val config = configuration(library(base), library(app))
+            val plan = graph(config, request = request(ProjectMode.PACKAGE, target.projectName))
+            val actions = resolved(plan)
+            val main = JsCompilation.fromJson(actions.getValue("app:${target.projectName}:main").parameters)
+            assertEquals("fixture:app", main.moduleName)
+            val action = actions.getValue("app:${target.projectName}:package")
+            assertEquals(listOf(FileEntry(LogicalPath("module.klib"), digest("app:${target.projectName}:main"))), action.inputs.files)
+            val selection = LibraryPackage.fromJson(action.parameters)
+            assertEquals("app-${target.publicationSuffix}", selection.coordinate.name)
+            assertEquals(mapOf("fixture:base-${target.publicationSuffix}:1" to true, "g:library:1" to true),
+                selection.dependencies.associate { it.coordinate.toString() to it.api })
+            assertFails { graph(configuration(library(base), library(app, true)), request = request(ProjectMode.PACKAGE, target.projectName)) }
+        }
+    }
+
     @Test fun unavailableJsIntegrationsAndMissingNodeIdentityAreExplicitErrors() {
         for (target in KotlinJsTarget.entries) {
             val config = fixture(target.projectName)
-            for (mode in listOf(ProjectMode.PACKAGE, ProjectMode.ABI_DUMP, ProjectMode.DOCUMENTATION))
+            for (mode in listOf(ProjectMode.ABI_DUMP, ProjectMode.DOCUMENTATION))
                 assertFails { graph(config, request = request(mode, target.projectName)) }
             val effective = effectiveConfiguration(config)
             assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition,

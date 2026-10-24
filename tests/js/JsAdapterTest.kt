@@ -19,6 +19,10 @@ class JsAdapterTest {
             assertFails { jsCompileAction(compilation, inputs, digest, tools + ("node" to digest)) }
             val link = JsCompilation("example", target, emptyList(), listOf(library), LogicalPath("tests"), includedLibrary = LogicalPath("tests.klib"), moduleName = "tests")
             val linked = jsCompileAction(link, TreeManifest(listOf(FileEntry(library, digest), FileEntry(LogicalPath("tests.klib"), digest))), digest, tools)
+            val published = compilation.copy(moduleName = "org.example:library")
+            assertContains(published.arguments(), "-Xir-module-name=org.example:library")
+            assertNotEquals(action.key(Sha256), jsCompileAction(published, inputs, digest, tools).key(Sha256))
+            assertFails { link.copy(moduleName = "org.example:library") }
             assertEquals(ActionKind.LINK, linked.kind)
             assertContains(linked.arguments, "-Xinclude=input/tests.klib")
             assertContains(linked.arguments, "noCall")

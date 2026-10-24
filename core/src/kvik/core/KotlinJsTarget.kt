@@ -5,6 +5,8 @@ enum class KotlinJsTarget(val projectName: String, val platformType: String) {
     JS("js", "js"),
     WASM_JS("wasmJs", "wasm");
 
+    val publicationSuffix: String get() = if (this == JS) "js" else "wasm-js"
+
     val variantAttributes: Map<String, String> get() = when (this) {
         JS -> mapOf("org.jetbrains.kotlin.js.compiler" to "ir")
         WASM_JS -> mapOf("org.jetbrains.kotlin.wasm.target" to "js")

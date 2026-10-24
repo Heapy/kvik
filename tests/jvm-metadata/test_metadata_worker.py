@@ -89,7 +89,7 @@ def main():
     manifest_text = (work / 'common/default/manifest').read_text()
     assert r'unique_name=fixture\:common' in manifest_text and 'native_targets=' not in manifest_text and 'builtins_platform=NATIVE' not in manifest_text
     assert list((work / 'common/default/linkdata').rglob('*.knm')) and not list((work / 'common').rglob('*.class'))
-    for name, targets in [('linux-common', ['jvm', 'linuxX64']), ('native-pair-common', ['macosArm64', 'linuxX64']), ('all-targets-common', ['jvm', 'macosArm64', 'linuxX64'])]:
+    for name, targets in [('linux-common', ['jvm', 'linuxX64']), ('native-pair-common', ['macosArm64', 'linuxX64']), ('all-targets-common', ['jvm', 'macosArm64', 'linuxX64']), ('web-common', ['js', 'wasmJs']), ('jvm-web-common', ['jvm', 'js', 'wasmJs'])]:
         compile(name, metadataTargets=targets)
         assert list((work / name / 'default/linkdata').rglob('*.knm'))
         assert not list((work / name).rglob('*.class'))

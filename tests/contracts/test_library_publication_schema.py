@@ -28,7 +28,7 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
         request['metadataTargets'] = ['jvm', 'macosArm64']
         request['pluginClasspath'] = []
         validator('workerRequest').validate(request)
-        for targets in (['jvm', 'linuxX64'], ['macosArm64', 'linuxX64'], ['jvm', 'macosArm64', 'linuxX64']):
+        for targets in (['jvm', 'linuxX64'], ['macosArm64', 'linuxX64'], ['jvm', 'macosArm64', 'linuxX64'], ['js', 'wasmJs'], ['jvm', 'js', 'wasmJs']):
             validator('workerRequest').validate({**request, 'metadataTargets': targets})
         for targets in ([], ['jvm'], ['jvm', 'jvm'], ['jvm', 'iosX64']):
             self.assertFalse(validator('workerRequest').is_valid({**request, 'metadataTargets': targets}))
@@ -48,7 +48,7 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
 
     def test_library_application_conflict_and_existing_plugins(self):
         value = {**module(), 'publication': dict(coordinate='org.example:library:1')}
-        for target in ('jvm', 'macosArm64', 'linuxX64'):
+        for target in ('jvm', 'macosArm64', 'linuxX64', 'js', 'wasmJs'):
             value['targets'][0]['name'] = target
             validator('module').validate(value)
             value['targets'][0]['application'] = dict(entryPoint='sample.main')
@@ -65,6 +65,9 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
         validator('verification').validate(value)
         value['requestedChecks'] = ['library:macosArm64:package']
         validator('verification').validate(value)
+        for target in ('js', 'wasmJs'):
+            value['requestedChecks'] = [f'library:{target}:package']
+            validator('verification').validate(value)
         value['requestedChecks'] = ['library:common:package']
         validator('verification').validate(value)
         value['requestedChecks'] = ['library:common:build']

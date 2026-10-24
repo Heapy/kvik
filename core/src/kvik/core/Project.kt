@@ -138,7 +138,7 @@ data class LibraryPublicationSpec(val coordinate: Coordinate) {
     fun coordinateFor(target: String): Coordinate {
         val suffix = when (target) {
             "jvm" -> "jvm"
-            else -> NativeTarget.require(target).publicationSuffix
+            else -> KotlinJsTarget.find(target)?.publicationSuffix ?: NativeTarget.require(target).publicationSuffix
         }
         return coordinate.copy(name = "${coordinate.name}-$suffix")
     }

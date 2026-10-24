@@ -30,7 +30,7 @@ data class JsCompilation(
             }
         }) { "Plugin paths overlap compilation inputs/outputs or leave the plugin namespace" }
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
-        require(moduleName.matches(Regex("[A-Za-z_][A-Za-z0-9_.-]*")))
+        require(moduleName.matches(Regex(if (includedLibrary == null) "[A-Za-z0-9_][A-Za-z0-9_.:-]*" else "[A-Za-z_][A-Za-z0-9_.-]*")))
         for (paths in listOf(sources, libraries, commonSources, plugins)) {
             require(paths.distinct().size == paths.size && paths.none { ':' in it.value || ',' in it.value })
         }

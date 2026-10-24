@@ -127,7 +127,7 @@ internal fun validateJsPluginArguments(arguments: List<String>, target: KotlinJs
             "-Xwasm-target=wasm-js" -> require(target == KotlinJsTarget.WASM_JS)
             "-Xmulti-platform", "-Xexplicit-api=strict", "-Werror" -> Unit
             else -> when {
-                argument.startsWith("-Xir-module-name=") -> require(argument.substringAfter('=').matches(Regex("[A-Za-z_][A-Za-z0-9_.-]*")))
+                argument.startsWith("-Xir-module-name=") -> require(argument.substringAfter('=').matches(Regex("[A-Za-z0-9_][A-Za-z0-9_.:-]*")))
                 argument.startsWith("-opt-in=") -> {
                     val annotation = argument.substringAfter('=')
                     require(annotation.matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")) && optIns.add(annotation))

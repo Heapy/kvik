@@ -112,8 +112,8 @@ private class Builder(
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
         require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unknown project module/target selection" }
-        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS)) {
-            "JS/Wasm currently supports build, test and compile-tests; packaging, ABI, documentation and application modes require their own adapters"
+        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.PACKAGE)) {
+            "JS/Wasm currently supports build, test, compile-tests and packaging; ABI, documentation and application modes require their own adapters"
         }
         require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
         require(!this.request.mode.isBenchmark() || this.request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
@@ -542,7 +542,7 @@ private class Builder(
         require(results.keys == dependencies && results.all { (id, result) -> result.actionId == id && result.successful }) { "Prerequisite result set/status differs" }
     }
     private fun compilerModuleName(module: String, target: String): String =
-        if (NativeTarget.find(target) != null) modules.getValue(module).publication?.coordinate?.let { "${it.group}:${it.name}" } ?: module else module
+        if (NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) modules.getValue(module).publication?.coordinate?.let { "${it.group}:${it.name}" } ?: module else module
     private fun options(module: String, target: String, scope: String, sources: Sources): CompilerOptions = compilerOptions(compilerModuleName(module, target), target, target(module, target).optionsFor(scope)).also {
         require(!it.multiplatform || sources.common.isNotEmpty()) { "Explicit multiplatform option requires common fragments" }
     }
@@ -689,7 +689,7 @@ private class Builder(
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else if (KotlinJsTarget.find(target) != null) jsCompileAction(JsCompilation(module = module, target = KotlinJsTarget.require(target),
-                sources = source.paths, commonSources = source.common, libraries = classpath, output = LogicalPath("module.klib"),
+                sources = source.paths, commonSources = source.common, libraries = classpath, output = LogicalPath("module.klib"), moduleName = compilerModuleName(module, target),
                 optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 plugins = plugin.map { it.path }, pluginApplications = workspace.applications), inputs, composition, jsCompilerTools(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
@@ -734,7 +734,7 @@ private class Builder(
             }
             val pomCoordinate = if (dependency is Dependency.Module && dependency.module in rootPublicationModules)
                 modules.getValue(dependency.module).publication!!.coordinateFor(target) else null
-            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (NativeTarget.find(target) != null || dependency.exported), pomCoordinate)
+            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (target != "jvm" || dependency.exported), pomCoordinate)
         }
         return dependencies.groupBy { it.coordinate.group to it.coordinate.name }.values.map { group ->
             require(group.map { it.coordinate.version }.distinct().size == 1) { "Library publication has conflicting direct dependency versions" }
@@ -751,7 +751,7 @@ private class Builder(
         ensureMain(module, target)
         val dependencies = publicationDependencies(module, target)
         val resource = resources(module, target, "main")
-        require(target == "jvm" || resource.isEmpty()) { "Native library publication does not yet support resources: $module" }
+        require(target == "jvm" || resource.isEmpty()) { "KLIB publication does not yet support resources: $module" }
         val directModules = sourceSets(module, target, "main").flatMap { it.dependencies }.filterIsInstance<Dependency.Module>().map { it.module }.distinct()
         val packaged = directModules.map { ensurePackage(it, target) }.toSet()
         val edges = packaged + mainId(module, target)

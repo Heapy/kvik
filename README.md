@@ -381,8 +381,13 @@ consume the resulting KLIB without the plugin or its reports. The
 [workspace plugin fixture](tools/test_js_workspace_plugins_cli.py) exercises an IR
 transformation on both targets; other plugins must support the selected compiler backend.
 
-Browser and WASI runtimes, npm dependencies, JS/Wasm publication, ABI/documentation
-adapters and application launching are still pending.
+JS/Wasm libraries can declare `publication` and use `package-library --target js
+--target wasmJs` to produce root KMP metadata and target KLIBs. Target coordinates
+use `-js` and `-wasm-js` suffixes. See [library packaging](docs/library-publication.md)
+for dependency semantics and scope selection.
+
+Browser and WASI runtimes, npm dependencies, ABI/documentation adapters and
+application launching are still pending.
 See the [compiler adapter](compiler/js/README.md) for its current boundaries and the
 pinned compiler workaround that suppresses Wasm application startup during tests.
 
