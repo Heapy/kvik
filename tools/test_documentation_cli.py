@@ -149,7 +149,7 @@ expect fun platformName(): String
     resolve()
     strict, _ = invoke('strict-undocumented-warning-fails', success=False)
     assert [action['actionId'] for action in strict['actions'] if action['status'] == 'failed'] == ['library:common:documentation']
-    assert all(action['status'] in ['executed', 'local_hit', 'shared_hit'] for action in strict['actions']
+    assert all(action['status'] in ['executed', 'local_hit'] for action in strict['actions']
                if not action['actionId'].endswith(':documentation'))
     print('PASS documentation CLI workflow', project, flush=True)
 
