@@ -164,7 +164,8 @@ private class Builder(
         return roots.flatMap { coordinate ->
             selections[ResolutionRequest(coordinate, VariantRequest("common", "kotlin-metadata", emptyMap()), domain)]?.artifacts
                 ?: error("Missing documentation metadata: $module:$coordinate")
-        }.distinctBy { artifactPath(it, false) }.map { FileEntry(artifactPath(it, false), it.digest) }
+        }.filter { includeStdlib || it.coordinate.group != stdlib.group || it.coordinate.name != stdlib.name }
+            .distinctBy { artifactPath(it, false) }.map { FileEntry(artifactPath(it, false), it.digest) }
     }
 
     private fun documentationMetadataOutputs(results: Map<String, ActionResult>, module: String, targets: Set<String>): List<FileEntry> {
