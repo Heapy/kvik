@@ -147,7 +147,10 @@ expect fun platformName(): String
     document['modules'][1]['documentation'].update(reportUndocumented=True, failOnWarning=True)
     write('library/common/Undocumented.kt', 'package sample\nclass Undocumented\n')
     resolve()
-    invoke('strict-undocumented-warning-fails', success=False)
+    strict, _ = invoke('strict-undocumented-warning-fails', success=False)
+    assert [action['actionId'] for action in strict['actions'] if action['status'] == 'failed'] == ['library:common:documentation']
+    assert all(action['status'] in ['executed', 'local_hit', 'shared_hit'] for action in strict['actions']
+               if not action['actionId'].endswith(':documentation'))
     print('PASS documentation CLI workflow', project, flush=True)
 
 
