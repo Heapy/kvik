@@ -26,6 +26,8 @@ class DocumentationSchemaTest(unittest.TestCase):
         jvm = dict(name='jvmMain', platform='jvm', sourceRoot='sources/jvm', classpath=['deps/library.jar'], dependsOn=['commonMain'], supportingTargets=['jvm'])
         value = dict(schemaVersion=1, module='library', targets=['jvm', 'macosArm64'], sourceSets=[common, jvm], settings={})
         self.assertTrue(valid('documentationSpec', value))
+        # Selecting JVM does not narrow commonMain's declared refinement for metadata extraction.
+        self.assertTrue(valid('documentationSpec', {**value, 'targets': ['jvm']}))
         self.assertFalse(valid('documentationSpec', {**value, 'targets': ['js']}))
         self.assertFalse(valid('documentationSpec', {**value, 'sourceSets': []}))
         self.assertFalse(valid('documentationSourceSet', {**jvm, 'platform': 'android'}))

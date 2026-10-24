@@ -35,4 +35,11 @@ class DocumentationTest {
         assertFails { DocumentationSettings(documentedVisibilities = listOf("public", "public")) }
         assertFails { DocumentationSettings(includes = listOf(LogicalPath("Module.md"), LogicalPath("Module.md"))) }
     }
+
+    @Test fun selectedTargetsPreserveFullSourceSetRefinementForMetadata() {
+        val value = DocumentationSpec("library", setOf("jvm"), listOf(common, jvm))
+        assertEquals(setOf("jvm", "macosArm64"), value.sourceSets.first().supportingTargets)
+        assertEquals(value, DocumentationSpec.fromJson(value.toJson()))
+        assertFails { value.copy(sourceSets = listOf(common.copy(supportingTargets = setOf("macosArm64")))) }
+    }
 }

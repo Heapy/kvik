@@ -63,7 +63,7 @@ data class DocumentationSettings(
     }
 }
 
-/** Each set owns its source root; parents remain separate nodes for expect/actual analysis. */
+/** Supporting targets describe the full project refinement, even when only some targets are documented. */
 data class DocumentationSourceSet(val name: String, val platform: String, val sourceRoot: LogicalPath,
                                   val classpath: List<LogicalPath>, val dependsOn: List<String>, val supportingTargets: Set<String>) {
     init {
@@ -97,9 +97,9 @@ data class DocumentationSpec(val module: String, val targets: Set<String>, val s
         require(sourceSets.size in 1..256 && sourceSets.map { it.name }.distinct().size == sourceSets.size)
         validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
         val byName = sourceSets.associateBy { it.name }
-        require(sourceSets.all { source -> targets.containsAll(source.supportingTargets) &&
+        require(sourceSets.all { source -> source.supportingTargets.any { it in targets } &&
             source.dependsOn.all { parent -> byName.getValue(parent).supportingTargets.containsAll(source.supportingTargets) } }) {
-            "Documentation refinement targets do not match the selected graph"
+            "Documentation refinement targets do not reach the selected graph"
         }
         val roots = sourceSets.map { it.sourceRoot.value }
         require(roots.distinct().size == roots.size && roots.none { root -> roots.any { other -> other.startsWith("$root/") } }) {
