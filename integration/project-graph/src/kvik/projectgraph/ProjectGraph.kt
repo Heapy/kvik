@@ -54,7 +54,7 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
             if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
         dependencies.modules.forEach { visit(it, target, "main", false) }
         if (scope == "test") visit(module, target, "main", false)
-        spec.compilerPlugins.filter { it.module != null && target in it.targets && scope in it.scopes }.forEach {
+        spec.compilerPlugins.filter { it.module != null && it.appliesTo(target, scope) }.forEach {
             visit(it.module!!, "jvm", "main", true)
         }
     }
@@ -444,8 +444,7 @@ private class Builder(
         FileEntry(artifactPath(it, plugin), it.digest)
     }.distinct()
     private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
-        modules.getValue(module).compilerPlugins.filter { target in it.targets &&
-            (scope in it.scopes || it.module == null && (NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) && scope == "test" && "main" in it.scopes) }.distinct()
+        modules.getValue(module).compilerPlugins.filter { it.appliesTo(target, scope) }.distinct()
             .also { require(it.size <= 1) { "Multiple compiler plugins per compilation are unsupported" } }
     private fun plugins(module: String, target: String, scope: String): List<FileEntry> {
         val selected = selectedPlugins(module, target, scope).filter { it.module == null }
@@ -692,7 +691,7 @@ private class Builder(
             else if (KotlinJsTarget.find(target) != null) jsCompileAction(JsCompilation(module = module, target = KotlinJsTarget.require(target),
                 sources = source.paths, commonSources = source.common, libraries = classpath, output = LogicalPath("module.klib"),
                 optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
-                plugins = plugin.map { it.path }), inputs, composition, jsCompilerTools(target))
+                plugins = plugin.map { it.path }, pluginApplications = workspace.applications), inputs, composition, jsCompilerTools(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main"),
@@ -1100,26 +1099,33 @@ private class Builder(
         val runtimeArtifacts = artifactEntries(external(module, target, "test", "kotlin-runtime"), target)
         val plugins = plugins(module, target, "test")
         require(plugins.none { plugin -> artifacts.any { it.digest == plugin.digest } }) { "Compiler plugin also appears in consumer classpath" }
-        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet()
+        val pluginDependencies = pluginModules(module, target, "test")
+        pluginDependencies.forEach { ensureMain(it, "jvm") }
+        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
         nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
             validateResults(results, compileEdges)
             val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
+            val workspace = workspacePlugin(module, target, "test", results)
             jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = source.paths,
                 commonSources = source.common, libraries = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
                 output = LogicalPath("tests.klib"), moduleName = testModuleName, optIns = options.optIns, explicitApi = options.explicitApi,
-                warningsAsErrors = options.warningsAsErrors, plugins = plugins.map { it.path }),
-                merge(source.entries, artifacts, plugins, dependencyFiles), composition, jsCompilerTools(target))
+                warningsAsErrors = options.warningsAsErrors, plugins = plugins.map { it.path }, pluginApplications = workspace.applications),
+                merge(source.entries, artifacts, plugins, dependencyFiles, workspace.entries), composition, jsCompilerTools(target))
         }
         val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
         nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges) { results ->
             validateResults(results, linkEdges)
             val compiled = results.getValue(compileId(module, target)).outputs.files
-            require(compiled.size == 1 && compiled.single().path == LogicalPath("tests.klib")) { "JS/Wasm tests must compile to exactly one KLIB" }
+            require(compiled.count { it.path == LogicalPath("tests.klib") } == 1 &&
+                compiled.all { it.path == LogicalPath("tests.klib") || it.path.value.startsWith("plugins/") }) {
+                "JS/Wasm tests must compile to one KLIB and declared plugin outputs"
+            }
+            val library = compiled.filter { it.path == LogicalPath("tests.klib") }
             val dependencyFiles = runtimeDependencies.flatMap { remap(results, it, target, "main") }
             jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = emptyList(),
                 libraries = runtimeDependencies.map { modulePath(it, target, "main") } + runtimeArtifacts.map { it.path },
                 output = LogicalPath("tests"), moduleName = testModuleName, includedLibrary = LogicalPath("tests.klib")),
-                merge(compiled, runtimeArtifacts, dependencyFiles), composition, jsCompilerTools(target))
+                merge(library, runtimeArtifacts, dependencyFiles), composition, jsCompilerTools(target))
         }
         if (!execute) return linkId(module, target)
         val id = "$module:$target:test"

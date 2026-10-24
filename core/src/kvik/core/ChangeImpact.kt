@@ -94,7 +94,7 @@ fun selectAffectedChecks(
             ImpactCompilation(it.module, compilation.target, "main")
         }.toMutableSet()
         if (compilation.scope == "test") dependencies += ImpactCompilation(module.id, compilation.target, "main")
-        for (plugin in module.compilerPlugins.filter { compilation.target in it.targets && compilation.scope in it.scopes }) {
+        for (plugin in module.compilerPlugins.filter { it.appliesTo(compilation.target, compilation.scope) }) {
             roots += plugin.inputs
             plugin.module?.let { dependencies += ImpactCompilation(it, "jvm", "main") }
         }

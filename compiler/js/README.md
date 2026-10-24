@@ -26,9 +26,18 @@ therefore removes the single exact generated `exports._start();` footer before c
 link output. An unfamiliar or repeated call fails validation; Wasm module initialization and
 the test entry export are preserved. The integration fixture has a throwing application main.
 
-Browser execution, npm dependencies, Wasm-WASI, workspace compiler plugin mediation, application
-launching and packaging are separate capabilities. This adapter accepts explicit plugin JARs
-for source compilation; it does not accept arbitrary compiler flags or output paths from plugins.
+Workspace plugins are compiled as JVM modules and loaded through `JsPluginWorker`
+using verified compiler tools and the shared typed plugin bridge. Options preserve order,
+repetition, commas and newlines. Declared input files and output directories are bound to
+the compilation workspace; plugin outputs are checked before publication. Plugin classes,
+runtime dependencies, options and files participate in the compilation key. Source-free
+links consume only KLIBs. Main-scoped plugins are inherited by test compilation, which
+includes production sources. Only one plugin per compilation is supported, without mixing
+published and workspace plugins. See `tools/test_js_workspace_plugins_cli.py` for a real
+IR transformation on both targets.
+
+Browser execution, npm dependencies, Wasm-WASI, application launching and packaging are
+separate capabilities. Arbitrary compiler flags are not accepted.
 
 Run `tools/test_js_compiler.py --help` for the offline integration checks. Supply explicit
 compiler artifacts, Maven cache and Node paths. `--konan-home` also runs native contract tests.

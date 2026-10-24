@@ -1279,7 +1279,9 @@
                   "macosArm64",
                   "linuxX64",
                   "iosArm64",
-                  "iosSimulatorArm64"
+                  "iosSimulatorArm64",
+                  "js",
+                  "wasmJs"
                 ]
               },
               "minItems": 1,

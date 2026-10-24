@@ -71,7 +71,8 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
 }
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
     "kvik-js-compiler-v1" -> JsCompilation.fromJson(action.parameters).let { compilation ->
-        if (compilation.includedLibrary == null) listOf(FileEntry(compilation.output, digest(salt)))
+        if (compilation.includedLibrary == null) listOf(FileEntry(compilation.output, digest(salt))) +
+            compilation.pluginApplications.flatMap { it.outputs }.map { FileEntry(LogicalPath(it.value + "/report.txt"), digest("report:$salt")) }
         else listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.mjs"), digest(salt))) +
             if (compilation.target == KotlinJsTarget.WASM_JS) listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.wasm"), digest("wasm:$salt"))) else emptyList()
     }
@@ -1644,6 +1645,48 @@ class JsProjectGraphTest {
             val changed = resolved(result, "base:${target.projectName}:main")
             assertNotEquals(compile.key(Sha256), changed.getValue("app:${target.projectName}:test-compile").key(Sha256))
             assertNotEquals(link.key(Sha256), changed.getValue("app:${target.projectName}:test-link").key(Sha256))
+        }
+    }
+
+    @Test fun workspacePluginsUseJvmProducersAndStayOutOfSourceFreeLinks() {
+        for (target in KotlinJsTarget.entries) for (scope in listOf("main", "test")) {
+            val plugin = CompilerPluginSpec("producer", null, setOf(target.projectName), setOf(scope), listOf("value=a,b", "value=c=d"),
+                listOf(LogicalPath("message.txt")), "fixture.rewrite", "2.4.20",
+                listOf(PluginPathOption("message", PluginPathKind.INPUT_FILE, LogicalPath("message.txt")),
+                    PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+            val consumer = app.copy(targets = listOf(TargetSpec(target.projectName, "jvmMain", "jvmTest", emptyList())), compilerPlugins = listOf(plugin))
+            val dependency = base.copy(targets = consumer.targets)
+            val producer = module("producer", listOf(external("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20")))
+                .let { it.copy(targets = it.targets.filter { t -> t.name == "jvm" }) }
+            val config = configuration(dependency, consumer, producer)
+            val files = TreeManifest(snapshot().files + snapshot().files.filter { it.path.value.startsWith("base/") }
+                .map { it.copy(path = LogicalPath(it.path.value.replaceFirst("base/", "producer/"))) } + FileEntry(LogicalPath("message.txt"), digest("message")))
+            val selection = request(ProjectMode.TEST, target.projectName)
+            assertEquals(setOf(target.projectName, "jvm"), projectToolTargets(config.project, selection))
+            val effective = effectiveConfiguration(config)
+            assertTrue(effective.requests.any { it.domain.module == "app" && it.domain.target == target.projectName &&
+                it.domain.compilation == "test" && it.domain.purpose == "compiler-plugin" && it.variant.platform == "jvm" })
+            val plan = graph(config, files, selection)
+            val actions = resolved(plan)
+            val main = actions.getValue("app:${target.projectName}:main")
+            assertEquals(scope == "main", JsCompilation.fromJson(main.parameters).pluginApplications.isNotEmpty())
+            val testCompile = actions.getValue("app:${target.projectName}:test-compile")
+            val application = JsCompilation.fromJson(testCompile.parameters).pluginApplications.single()
+            assertEquals(plugin.options, application.options)
+            assertContains(plan.nodes.single { it.id == "app:${target.projectName}:test-compile" }.dependencies, "producer:jvm:main")
+            assertContains(testCompile.outputs, LogicalPath("plugins/fixture.rewrite/report"))
+            assertTrue(testCompile.inputs.files.any { it.path.value == "plugin-inputs/fixture.rewrite/message.txt" })
+            assertTrue(testCompile.inputs.files.any { it.path.value.startsWith("plugins/fixture.rewrite/modules/producer/") })
+            val link = actions.getValue("app:${target.projectName}:test-link")
+            assertTrue(JsCompilation.fromJson(link.parameters).pluginApplications.isEmpty())
+            assertTrue(link.inputs.files.none { it.path.value.startsWith("plugins/") || it.path.value.startsWith("plugin-inputs/") })
+            val changed = resolved(plan, "producer:jvm:main")
+            assertNotEquals(testCompile.key(Sha256), changed.getValue("app:${target.projectName}:test-compile").key(Sha256))
+            assertEquals(scope == "main", main.key(Sha256) != changed.getValue("app:${target.projectName}:main").key(Sha256))
+            val inputChanged = resolved(graph(config, TreeManifest(files.files.map { if (it.path.value == "message.txt") it.copy(digest = digest("new")) else it }), selection))
+            assertNotEquals(testCompile.key(Sha256), inputChanged.getValue("app:${target.projectName}:test-compile").key(Sha256))
+            assertEquals(actions.getValue("base:${target.projectName}:main").key(Sha256), inputChanged.getValue("base:${target.projectName}:main").key(Sha256))
+            assertEquals(link.key(Sha256), inputChanged.getValue("app:${target.projectName}:test-link").key(Sha256))
         }
     }
 

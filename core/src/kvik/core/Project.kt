@@ -121,12 +121,17 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         if (module != null) {
             require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilerVersion == "2.4.20") { "Workspace plugin requires an id and compilerVersion=2.4.20" }
             require(if ("script" in scopes) targets == setOf("jvm") && scopes == setOf("script")
-                else targets.all { it == "jvm" || NativeTarget.find(it) != null }) {
-                "Workspace compiler plugins require JVM/Native main/test or a separate JVM script declaration"
+                else targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) {
+                "Workspace compiler plugins require JVM/Native/JS/Wasm main/test or a separate JVM script declaration"
             }
             validatePluginOptions(options, inputs, pathOptions, outputs)
         } else require(id == null && compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions are not supported" }
     }
+
+    /** JS/Wasm tests recompile production sources, so their main plugins must also apply. */
+    fun appliesTo(target: String, scope: String): Boolean = target in targets &&
+        (scope in scopes || scope == "test" && "main" in scopes &&
+            (KotlinJsTarget.find(target) != null || module == null && NativeTarget.find(target) != null))
 }
 /** Base coordinate for a root KMP publication and its target packages. */
 data class LibraryPublicationSpec(val coordinate: Coordinate) {
