@@ -30,7 +30,7 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, view, resolve, check-lock, build, test, verify, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, workspace, help
+            Commands: runtime-info, inspect, view, resolve, check-lock, build, test, verify, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
@@ -56,6 +56,7 @@ private fun command(args: Array<String>) {
             Prepared replay: run-prepared --run PATH --descriptor DIGEST_JSON (requires current successful preparation)
             Application mode requires one application module/target; r reloads, t runs fresh tests without changing app mode.
             Dev: dev [--mode library|application] [--control keys|jsonl|lines] (TTY defaults to immediate r/t/q/? keys) [--watch-ms 1000] [--initial build|test] plus build options
+            Sessions: session status|events|control --session DIRECTORY; events accepts --cursor JSON --limit N; control requires --request-id ID --command r|t|q|status|cancel [--operation ID] [--wait-ms N]
             Packages: packages versions GROUP:ARTIFACT --project PATH [--channel all|stable|prerelease] [--limit N] [--cursor TOKEN]
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target TARGET --usage USAGE --project PATH (same targets as build)
             Query cache: --query-cache PATH [--refresh|--offline] --json
@@ -110,6 +111,7 @@ private fun command(args: Array<String>) {
         "stage-application" -> exitProcess(stageApplicationCommand(args.drop(1)))
         "stage-prepared" -> exitProcess(stagePreparedApplicationCommand(args.drop(1)))
         "dev" -> exitProcess(devCommand(args.drop(1)))
+        "session" -> exitProcess(sessionCommand(args.drop(1)).code)
         "session-coordinator" -> exitProcess(sessionCoordinatorCommand(args.drop(1)))
         "snapshot-query" -> println(snapshotQueryCommand(args.drop(1)).canonical())
         "verification" -> exitProcess(verificationCommand(args.drop(1)).code)

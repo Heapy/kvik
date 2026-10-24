@@ -15,9 +15,10 @@ internal fun boundedObservationMessage(value: String): String = value.take(512).
 }
 
 /** Each cleanup boundary runs even when another fails; the original session failure remains primary. */
-internal fun closeSessionResources(primary: Throwable?, closeOwned: () -> Unit, closeJournal: () -> Unit, restoreTerminal: () -> Unit) {
+internal fun closeSessionResources(primary: Throwable?, closeOwned: () -> Unit, closeJournal: () -> Unit,
+                                   restoreTerminal: () -> Unit, releaseOwner: () -> Unit = {}) {
     var cleanup: Throwable? = null
-    for (close in listOf(closeOwned, closeJournal, restoreTerminal)) try { close() } catch (failure: Throwable) {
+    for (close in listOf(closeOwned, closeJournal, restoreTerminal, releaseOwner)) try { close() } catch (failure: Throwable) {
         if (primary != null) primary.addSuppressed(failure)
         else if (cleanup == null) cleanup = failure else cleanup.addSuppressed(failure)
     }
@@ -88,6 +89,8 @@ class ForegroundSession(
     private var sourceGated = false
     private var nextSessionDirectory: String? = null
     private var handoffStarted = 0L
+    private var live: LiveSessionOwner? = null
+    private var finished = false
     private var journal = -1
     private var boundary: COpaquePointer? = null
     private data class Child(val process: OwnedProcess, val path: String, val revision: Long, val operation: Operation?, val runtime: String)
@@ -108,9 +111,43 @@ class ForegroundSession(
         }
         if (outputBytes + bytes.size > 256 * 1024) {
             if (closing == null) { closing = "output-backpressure"; closingAt = now() }
+            live?.update(state())
             return
         }
         output.addLast(bytes); outputBytes += bytes.size
+        live?.update(state())
+    }
+    private fun state(): JsonValue.Object = obj(
+        "schemaVersion" to 1.json(), "sessionId" to directory.substringAfterLast('/').json(),
+        "directory" to directory.json(), "sequence" to sequence.json(), "mode" to mode.name.lowercase().json(),
+        "state" to (if (finished) "finished" else if (closing != null) "closing" else "running").json(),
+        "activeOperationId" to (operation?.path?.substringAfterLast('/')?.json() ?: JsonValue.Null),
+        "active" to (operation?.operation?.command?.json() ?: JsonValue.Null),
+        "pendingIntents" to pending.snapshot().map { it.command.json() }.json(),
+        "application" to (applications?.status() ?: JsonValue.Null),
+        "nextSessionDirectory" to (nextSessionDirectory?.json() ?: JsonValue.Null)
+    )
+    private fun remoteControl(request: SessionRequest): JsonValue.Object {
+        val status = when {
+            request.command == "status" -> "accepted"
+            closing != null || finished -> "closing"
+            request.command == "cancel" -> {
+                val id = request.operationId
+                val child = operation
+                val accepted = if (id != null && child != null && child.path.substringAfterLast('/') == id) {
+                    child.process.cancel(); true
+                } else id != null && applications?.cancelOperation(id) == true
+                val outcome = if (accepted) "accepted" else "not-active"
+                event("control", obj("requestId" to request.requestId.json(), "command" to "cancel".json(),
+                    "operationId" to (id?.json() ?: JsonValue.Null), "status" to outcome.json()))
+                outcome
+            }
+            request.command in setOf("r", "t", "q") -> {
+                control(Control(request.requestId, request.command)); "accepted"
+            }
+            else -> error("Unsupported remote session command: ${request.command}")
+        }
+        return obj("status" to status.json(), "state" to state())
     }
     private fun stop(reason: String) {
         if (closing != null) return
@@ -238,7 +275,7 @@ class ForegroundSession(
         } }
         operation?.let { child -> completed(child)?.let { result ->
             operation = null
-            event("operation-finished", obj("generation" to generation.json(), "operation" to child.operation!!.command.json(),
+            event("operation-finished", obj("operationId" to child.path.substringAfterLast('/').json(), "generation" to generation.json(), "operation" to child.operation!!.command.json(),
                 "exitCode" to result.exitCode.json(), "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(),
                 "inputsChangedSinceStart" to (child.revision != revision).json(), "evidenceDirectory" to child.path.json()))
             // Trigger a fresh observation; do not label tool inventories/current verification from a source scan.
@@ -248,7 +285,7 @@ class ForegroundSession(
     private fun startOperation(kind: Operation) {
         check(kind != Operation.APPLICATION)
         operation = launch(kind); generation++
-        event("operation-started", obj("generation" to generation.json(), "operation" to kind.command.json(), "evidenceDirectory" to operation!!.path.json()))
+        event("operation-started", obj("operationId" to operation!!.path.substringAfterLast('/').json(), "generation" to generation.json(), "operation" to kind.command.json(), "evidenceDirectory" to operation!!.path.json()))
     }
 
     private inline fun prepareApplication(start: () -> Unit): Boolean = try { start(); true } catch (failure: Exception) {
@@ -313,13 +350,15 @@ class ForegroundSession(
             check(boundary != null) { "Cannot establish foreground terminal/stream ownership (errno=$errno)" }
             journal = open("$directory/session.jsonl", O_WRONLY or O_CREAT or O_EXCL or O_NOFOLLOW or O_CLOEXEC, 384)
             check(journal >= 0) { "Cannot create session journal" }
+            live = LiveSessionOwner(directory)
             event("session-started", obj("control" to (if (keys) "keys" else if (jsonControls) "jsonl" else "lines").json(),
                 "directory" to directory.json(), "previousSessionDirectory" to (previousDirectory?.json() ?: JsonValue.Null),
                 "composition" to (bootstrap?.composition?.toJson() ?: JsonValue.Null),
-                "capabilities" to (listOf("library-build", "library-test", "input-watch") + (if (mode == SessionMode.APPLICATION) listOf("application-reload") else emptyList()) + if (bootstrap != null) listOf("source-recomposition") else emptyList()).map { it.json() }.json(),
+                "capabilities" to (listOf("library-build", "library-test", "input-watch", "session-query", "session-events", "session-control", "cancel-operation") + (if (mode == SessionMode.APPLICATION) listOf("application-reload") else emptyList()) + if (bootstrap != null) listOf("source-recomposition") else emptyList()).map { it.json() }.json(),
                 "limitations" to ((if (mode == SessionMode.LIBRARY) listOf("no-application-restart") else emptyList()) + listOf("no-continuous-tool-verification") + if (bootstrap == null) listOf("source-recomposition-unsupported-without-bootstrap-context") else emptyList()).map { it.json() }.json()))
             while (true) {
                 pollInput()
+                live?.poll(::remoteControl)
                 if (kvik_interrupt_requested() != 0) stop("signal")
                 if (closing != null) { scanner?.process?.cancel(); operation?.process?.cancel(); sources?.cancel(); applications?.cancelAll() }
                 sources?.tick(now(), operation == null && scanner == null, closing != null)
@@ -367,9 +406,11 @@ class ForegroundSession(
                     }
                 }
                 flushOutput()
+                live?.update(state())
                 if (closing != null && operation == null && scanner == null && sources?.busy != true && applications?.busy != true && operations?.drain() != false) break
                 usleep(10_000u)
             }
+            finished = true
             event("session-finished", obj("reason" to closing!!.json()))
             // Never wait indefinitely for a disconnected or non-reading stdout consumer.
             while (output.isNotEmpty() && now() - closingAt < 1000) { flushOutput(); usleep(10_000u) }
@@ -392,6 +433,15 @@ class ForegroundSession(
                 val restoreError = errno
                 kvik_interrupt_restore(); signal(SIGPIPE, previousPipe)
                 check(restored == 0) { "Terminal restoration failed (errno=$restoreError)" }
+            }, {
+                // Keep ownership until child cleanup and terminal restoration have both been attempted.
+                // Publishing a final state must not prevent releasing the live-session lock.
+                closeSessionResources(null, {
+                    finished = true
+                    live?.update(state())
+                }, {}, {
+                    live?.close(); live = null
+                })
             })
         }
     }

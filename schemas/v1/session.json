@@ -157,79 +157,112 @@
           "then": {
             "properties": {
               "payload": {
-                "type": "object",
-                "properties": {
-                  "requestId": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "command": {
-                    "enum": [
-                      "r",
-                      "t",
-                      "q",
-                      "?",
-                      "status"
-                    ]
-                  },
-                  "active": {
-                    "enum": [
-                      "build",
-                      "test",
-                      null
-                    ]
-                  },
-                  "pending": {
-                    "enum": [
-                      "build",
-                      "test",
-                      null,
-                      "application"
-                    ]
-                  },
-                  "help": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "compositionReady": {
-                    "type": "boolean"
-                  },
-                  "application": {
-                    "$ref": "#/$defs/applicationStatus"
-                  },
-                  "pendingIntents": {
-                    "type": "array",
-                    "maxItems": 2,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "test",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "requestId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "command": {
+                        "enum": [
+                          "r",
+                          "t",
+                          "q",
+                          "?",
+                          "status"
+                        ]
+                      },
+                      "active": {
+                        "enum": [
+                          "build",
+                          "test",
+                          null
+                        ]
+                      },
+                      "pending": {
+                        "enum": [
+                          "build",
+                          "test",
+                          null,
+                          "application"
+                        ]
+                      },
+                      "help": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "compositionReady": {
+                        "type": "boolean"
+                      },
+                      "application": {
+                        "$ref": "#/$defs/applicationStatus"
+                      },
+                      "pendingIntents": {
+                        "type": "array",
+                        "maxItems": 2,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "test",
+                            "application"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "requestId",
+                      "command",
+                      "active",
+                      "pending",
+                      "help",
+                      "compositionReady"
+                    ],
+                    "additionalProperties": false,
+                    "dependentRequired": {
+                      "application": [
+                        "pendingIntents"
+                      ],
+                      "pendingIntents": [
                         "application"
                       ]
                     }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "requestId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "command": {
+                        "const": "cancel"
+                      },
+                      "operationId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "status": {
+                        "enum": [
+                          "accepted",
+                          "not-active"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "requestId",
+                      "command",
+                      "operationId",
+                      "status"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "requestId",
-                  "command",
-                  "active",
-                  "pending",
-                  "help",
-                  "compositionReady"
-                ],
-                "additionalProperties": false,
-                "dependentRequired": {
-                  "application": [
-                    "pendingIntents"
-                  ],
-                  "pendingIntents": [
-                    "application"
-                  ]
-                }
+                ]
               }
             }
           }
@@ -369,6 +402,10 @@
                   },
                   "evidenceDirectory": {
                     "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -417,6 +454,10 @@
                   },
                   "evidenceDirectory": {
                     "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -716,6 +757,10 @@
                   },
                   "evidenceDirectory": {
                     "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -769,6 +814,10 @@
                   },
                   "ready": {
                     "$ref": "contracts.json#/$defs/applicationReady"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -820,6 +869,10 @@
                   },
                   "evidenceDirectory": {
                     "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -873,6 +926,10 @@
                   },
                   "started": {
                     "$ref": "contracts.json#/$defs/applicationStarted"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -924,6 +981,10 @@
                   },
                   "evidenceDirectory": {
                     "type": "string"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -989,6 +1050,10 @@
                   },
                   "stale": {
                     "type": "boolean"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -1478,6 +1543,10 @@
                 },
                 "stale": {
                   "type": "boolean"
+                },
+                "operationId": {
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -1532,6 +1601,10 @@
                     "starting",
                     "cancelling"
                   ]
+                },
+                "operationId": {
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -1747,6 +1820,337 @@
           }
         }
       ]
+    },
+    "sessionState": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "enum": [
+            "library",
+            "application"
+          ]
+        },
+        "state": {
+          "enum": [
+            "running",
+            "closing",
+            "finished"
+          ]
+        },
+        "activeOperationId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "active": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "build",
+                "test"
+              ]
+            }
+          ]
+        },
+        "pendingIntents": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "build",
+              "test",
+              "application"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "application": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/applicationStatus"
+            }
+          ]
+        },
+        "nextSessionDirectory": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sessionId",
+        "directory",
+        "sequence",
+        "mode",
+        "state",
+        "activeOperationId",
+        "active",
+        "pendingIntents",
+        "application",
+        "nextSessionDirectory"
+      ],
+      "additionalProperties": false
+    },
+    "sessionRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+(?![\\s\\S])"
+        },
+        "command": {
+          "enum": [
+            "r",
+            "t",
+            "q",
+            "status",
+            "cancel"
+          ]
+        },
+        "operationId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "command",
+        "operationId"
+      ],
+      "additionalProperties": false
+    },
+    "sessionReply": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request": {
+          "$ref": "#/$defs/sessionRequest"
+        },
+        "outcome": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "accepted",
+                "not-active",
+                "closing"
+              ]
+            },
+            "state": {
+              "$ref": "#/$defs/sessionState"
+            }
+          },
+          "required": [
+            "status",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "sessionId",
+        "request",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "sessionStatus": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-status"
+        },
+        "ownerAlive": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ownerAlive",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "sessionControlResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-control"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "acknowledged",
+            "pending",
+            "busy",
+            "owner-exited"
+          ]
+        },
+        "reply": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/sessionReply"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "requestId",
+        "status",
+        "reply"
+      ],
+      "additionalProperties": false
+    },
+    "sessionCursor": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sessionId",
+        "offset",
+        "sequence"
+      ],
+      "additionalProperties": false
+    },
+    "sessionEvents": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-events"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ownerAlive": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          },
+          "maxItems": 256
+        },
+        "pendingTail": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "$ref": "#/$defs/sessionCursor"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "ownerAlive",
+        "events",
+        "pendingTail",
+        "status",
+        "hasMore",
+        "nextCursor"
+      ],
+      "additionalProperties": false
     }
   }
 }

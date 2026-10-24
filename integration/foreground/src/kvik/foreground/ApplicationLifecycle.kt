@@ -20,7 +20,7 @@ internal class ApplicationLifecycle(
         val revision: Long, val generation: Long, val composition: Digest, val replacement: Boolean,
         val prepared: ApplicationReady?, var ready: ApplicationReady? = null,
         var activated: Boolean = false, var started: ApplicationStarted? = null,
-        var cancelled: Boolean = false, var stale: Boolean = false,
+        var cancelled: Boolean = false, var stale: Boolean = false, var cancelledByRequest: Boolean = false,
     )
     private var active: Child? = null
     private var candidate: Child? = null
@@ -49,6 +49,15 @@ internal class ApplicationLifecycle(
     private fun cancel(child: Child?) { child?.let { it.cancelled = true; it.process.cancel() } }
     fun cancelAll() { handoff = null; handoffRevision = null; cancel(candidate); cancel(active) }
     fun cancelCandidate() { handoff = null; handoffRevision = null; cancel(candidate) }
+    /** Identity belongs to one immutable supervisor directory, never to a later replacement. */
+    fun cancelOperation(id: String): Boolean {
+        val child = candidate?.takeIf { it.path.substringAfterLast('/') == id }
+            ?: active?.takeIf { it.path.substringAfterLast('/') == id } ?: return false
+        child.cancelledByRequest = true
+        if (child === candidate) { handoff = null; handoffRevision = null; retryPreparation = false }
+        cancel(child)
+        return true
+    }
     fun markStale() {
         active?.takeUnless { it.stale }?.let {
             it.stale = true
@@ -69,7 +78,7 @@ internal class ApplicationLifecycle(
         if (handoff != null) retryPreparation = true
         handoff = null; handoffRevision = null
     }
-    private fun identity(child: Child) = obj("generation" to child.generation.json(), "revision" to child.revision.json(),
+    private fun identity(child: Child) = obj("operationId" to child.path.substringAfterLast('/').json(), "generation" to child.generation.json(), "revision" to child.revision.json(),
         "composition" to child.composition.toJson(), "module" to module.json(), "target" to target.json(),
         "evidenceDirectory" to child.path.json())
 
@@ -140,7 +149,7 @@ internal class ApplicationLifecycle(
         val child = candidate ?: return
         records(child)
         if (poll(child)) {
-            if (child.prepared != null && child.started == null && !closing) retryPreparation = true
+            if (child.prepared != null && child.started == null && !closing && !child.cancelledByRequest) retryPreparation = true
             candidate = null; return
         }
         if (child.cancelled || closing || child.revision != revision || child.composition != composition) return

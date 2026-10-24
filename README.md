@@ -617,3 +617,45 @@ python3 -m venv .kvik/schema-tools
 ```
 
 Upstream source submodules under `references/` are optional design references, not runtime/bootstrap dependencies. See [their provenance](references/README.md).
+
+### Inspect and control a foreground session
+
+The `session-started` event from `dev` supplies its directory. Another terminal
+or agent can query it without taking over the owner's stdin:
+
+```sh
+kvik session status --session /project/.kvik/sessions/SESSION
+kvik session events --session /project/.kvik/sessions/SESSION --limit 100
+kvik session control --session /project/.kvik/sessions/SESSION --request-id test-1 --command t
+kvik session control --session /project/.kvik/sessions/SESSION --request-id cancel-1 --command cancel --operation OPERATION_ID
+```
+
+Pass `nextCursor` as JSON to `session events --cursor` for subsequent pages.
+Only complete journal records advance the cursor; reads and page sizes are
+bounded. Status and event queries remain available after exit. `ownerAlive`
+is a lock observation at query time; the saved state may describe the last
+observation before a crash. Runtime recomposition exposes `nextSessionDirectory`;
+clients explicitly reconnect to that new directory with a new event cursor.
+
+Control commands are `r`, `t`, `q`, `status` and `cancel`. Each request requires an
+ID: repeating the same ID and command retrieves its original acknowledgement,
+while changing its arguments is rejected. Cancellation requires the immutable
+`operationId` exposed by operation events or application status. It cannot cancel
+a newer operation that happens to occupy the same slot. An acknowledgement
+confirms receipt, not successful compilation or completed cancellation. Its
+`outcome.status` is `accepted`, `not-active` or `closing`; the latter two reject
+the requested action. Follow the operation's events for its final outcome.
+
+`--wait-ms` defaults to 1000 and accepts 0–10000. Exit status 3 with `pending`
+means the command was submitted but not acknowledged within the wait; retry
+with the same ID. `busy` means publication was blocked and this attempt did not
+submit a command. `owner-exited` means no acknowledgement was observed before
+owner exit; it does not prove the command never ran. A retained acknowledgement
+can still be retrieved after exit.
+
+The transport lives in the session's private local directory and is processed
+by the foreground owner. Its lock is released on exit and runtime replacement.
+It starts no service, and clients do not extend the owner's lifetime: stdin EOF,
+terminal loss, output backpressure and normal shutdown retain their existing
+behavior. The directory has the same trusted-local-filesystem boundary as the
+artifact store; it is not a remote authorization protocol.
