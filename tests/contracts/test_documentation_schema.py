@@ -22,14 +22,15 @@ class DocumentationSchemaTest(unittest.TestCase):
             self.assertFalse(valid('documentationSettings', value), value)
 
     def test_source_set_relationships_and_platforms(self):
-        common = dict(name='commonMain', platform='common', sourceRoot='sources/common', classpath=[], dependsOn=[])
-        jvm = dict(name='jvmMain', platform='jvm', sourceRoot='sources/jvm', classpath=['deps/library.jar'], dependsOn=['commonMain'])
+        common = dict(name='commonMain', platform='common', sourceRoot='sources/common', classpath=[], dependsOn=[], supportingTargets=['jvm', 'macosArm64'])
+        jvm = dict(name='jvmMain', platform='jvm', sourceRoot='sources/jvm', classpath=['deps/library.jar'], dependsOn=['commonMain'], supportingTargets=['jvm'])
         value = dict(schemaVersion=1, module='library', targets=['jvm', 'macosArm64'], sourceSets=[common, jvm], settings={})
         self.assertTrue(valid('documentationSpec', value))
         self.assertFalse(valid('documentationSpec', {**value, 'targets': ['js']}))
         self.assertFalse(valid('documentationSpec', {**value, 'sourceSets': []}))
         self.assertFalse(valid('documentationSourceSet', {**jvm, 'platform': 'android'}))
         self.assertFalse(valid('documentationSourceSet', {**jvm, 'classpath': ['/absolute']}))
+        self.assertFalse(valid('documentationSourceSet', {**jvm, 'supportingTargets': []}))
 
     def test_distribution_contains_exactly_the_pinned_jar_roles(self):
         names = ['dokka-cli-2.2.0.jar', 'dokka-base-2.2.0.jar', 'analysis-kotlin-symbols-2.2.0.jar',

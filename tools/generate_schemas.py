@@ -135,7 +135,8 @@ DEFS["documentationSettings"] = object_({
 }, optional=("includes", "documentedVisibilities", "reportUndocumented", "failOnWarning", "skipDeprecated", "suppressInheritedMembers", "timeoutMillis"))
 DEFS["documentationSourceSet"] = object_({"name": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
     "platform": enum("common", "jvm", "native"), "sourceRoot": PATH,
-    "classpath": array(PATH, maxItems=1024, uniqueItems=True), "dependsOn": array(ID, uniqueItems=True)})
+    "classpath": array(PATH, maxItems=1024, uniqueItems=True), "dependsOn": array(ID, uniqueItems=True),
+    "supportingTargets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)})
 DEFS["documentationSpec"] = versioned({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
     "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
     "sourceSets": array(ref("documentationSourceSet"), minItems=1, maxItems=256), "settings": ref("documentationSettings")})

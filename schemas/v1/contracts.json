@@ -1006,6 +1006,20 @@
             "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
           },
           "uniqueItems": true
+        },
+        "supportingTargets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -1013,7 +1027,8 @@
         "platform",
         "sourceRoot",
         "classpath",
-        "dependsOn"
+        "dependsOn",
+        "supportingTargets"
       ],
       "additionalProperties": false
     },

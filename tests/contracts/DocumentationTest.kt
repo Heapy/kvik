@@ -7,8 +7,8 @@ class DocumentationTest {
     private val distribution = DocumentationDistribution(DOKKA_VERSION, TreeManifest(listOf(
         "dokka-cli-2.2.0.jar", "dokka-base-2.2.0.jar", "analysis-kotlin-symbols-2.2.0.jar",
         "kotlinx-html-jvm-0.8.0.jar", "freemarker-2.3.31.jar").map { FileEntry(LogicalPath(it), digest) }))
-    private val common = DocumentationSourceSet("common", "common", LogicalPath("sources/common"), emptyList(), emptyList())
-    private val jvm = DocumentationSourceSet("jvmMain", "jvm", LogicalPath("sources/jvm"), listOf(LogicalPath("dependencies/library.jar")), listOf("common"))
+    private val common = DocumentationSourceSet("common", "common", LogicalPath("sources/common"), emptyList(), emptyList(), setOf("jvm", "macosArm64"))
+    private val jvm = DocumentationSourceSet("jvmMain", "jvm", LogicalPath("sources/jvm"), listOf(LogicalPath("dependencies/library.jar")), listOf("common"), setOf("jvm"))
 
     @Test fun distributionBindsExactlyTheStandaloneCliAndHtmlPlugins() {
         assertEquals(distribution.toJson(), DocumentationDistribution.fromJson(distribution.toJson()).toJson())
@@ -29,6 +29,8 @@ class DocumentationTest {
         assertFails { value.copy(sourceSets = listOf(common.copy(dependsOn = listOf("jvmMain")), jvm)) }
         assertFails { value.copy(sourceSets = listOf(common, jvm.copy(sourceRoot = LogicalPath("sources/common/jvm")))) }
         assertFails { value.copy(targets = setOf("js")) }
+        assertFails { value.copy(sourceSets = listOf(common.copy(supportingTargets = setOf("macosArm64")), jvm)) }
+        assertFails { jvm.copy(supportingTargets = emptySet()) }
         assertFails { DocumentationSettings.fromJson(obj("plugins" to emptyList<JsonValue>().json())) }
         assertFails { DocumentationSettings(documentedVisibilities = listOf("public", "public")) }
         assertFails { DocumentationSettings(includes = listOf(LogicalPath("Module.md"), LogicalPath("Module.md"))) }

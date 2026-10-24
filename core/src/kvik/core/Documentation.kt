@@ -65,22 +65,26 @@ data class DocumentationSettings(
 
 /** Each set owns its source root; parents remain separate nodes for expect/actual analysis. */
 data class DocumentationSourceSet(val name: String, val platform: String, val sourceRoot: LogicalPath,
-                                  val classpath: List<LogicalPath>, val dependsOn: List<String>) {
+                                  val classpath: List<LogicalPath>, val dependsOn: List<String>, val supportingTargets: Set<String>) {
     init {
         documentationIdentifier(name)
         require(platform in setOf("common", "jvm", "native")) { "Unsupported documentation platform" }
         require(classpath.size <= 1024 && classpath.distinct().size == classpath.size)
         require(dependsOn.distinct().size == dependsOn.size)
         dependsOn.forEach(::documentationIdentifier)
+        require(supportingTargets.isNotEmpty() && supportingTargets.all { it == "jvm" || NativeTarget.find(it) != null })
     }
     fun toJson(): JsonValue.Object = obj("name" to name.json(), "platform" to platform.json(), "sourceRoot" to sourceRoot.value.json(),
-        "classpath" to classpath.map { it.value.json() }.json(), "dependsOn" to dependsOn.map { it.json() }.json())
+        "classpath" to classpath.map { it.value.json() }.json(), "dependsOn" to dependsOn.map { it.json() }.json(),
+        "supportingTargets" to supportingTargets.sorted().map { it.json() }.json())
     companion object {
         fun fromJson(value: JsonValue): DocumentationSourceSet {
-            val fields = value.fields(setOf("name", "platform", "sourceRoot", "classpath", "dependsOn"))
+            val fields = value.fields(setOf("name", "platform", "sourceRoot", "classpath", "dependsOn", "supportingTargets"))
+            val targets = fields.getValue("supportingTargets").arrayValue().map(JsonValue::stringValue)
+            require(targets.distinct().size == targets.size)
             return DocumentationSourceSet(fields.getValue("name").stringValue(), fields.getValue("platform").stringValue(),
                 LogicalPath(fields.getValue("sourceRoot").stringValue()), fields.getValue("classpath").arrayValue().map { LogicalPath(it.stringValue()) },
-                fields.getValue("dependsOn").arrayValue().map(JsonValue::stringValue))
+                fields.getValue("dependsOn").arrayValue().map(JsonValue::stringValue), targets.toSet())
         }
     }
 }
@@ -92,6 +96,11 @@ data class DocumentationSpec(val module: String, val targets: Set<String>, val s
         require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null })
         require(sourceSets.size in 1..256 && sourceSets.map { it.name }.distinct().size == sourceSets.size)
         validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
+        val byName = sourceSets.associateBy { it.name }
+        require(sourceSets.all { source -> targets.containsAll(source.supportingTargets) &&
+            source.dependsOn.all { parent -> byName.getValue(parent).supportingTargets.containsAll(source.supportingTargets) } }) {
+            "Documentation refinement targets do not match the selected graph"
+        }
         val roots = sourceSets.map { it.sourceRoot.value }
         require(roots.distinct().size == roots.size && roots.none { root -> roots.any { other -> other.startsWith("$root/") } }) {
             "Documentation source roots overlap"
