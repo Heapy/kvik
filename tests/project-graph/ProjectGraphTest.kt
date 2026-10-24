@@ -7,6 +7,7 @@ import kvik.compiler.jvm.*
 import kvik.compiler.native.*
 import kvik.compiler.ksp.*
 import kvik.library.*
+import kvik.abi.*
 import kotlin.test.*
 import kotlinx.cinterop.*
 import platform.posix.*
@@ -34,7 +35,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
         "modules" to modules.map { m -> obj("id" to m.id.json(), "sourceSets" to m.sourceSets.map { s -> obj("name" to s.name.json(),
             "directories" to paths(s.directories), "resources" to paths(s.resources), "dependsOn" to strings(s.dependsOn), "dependencies" to s.dependencies.map { d -> when(d) {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
-            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
+            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.abi == null) fields else JsonValue.Object(fields.values + ("abi" to t.abi.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
                 t.nativeTimeouts.compileMillis?.let { put("compileMillis", it.json()) }; t.nativeTimeouts.linkMillis?.let { put("linkMillis", it.json()) }
             }))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
@@ -102,6 +103,57 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun abiChecksConsumeOnlyOwnMainAndBaselineChangesOnlyComparison() {
+        for (target in listOf("jvm", "macosArm64", "iosArm64")) {
+            val baseline = LogicalPath("api/$target.api")
+            val targetSpec = TargetSpec(target, if (target == "jvm") "jvmMain" else "nativeMain", null, emptyList(),
+                abi = AbiSettings(baseline), nativeFramework = if (target == "iosArm64") NativeFrameworkSpec("Sample", false) else null)
+            val spec = module("app").copy(targets = listOf(targetSpec))
+            val config = configuration(spec)
+            val request = ProjectGraphRequest(setOf("app"), setOf(target), ProjectMode.ABI_CHECK)
+            assertContains(projectToolTargets(config.project, request), "jvm")
+            val sourceFiles = snapshot().files.filter { it.path.value.startsWith("app/") }
+            fun make(value: String) = graph(config, TreeManifest(sourceFiles + FileEntry(baseline, digest(value))), request)
+            val graph = make("old")
+            val main = "app:$target:main"; val dump = "app:$target:abi-dump"; val check = "app:$target:abi-check"
+            assertEquals(setOf(main, dump, check), graph.nodes.map { it.id }.toSet())
+            assertEquals(mapOf(check to check), graph.terminalActions)
+            fun actions(graph: ProjectActionGraph, compiled: String): Triple<ActionSpec, ActionSpec, ActionSpec> {
+                val compile = graph.nodes.single { it.id == main }.resolve(emptyMap())
+                val mainOutput = TreeManifest(listOf(FileEntry(LogicalPath(if (target == "jvm") "classes/Api.class" else "module.klib"), digest(compiled)),
+                    FileEntry(LogicalPath("plugins/report.txt"), digest("ignored"))))
+                val extracted = graph.nodes.single { it.id == dump }.resolve(mapOf(main to ActionResult(main, compile.key(Sha256), ActionStatus.EXECUTED, mainOutput, 0)))
+                assertEquals(1, extracted.inputs.files.size)
+                assertEquals(tools.getValue("jvm"), extracted.toolchains)
+                val candidate = TreeManifest(listOf(FileEntry(LogicalPath("abi.json"), digest("snapshot:$compiled")), FileEntry(LogicalPath("api.txt"), digest("api:$compiled"))))
+                val compared = graph.nodes.single { it.id == check }.resolve(mapOf(dump to ActionResult(dump, extracted.key(Sha256), ActionStatus.EXECUTED, candidate, 0)))
+                return Triple(compile, extracted, compared)
+            }
+            val first = actions(graph, "first")
+            val changedBaseline = actions(make("new"), "first")
+            assertEquals(first.first.key(Sha256), changedBaseline.first.key(Sha256))
+            assertEquals(first.second.key(Sha256), changedBaseline.second.key(Sha256))
+            assertNotEquals(first.third.key(Sha256), changedBaseline.third.key(Sha256))
+            val changedArtifact = actions(graph, "second")
+            assertNotEquals(first.second.key(Sha256), changedArtifact.second.key(Sha256))
+            assertNotEquals(first.third.key(Sha256), changedArtifact.third.key(Sha256))
+            assertFails { graph(config, TreeManifest(sourceFiles), request) }
+            val dumpOnly = graph(config, TreeManifest(sourceFiles), request.copy(mode = ProjectMode.ABI_DUMP))
+            assertEquals(setOf(main, dump), dumpOnly.nodes.map { it.id }.toSet())
+            assertEquals(setOf(dump), dumpOnly.requestedChecks)
+            assertEquals(setOf(main), dumpOnly.nodes.single { it.id == dump }.dependencies)
+        }
+    }
+
+    @Test fun abiCheckRequiresSettingsAndRejectsFailedDumpPrerequisite() {
+        assertFails { graph(request = request(ProjectMode.ABI_CHECK)) }
+        val baseline = LogicalPath("app.api")
+        val spec = app.copy(targets = app.targets.map { it.copy(abi = AbiSettings(baseline)) })
+        val graph = graph(configuration(base, spec), TreeManifest(snapshot().files + FileEntry(baseline, digest("baseline"))), request(ProjectMode.ABI_CHECK))
+        val node = graph.nodes.single { it.id == "app:jvm:abi-check" }
+        assertFails { node.resolve(mapOf("app:jvm:abi-dump" to ActionResult("app:jvm:abi-dump", null, ActionStatus.FAILED))) }
+    }
+
     @Test fun linuxWorkspacePluginUsesJvmProducerRuntimeAndHonorsMainOnlyScope() {
         val plugin = CompilerPluginSpec("producer", null, setOf("linuxX64"), setOf("main"),
             listOf("value=a,b=c"), emptyList(), "example.plugin", "2.4.20",

@@ -7,8 +7,10 @@ import kvik.compiler.native.*
 import kvik.compiler.ksp.*
 import kvik.application.applicationBundleAction
 import kvik.library.*
+import kvik.abi.*
 
-enum class ProjectMode { BUILD, TEST, APPLICATION, PACKAGE }
+enum class ProjectMode { BUILD, TEST, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK }
+private fun ProjectMode.checkScope() = name.lowercase().replace('_', '-')
 data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
         "excludes" to excludes.map { it.json() }.json())
@@ -23,7 +25,7 @@ data class ProjectGraphRequest(
 data class ProjectActionGraph(val nodes: List<ActionNode>, val requestedChecks: Set<String>, val terminalActions: Map<String, String>)
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
-    request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.name.lowercase()}" } +
+    request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.checkScope()}" } +
         if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) listOf("$module:common:package") else emptyList()
     }.toSet()
 
@@ -32,7 +34,8 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
     val modules = project.modules.associateBy { it.id }
     val visited = mutableSetOf<List<String>>()
     val targets = request.targets.toMutableSet()
-    if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) targets += "jvm"
+    if (request.mode in setOf(ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK) ||
+        request.mode == ProjectMode.PACKAGE && request.targets.size > 1) targets += "jvm"
     fun visit(module: String, target: String, scope: String, runtime: Boolean) {
         if (!visited.add(listOf(module, target, scope, runtime.toString()))) return
         targets += target
@@ -118,12 +121,14 @@ private class Builder(
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
             ensureMain(module, target)
-            val check = "$module:$target:${request.mode.name.lowercase()}"
+            val check = "$module:$target:${request.mode.checkScope()}"
             terminals[check] = when (request.mode) {
                 ProjectMode.BUILD -> if (target(module, target).nativeFramework == null) mainId(module, target) else ensureFramework(module, target)
                 ProjectMode.TEST -> ensureTest(module, target)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
+                ProjectMode.ABI_DUMP -> ensureAbiDump(module, target)
+                ProjectMode.ABI_CHECK -> ensureAbiCheck(module, target)
             }
         }
         if (request.mode == ProjectMode.PACKAGE && request.targets.size > 1) {
@@ -133,6 +138,36 @@ private class Builder(
             }
         }
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
+    }
+
+    private fun ensureAbiDump(module: String, target: String): String {
+        val id = "$module:$target:abi-dump"
+        if (id in nodes) return id
+        require(tools["jvm"]?.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit")) { "ABI extraction requires JVM tool identities" }
+        val dependencies = setOf(mainId(module, target))
+        nodes[id] = ActionNode(id, dependencies) { results ->
+            validateResults(results, dependencies)
+            abiDumpAction(AbiExtraction(module, target, modulePath(module, target, "main")),
+                TreeManifest(remap(results, module, target, "main")), composition, tools.getValue("jvm"))
+        }
+        return id
+    }
+
+    private fun ensureAbiCheck(module: String, target: String): String {
+        val id = "$module:$target:abi-check"
+        val baseline = target(module, target).abi?.baseline ?: error("ABI check requires a baseline: $module:$target")
+        val entry = files.singleOrNull { it.path == baseline } ?: error("Missing ABI baseline: ${baseline.value}")
+        require(!entry.executable && entry.digest.sizeBytes <= ABI_MAX_BYTES) { "Invalid ABI baseline: ${baseline.value}" }
+        val dump = ensureAbiDump(module, target)
+        nodes[id] = ActionNode(id, setOf(dump)) { results ->
+            validateResults(results, setOf(dump))
+            val output = results.getValue(dump).outputs
+            require(output.files.map { it.path.value }.toSet() == setOf("abi.json", "api.txt") && output.files.none { it.executable }) { "Invalid ABI dump output" }
+            val comparison = AbiComparison(module, target, LogicalPath("candidate/abi.json"), LogicalPath("baseline/api.txt"))
+            abiCheckAction(comparison, TreeManifest(listOf(output.files.single { it.path.value == "abi.json" }.copy(path = comparison.snapshot),
+                entry.copy(path = comparison.baseline))), composition)
+        }
+        return id
     }
 
     private fun target(module: String, target: String) = modules.getValue(module).targets.singleOrNull { it.name == target }
