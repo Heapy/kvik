@@ -36,15 +36,33 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     private val published = mutableMapOf<String, Set<String>>()
     override val activeId: JsonValue? get() = pending?.request?.id
 
+    private fun notification(method: String, params: JsonValue.Object) {
+        messages += obj("jsonrpc" to "2.0".json(), "method" to method.json(), "params" to params)
+    }
+
     private fun targetsChanged(changes: List<Pair<String, Int>>) {
         if (changes.isEmpty()) return
-        messages += obj("jsonrpc" to "2.0".json(), "method" to "buildTarget/didChange".json(),
-            "params" to obj("changes" to changes.map { (uri, kind) ->
+        notification("buildTarget/didChange", obj("changes" to changes.map { (uri, kind) ->
                 obj("target" to obj("uri" to uri.json()), "kind" to kind.json())
             }.json()))
     }
 
+    private fun clearGeneratedDiagnostics(model: BspProjectModel, target: BspTarget, state: Pending? = null) {
+        val documents = published[target.uri].orEmpty()
+        if (documents.isEmpty()) return
+        val generated = model.sources(listOf(target.uri)).values.getValue("items").arrayValue().single().objectValue()
+            .getValue("sources").arrayValue().map(JsonValue::objectValue)
+            .filter { it.getValue("generated").booleanValue() }.map { it.getValue("uri").stringValue() }.toSet()
+        for (uri in documents.intersect(generated)) {
+            val params = obj("textDocument" to obj("uri" to uri.json()), "buildTarget" to obj("uri" to target.uri.json()),
+                "diagnostics" to emptyList<JsonValue>().json(), "reset" to true.json())
+            if (state == null) notification("build/publishDiagnostics", params) else notification(state, "build/publishDiagnostics", params)
+        }
+        published[target.uri] = documents - generated
+    }
+
     override fun modelReloaded(previous: BspProjectModel, next: BspProjectModel) {
+        previous.allTargets().forEach { clearGeneratedDiagnostics(previous, it) }
         val old = previous.allTargets().map { it.uri }.toSet()
         val current = next.allTargets().map { it.uri }.toSet()
         targetsChanged((old + current).sorted().map { uri -> uri to when {
@@ -68,8 +86,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     }
 
     private fun notification(state: Pending, method: String, params: JsonValue.Object) {
-        messages += obj("jsonrpc" to "2.0".json(), "method" to method.json(), "params" to
-            JsonValue.Object(params.values + (state.request.originId?.let { mapOf("originId" to it.json()) } ?: emptyMap())))
+        notification(method, JsonValue.Object(params.values + (state.request.originId?.let { mapOf("originId" to it.json()) } ?: emptyMap())))
     }
 
     private fun log(state: Pending, message: String, type: Int = 1) = notification(state, "build/logMessage", obj("type" to type.json(),
@@ -77,6 +94,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
 
     private fun launch(state: Pending) {
         val target = state.waiting.removeFirst()
+        clearGeneratedDiagnostics(state.model, target, state)
         if (state.model.replaceGeneratedSources(target, emptyList())) targetsChanged(listOf(target.uri to 2))
         val project = readProject(options.project.project)
         require(effectiveConfiguration(project.configuration, options.project.resolverPolicy()).digest == state.model.inspection.configuration) {
