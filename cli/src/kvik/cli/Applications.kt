@@ -17,7 +17,12 @@ import kotlin.time.TimeSource
 
 internal fun prepareApplicationCommand(args: List<String>): ExitStatus = executeBuild(args, ProjectMode.APPLICATION).status
 
-internal fun runApplicationCommand(args: List<String>): Int = buildAndRunApplication(args)
+internal fun runApplicationCommand(args: List<String>): Int {
+    if (args.firstOrNull() != "--run-options") return buildAndRunApplication(args)
+    require(args.size >= 3) { "Missing application run options or build options" }
+    val options = readApplicationRunOptions(args[1])
+    return buildAndRunApplication(args.drop(2), runOptions = options)
+}
 
 /** Internal supervisor boundary; the foreground owner creates a dedicated empty gate directory. */
 internal fun stageApplicationCommand(args: List<String>): Int {
@@ -47,7 +52,7 @@ private fun activationGate(args: List<String>): ApplicationGate {
     return ApplicationGate(directory, token)
 }
 
-private fun buildAndRunApplication(args: List<String>, gate: ApplicationGate? = null): Int {
+private fun buildAndRunApplication(args: List<String>, gate: ApplicationGate? = null, runOptions: ApplicationRunOptions? = null): Int {
     check(kvik_interrupt_install() == 0) { "Cannot install application interruption handlers" }
     try {
         val outcome = executeBuild(args, ProjectMode.APPLICATION, ownInterrupts = false)
@@ -55,7 +60,7 @@ private fun buildAndRunApplication(args: List<String>, gate: ApplicationGate? = 
         if (outcome.status != ExitStatus.SUCCESS) return outcome.status.code
         // Keep the same interruption latch across preparation and execution.
         try {
-            return executePreparedApplication(checkNotNull(outcome.preparation), ownInterrupts = false, gate = gate)
+            return executePreparedApplication(checkNotNull(outcome.preparation), ownInterrupts = false, gate = gate, runOptions = runOptions)
         } catch (failure: RunStreamFailure) {
             throw failure
         } catch (failure: Exception) {
@@ -75,12 +80,13 @@ internal fun runPreparedApplicationCommand(args: List<String>): Int {
     return executePreparedApplication(PreparedRun(projectPath(currentDirectory(), args[1]), Digest.fromJson(parseJson(args[3]))))
 }
 
-private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boolean = true, gate: ApplicationGate? = null): Int {
+private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boolean = true, gate: ApplicationGate? = null, runOptions: ApplicationRunOptions? = null): Int {
     if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install application interruption handlers" }
     var streamStarted = false
     try {
         if (kvik_interrupt_requested() != 0) return ExitStatus.CANCELLED.code
         var plan = validateApplicationPlan(prepared)
+        runOptions?.requirePrepared(plan.record)
         val ready = gate?.let {
             val value = ApplicationReady(it.token, prepared.directory, prepared.descriptor, plan.descriptor.verification,
                 plan.record.composition, plan.launch.module, plan.launch.target)
@@ -95,14 +101,15 @@ private fun executePreparedApplication(prepared: PreparedRun, ownInterrupts: Boo
         val descriptor = plan.descriptor
         val record = plan.record
         val launch = plan.launch
-        val arguments = plan.arguments
-        val environment = plan.environment
+        val arguments = runOptions?.arguments?.let { plan.arguments.dropLast(launch.application.arguments.size) + it } ?: plan.arguments
+        val environment = plan.environment + runOptions?.environmentVariables.orEmpty()
+        val workingDirectory = runOptions?.workingDirectory ?: plan.workingDirectory
         NativeFiles.ensureDirectory("$directory/application-runs")
         val execution = NativeRunDirectory("$directory/application-runs")
         NativeFiles.syncDirectory("$directory/application-runs")
         val stdout = "${execution.path}/application.stdout"
         val stderr = "${execution.path}/application.stderr"
-        val request = ProcessRequest(arguments, plan.workingDirectory, environment, stdout, stderr, 0)
+        val request = ProcessRequest(arguments, workingDirectory, environment, stdout, stderr, 0)
         NativeFiles.writeNew("${execution.path}/request.json", obj("schemaVersion" to CONTRACT_VERSION.json(),
             "preparation" to prepared.descriptor.toJson(), "verification" to descriptor.verification.toJson(),
             "arguments" to arguments.map { it.json() }.json(), "workingDirectory" to request.workingDirectory.json(),

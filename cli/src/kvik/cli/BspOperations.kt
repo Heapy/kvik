@@ -13,17 +13,20 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     private val hostTarget = if (terminalLeasePlatform() == "macos-arm64") "macosArm64" else "linuxX64"
     override val compileTargets = setOf("jvm", "js", "wasmJs", hostTarget) + if (hostTarget == "macosArm64") setOf("iosArm64", "iosSimulatorArm64") else emptySet()
     override val testTargets = setOf("jvm", "js", "wasmJs", hostTarget)
+    override val runTargets = setOf("jvm", hostTarget)
     private var host: ProcessHost? = null
-    private data class Child(val target: BspTarget, val directory: String, val task: String, val process: OwnedProcess)
+    private data class Child(val target: BspTarget, val directory: String, val task: String, val process: OwnedProcess, val output: BspApplicationOutput? = null)
     private class Pending(val request: BspBuildRequest, val model: BspProjectModel, val directory: String) {
         val waiting = ArrayDeque(request.targets)
         val runs = mutableListOf<JsonValue>()
         val classpaths = mutableListOf<JsonValue>()
+        val applicationRun: Boolean get() = request.method == "buildTarget/run"
         val classpathQuery: Boolean get() = request.method == "buildTarget/jvmCompileClasspath"
         val snapshots = mutableSetOf<Digest>()
         var child: Child? = null
         var status = 1
         var cancelled = false
+        var outputFailed = false
         var sequence = 0
     }
     private var pending: Pending? = null
@@ -62,18 +65,28 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         val build = checkNotNull(options.build)
         requireDisjointStore(project, projectPath(project.root, options.project.store), projectPath(project.root, options.project.lock), projectPath(project.root, build.tools))
         val directory = NativeRunDirectory(state.directory).path
-        val operation = if (state.classpathQuery) "jvm-classpath" else if (state.request.method == "buildTarget/test") "test" else if (target.compilation == "test") "compile-tests" else "build"
+        val operation = if (state.applicationRun) "run-application" else if (state.classpathQuery) "jvm-classpath" else if (state.request.method == "buildTarget/test") "test" else if (target.compilation == "test") "compile-tests" else "build"
         val arguments = options.arguments + listOf("--module", target.module, "--target", target.target, "--runs", "$directory/runs")
-        val command = listOf("${runtimeDirectory()}/kvik.kexe", operation) + arguments +
+        val overrides = if (state.applicationRun) {
+            val settings = state.request.runOptions
+            val value = ApplicationRunOptions(settings ?: BspRunOptions(), state.model.inspection.configuration, state.model.inspection.composition)
+            val bytes = value.toJson().canonical().encodeToByteArray()
+            require(bytes.size <= 128 * 1024) { "Application run options exceed 128 KiB" }
+            NativeFiles.writeNew("$directory/run-options.json", bytes)
+            listOf("--run-options", "$directory/run-options.json")
+        } else emptyList()
+        val command = listOf("${runtimeDirectory()}/kvik.kexe", operation) + overrides + arguments +
             if (state.classpathQuery) listOf("--compilation", target.compilation) else emptyList()
         NativeFiles.writeNew("$directory/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         val processHost = host ?: runtimeProcessHost().also { host = it }
         val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC") + remoteOperationEnvironment(project.root, listOf("${runtimeDirectory()}/kvik.kexe", "build") + arguments)
-        val process = processHost.start(ProcessRequest(command, project.root, environment, "$directory/stdout.jsonl", "$directory/stderr.log", 30 * 60_000))
+        val process = processHost.start(ProcessRequest(command, project.root, environment, "$directory/stdout.jsonl", "$directory/stderr.log", if (state.applicationRun) 0 else 30 * 60_000))
         val task = "${state.directory.substringAfterLast('/')}-${++state.sequence}"
-        state.child = Child(target, directory, task, process)
+        state.child = Child(target, directory, task, process, if (state.applicationRun) BspApplicationOutput(directory, target.module, target.target) else null)
         log(state, "$operation ${target.module}:${target.target}", type = 3)
-        if (state.classpathQuery) notification(state, "build/taskStart", obj("taskId" to obj("id" to task.json()),
+        if (state.applicationRun) notification(state, "build/taskStart", obj("taskId" to obj("id" to task.json()),
+            "message" to "Run ${target.module}:${target.target}".json()))
+        else if (state.classpathQuery) notification(state, "build/taskStart", obj("taskId" to obj("id" to task.json()),
             "message" to "Prepare JVM classpath for ${target.module}:${target.compilation}".json()))
         else notification(state, "build/taskStart", obj("taskId" to obj("id" to task.json()),
             "dataKind" to (if (operation == "test") "test-task" else "compile-task").json(),
@@ -124,7 +137,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     }
 
     private fun finished(state: Pending, child: Child, result: ProcessResult) {
-        var status = if (state.cancelled || result.cancelled) 3 else 2
+        var status = if (state.cancelled || result.cancelled && !state.outputFailed) 3 else 2
         var record: VerificationRecord? = null
         var observedDiagnostics = emptyList<Diagnostic>()
         try {
@@ -132,7 +145,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             val directory = "$runs/${NativeFiles.names(runs).single()}"
             record = verificationRecordFromJson(parseJson(NativeFiles.read("$directory/verification.json", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
             val events = committedRunEvents(record, parseJson(NativeFiles.read("$directory/completion.json", 8192).decodeToString()), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
-            val check = "${child.target.module}:${child.target.target}:" + if (state.classpathQuery) "classpath-${child.target.compilation}" else if (state.request.method == "buildTarget/test") "test" else if (child.target.compilation == "test") "compile-tests" else "build"
+            val check = "${child.target.module}:${child.target.target}:" + if (state.applicationRun) "prepare-application" else if (state.classpathQuery) "classpath-${child.target.compilation}" else if (state.request.method == "buildTarget/test") "test" else if (child.target.compilation == "test") "compile-tests" else "build"
             require(record.requestedChecks == setOf(check) && record.configuration == state.model.inspection.configuration && record.composition == state.model.inspection.composition) {
                 "Build result does not match the imported BSP target/configuration"
             }
@@ -141,6 +154,9 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             diagnostics(state, record, observedDiagnostics, fresh)
             state.snapshots += record.inputSnapshot
             if (!state.cancelled && !result.cancelled && result.exitCode == 0 && record.status == VerificationStatus.PASSED && fresh && state.snapshots.size == 1) status = 1
+            if (state.applicationRun && status == 1) {
+                checkNotNull(child.output).requireCompleted(directory, record)
+            }
             if (state.snapshots.size > 1) log(state, "Project inputs changed between BSP target builds; retry the request")
             if (state.classpathQuery && status == 1) state.classpaths += obj("target" to obj("uri" to child.target.uri.json()),
                 "classpath" to materializedJvmClasspath(record, child.target.module, child.target.compilation, directory).map { it.json() }.json())
@@ -148,7 +164,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
                 "inputSnapshot" to record.inputSnapshot.toJson(), "configuration" to record.configuration.toJson(),
                 "dependencyLock" to record.dependencyLock.toJson(), "status" to record.status.name.lowercase().json())
         } catch (failure: Exception) {
-            status = if (state.cancelled || result.cancelled) 3 else 2
+            status = if (state.cancelled || result.cancelled && !state.outputFailed) 3 else 2
             record = null; observedDiagnostics = emptyList()
             log(state, "Build did not produce a matching completed result: ${failure.message}")
             try {
@@ -166,7 +182,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             "ignored" to (record?.tests?.count { it.status == TestStatus.SKIPPED } ?: 0).json(), "cancelled" to 0.json(), "skipped" to 0.json())
         else obj("target" to obj("uri" to child.target.uri.json()), "errors" to observedDiagnostics.count { "WARNING" !in it.code && "INFO" !in it.code }.json(),
             "warnings" to observedDiagnostics.count { "WARNING" in it.code }.json())
-        if (state.classpathQuery) notification(state, "build/taskFinish", obj("taskId" to obj("id" to child.task.json()), "status" to status.json()))
+        if (state.classpathQuery || state.applicationRun) notification(state, "build/taskFinish", obj("taskId" to obj("id" to child.task.json()), "status" to status.json()))
         else notification(state, "build/taskFinish", obj("taskId" to obj("id" to child.task.json()), "status" to status.json(),
             "dataKind" to (if (testing) "test-report" else "compile-report").json(), "data" to report))
     }
@@ -174,8 +190,25 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     fun poll(): List<JsonValue.Object> {
         pending?.let { state ->
             state.child?.let { child ->
+                fun stream(final: Boolean) {
+                    try {
+                        child.output?.poll(final, { log(state, it, type = 2) }) { stderr, message ->
+                            if (state.request.originId != null) notification(state,
+                                if (stderr) "run/printStderr" else "run/printStdout", obj("message" to message.json()))
+                            else notification(state, "build/logMessage", obj("type" to (if (stderr) 2 else 3).json(), "message" to message.json()))
+                        }
+                    } catch (failure: Exception) {
+                        state.outputFailed = true
+                        state.status = 2
+                        state.waiting.clear()
+                        child.process.cancel()
+                        log(state, "Cannot forward application output: ${failure.message}")
+                    }
+                }
+                stream(false)
                 child.process.poll()?.let { result ->
                     child.process.close()
+                    stream(true)
                     finished(state, child, result)
                     state.child = null
                 }
@@ -183,7 +216,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             if (state.child == null && !state.cancelled && state.waiting.isNotEmpty()) try { launch(state) }
             catch (failure: Exception) { state.status = 2; state.waiting.clear(); log(state, failure.message ?: "Cannot launch BSP build") }
             if (state.child == null && (state.cancelled || state.waiting.isEmpty())) {
-                val result = obj("statusCode" to state.status.json(), "dataKind" to "kvik-build-result".json(),
+                val result = if (state.applicationRun) obj("statusCode" to state.status.json()) else obj("statusCode" to state.status.json(), "dataKind" to "kvik-build-result".json(),
                     "data" to obj("schemaVersion" to CONTRACT_VERSION.json(), "runs" to state.runs.json()))
                 messages += if (state.classpathQuery) {
                     when (state.status) {
