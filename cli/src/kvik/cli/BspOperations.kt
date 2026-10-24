@@ -14,6 +14,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     override val compileTargets = setOf("jvm", "js", "wasmJs", hostTarget) + if (hostTarget == "macosArm64") setOf("iosArm64", "iosSimulatorArm64") else emptySet()
     override val testTargets = setOf("jvm", "js", "wasmJs", hostTarget)
     override val runTargets = setOf("jvm", hostTarget)
+    override val generatedSourcesProvider = true
     private var host: ProcessHost? = null
     private data class Child(val target: BspTarget, val directory: String, val task: String, val process: OwnedProcess, val output: BspApplicationOutput? = null)
     private class Pending(val request: BspBuildRequest, val model: BspProjectModel, val directory: String) {
@@ -34,6 +35,24 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     private val compilerDiagnostics = mutableMapOf<String, Pair<Digest, List<Diagnostic>>>()
     private val published = mutableMapOf<String, Set<String>>()
     override val activeId: JsonValue? get() = pending?.request?.id
+
+    private fun targetsChanged(changes: List<Pair<String, Int>>) {
+        if (changes.isEmpty()) return
+        messages += obj("jsonrpc" to "2.0".json(), "method" to "buildTarget/didChange".json(),
+            "params" to obj("changes" to changes.map { (uri, kind) ->
+                obj("target" to obj("uri" to uri.json()), "kind" to kind.json())
+            }.json()))
+    }
+
+    override fun modelReloaded(previous: BspProjectModel, next: BspProjectModel) {
+        val old = previous.allTargets().map { it.uri }.toSet()
+        val current = next.allTargets().map { it.uri }.toSet()
+        targetsChanged((old + current).sorted().map { uri -> uri to when {
+            uri !in old -> 1
+            uri !in current -> 3
+            else -> 2
+        } })
+    }
 
     override fun start(request: BspBuildRequest, model: BspProjectModel) {
         check(pending == null)
@@ -58,6 +77,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
 
     private fun launch(state: Pending) {
         val target = state.waiting.removeFirst()
+        if (state.model.replaceGeneratedSources(target, emptyList())) targetsChanged(listOf(target.uri to 2))
         val project = readProject(options.project.project)
         require(effectiveConfiguration(project.configuration, options.project.resolverPolicy()).digest == state.model.inspection.configuration) {
             "Project configuration changed during BSP build; reload before retrying"
@@ -115,10 +135,10 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         for (diagnostic in values) {
             val path = diagnostic.path
             val target = diagnostic.actionId?.let(state.model::actionTarget)
+            val uri = if (path == null || target == null) null else state.model.sourceUri(target, path)
             if (!fresh || path == null || diagnostic.line == null || diagnostic.column == null || target == null ||
-                !state.model.containsSource(target, path)) { log(state, diagnostic.message); continue }
+                uri == null) { log(state, diagnostic.message); continue }
             val position = obj("line" to (diagnostic.line - 1).json(), "character" to (diagnostic.column - 1).json())
-            val uri = bspFileUri("${state.model.root}/$path")
             val severity = if ("WARNING" in diagnostic.code) 2 else if ("INFO" in diagnostic.code) 3 else 1
             files.getOrPut(target.uri) { mutableMapOf() }.getOrPut(uri) { mutableListOf() } += obj("range" to obj("start" to position, "end" to position),
                 "severity" to severity.json(), "code" to diagnostic.code.json(), "source" to "kvik".json(), "message" to diagnostic.message.json())
@@ -151,6 +171,13 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             }
             observedDiagnostics = replayDiagnostics(state, record, events.filter { it.type == "diagnostic" }.map { Diagnostic.fromJson(it.payload) })
             val fresh = record.freshnessAtCompletion == Freshness.CURRENT
+            if (fresh && !state.cancelled && !result.cancelled) {
+                val generated = materializeBspGeneratedSources(state.model, record, events, directory, child.directory,
+                    projectPath(state.model.root, options.project.store))
+                targetsChanged(generated.mapNotNull { (target, sources) ->
+                    if (state.model.replaceGeneratedSources(target, sources)) target.uri to 2 else null
+                })
+            }
             diagnostics(state, record, observedDiagnostics, fresh)
             state.snapshots += record.inputSnapshot
             if (!state.cancelled && !result.cancelled && result.exitCode == 0 && record.status == VerificationStatus.PASSED && fresh && state.snapshots.size == 1) status = 1
