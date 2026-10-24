@@ -20,7 +20,9 @@ class LibraryPublicationTest {
         assertEquals(Coordinate("org.example", "library-jvm", "1.0.0"), spec.coordinateFor("jvm"))
         assertEquals(Coordinate("org.example", "library-macosarm64", "1.0.0"), spec.coordinateFor("macosArm64"))
         assertEquals(Coordinate("org.example", "library-linuxx64", "1.0.0"), spec.coordinateFor("linuxX64"))
-        for (target in listOf("common", "js", "macosarm64", "")) assertFails { spec.coordinateFor(target) }
+        assertEquals(Coordinate("org.example", "library-js", "1.0.0"), spec.coordinateFor("js"))
+        assertEquals(Coordinate("org.example", "library-wasm-js", "1.0.0"), spec.coordinateFor("wasmJs"))
+        for (target in listOf("common", "wasmWasi", "wasm-js", "macosarm64", "")) assertFails { spec.coordinateFor(target) }
         val legacy = parse(document())
         assertNull(legacy.project.modules.single().publication)
         assertEquals(module(), legacy.project.modules.single())
@@ -57,7 +59,16 @@ class LibraryPublicationTest {
         val declaration = """{"coordinate":"$base"}"""
         assertFails { parse(document(declaration).replace("\"compilerOptions\":[]", "\"compilerOptions\":[],\"application\":{\"entryPoint\":\"sample.MainKt\"}")) }
         assertFails { module(targets = listOf(target.copy(application = ApplicationSpec("sample.MainKt"))), publication = LibraryPublicationSpec(base)) }
-        assertFails { module(targets = listOf(target.copy(name = "js")), publication = LibraryPublicationSpec(base)) }
+        for (name in listOf("js", "wasmJs")) {
+            val expected = module(targets = listOf(target.copy(name = name)), publication = LibraryPublicationSpec(base))
+            val configured = parse(document(declaration, targetName = name))
+            assertEquals(expected, configured.project.modules.single())
+            assertEquals(configured, parseProjectConfiguration(parseJson(configured.document.canonical())))
+        }
+        for (name in listOf("common", "wasmWasi", "wasm-js", "macosarm64", "")) {
+            assertFails { module(targets = listOf(target.copy(name = name)), publication = LibraryPublicationSpec(base)) }
+            assertFails { parse(document(declaration, targetName = name)) }
+        }
         val plugin = """{"coordinate":"org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20","targets":["jvm"],"scopes":["main"],"options":[],"inputs":[]}"""
         val parsed = parse(document(declaration).replace("\"compilerPlugins\":[]", "\"compilerPlugins\":[$plugin]"))
         assertEquals("kotlin-serialization-compiler-plugin-embeddable", parsed.project.modules.single().compilerPlugins.single().coordinate?.name)
