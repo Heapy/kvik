@@ -266,6 +266,37 @@ def main():
             'selector': {'package': 'org.jetbrains.kotlin:kotlin-stdlib'}}])
         assert apply(case, value)['status'] == 'applied'
         invoke('check-lock', '--project', case / 'kvik.json')
+        # Shared catalog changes update the lock for both direct and profile consumers.
+        value = plan(case, [
+            {'op': 'set-script', 'name': 'direct', 'script': {'sources': ['direct.kt'], 'dependencies': [{'catalog': 'stdlib'}]}},
+            {'op': 'set-script', 'name': 'profile', 'script': {'sources': ['profile.kt'], 'profiles': ['tools']}},
+            {'op': 'set-dependency-profile', 'name': 'tools', 'profile': {'dependencies': [{'catalog': 'stdlib'}]}},
+            {'op': 'set-catalog-entry', 'alias': 'stdlib', 'coordinate': 'org.jetbrains.kotlin:kotlin-stdlib:2.2.0'},
+        ])
+        assert apply(case, value)['status'] == 'applied'
+        invoke('check-lock', '--project', case / 'kvik.json')
+        old_lock = value['dependencyLock']['after']
+        value = plan(case, [{'op': 'set-catalog-version', 'alias': 'stdlib', 'version': '2.2.10'}])
+        assert value['dependencyLock']['after'] != old_lock
+        assert json.loads(value['configuration']['content'])['dependencyCatalog']['stdlib'].endswith(':2.2.10')
+        selections = json.loads(value['dependencyLock']['content'])['selections']
+        assert {entry['domain'].get('script') for entry in selections} == {'direct', 'profile'}
+        for entry in selections:
+            assert entry['requested'] == 'org.jetbrains.kotlin:kotlin-stdlib:2.2.10'
+            assert 'org.jetbrains.kotlin:kotlin-stdlib:2.2.10' in {artifact['coordinate'] for artifact in entry['artifacts']}
+        assert apply(case, value)['status'] == 'applied'
+        invoke('check-lock', '--project', case / 'kvik.json')
+        before = contents(case)
+        plan(case, [{'op': 'remove-catalog-entry', 'alias': 'stdlib'}], expected=2)
+        assert contents(case) == before
+        value = plan(case, [
+            {'op': 'remove-catalog-entry', 'alias': 'stdlib'},
+            {'op': 'remove-dependency-profile', 'name': 'tools'},
+            {'op': 'remove-script', 'name': 'direct'},
+            {'op': 'remove-script', 'name': 'profile'},
+        ])
+        assert apply(case, value)['status'] == 'applied'
+        invoke('check-lock', '--project', case / 'kvik.json')
     print('PASS configuration validation, plans, conflicts, recovery, concurrency and revision publication', flush=True)
 
 

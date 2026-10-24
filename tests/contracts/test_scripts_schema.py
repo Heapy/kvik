@@ -14,6 +14,25 @@ def validator(name):
 
 
 class ScriptsSchemaTest(unittest.TestCase):
+    def test_named_configuration_edits(self):
+        operations = [
+            dict(op='set-catalog-entry', alias='json', coordinate='example:json:1'),
+            dict(op='set-catalog-version', alias='json', version='2'),
+            dict(op='remove-catalog-entry', alias='json'),
+            dict(op='set-dependency-profile', name='tools', profile={'dependencies': [{'catalog': 'json'}]}),
+            dict(op='remove-dependency-profile', name='tools'),
+            dict(op='set-script', name='maintain', script={'sources': ['maintain.kt'], 'profiles': ['tools']}),
+            dict(op='remove-script', name='maintain'),
+        ]
+        validator('configurationEdits').validate({'schemaVersion': 1, 'operations': operations})
+        for operation in operations:
+            identity = 'alias' if 'alias' in operation else 'name'
+            for invalid in [{**operation, identity: 'bad\n'}, {**operation, identity: 'x' * 129},
+                            {**operation, 'module': 'app'}, {k: v for k, v in operation.items() if k != identity}]:
+                self.assertFalse(validator('configurationEditOperation').is_valid(invalid), invalid)
+        self.assertFalse(validator('configurationEditOperation').is_valid(dict(op='set-script', name='x', script={})))
+        self.assertFalse(validator('configurationEditOperation').is_valid(dict(op='set-dependency-profile', name='x', profile={'unknown': True})))
+
     def test_named_project_fixture_and_old_empty_fields(self):
         project = json.loads((ROOT / 'tests/scripts/fixtures/project.json').read_text())
         validator('project').validate(project)

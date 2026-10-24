@@ -792,6 +792,13 @@ DEFS["configurationEditOperation"] = {"oneOf": [
         "selector": {"oneOf": [object_({"package": NONEMPTY}), object_({"module": ID})]}}),
     object_({"op": {"const": "set-target"}, "module": ID, "target": ref("target")}),
     object_({"op": {"const": "remove-target"}, "module": ID, "target": enum(*PROJECT_TARGETS)}),
+    object_({"op": {"const": "set-catalog-entry"}, "alias": SCRIPT_ID, "coordinate": SCRIPT_COORDINATE}),
+    object_({"op": {"const": "set-catalog-version"}, "alias": SCRIPT_ID, "version": NONEMPTY}),
+    object_({"op": {"const": "remove-catalog-entry"}, "alias": SCRIPT_ID}),
+    object_({"op": {"const": "set-dependency-profile"}, "name": SCRIPT_ID, "profile": ref("scriptDependencyProfile")}),
+    object_({"op": {"const": "remove-dependency-profile"}, "name": SCRIPT_ID}),
+    object_({"op": {"const": "set-script"}, "name": SCRIPT_ID, "script": ref("script")}),
+    object_({"op": {"const": "remove-script"}, "name": SCRIPT_ID}),
 ]}
 DEFS["configurationEdits"] = versioned({"operations": array(ref("configurationEditOperation"), minItems=1, maxItems=128)})
 DEFS["configurationValidation"] = versioned({"kind": {"const": "configuration-validation"}, "status": {"const": "valid"},

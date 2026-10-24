@@ -188,9 +188,24 @@ The operations are:
 - `set-target`: supply `module` and a complete `target` object. Adds or replaces
   by target name.
 - `remove-target`: supply `module` and `target` (the target name). Requires an existing target.
+- `set-catalog-entry`: supply `alias` and a full Maven `coordinate`. Adds or replaces
+  an entry in `dependencyCatalog`.
+- `set-catalog-version`: supply `alias` and `version`. Updates an existing catalog
+  entry, preserving its group and artifact; all scripts using that alias see the update.
+- `remove-catalog-entry`: supply `alias`. Requires an existing entry.
+- `set-dependency-profile`: supply `name` and a complete `profile` object from the
+  project schema. Adds or replaces its dependencies, compiler options and plugins.
+- `remove-dependency-profile`: supply `name`. Requires an existing profile.
+- `set-script`: supply `name` and a complete `script` object from the project schema.
+  Adds or replaces the named script.
+- `remove-script`: supply `name`. Requires an existing script.
 
 The entire batch must produce a valid project; coordinated edits can temporarily
 invalidate the graph between operations. Unrelated authoring fields are preserved.
+Removing a catalog entry or profile still referenced by a script is rejected;
+update its consumers in the same batch. Set operations replace the named value,
+so include any existing settings you want to retain. For example, a shared script
+dependency update is `{"op":"set-catalog-version","alias":"json","version":"2.0.0"}`.
 Changed JSON is canonicalized, so formatting may change. The version in the example
 is illustrative; `packages versions` lists repository versions before choosing one.
 The edit and result schemas are in [contracts.json](schemas/v1/contracts.json), under

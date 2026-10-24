@@ -10485,6 +10485,150 @@
             "target"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-catalog-entry"
+            },
+            "alias": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            },
+            "coordinate": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "op",
+            "alias",
+            "coordinate"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-catalog-version"
+            },
+            "alias": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "op",
+            "alias",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-catalog-entry"
+            },
+            "alias": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "op",
+            "alias"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-dependency-profile"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            },
+            "profile": {
+              "$ref": "#/$defs/scriptDependencyProfile"
+            }
+          },
+          "required": [
+            "op",
+            "name",
+            "profile"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-dependency-profile"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "op",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-script"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            },
+            "script": {
+              "$ref": "#/$defs/script"
+            }
+          },
+          "required": [
+            "op",
+            "name",
+            "script"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-script"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "op",
+            "name"
+          ],
+          "additionalProperties": false
         }
       ]
     },

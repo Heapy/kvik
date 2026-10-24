@@ -14,6 +14,16 @@ fun editProjectConfiguration(configuration: ProjectConfiguration, edits: JsonVal
     var document = configuration.document
     for (operation in operations) {
         val name = operation.objectValue().getValue("op").stringValue()
+        val collection = when (name) {
+            "set-catalog-entry", "set-catalog-version", "remove-catalog-entry" -> "dependencyCatalog"
+            "set-dependency-profile", "remove-dependency-profile" -> "dependencyProfiles"
+            "set-script", "remove-script" -> "scripts"
+            else -> null
+        }
+        if (collection != null) {
+            document = editNamedConfiguration(document, operation, name, collection)
+            continue
+        }
         val fields = operation.fields(when (name) {
             "set-dependency" -> setOf("op", "module", "sourceSet", "dependency")
             "set-dependency-version" -> setOf("op", "module", "sourceSet", "package", "version")
@@ -76,6 +86,34 @@ fun editProjectConfiguration(configuration: ProjectConfiguration, edits: JsonVal
     }
     require(document.canonical().encodeToByteArray().size <= 4 * 1024 * 1024) { "Edited project configuration exceeds 4 MiB" }
     return parseProjectConfiguration(document)
+}
+
+private fun editNamedConfiguration(
+    document: JsonValue.Object, operation: JsonValue, name: String, collection: String,
+): JsonValue.Object {
+    val identityField = if (collection == "dependencyCatalog") "alias" else "name"
+    val payloadField = when (name) {
+        "set-catalog-entry" -> "coordinate"
+        "set-catalog-version" -> "version"
+        "set-dependency-profile" -> "profile"
+        "set-script" -> "script"
+        else -> null
+    }
+    val fields = operation.fields(setOf("op", identityField) + listOfNotNull(payloadField))
+    val identity = fields.getValue(identityField).stringValue()
+    val entries = document.values[collection]?.objectValue().orEmpty()
+    val changed = if (payloadField == null) {
+        require(identity in entries) { "Unknown $collection entry: $identity" }
+        entries - identity
+    } else {
+        val replacement = if (name == "set-catalog-version") {
+            val previous = entries[identity] ?: error("Unknown dependencyCatalog entry: $identity")
+            val coordinate = Coordinate.parse(previous.stringValue())
+            Coordinate.parse("${coordinate.group}:${coordinate.name}:${fields.getValue("version").stringValue()}").toString().json()
+        } else fields.getValue(payloadField)
+        entries + (identity to replacement)
+    }
+    return JsonValue.Object(document.values + (collection to JsonValue.Object(changed)))
 }
 
 private data class EditDependencyKey(val kind: String, val value: String)

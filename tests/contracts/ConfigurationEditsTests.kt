@@ -45,6 +45,87 @@ class ConfigurationEditsTests {
         it.objectValue().getValue("name").stringValue() == "main"
     }.objectValue().getValue("dependencies").arrayValue()
 
+    @Test fun catalogVersionUpdatesSharedScriptDependencyWithoutChangingAuthoringReferences() {
+        val original = fixture()
+        val result = editProjectConfiguration(original, batch(obj(
+            "op" to "set-catalog-version".json(), "alias" to "json".json(), "version" to "2".json())))
+        assertEquals(Coordinate.parse("example:json:2"), result.project.dependencyCatalog.getValue("json"))
+        val expanded = expandScript(result.project, "maintain")
+        assertEquals(Coordinate.parse("example:json:2"), (expanded.dependencies.single().value as Dependency.External).coordinate)
+        assertEquals(original.document.values - "dependencyCatalog", result.document.values - "dependencyCatalog")
+        assertEquals(Coordinate.parse("example:json:1"), original.project.dependencyCatalog.getValue("json"))
+        for (version in listOf("", "LATEST", "1-SNAPSHOT", "../2", "2:3")) assertFails {
+            editProjectConfiguration(original, batch(obj("op" to "set-catalog-version".json(), "alias" to "json".json(), "version" to version.json())))
+        }
+    }
+
+    @Test fun namedScriptEditsSupportCoordinatedReplacementAndRemoval() {
+        val original = fixture()
+        val script = obj("sources" to listOf("scripts/new.kt".json()).json(), "profiles" to listOf("newTools".json()).json())
+        val profile = obj("dependencies" to listOf(obj("catalog" to "newJson".json())).json(),
+            "compilerOptions" to listOf("-Werror".json()).json())
+        val changed = editProjectConfiguration(original, batch(
+            obj("op" to "remove-catalog-entry".json(), "alias" to "json".json()),
+            obj("op" to "remove-dependency-profile".json(), "name" to "tools".json()),
+            obj("op" to "set-script".json(), "name" to "maintain".json(), "script" to script),
+            obj("op" to "set-dependency-profile".json(), "name" to "newTools".json(), "profile" to profile),
+            obj("op" to "set-catalog-entry".json(), "alias" to "newJson".json(), "coordinate" to "other:json:3".json()),
+        ))
+        assertEquals(script, changed.document.values.getValue("scripts").objectValue().getValue("maintain"))
+        assertEquals(profile, changed.document.values.getValue("dependencyProfiles").objectValue().getValue("newTools"))
+        assertEquals(listOf("-Werror"), expandScript(changed.project, "maintain").compilerOptions.map { it.value })
+        val removed = editProjectConfiguration(changed, batch(
+            obj("op" to "remove-script".json(), "name" to "maintain".json()),
+            obj("op" to "remove-dependency-profile".json(), "name" to "newTools".json()),
+            obj("op" to "remove-catalog-entry".json(), "alias" to "newJson".json()),
+        ))
+        assertTrue(removed.project.scripts.isEmpty())
+        assertTrue(removed.project.dependencyCatalog.isEmpty())
+        assertTrue(removed.project.dependencyProfiles.isEmpty())
+        assertEquals(modules(original), modules(removed))
+    }
+
+    @Test fun namedEditsRejectDanglingReferencesUnknownNamesAndMalformedPayloads() {
+        val original = fixture()
+        val before = original.document.canonical()
+        val invalid = listOf(
+            obj("op" to "remove-catalog-entry".json(), "alias" to "json".json()),
+            obj("op" to "remove-dependency-profile".json(), "name" to "tools".json()),
+            obj("op" to "remove-script".json(), "name" to "missing".json()),
+            obj("op" to "remove-catalog-entry".json(), "alias" to "missing".json()),
+            obj("op" to "remove-dependency-profile".json(), "name" to "missing".json()),
+            obj("op" to "set-catalog-version".json(), "alias" to "missing".json(), "version" to "2".json()),
+            obj("op" to "set-catalog-entry".json(), "alias" to "bad/name".json(), "coordinate" to "example:json:2".json()),
+            obj("op" to "set-catalog-entry".json(), "alias" to "json".json(), "coordinate" to "example:json:2".json(), "module" to "app".json()),
+            obj("op" to "set-script".json(), "name" to "maintain".json(), "script" to obj()),
+            obj("op" to "set-dependency-profile".json(), "name" to "tools".json(), "profile" to obj("unknown" to true.json())),
+        )
+        for (operation in invalid) {
+            assertFails { editProjectConfiguration(original, batch(operation)) }
+            assertEquals(before, original.document.canonical())
+        }
+    }
+
+    @Test fun namedEditsCreateOptionalCollectionsAndReplaceWholeValues() {
+        val original = fixture()
+        val bare = parseProjectConfiguration(JsonValue.Object(original.document.values - setOf("scripts", "dependencyProfiles", "dependencyCatalog")))
+        val script = obj("sources" to listOf("script.kt".json()).json())
+        val result = editProjectConfiguration(bare, batch(
+            obj("op" to "set-script".json(), "name" to "newScript".json(), "script" to script),
+            obj("op" to "set-dependency-profile".json(), "name" to "tools".json(), "profile" to obj()),
+            obj("op" to "set-catalog-entry".json(), "alias" to "json".json(), "coordinate" to "example:json:2".json()),
+        ))
+        assertEquals(setOf("newScript"), result.project.scripts.keys)
+        val replaced = editProjectConfiguration(original, batch(
+            obj("op" to "set-script".json(), "name" to "maintain".json(), "script" to script),
+            obj("op" to "set-dependency-profile".json(), "name" to "tools".json(), "profile" to obj()),
+            obj("op" to "set-catalog-entry".json(), "alias" to "json".json(), "coordinate" to "other:artifact:4".json()),
+        ))
+        assertEquals(script, replaced.document.values.getValue("scripts").objectValue().getValue("maintain"))
+        assertTrue(replaced.project.dependencyProfiles.getValue("tools").dependencies.isEmpty())
+        assertEquals(Coordinate.parse("other:artifact:4"), replaced.project.dependencyCatalog.getValue("json"))
+    }
+
     @Test fun versionUpdatePreservesExportScopeOmittedDefaultsAndEveryUnrelatedAuthoringField() {
         val original = fixture()
         val before = original.document.canonical()
