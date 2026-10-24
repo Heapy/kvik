@@ -115,6 +115,41 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun webDocumentationKeepsTargetPlatformsAndCommonDependencyMetadataSeparate() {
+        fun web(value: ModuleSpec) = value.copy(
+            sourceSets = value.sourceSets + listOf("js", "wasmJs").map { source("${it}Main", "${value.id}/$it", listOf("commonMain")) },
+            targets = value.targets.filter { it.name == "jvm" } + listOf("js", "wasmJs").map { TargetSpec(it, "${it}Main", null, emptyList()) })
+        val config = configuration(web(base), web(app).copy(documentation = DocumentationSettings()))
+        val files = TreeManifest(snapshot().files + listOf("base", "app").flatMap { module ->
+            listOf("js", "wasmJs").map { FileEntry(LogicalPath("$module/$it/Actual.kt"), digest("$module:$it")) }
+        })
+        for (targets in listOf(setOf("js"), setOf("wasmJs"), setOf("js", "wasmJs"), setOf("jvm", "js", "wasmJs"))) {
+            val request = ProjectGraphRequest(setOf("app"), targets, ProjectMode.DOCUMENTATION)
+            val plan = graph(config, files, request)
+            val actions = resolved(plan)
+            val action = actions.getValue("app:common:documentation")
+            val spec = DocumentationSpec.fromJson(action.parameters)
+            val common = spec.sourceSets.single { it.name == "commonMain" }
+            assertEquals("common", common.platform)
+            assertEquals(setOf("jvm", "js", "wasmJs"), common.supportingTargets)
+            assertContains(common.classpath, LogicalPath("modules/base/documentation-metadata-js-jvm-wasmJs"))
+            val metadata = JvmMetadataCompilation.fromJson(actions.getValue("base:common:documentation-metadata-js-jvm-wasmJs").parameters)
+            assertEquals(common.supportingTargets, metadata.targets)
+            assertEquals(targets + "jvm", projectToolTargets(config.project, request))
+            for (target in targets) {
+                val leaf = spec.sourceSets.single { it.name == "${target}Main" }
+                assertEquals(if (target == "wasmJs") "wasm" else target, leaf.platform)
+                assertEquals(setOf(target), leaf.supportingTargets)
+                assertContains(leaf.classpath, LogicalPath("modules/base/$target/" + if (target == "jvm") "main" else "main.klib"))
+            }
+            assertEquals(targets.map { "${it}Main" }.toSet() + "commonMain", spec.sourceSets.map { it.name }.toSet())
+            assertTrue(actions.keys.none { it.contains(":test") || it.endsWith("documentation-stdlib") || it.endsWith(":package") })
+            assertTrue(action.inputs.files.none { it.path.value.startsWith("modules/app/") || it.path.value.startsWith("native-stdlib/") })
+            val edited = resolved(plan, "base:common:documentation-metadata-js-jvm-wasmJs")
+            assertNotEquals(action.key(Sha256), edited.getValue("app:common:documentation").key(Sha256))
+        }
+    }
+
     @Test fun documentationCombinesSourcesAndUsesOnlyDependencyArtifactsWithoutPublication() {
         val settings = DocumentationSettings(includes = listOf(LogicalPath("Module.md")))
         val config = configuration(base, app.copy(documentation = settings))
@@ -1714,8 +1749,7 @@ class JsProjectGraphTest {
     @Test fun unavailableJsIntegrationsAndMissingNodeIdentityAreExplicitErrors() {
         for (target in KotlinJsTarget.entries) {
             val config = fixture(target.projectName)
-            for (mode in listOf(ProjectMode.DOCUMENTATION))
-                assertFails { graph(config, request = request(mode, target.projectName)) }
+            assertFails { graph(config, request = request(ProjectMode.APPLICATION, target.projectName)) }
             val effective = effectiveConfiguration(config)
             assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition,
                 tools + (target.projectName to tools.getValue(target.projectName).filterKeys { it != "node" }),

@@ -28,11 +28,16 @@ class DocumentationSchemaTest(unittest.TestCase):
         self.assertTrue(valid('documentationSpec', value))
         # Selecting JVM does not narrow commonMain's declared refinement for metadata extraction.
         self.assertTrue(valid('documentationSpec', {**value, 'targets': ['jvm']}))
-        self.assertFalse(valid('documentationSpec', {**value, 'targets': ['js']}))
+        self.assertFalse(valid('documentationSpec', {**value, 'targets': ['unknown']}))
         self.assertFalse(valid('documentationSpec', {**value, 'sourceSets': []}))
         self.assertFalse(valid('documentationSourceSet', {**jvm, 'platform': 'android'}))
         self.assertFalse(valid('documentationSourceSet', {**jvm, 'classpath': ['/absolute']}))
         self.assertFalse(valid('documentationSourceSet', {**jvm, 'supportingTargets': []}))
+        web_common = {**common, 'supportingTargets': ['js', 'wasmJs']}
+        for target, platform in [('js', 'js'), ('wasmJs', 'wasm')]:
+            leaf = {**jvm, 'name': target + 'Main', 'platform': platform,
+                    'classpath': ['deps/library.klib'], 'supportingTargets': [target]}
+            self.assertTrue(valid('documentationSpec', {**value, 'targets': [target], 'sourceSets': [web_common, leaf]}))
 
     def test_distribution_contains_exactly_the_pinned_jar_roles(self):
         names = ['dokka-cli-2.2.0.jar', 'dokka-base-2.2.0.jar', 'analysis-kotlin-symbols-2.2.0.jar',
@@ -54,6 +59,9 @@ class DocumentationSchemaTest(unittest.TestCase):
         self.assertTrue(valid('snapshotSelection', selection))
         self.assertFalse(valid('snapshotSelection', {**selection, 'targets': []}))
         self.assertFalse(valid('snapshotSelection', {**selection, 'modules': ['library', 'library']}))
+        for targets in [['js'], ['wasmJs'], ['js', 'wasmJs']]:
+            self.assertTrue(valid('snapshotSelection', {**selection, 'targets': targets}))
+            self.assertTrue(valid('documentationReady', {**payload, 'targets': targets}))
 
 
 if __name__ == '__main__':

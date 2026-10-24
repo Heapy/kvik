@@ -68,11 +68,11 @@ data class DocumentationSourceSet(val name: String, val platform: String, val so
                                   val classpath: List<LogicalPath>, val dependsOn: List<String>, val supportingTargets: Set<String>) {
     init {
         documentationIdentifier(name)
-        require(platform in setOf("common", "jvm", "native")) { "Unsupported documentation platform" }
+        require(platform in setOf("common", "jvm", "native", "js", "wasm")) { "Unsupported documentation platform" }
         require(classpath.size <= 1024 && classpath.distinct().size == classpath.size)
         require(dependsOn.distinct().size == dependsOn.size)
         dependsOn.forEach(::documentationIdentifier)
-        require(supportingTargets.isNotEmpty() && supportingTargets.all { it == "jvm" || NativeTarget.find(it) != null })
+        require(supportingTargets.isNotEmpty() && supportingTargets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
     }
     fun toJson(): JsonValue.Object = obj("name" to name.json(), "platform" to platform.json(), "sourceRoot" to sourceRoot.value.json(),
         "classpath" to classpath.map { it.value.json() }.json(), "dependsOn" to dependsOn.map { it.json() }.json(),
@@ -93,7 +93,7 @@ data class DocumentationSpec(val module: String, val targets: Set<String>, val s
                              val settings: DocumentationSettings = DocumentationSettings()) {
     init {
         documentationIdentifier(module)
-        require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+        require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
         require(sourceSets.size in 1..256 && sourceSets.map { it.name }.distinct().size == sourceSets.size)
         validateGraph(sourceSets.associate { it.name to it.dependsOn.toSet() })
         val byName = sourceSets.associateBy { it.name }

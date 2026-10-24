@@ -1417,7 +1417,9 @@
           "enum": [
             "common",
             "jvm",
-            "native"
+            "native",
+            "js",
+            "wasm"
           ]
         },
         "sourceRoot": {
@@ -1451,7 +1453,9 @@
               "macosArm64",
               "linuxX64",
               "iosArm64",
-              "iosSimulatorArm64"
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
             ]
           },
           "minItems": 1,
@@ -1486,7 +1490,9 @@
               "macosArm64",
               "linuxX64",
               "iosArm64",
-              "iosSimulatorArm64"
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
             ]
           },
           "minItems": 1,
@@ -3077,7 +3083,9 @@
                   "macosArm64",
                   "linuxX64",
                   "iosArm64",
-                  "iosSimulatorArm64"
+                  "iosSimulatorArm64",
+                  "js",
+                  "wasmJs"
                 ]
               },
               "minItems": 1,
@@ -9827,7 +9835,9 @@
               "macosArm64",
               "linuxX64",
               "iosArm64",
-              "iosSimulatorArm64"
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
             ]
           },
           "minItems": 1,

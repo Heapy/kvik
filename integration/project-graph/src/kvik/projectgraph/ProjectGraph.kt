@@ -112,8 +112,8 @@ private class Builder(
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
         require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unknown project module/target selection" }
-        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.PACKAGE, ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK)) {
-            "JS/Wasm currently supports build, test, compile-tests, packaging and ABI checks; documentation and application modes require their own adapters"
+        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.PACKAGE, ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK, ProjectMode.DOCUMENTATION)) {
+            "JS/Wasm currently supports build, test, compile-tests, packaging, ABI checks and documentation; application mode requires its own adapter"
         }
         require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
         require(!this.request.mode.isBenchmark() || this.request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
@@ -267,7 +267,14 @@ private class Builder(
         val sqlDelightId = sqlDelight?.let { ensureSqlDelight(module) }
         val reached = spec.targets.associate { it.name to sourceSets(module, it.name, "main").map { source -> source.name }.toSet() }
         fun platform(set: SourceSet): String {
-            val families = reached.filterValues { set.name in it }.keys.map { if (it == "jvm") "jvm" else "native" }.toSet()
+            val families = reached.filterValues { set.name in it }.keys.map {
+                when (it) {
+                    "jvm" -> "jvm"
+                    "js" -> "js"
+                    "wasmJs" -> "wasm"
+                    else -> "native"
+                }
+            }.toSet()
             return families.singleOrNull() ?: "common"
         }
         val nativeStdlibIds = selectedTargets.filter { NativeTarget.find(it) != null }.associateWith { ensureDocumentationStdlib(module, it) }

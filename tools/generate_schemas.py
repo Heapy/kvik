@@ -176,11 +176,11 @@ DEFS["documentationSettings"] = object_({
     "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000},
 }, optional=("includes", "documentedVisibilities", "reportUndocumented", "failOnWarning", "skipDeprecated", "suppressInheritedMembers", "timeoutMillis"))
 DEFS["documentationSourceSet"] = object_({"name": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
-    "platform": enum("common", "jvm", "native"), "sourceRoot": PATH,
+    "platform": enum("common", "jvm", "native", "js", "wasm"), "sourceRoot": PATH,
     "classpath": array(PATH, maxItems=1024, uniqueItems=True), "dependsOn": array(ID, uniqueItems=True),
-    "supportingTargets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True)})
+    "supportingTargets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)})
 DEFS["documentationSpec"] = versioned({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
-    "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True),
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
     "sourceSets": array(ref("documentationSourceSet"), minItems=1, maxItems=256), "settings": ref("documentationSettings")})
 DEFS["documentationSpec"]["description"] = "Source-set names and roots must be unique; roots cannot overlap; dependency edges must form a closed acyclic graph."
 DOKKA_JARS = ("dokka-cli-2.2.0.jar", "dokka-base-2.2.0.jar", "analysis-kotlin-symbols-2.2.0.jar", "kotlinx-html-jvm-0.8.0.jar", "freemarker-2.3.31.jar")
@@ -299,7 +299,7 @@ DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
     object_({"kind": {"const": "script"}, "name": SCRIPT_ID}), object_({"kind": {"const": "standalone-script"}})]}
 DEFS["snapshotSelection"]["oneOf"].append(object_({"kind": {"const": "documentation"},
     "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
-    "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True)}))
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}))
 DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
 EXCLUSION_COORDINATE = {**COORDINATE, "maxLength": 1024, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
 DEFS["metadataEdgeExclusion"] = object_({"parent": EXCLUSION_COORDINATE, "metadata": ref("digest"),
@@ -781,7 +781,7 @@ DEFS["frameworkReady"] = object_({
 DEFS["frameworkReady"]["allOf"] = [{"if": {"properties": {"isStatic": {"const": True}}},
     "then": {"properties": {"dSYM": {"type": "null"}}}, "else": {"properties": {"dSYM": {"type": "string"}}}}]
 DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
-    "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True),
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})

@@ -10,7 +10,7 @@ class DocumentationMaterializationTest {
         try {
             val store = NativeContentStore("$root/store")
             val run = "$root/run".also(NativeFiles::ensureDirectory)
-            val selection = DocumentationSelection("library", setOf("jvm", "macosArm64"))
+            val selection = DocumentationSelection("library", setOf("jvm", "macosArm64", "js", "wasmJs"))
             val digest = store.put("<html>Public API</html>".encodeToByteArray())
             val output = TreeManifest(listOf(FileEntry(LogicalPath("html/index.html"), digest)))
             val record = VerificationRecord("run", setOf(selection.actionId), setOf(selection.actionId), digest, digest, digest, digest,
@@ -25,7 +25,9 @@ class DocumentationMaterializationTest {
             assertNull(NativeFiles.info("$run/documentation"))
             true
         })
-        val index = selection.event(run).values.getValue("index").stringValue()
+        val event = selection.event(run).values
+        assertEquals(selection.targets, event.getValue("targets").arrayValue().map(JsonValue::stringValue).toSet())
+        val index = event.getValue("index").stringValue()
         assertEquals("<html>Public API</html>", NativeFiles.read(index, 1024).decodeToString())
     }
 

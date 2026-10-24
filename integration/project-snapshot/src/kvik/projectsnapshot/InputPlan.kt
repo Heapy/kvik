@@ -18,7 +18,7 @@ sealed interface SnapshotSelection {
     data class Documentation(val modules: Set<String>, val targets: Set<String>) : SnapshotSelection {
         init {
             require(modules.isNotEmpty() && modules.size <= 1000 && modules.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) })
-            require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+            require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
         }
     }
     fun toJson(): JsonValue = when (this) {

@@ -6,7 +6,7 @@ import kvik.core.*
 internal data class DocumentationSelection(val module: String, val targets: Set<String>) {
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")))
-        require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+        require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
     }
     val actionId: String get() = "$module:common:documentation"
     fun event(runDirectory: String): JsonValue.Object {
