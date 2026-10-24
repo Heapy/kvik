@@ -30,6 +30,10 @@ class AbiExecutorTest {
         assertEquals(CachePolicy.LOCAL, action.cachePolicy)
         assertEquals(extraction, AbiExtraction.fromJson(action.parameters))
         assertFails { abiDumpAction(extraction, inputs, identity, tools - "junit") }
+        assertFails { abiDumpAction(extraction, TreeManifest(listOf(FileEntry(LogicalPath("classes/Huge.class"),
+            identity.copy(sizeBytes = 64L * 1024 * 1024 + 1)))), identity, tools) }
+        assertFails { abiDumpAction(extraction, TreeManifest((1..5).map { FileEntry(LogicalPath("classes/Huge$it.class"),
+            identity.copy(sizeBytes = 64L * 1024 * 1024)) }), identity, tools) }
         assertFails { abiDumpAction(extraction, TreeManifest(inputs.files + FileEntry(LogicalPath("extra.class"), identity)), identity, tools) }
         val root = NativeRunDirectory("/private/tmp").path
         try {

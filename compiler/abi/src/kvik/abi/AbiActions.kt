@@ -12,6 +12,8 @@ fun abiDumpAction(extraction: AbiExtraction, inputs: TreeManifest, composition: 
     require(toolchains.keys == abiTools) { "ABI extraction requires the pinned JVM worker/compiler tool identities" }
     // The worker and adapter share exactly the same artifact/input contract.
     AbiWorkerRequest("validation", toolchains.getValue("jvm-compiler"), extraction, inputs)
+    require(inputs.files.all { it.digest.sizeBytes <= 64L * 1024 * 1024 } &&
+        inputs.files.sumOf { it.digest.sizeBytes } <= 256L * 1024 * 1024) { "ABI artifacts exceed the worker input size limit" }
     return ActionSpec("kvik-abi-dump-v1", composition, ActionKind.GENERATE, jvmHostPlatform(), extraction.target,
         toolchains.toMap(), TreeManifest(inputs.files.toList()), abiOutputs, listOf("kvik.jvm.AbiWorker"),
         mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), extraction.toJson(), timeoutMillis, CachePolicy.LOCAL)
