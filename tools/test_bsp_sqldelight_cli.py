@@ -303,6 +303,7 @@ SELECT name FROM person ORDER BY id;
         print('PASS deleting the last SQL file clears generated mappings while ordinary Kotlin still compiles', flush=True)
 
         files = generated(compile_target())
+        assert effective_diagnostics(marker) == kotlin_warnings, 'Restoring a prior successful cache key lost compiler warnings'
         assert client.request('workspace/reload') is None
         assert_empty(uris(files))
         assert_retained(files)

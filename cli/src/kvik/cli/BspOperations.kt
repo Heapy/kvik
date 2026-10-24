@@ -32,7 +32,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     }
     private var pending: Pending? = null
     private val messages = ArrayDeque<JsonValue.Object>()
-    private val actionDiagnostics = mutableMapOf<String, Pair<Digest, List<Diagnostic>>>()
+    private val actionDiagnostics = BspDiagnosticReplay()
     private val publishedDiagnostics = BspDiagnostics()
     override val activeId: JsonValue? get() = pending?.request?.id
 
@@ -137,11 +137,11 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             if (!action.successful || state.model.diagnosticTarget(action.actionId) == null) continue
             val key = checkNotNull(action.key)
             if (action.status == ActionStatus.EXECUTED) {
-                actionDiagnostics[action.actionId] = key to values.filter { it.actionId == action.actionId }
+                actionDiagnostics.record(action.actionId, key, values.filter { it.actionId == action.actionId })
             } else {
                 // Cache hits reuse outputs without new producer observations. Keep warnings
-                // observed for this exact key during this connection, including after a failed edit.
-                actionDiagnostics[action.actionId]?.takeIf { it.first == key }?.second?.let(replayed::addAll)
+                // observed for this exact key during this connection, including after other successful variants.
+                actionDiagnostics.find(action.actionId, key)?.let(replayed::addAll)
             }
         }
         return values + replayed

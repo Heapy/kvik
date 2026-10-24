@@ -137,6 +137,8 @@ Generator and compiler diagnostics are tracked separately: a failed generator
 retains diagnostics from the blocked compiler. Successful generation, including a
 cache hit or deletion of the last SQL input, clears previous SQL errors. Reload
 clears published diagnostics before importing the new model.
+BSP keeps a bounded connection-local history to replay observed warnings for exact
+cached action keys, including when returning to an earlier successful build variant.
 The exposed launcher is the original KSP output. Diagnostics referring to the
 Native adapter's rewritten `prepared/kotest.kt` currently remain log messages.
 
