@@ -21,6 +21,10 @@ class SqlDelightTest {
         assertFails { module().copy(sqlDelight = settings.copy(sourceSet = "absent")) }
         assertFails { module().copy(sqlDelight = settings.copy(sourceSet = "test")) }
         assertFails { module().copy(targets = module().targets + TargetSpec("macosArm64", "main", null, emptyList())) }
+        assertFails { module().copy(sourceSets = module().sourceSets +
+            SourceSet("native", emptyList(), emptyList(), emptyList(), emptyList()) +
+            SourceSet("nativeTest", emptyList(), emptyList(), listOf("main"), emptyList()),
+            targets = module().targets + TargetSpec("macosArm64", "native", "nativeTest", emptyList())) }
         val separateNative = SourceSet("native", emptyList(), emptyList(), emptyList(), emptyList())
         module().copy(sourceSets = module().sourceSets + separateNative,
             targets = module().targets + TargetSpec("macosArm64", "native", null, emptyList()))

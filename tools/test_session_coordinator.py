@@ -42,7 +42,7 @@ def main():
         'resolution/src/kvik/resolution/ResolutionGraph.kt', 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt',
         'compiler/jvm/native/src/kvik/compiler/jvm/JvmBenchmarkActions.kt',
         'compiler/jvm/native/src/kvik/compiler/jvm/JvmScriptActions.kt', 'compiler/native/src/kvik/compiler/native/NativeActions.kt', 'compiler/js/src/kvik/compiler/js/JsActions.kt',
-        'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt', 'integration/application/src/kvik/application/ApplicationActions.kt')]
+        'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt', 'compiler/sqldelight/src/kvik/compiler/sqldelight/SqlDelightActions.kt', 'integration/application/src/kvik/application/ApplicationActions.kt')]
     commands.append(files_interop_command(ROOT, args.konan_home, output))
     commands.append([args.konan_home / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
                      '-library', output / 'process.klib', '-generate-test-runner', '-o', output / 'tests.kexe', *sources])
