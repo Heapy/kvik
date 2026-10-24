@@ -132,6 +132,12 @@ Select an explicit source composition with `--source-lock /absolute/source.lock.
 
 Use `--runtime-store /absolute/shared-store` to share complete verified native runtime bundles between checkouts or distinct `--cache-dir` directories on the same compatible host. The local K04 store includes the executable, guardian, JVM workers and runtime manifests. Concurrent launchers coordinate one build; `--offline --no-build` can restore an existing shared bundle into an empty local runtime cache without compiler or source/artifact caches. Local source declarations still need to be observable. The store must be separate from sources, other bootstrap caches and tool installations. See the [shared runtime contract](docs/decisions/k14-shared-runtime-store.md) and [actual build/restore evidence](docs/evidence/k14-shared-runtime-launcher.md).
 
+`abi-dump` and `abi-check` accept the same module, target, project and tools selectors as `build`. They read main compilation outputs on JVM and Native targets; publication coordinates are optional. Add `"abi": {"baseline": "api/library.jvm.api"}` to each target you want to check, using a separate baseline per target.
+
+Run `abi-dump --module library --target jvm` with your project and tools options to produce the first candidate. The `abi-ready` event provides paths to `api.txt` and its versioned `abi.json` metadata. Review `api.txt` and copy it to the configured baseline, then use `abi-check` in your normal verification workflow. Neither command updates baselines automatically. A failed comparison still exposes the current candidate for review.
+
+Checks require an exact public API match, allowing CRLF/LF and an optional final newline in the baseline. Additions and removals both fail; this is not a binary compatibility classification. Successful extraction and comparisons are cached locally. Baseline edits invalidate comparison and retained verification freshness while preserving compilation and extraction caches. ABI readers use pinned BCV and Kotlin compiler versions in an owned, isolated JVM process.
+
 ## Current checks
 
 On macOS ARM64, supply a Kotlin/Native 2.4.20 installation and Liberica JDK 25.0.4:
