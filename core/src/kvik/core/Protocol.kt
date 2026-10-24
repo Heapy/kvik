@@ -43,7 +43,7 @@ data class RunEvent(val runId: String, val sequence: Long, val type: String, val
     init {
         require(runId.isNotBlank() && sequence >= 1)
         require(type in setOf("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state",
-            "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"))
+            "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"))
     }
     fun toJson(): JsonValue = obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to runId.json(),
         "sequence" to sequence.json(), "type" to type.json(), "payload" to payload)

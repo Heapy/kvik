@@ -140,7 +140,7 @@ open class Sample {
         child = subprocess.Popen(command(), env=env, stdout=stdout, stderr=stderr)
         try:
             deadline = time.monotonic() + 120
-            while not marker.exists():
+            while not marker.exists() or not marker.read_text():
                 assert child.poll() is None, (child.returncode, stdout_path.read_text(), stderr_path.read_text())
                 assert time.monotonic() < deadline, 'JMH fork did not start'
                 time.sleep(.05)
@@ -169,6 +169,16 @@ open class Sample {
     resolve()
     timed_out = run(passed=False)
     assert any(a['actionId'] == 'bench:jvm:benchmark-smoke' and a['status'] == 'failed' for a in timed_out['actions']), timed_out
+    if marker.exists() and marker.read_text():
+        fork = int(marker.read_text())
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                os.kill(fork, 0)
+            except ProcessLookupError:
+                break
+            assert time.monotonic() < deadline, f'JMH fork {fork} survived timeout'
+            time.sleep(.05)
     print('PASS foreground cancellation and timeout stop measurement forks', flush=True)
 
 

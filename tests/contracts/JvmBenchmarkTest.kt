@@ -7,6 +7,13 @@ class JvmBenchmarkTest {
     private val digest = Sha256.digest("input".encodeToByteArray())
     private val classpath = listOf(LogicalPath("modules/app/jvm/main"), LogicalPath("deps/jmh.jar"))
     private val inputs = TreeManifest(listOf(FileEntry(LogicalPath("modules/app/jvm/main/example/Bench.class"), digest), FileEntry(classpath[1], digest)))
+    @Test fun benchmarkResultsHaveAnAcceptedRuntimeEvent() {
+        val payload = obj("module" to "app".json(), "target" to "jvm".json(), "profile" to "smoke".json(),
+            "actionId" to "app:jvm:benchmark-smoke".json(), "directory" to "/run/benchmarks/app/smoke".json(),
+            "summary" to "/run/benchmarks/app/smoke/summary.json".json(), "results" to "/run/benchmarks/app/smoke/results.json".json())
+        val event = RunEvent("run", 1, "benchmark-ready", payload)
+        assertEquals(payload, event.toJson().objectValue().getValue("payload"))
+    }
     @Test fun defaultsAndSmokeKeepExplicitIsolationAndRoundTrip() {
         assertEquals(settings, JvmBenchmarkSettings.fromJson(obj("classes" to listOf("example.Bench".json()).json())))
         assertEquals(settings, JvmBenchmarkSettings.fromJson(settings.toJson()))
