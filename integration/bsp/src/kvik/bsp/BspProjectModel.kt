@@ -59,6 +59,11 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
 
     fun select(targetUris: List<String>): List<BspTarget> = selected(targetUris).map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
 
+    fun isRunnable(target: BspTarget): Boolean = byUri[target.uri]?.let {
+        it.module.id == target.module && it.target.name == target.target && it.scope == target.compilation &&
+            it.scope == "main" && it.target.application != null
+    } == true
+
     /** Compilation action identities are shared with the ordinary project graph. */
     fun actionTarget(actionId: String): BspTarget? {
         val parts = actionId.split(':')
@@ -71,7 +76,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         belongs(LogicalPath(path), byUri.getValue(target.uri).directories)
     } catch (_: IllegalArgumentException) { false }
 
-    fun targets(compileTargets: Set<String> = emptySet(), testTargets: Set<String> = emptySet()): JsonValue.Object = obj("targets" to compilations.map { compilation ->
+    fun targets(compileTargets: Set<String> = emptySet(), testTargets: Set<String> = emptySet(), runTargets: Set<String> = emptySet()): JsonValue.Object = obj("targets" to compilations.map { compilation ->
         val (module, target, scope) = compilation
         val dependencies = compilation.sourceSets.flatMap { it.dependencies }.filterIsInstance<Dependency.Module>()
             .map { targetUri(it.module, target.name, "main") }.toMutableList()
@@ -85,7 +90,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
             "tags" to listOf((if (scope == "test") "test" else if (target.application != null) "application" else "library").json()).json(),
             "languageIds" to listOf("kotlin".json()).json(),
             "dependencies" to dependencies.distinct().map { obj("uri" to it.json()) }.json(),
-            "capabilities" to obj("canCompile" to (target.name in compileTargets).json(), "canTest" to (scope == "test" && target.name in testTargets).json(), "canRun" to false.json(), "canDebug" to false.json()),
+            "capabilities" to obj("canCompile" to (target.name in compileTargets).json(), "canTest" to (scope == "test" && target.name in testTargets).json(), "canRun" to (scope == "main" && target.application != null && target.name in runTargets).json(), "canDebug" to false.json()),
             "dataKind" to "kvik-kotlin".json(),
             "data" to obj("schemaVersion" to CONTRACT_VERSION.json(), "module" to module.id.json(), "target" to target.name.json(),
                 "compilation" to scope.json(), "configurationUri" to configurationUri.json(),
@@ -115,7 +120,10 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
 }
 
 /** Accept equivalent percent escapes from clients without assigning nonlocal URI authorities to local files. */
-private fun canonicalFileUri(uri: String): String? {
+private fun canonicalFileUri(uri: String): String? = bspFilePath(uri)?.let(::bspFileUri)
+
+/** Decode a local file URI for an explicitly requested application working directory. */
+fun bspFilePath(uri: String): String? {
     val path = when {
         uri.startsWith("file:///") -> uri.removePrefix("file://")
         uri.startsWith("file://localhost/") -> uri.removePrefix("file://localhost")
@@ -137,7 +145,7 @@ private fun canonicalFileUri(uri: String): String? {
             index = end
         }
     }
-    return try { bspFileUri(bytes.toByteArray().decodeToString(throwOnInvalidSequence = true)) }
+    return try { bytes.toByteArray().decodeToString(throwOnInvalidSequence = true).also { bspFileUri(it) } }
     catch (_: IllegalArgumentException) { null }
     catch (_: CharacterCodingException) { null }
 }

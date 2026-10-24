@@ -112,12 +112,13 @@ fun bspError(id: JsonValue, code: Int, message: String): JsonValue.Object = obj(
     "error" to obj("code" to code.json(), "message" to message.json()))
 
 /** One explicit connection; failed reloads preserve the last successfully imported model. */
-data class BspBuildRequest(val id: JsonValue, val method: String, val targets: List<BspTarget>, val originId: String?)
+data class BspBuildRequest(val id: JsonValue, val method: String, val targets: List<BspTarget>, val originId: String?, val runOptions: BspRunOptions? = null)
 
 interface BspOperations {
     val activeId: JsonValue?
     val compileTargets: Set<String>
     val testTargets: Set<String>
+    val runTargets: Set<String> get() = emptySet()
     fun start(request: BspBuildRequest, model: BspProjectModel)
     fun cancel(id: JsonValue)
 }
@@ -178,6 +179,7 @@ class BspSession(private val operations: BspOperations? = null,
                             put("jvmCompileClasspathProvider", true.json())
                             put("compileProvider", obj("languageIds" to listOf("kotlin".json()).json()))
                             put("testProvider", obj("languageIds" to listOf("kotlin".json()).json()))
+                            if (operations.runTargets.isNotEmpty()) put("runProvider", obj("languageIds" to listOf("kotlin".json()).json()))
                         }
                     })))
             } catch (failure: Exception) { bspError(id, -32602, failure.message ?: "Cannot initialize project") }
@@ -187,7 +189,8 @@ class BspSession(private val operations: BspOperations? = null,
         if (!initialized) return bspError(id, -32002, "Send build/initialized before workspace requests")
         val methods = setOf("workspace/buildTargets", "workspace/reload", "buildTarget/sources", "buildTarget/resources", "buildTarget/inverseSources", "kvik/projectModel") +
             (if (dependencies != null) setOf("buildTarget/dependencyModules") else emptySet()) +
-            (if (operations != null) setOf("buildTarget/compile", "buildTarget/test", "buildTarget/jvmCompileClasspath") else emptySet())
+            (if (operations != null) setOf("buildTarget/compile", "buildTarget/test", "buildTarget/jvmCompileClasspath") else emptySet()) +
+            (if (operations?.runTargets?.isNotEmpty() == true) setOf("buildTarget/run") else emptySet())
         if (method !in methods) return bspError(id, -32601, "Unsupported method: $method")
         return try {
             fun targets(): List<String> {
@@ -196,7 +199,7 @@ class BspSession(private val operations: BspOperations? = null,
                 return targets
             }
             val result = when (method) {
-                "workspace/buildTargets" -> if (kotlinClient) current.targets(operations?.compileTargets.orEmpty(), operations?.testTargets.orEmpty()) else obj("targets" to emptyList<JsonValue>().json())
+                "workspace/buildTargets" -> if (kotlinClient) current.targets(operations?.compileTargets.orEmpty(), operations?.testTargets.orEmpty(), operations?.runTargets.orEmpty()) else obj("targets" to emptyList<JsonValue>().json())
                 "workspace/reload" -> { check(operations?.activeId == null) { "Cannot reload during an active build" }; val next = load(); require(next.rootUri == current.rootUri); model = next; JsonValue.Null }
                 "buildTarget/sources" -> current.sources(targets())
                 "buildTarget/resources" -> current.resources(targets())
@@ -204,6 +207,24 @@ class BspSession(private val operations: BspOperations? = null,
                     val selected = current.select(targets())
                     try { checkNotNull(dependencies)(current, selected) }
                     catch (failure: Exception) { return bspError(id, -32603, failure.message ?: "Cannot read locked dependencies") }
+                }
+                "buildTarget/run" -> {
+                    val service = checkNotNull(operations)
+                    check(service.activeId == null) { "Another build request is active" }
+                    require(kotlinClient) { "Client did not enable Kotlin" }
+                    val params = fields.getValue("params").fields()
+                    require(params.keys.all { it in setOf("target", "originId", "arguments", "environmentVariables", "workingDirectory") }) {
+                        "Unsupported BSP run parameters or launch extension"
+                    }
+                    val selected = current.select(listOf(params.getValue("target").fields().getValue("uri").string())).single()
+                    require(selected.target in service.runTargets && current.isRunnable(selected)) {
+                        "Select a main application target supported on the current host"
+                    }
+                    val run = BspRunOptions(params["arguments"]?.array()?.map { it.string() },
+                        params["environmentVariables"]?.fields()?.mapValues { it.value.string() } ?: emptyMap(),
+                        params["workingDirectory"]?.string()?.let { requireNotNull(bspFilePath(it)) { "Working directory must be a local file URI" } })
+                    service.start(BspBuildRequest(id, method, listOf(selected), params["originId"]?.string(), run), current)
+                    return null
                 }
                 "buildTarget/compile", "buildTarget/test", "buildTarget/jvmCompileClasspath" -> {
                     val service = checkNotNull(operations)
