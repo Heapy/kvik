@@ -146,6 +146,7 @@ class SqlDelightGraphTest {
                 "documentation" to DocumentationSettings().toJson()).let { base -> JsonValue.Object(base.values +
                     (if (database) mapOf("sqlDelight" to settings.copy(sourceSet = sqlSource).toJson()) else emptyMap()) +
                     (if (publication) mapOf("publication" to obj("coordinate" to "fixture:$id:1".json())) else emptyMap())) }
+        }
         return parseProjectConfiguration(obj("schemaVersion" to 1.json(), "name" to "kmpSql".json(),
             "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(),
             "modules" to (listOf(module("data", true)) + if (dependency) listOf(module("consumer", false)) else emptyList()).json()))
