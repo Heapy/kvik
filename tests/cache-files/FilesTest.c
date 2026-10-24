@@ -27,6 +27,16 @@ int main(int argc, char **argv) {
     assert(kvik_files_ctime_seconds(&stamp) == 30);
     assert(kvik_files_ctime_nanoseconds(&stamp) == 987654321);
 
+    int lock = open("lock", O_CREAT | O_RDWR, 0600);
+    int contender = open("lock", O_RDWR);
+    assert(lock >= 0 && contender >= 0);
+    assert(kvik_files_flock(lock, LOCK_EX) == 0);
+    assert(kvik_files_flock(contender, LOCK_EX | LOCK_NB) == -1 && (errno == EWOULDBLOCK || errno == EAGAIN));
+    assert(kvik_files_flock(lock, LOCK_UN) == 0);
+    assert(kvik_files_flock(contender, LOCK_EX | LOCK_NB) == 0);
+    assert(kvik_files_flock(contender, LOCK_UN) == 0);
+    assert(close(lock) == 0 && close(contender) == 0);
+
     directory("stage");
     int fd = open("stage/content", O_CREAT | O_EXCL | O_WRONLY, 0600);
     assert(fd >= 0 && write(fd, "content", 7) == 7 && close(fd) == 0);
@@ -49,6 +59,6 @@ int main(int argc, char **argv) {
     assert(lstat("alias", &after) == 0 && S_ISLNK(after.st_mode));
     assert(kvik_files_rename_exclusive("absent", "unused") == -1 && errno == ENOENT);
     assert(lstat("second", &after) == 0 && S_ISDIR(after.st_mode));
-    puts("PASS timestamps and exclusive directory publication preserve existing destinations");
+    puts("PASS locks, timestamps and exclusive directory publication preserve existing destinations");
     return 0;
 }

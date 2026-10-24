@@ -93,9 +93,9 @@ internal object NativeFiles {
         val fd = open(path, O_RDWR or O_CREAT or O_NOFOLLOW, 384)
         if (fd < 0) fail("open lock $path")
         try {
-            while (flock(fd, LOCK_EX) != 0) { if (errno != EINTR) fail("lock $path") }
+            while (kvik_files_flock(fd, LOCK_EX) != 0) { if (errno != EINTR) fail("lock $path") }
             return block()
-        } finally { flock(fd, LOCK_UN); close(fd) }
+        } finally { kvik_files_flock(fd, LOCK_UN); close(fd) }
     }
     fun removeEntry(path: String) {
         if (unlink(path) != 0) fail("remove corrupt entry $path")

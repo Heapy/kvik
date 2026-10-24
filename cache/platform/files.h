@@ -4,12 +4,17 @@
 #include <stdint.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <stdio.h>
 #if defined(__linux__)
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #endif
+
+static inline int kvik_files_flock(int descriptor, int operation) {
+    return flock(descriptor, operation);
+}
 
 /* Preserve nanosecond change detection without leaking host-specific struct fields. */
 static inline int64_t kvik_files_mtime_seconds(const struct stat *value) {
