@@ -97,8 +97,8 @@ class FrameworkMaterializationTest {
 
     @Test fun incompleteFailedOrWrongScopedResultsCannotReachMaterialization() = FrameworkFixture().use { f ->
         val invalid = listOf(f.record.copy(status = VerificationStatus.FAILED),
-            f.record.copy(completedChecks = setOf(f.selections.first().check)),
-            f.record.copy(actions = f.actions.map { it.copy(status = ActionStatus.FAILED) }),
+            f.record.copy(requestedChecks = setOf(f.selections.first().check), completedChecks = setOf(f.selections.first().check)),
+            f.record.copy(status = VerificationStatus.FAILED, actions = f.actions.map { it.copy(status = ActionStatus.FAILED) }),
             f.record.copy(actions = f.actions.drop(1)),
             f.record.copy(actions = f.actions.map { it.copy(outputs = TreeManifest(emptyList())) }))
         for (record in invalid) {
