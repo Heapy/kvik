@@ -32,8 +32,8 @@ def main():
     runtime = args.runtime.resolve(strict=True)
     tools = project / 'tools.json'
     tool_configuration = json.loads(args.tools.read_bytes())
-    # Web target admission requires a Node declaration; ABI operations must never consume it.
-    tool_configuration['node'] = dict(root=str(case / 'absent-node'), identity=dict(hash='0' * 64, sizeBytes=1))
+    # ABI operations must work without a Node declaration or installation.
+    tool_configuration.pop('node', None)
     tools.write_text(json.dumps(tool_configuration))
     store = args.store.resolve() if args.store else case / 'store'
     runs = case / 'runs'
@@ -171,7 +171,6 @@ def main():
         if not name.endswith(':abi-check'):
             assert action['key'] == changed[name]['key'], name
     verification('accepted-retained-current', accepted, 'current')
-    assert not (case / 'absent-node').exists()
     print('PASS JS/Wasm ABI extraction, independent baselines, cache reuse, main-only scope and retained verification', flush=True)
 
 

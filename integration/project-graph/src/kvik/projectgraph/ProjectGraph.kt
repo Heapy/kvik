@@ -121,9 +121,16 @@ private class Builder(
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
         for (module in this.request.modules) for (target in this.request.targets) {
             target(module, target)
-            require(tools[target]?.keys == if (target == "jvm") setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
-                else if (KotlinJsTarget.find(target) != null) setOf("jdk", "jvm-compiler", "jvm-worker", "junit", "node")
-                else NativeTarget.require(target).toolIdentityNames) { "Missing/incompatible tool identities: $target" }
+            val webTarget = KotlinJsTarget.find(target) != null
+            if (webTarget && this.request.mode == ProjectMode.TEST) require(tools[target]?.containsKey("node") == true) {
+                "JS/Wasm test execution requires node.root and node.identity in tools: $target"
+            }
+            val compilerKeys = if (target == "jvm" || webTarget) setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
+                else NativeTarget.require(target).toolIdentityNames
+            val actualKeys = tools[target]?.keys
+            require((if (webTarget) actualKeys?.minus("node") else actualKeys) == compilerKeys) {
+                "Missing/incompatible tool identities: $target"
+            }
             val scope = if (this.request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.CLASSPATH_TEST)) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }

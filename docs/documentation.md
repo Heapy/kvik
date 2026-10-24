@@ -31,9 +31,8 @@ Documentation uses production sources and compiled dependency artifacts from the
 build graph. Common dependency metadata supplies types and members referenced by
 shared sources; platform dependency artifacts supply target-specific declarations.
 Tests are neither compiled nor run. JS and WasmJS analysis runs in Dokka's JVM
-process; it does not launch Node or a browser. Web targets currently still require
-a `node` declaration in the tools configuration, but documentation does not verify
-or use that Node installation.
+process; it does not require Node or a browser. A `node` declaration in the tools
+configuration is needed only for test execution.
 
 Settings include `includes`, `documentedVisibilities`, `reportUndocumented`,
 `failOnWarning`, `skipDeprecated`, `suppressInheritedMembers` and `timeoutMillis`.

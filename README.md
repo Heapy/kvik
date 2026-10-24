@@ -351,7 +351,9 @@ with `*` as the only wildcard. Zero matches or only skipped tests report incompl
 verification; assertion failures report failure. Promise-returning tests are awaited.
 Application `main()` is not run by the test command.
 
-Use the existing JVM compiler/JDK tool configuration and add a `node` object to
+Compilation, packaging, ABI checks and documentation use the JVM compiler/JDK
+tool configuration. Adding or changing Node does not invalidate these compilation
+results or their retained verification. To execute tests, add a `node` object to
 `tools.json`. Generate that object from an explicitly selected standalone Node
 installation with `python3 tools/pin_node.py --root /absolute/node-installation`.
 The command prints the physical root and content identity; Kvik verifies the entire
@@ -387,7 +389,7 @@ use `-js` and `-wasm-js` suffixes. See [library packaging](docs/library-publicat
 for dependency semantics and scope selection.
 
 JS/Wasm main KLIBs support `abi-dump` and `abi-check` with separate target baselines;
-these commands do not launch Node. Web targets still require its tool declaration.
+these commands do not require a Node declaration or installation.
 See [public API baselines](docs/abi.md).
 
 `docs --target js --target wasmJs` generates API documentation with shared and

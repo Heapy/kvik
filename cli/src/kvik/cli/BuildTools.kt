@@ -2,6 +2,7 @@ package kvik.cli
 
 import kvik.cache.NativeFiles
 import kvik.compilertools.*
+import kvik.compiler.js.NodeToolchainProvider
 import kvik.compiler.native.nativeDependenciesIdentity
 import kvik.compiler.native.linuxNativeDependenciesIdentity
 import kvik.core.*
@@ -32,8 +33,9 @@ internal class BuildTools(path: String) {
     }
 
     /** Validated desired identities authorize matching cached artifacts, not installed tool paths. */
-    fun desiredIdentities(targets: Set<String>): Map<String, Map<String, Digest>> {
+    fun desiredIdentities(targets: Set<String>, nodeTargets: Set<String> = emptySet()): Map<String, Map<String, Digest>> {
         require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unsupported tool targets" }
+        require(nodeTargets.all { it in targets && KotlinJsTarget.find(it) != null }) { "Invalid Node tool targets" }
         fun identity(component: ToolComponent) = declaration.components.getValue(component)
         val result = mutableMapOf<String, Map<String, Digest>>()
         if ("jvm" in targets || targets.any { KotlinJsTarget.find(it) != null }) {
@@ -41,7 +43,10 @@ internal class BuildTools(path: String) {
             result["jvm"] = mapOf("jdk" to identity(ToolComponent.JDK), "jvm-compiler" to worker.compiler,
                 "jvm-worker" to worker.identity, "junit" to worker.junitIdentity)
             for (target in targets.filter { KotlinJsTarget.find(it) != null }) {
-                result[target] = result.getValue("jvm") + ("node" to requireNotNull(node) { "JS/Wasm tools require a pinned Node installation" }.second)
+                val nodeIdentity = if (target in nodeTargets) mapOf("node" to requireNotNull(node) {
+                    "JS/Wasm test execution requires node.root and node.identity in tools: $target"
+                }.second) else emptyMap()
+                result[target] = result.getValue("jvm") + nodeIdentity
             }
             if ("jvm" !in targets) result.remove("jvm")
         }
@@ -76,8 +81,9 @@ internal class BuildTools(path: String) {
 
     fun jvmProvider() = InstalledJvmToolchainProvider(lock, roots, "${runtimeDirectory()}/jvm",
         Digest(runtimeJvmWorkerHash, runtimeJvmWorkerSize), artifacts)
-    fun nodeProvider() = requireNotNull(node) { "Supply node.root and node.identity in tools" }.let { (root, identity) ->
-        InstalledNodeToolchainProvider(root, identity)
+    fun nodeProvider() = NodeToolchainProvider { expected, checkpoint ->
+        val (root, identity) = requireNotNull(node) { "JS/Wasm test execution requires node.root and node.identity in tools" }
+        InstalledNodeToolchainProvider(root, identity).verified(expected, checkpoint)
     }
     fun nativeProvider(target: NativeTarget = if (ToolComponent.SYSTEM in roots) NativeTarget.LINUX_X64 else NativeTarget.MACOS_ARM64) =
         InstalledNativeToolchainProvider(lock, roots, data, target)

@@ -3,9 +3,8 @@
 `abi-dump` extracts the public API of selected main compilations on JVM, supported
 Native targets, JS and WasmJS. `abi-check` compares each candidate with its configured
 baseline. Publication coordinates are optional; tests are neither compiled nor run.
-JS/Wasm ABI operations read packed KLIBs and do not launch Node or a browser. Web
-targets currently require a `node` declaration in `tools.json`, but ABI operations
-do not verify or use that Node installation.
+JS/Wasm ABI operations read packed KLIBs and do not require Node or a browser.
+A `node` declaration is needed only for test execution.
 
 Configure a separate baseline on each target in `kvik.json`:
 

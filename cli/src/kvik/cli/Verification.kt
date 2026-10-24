@@ -64,7 +64,8 @@ internal fun checkRun(directory: String): CheckedRun {
                 val tools = BuildTools(metadata.getValue("toolsPath").stringValue())
                 val toolTargets = metadata["toolTargets"]?.arrayValue()?.map(JsonValue::stringValue)?.toSet() ?: targets
                 require(toolTargets.containsAll(targets) && toolTargets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Invalid retained tool target selection" }
-                val desired = tools.desiredIdentities(toolTargets)
+                val nodeTargets = toolTargets.filter { "$it:node" in record.toolchains }.toSet()
+                val desired = tools.desiredIdentities(toolTargets, nodeTargets)
                     .flatMap { (target, identities) -> identities.map { (name, digest) -> "$target:$name" to digest } }.toMap()
                 if (desired != record.toolchains) { current = Freshness.STALE; reason = "Desired tool identities changed" }
                 else {

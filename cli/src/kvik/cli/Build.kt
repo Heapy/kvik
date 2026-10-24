@@ -254,7 +254,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             ("source" to sourceProject.reference.toJson()) + sourceProject.retention?.let { mapOf("sourceRetention" to it.toJson()) }.orEmpty()))
         began = true
         try {
-            toolIdentities = tools.desiredIdentities(toolTargets)
+            toolIdentities = tools.desiredIdentities(toolTargets, if (mode == ProjectMode.TEST)
+                options.targets.filter { KotlinJsTarget.find(it) != null }.toSet() else emptySet())
             if (expectedTools != null && toolIdentities.any { (target, identities) -> expectedTools[target] != identities })
                 throw CliFailure("KVIK_VERIFICATION_TOOLS_CHANGED", DiagnosticCategory.TOOLCHAIN,
                     "Desired tools changed after verification selection", ExitStatus.INCOMPLETE)

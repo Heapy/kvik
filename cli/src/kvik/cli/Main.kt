@@ -47,7 +47,7 @@ private fun command(args: Array<String>) {
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs (repeatable) --tools PATH
             IDE classpath: jvm-classpath --compilation main|test plus JVM build options; prepares prerequisite outputs without compiling the requested source set
             Test compilation: compile-tests uses build options and compiles/links tests without running them
-            JS/Wasm: build/test use explicit stdlib/test KLIB dependencies; tools require node.root and pinned node.identity; browser and WASI runtimes are not yet supported
+            JS/Wasm: build/test use explicit stdlib/test KLIB dependencies; test execution requires node.root and pinned node.identity; browser and WASI runtimes are not yet supported
             Configuration edits: config validate --project PATH; config plan --project PATH --edits FILE; config apply --plan FILE
             Change-aware verification: verify --since RUN_DIRECTORY (repeatable) [--check build|test|abi-check] (repeatable; default test) [--full] [--plan-only] plus build selectors; or verify --full
             Test execution: JVM, JS/WasmJS through Node, or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking

@@ -14,7 +14,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from bootstrap.identity import canonical, digest, inventory
+from bootstrap.identity import canonical
 
 TARGETS = ('js', 'wasmJs')
 
@@ -38,7 +38,7 @@ def main():
     runtime, store = args.runtime.resolve(strict=True), args.store.resolve()
     node = args.node_root.resolve(strict=True)
     tools = json.loads(args.tools.read_bytes())
-    tools['node'] = dict(root=str(node), identity=digest(canonical(inventory(node, True))))
+    tools.pop('node', None)  # Kvik packaging needs no Node; Gradle uses the selected installation below.
     env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()),
                PATH=str(node / 'bin') + os.pathsep + os.environ.get('PATH', ''))
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)

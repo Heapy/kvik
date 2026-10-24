@@ -137,6 +137,10 @@ class Tests {
     write('tools.json', json.dumps(tools))
     for record in (built, prepared):
         current(record)
+    prepared_with_node = run(operation='compile-tests')
+    assert not any(name.endswith(':node') for name in prepared_with_node['toolchains']), prepared_with_node
+    assert all(action['status'] == 'local_hit' for action in prepared_with_node['actions']), prepared_with_node
+    current(prepared_with_node)
     first = run()
     assert first['status'] == 'passed' and first['testCounts']['executed'] == 2 and first['testCounts']['skipped'] == 2, first
     assert {test['target'] for test in first['tests']} == {'js', 'wasmJs'}
@@ -151,6 +155,32 @@ class Tests {
     assert compiled and all(action['status'] == 'local_hit' for action in compiled), compiled
     assert all(action['status'] == 'executed' for action in second['actions'] if action['actionId'].endswith(':test'))
     assert second['testCounts']['executed'] == 2
+    def verify(*extra, expected=0):
+        events = invoke(*build_arguments('verify', ('js', 'wasmJs')), '--check', 'build', '--check', 'test',
+                        *extra, expected=expected)
+        return next(event for event in events if event.get('kind') == 'change-verification')
+
+    mixed = verify('--full')
+    assert mixed['status'] == 'passed' and len(mixed['executionRuns']) == 2, mixed
+    baselines = [part for run in mixed['executionRuns'] for part in ('--since', run['directory'])]
+    unchanged = verify(*baselines)
+    assert unchanged['status'] == 'unchanged' and not unchanged['executionRuns'], unchanged
+    pinned_node = tools.pop('node')
+    write('tools.json', json.dumps(tools))
+    rejected = invoke(*build_arguments('verify', ('js', 'wasmJs')), '--check', 'test',
+                      '--since', root / 'runs' / second['runId'], expected=None)
+    assert not any(event.get('kind') == 'change-verification' and event['status'] == 'unchanged'
+                   for event in rejected), rejected
+    assert any('JS/Wasm test execution requires node.root and node.identity' in str(event)
+               for event in rejected), rejected
+    tools['node'] = pinned_node | {'identity': digest(b'a different Node installation')}
+    write('tools.json', json.dumps(tools))
+    current(prepared_with_node)
+    stale, = invoke('verification', '--run', root / 'runs' / second['runId'], expected=3)
+    assert stale['freshness'] == 'stale' and stale['reason'] == 'Desired tool identities changed', stale
+    tools['node'] = pinned_node
+    write('tools.json', json.dumps(tools))
+    print('PASS mixed build/test verification omits unchanged checks and rejects missing Node before test avoidance', flush=True)
     # A production dependency edit must invalidate consumer compilation/linking.
     write('base/common/Base.kt', 'package base\nexpect fun platform(): String\nfun answer() = 42\nfun addedApi() = 7\n')
     changed = run()

@@ -152,7 +152,8 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     val lock = DependencyLocks(content, kvik.resolution.NativePomParser()).loadLocked(snapshot.lockBytes, effective)
     val toolTargets = parsed.checks.flatMap { kind -> projectToolTargets(snapshot.configuration.project,
         ProjectGraphRequest(options.modules, options.targets, verificationMode(kind))) }.toSet()
-    val desired = BuildTools(toolsPath).desiredIdentities(toolTargets)
+    val nodeTargets = if ("test" in parsed.checks) options.targets.filter { KotlinJsTarget.find(it) != null }.toSet() else emptySet()
+    val desired = BuildTools(toolsPath).desiredIdentities(toolTargets, nodeTargets)
     val fullReasons = linkedSetOf<String>()
     if (parsed.full) fullReasons += "requested-full"
     if (options.coverage) fullReasons += "coverage-requested"
@@ -193,6 +194,7 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
             val required = projectToolTargets(snapshot.configuration.project,
                 ProjectGraphRequest(setOf(parts[0]), setOf(parts[1]), verificationMode(parts[2])))
             for (target in required) for ((name, identity) in desired.getValue(target)) {
+                if (name == "node" && (parts[2] != "test" || target != parts[1])) continue
                 if (candidate.toolchains["$target:$name"] != identity) fullReasons += "baseline-check-tools-incomplete"
             }
         }
@@ -237,7 +239,7 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     val fresh = linkedSetOf<String>()
     var exitStatus = ExitStatus.SUCCESS
     fun stable(): Boolean = snapshots.freshness(snapshot) == Freshness.CURRENT &&
-        try { BuildTools(toolsPath).desiredIdentities(toolTargets) == desired } catch (_: Exception) { false }
+        try { BuildTools(toolsPath).desiredIdentities(toolTargets, nodeTargets) == desired } catch (_: Exception) { false }
     fun guard(): Boolean {
         if (kvik_interrupt_requested() != 0) { status = "cancelled"; exitStatus = ExitStatus.CANCELLED; reason = "Verification interrupted"; return false }
         if (!stable()) { status = "incomplete"; exitStatus = ExitStatus.INCOMPLETE; reason = "Inputs or desired tools changed during verification"; return false }
@@ -251,7 +253,10 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
             if (!guard()) break
             val groupOptions = options.copy(modules = group.modules, targets = group.targets, coverage = options.coverage && group.mode == ProjectMode.TEST)
             try {
-                val outcome = executeSelectedVerificationBuild(groupOptions, group.mode, snapshot.fingerprint, inputSelection, desired)
+                val groupTools = desired.mapValues { (target, identities) -> identities.filterKeys { name ->
+                    name != "node" || group.mode == ProjectMode.TEST && target in group.targets
+                } }
+                val outcome = executeSelectedVerificationBuild(groupOptions, group.mode, snapshot.fingerprint, inputSelection, groupTools)
                 val runPath = requireNotNull(outcome.directory) { "Verification execution did not retain a run directory" }
                 val record = verificationRecordFromJson(parseJson(NativeFiles.read("$runPath/verification.json", 16 * 1024 * 1024)
                     .decodeToString(throwOnInvalidSequence = true)))

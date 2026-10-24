@@ -30,8 +30,8 @@ def main():
     store = args.store.resolve() if args.store else case / 'store'
     runs = case / 'runs'
     tools = json.loads(args.tools.read_bytes())
-    # Web target admission needs a declaration, but documentation must not consume a Node installation.
-    tools['node'] = dict(root=str(case / 'absent-node'), identity=dict(hash='0' * 64, sizeBytes=1))
+    # Documentation must work without a Node declaration or installation.
+    tools.pop('node', None)
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_bytes())
     validator = Draft202012Validator({**schema, '$ref': '#/$defs/event'})
     env = dict(os.environ)
@@ -179,7 +179,6 @@ fun webName(token: dependency.WebToken): String = token.name
         assert changed[name]['status'] == 'executed' and changed[name]['key'] != included[name]['key'], name
     assert all(action['status'] == 'local_hit' for name, action in changed.items() if name.startswith('base:')), changed
     verification('source-current', changed_record, 'current')
-    assert not (case / 'absent-node').exists()
     print('PASS JS/Wasm documentation, dependency members, target refinement, cache invalidation and retained freshness', flush=True)
 
 

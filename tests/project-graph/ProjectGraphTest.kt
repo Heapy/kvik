@@ -1746,6 +1746,21 @@ class JsProjectGraphTest {
         }
     }
 
+    @Test fun compilationDoesNotRequireNodeOrIncludeItInActionKeys() {
+        for (target in KotlinJsTarget.entries) for (mode in listOf(ProjectMode.BUILD, ProjectMode.COMPILE_TESTS)) {
+            val config = fixture(target.projectName)
+            val effective = effectiveConfiguration(config)
+            val selection = request(mode, target.projectName)
+            val withNode = resolved(graph(config, request = selection))
+            val withoutNode = resolved(projectActionGraph(effective, lock(effective), snapshot(), composition,
+                tools + (target.projectName to tools.getValue(target.projectName).minus("node")), selection))
+            assertEquals(withNode.mapValues { it.value.key(Sha256) }, withoutNode.mapValues { it.value.key(Sha256) })
+            assertTrue(withoutNode.values.all { "node" !in it.toolchains })
+            assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition,
+                tools + (target.projectName to tools.getValue(target.projectName).minus("jvm-compiler")), selection) }
+        }
+    }
+
     @Test fun unavailableJsIntegrationsAndMissingNodeIdentityAreExplicitErrors() {
         for (target in KotlinJsTarget.entries) {
             val config = fixture(target.projectName)
