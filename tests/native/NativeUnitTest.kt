@@ -70,9 +70,14 @@ class NativeUnitTest {
             NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer") })
         executor.start("linux", "compile", action).use { running ->
             val started = TimeSource.Monotonic.markNow()
-            var result = running.poll()
-            while (result == null && started.elapsedNow().inWholeSeconds < 3) { usleep(1_000u); result = running.poll() }
-            assertEquals(ActionStatus.FAILED, assertNotNull(result).status)
+            val failure = assertFailsWith<IllegalArgumentException> {
+                while (started.elapsedNow().inWholeSeconds < 3) {
+                    assertNull(running.poll())
+                    usleep(1_000u)
+                }
+                error("Mismatched provider did not fail preparation")
+            }
+            assertEquals("Verified Native toolchain target differs from action", failure.message)
         }
     }
 
