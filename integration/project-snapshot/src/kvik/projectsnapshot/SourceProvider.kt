@@ -165,10 +165,19 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
         if (expectedConfiguration != null && digests.getValue(configurationPath.value) != expectedConfiguration)
             throw SnapshotFailure("Configuration differs from expected source snapshot")
         val lockBytes = read(lockPath.value, minOf(limits.maxFileBytes, 16 * 1024 * 1024))
+        fun declarationSource(path: LogicalPath): ByteArray {
+            declared(path)
+            val bytes = read(path.value, minOf(limits.maxFileBytes, 4 * 1024 * 1024))
+            addFile(path.value)
+            return bytes
+        }
         val configuration = if (selection == SnapshotSelection.StandaloneScript) null else
             parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
-        val plan = if (configuration == null) standaloneScriptInputPlan(parseStandaloneScriptConfiguration(
-            parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))) else projectInputPlan(configuration, selection)
+                .withScriptDeclarations(::declarationSource)
+        val standalone = if (selection != SnapshotSelection.StandaloneScript) null else
+            parseStandaloneScriptConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
+                .withScriptDeclarations(::declarationSource)
+        val plan = if (configuration == null) standaloneScriptInputPlan(checkNotNull(standalone)) else projectInputPlan(configuration, selection)
         if (plan.paths.size > limits.maxEntries) throw SnapshotFailure("Too many declared input paths")
         for (path in plan.paths) { checkpoint(); declared(path) }
         for (path in plan.directories) visit(path.value)
@@ -181,7 +190,7 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
         val tree = TreeManifest(inputs.values.sortedBy { it.path.value })
         val fingerprint = projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, observedDirectories, selection)
         return ProjectInputSnapshot("source-provider:${manifest.digest.hash}", configurationPath, lockPath.value, selection,
-            configurationBytes, lockBytes, tree, fingerprint, configuration)
+            configurationBytes, lockBytes, tree, fingerprint, configuration, standalone)
     }
 
     private fun validateManifest() {

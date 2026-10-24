@@ -25,7 +25,7 @@ data class ProjectQueryFilter(val modules: List<String> = emptyList(), val targe
     }
 }
 
-fun projectDeclarations(project: ProjectSpec): List<JsonValue> = buildList {
+fun projectDeclarations(project: ProjectSpec, scripts: Map<String, ExpandedScript> = emptyMap()): List<JsonValue> = buildList {
     fun declaration(module: String, source: String?, kind: String, coordinate: Coordinate?, dependency: String?,
                     scope: String, exported: Boolean, targets: List<String>, compilations: List<String>) = obj(
         "module" to module.json(), "sourceSet" to (source?.json() ?: JsonValue.Null), "kind" to kind.json(),
@@ -57,7 +57,7 @@ fun projectDeclarations(project: ProjectSpec): List<JsonValue> = buildList {
         }
     }
     for (name in project.scripts.keys) {
-        val script = expandScript(project, name)
+        val script = scripts[name] ?: expandScript(project, name)
         fun declared(kind: String, coordinate: Coordinate?, module: String?, scope: String, origin: ScriptOrigin) = obj(
             "script" to name.json(), "sourceSet" to JsonValue.Null, "kind" to kind.json(),
             "coordinate" to (coordinate?.toString()?.json() ?: JsonValue.Null), "dependencyModule" to (module?.json() ?: JsonValue.Null),
@@ -100,7 +100,7 @@ fun queryProjectDependencies(projectPath: String, lockPath: String, storePath: S
             selection.metadata.forEach { metadata ->
                 require(metadata.url.length <= 4096) { "Locked metadata URL exceeds query bound" }
                 identities[metadata.url] = metadata.digest
-                val matches = effective.repositories.filter { metadata.url.startsWith(it.url.trimEnd('/') + "/") }
+                val matches = effective.repositoriesFor(selection.domain).filter { metadata.url.startsWith(it.url.trimEnd('/') + "/") }
                 require(matches.size == 1) { "Ambiguous locked metadata repository provenance; overlapping repository bases are unsupported" }
                 val repository = matches.single().id
                 sources[metadata.url] = QuerySource(repository, metadata.url, "metadata", metadata.digest, null, "locked", "found", "fresh")
@@ -122,7 +122,7 @@ fun queryProjectDependencies(projectPath: String, lockPath: String, storePath: S
         if (selected.size > 256) { truncated = true; diagnostics += QueryDiagnostic("KVIK_QUERY_TRUNCATED", "Project query exceeds 256 domains; select module/target/compilation/usage") }
         for ((domain, requests) in selected.entries.take(256)) {
             val graph = MavenResolver(replay, parser, effective.policy.pinsFor(domain), effective.policy.maxComponents,
-                effective.policy.maxRequests, resolutionArtifactByteLimit(domain), effective.policy.exclusionsFor(domain)).resolveGraph(requests.map { it.coordinate }, requests.first().variant, effective.repositories, requireAllExclusions = true)
+                effective.policy.maxRequests, resolutionArtifactByteLimit(domain), effective.policy.exclusionsFor(domain)).resolveGraph(requests.map { it.coordinate }, requests.first().variant, effective.repositoriesFor(domain), requireAllExclusions = true)
             require(graph.selections == lock.selections.filter { it.domain == domain }.map { it.selection }) { "Query graph disagrees with locked selections: $domain" }
             val json = graph.toJson()
             if (json.values.getValue("truncated").booleanValue()) truncated = true
@@ -137,7 +137,7 @@ fun queryProjectDependencies(projectPath: String, lockPath: String, storePath: S
         if (outputBound) truncated = true else freshness = "indeterminate"
         diagnostics += QueryDiagnostic(if (outputBound) "KVIK_QUERY_BOUND" else "KVIK_QUERY_LOCK_INVALID", message)
     }
-    var declarations = projectDeclarations(configuration.project)
+    var declarations = projectDeclarations(configuration.project, configuration.project.scripts.keys.associateWith { expandScript(configuration, it) })
     if (declarations.any { declaration -> declaration.objectValue().any { (name, value) ->
             value is JsonValue.StringValue && value.value.length > if (name == "coordinate") 1024 else 4096
         } }) {

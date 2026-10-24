@@ -61,6 +61,96 @@ private fun capture(provider: SourceSnapshotProvider, store: ContentStore = Prov
         LogicalPath("kvik.lock.json"), selection = selection, checkpoint = checkpoint)
 
 class SourceProviderTest {
+    @Test fun selectedScriptCapturesOtherScriptsReachableDeclarationsFromExactObservedBytes() {
+        val document = JsonValue.Object(parseJson(providerDocument().decodeToString()).objectValue() + ("scripts" to parseJson("""{
+            "probe":{"sources":["script/Main.kt"]},
+            "annotated":{"sources":["other"],"entryScript":"other/main.kts"}
+        }"""))).canonical().encodeToByteArray()
+        val primary = "@file:Import(\"helper.kts\")\nprintln(42)\n".encodeToByteArray()
+        val helper = "@file:DependsOn(\"example:library:1\")\n".encodeToByteArray()
+        val original = MemoryRevision(mapOf(
+            "kvik.json" to document, "kvik.lock.json" to "locked".encodeToByteArray(),
+            "script/Main.kt" to "println(42)".encodeToByteArray(),
+            "other/main.kts" to primary, "other/helper.kts" to helper,
+            "other/unrelated.kt" to "fun unrelated() = 1".encodeToByteArray(),
+            "other/unreachable.kts" to "@file:DependsOn(\"example:ignored:1\")".encodeToByteArray()),
+            listOf("script", "other"))
+        val store = ProviderStore()
+        val selection = SnapshotSelection.Script("probe")
+        val captured = capture(MemoryProvider(original), store, selection).snapshot
+        assertEquals(setOf("script/Main.kt", "other/main.kts", "other/helper.kts"), captured.inputs.files.map { it.path.value }.toSet())
+        assertEquals(listOf("other"), projectInputPlan(captured.configuration, selection).declarationRoots.map { it.value })
+        assertTrue(captured.configuration.project.scripts.getValue("annotated").dependencies.isEmpty())
+        assertContentEquals(document, captured.configurationBytes)
+        store.bytes.clear() // Models retain their observation; property access cannot consult CAS.
+        assertEquals(listOf(Dependency.External(Coordinate.parse("example:library:1"))),
+            expandScript(captured.configuration, "annotated").dependencies.map { it.value })
+        assertFalse(original.requested.any { it == original.manifest.files.single { it.path.value == "other/unreachable.kts" }.blob })
+
+        val root = NativeFiles.tempDirectory("/private/tmp")
+        try {
+            original.directoryNames.forEach { NativeFiles.ensureDirectory("$root/$it") }
+            original.contents.forEach { (path, bytes) -> NativeFiles.writeNew("$root/$path", bytes) }
+            val inaccessible = object : ContentStore {
+                override fun get(digest: Digest): ByteArray? = error("Local observation must not read CAS")
+                override fun put(bytes: ByteArray): Digest = Sha256.digest(bytes)
+            }
+            val observer = NativeProjectSnapshotter(root, inaccessible)
+            val local = assertIs<SnapshotCapture.Captured>(observer.capture(LogicalPath("kvik.json"), "$root/kvik.lock.json", selection = selection)).snapshot
+            assertEquals(captured.fingerprint, local.fingerprint)
+            assertEquals(captured.configuration.scriptDeclarations, local.configuration.scriptDeclarations)
+            NativeFiles.removeEntry("$root/other/unrelated.kt")
+            NativeFiles.publish("$root/other/unrelated.kt", "changed".encodeToByteArray(), 4096)
+            assertEquals(Freshness.CURRENT, observer.freshness(local))
+            NativeFiles.removeEntry("$root/other/helper.kts")
+            NativeFiles.publish("$root/other/helper.kts", "@file:DependsOn(\"example:library:2\")\n".encodeToByteArray(), 4096)
+            assertEquals(Freshness.STALE, observer.freshness(local))
+            assertEquals(listOf(Dependency.External(Coordinate.parse("example:library:1"))),
+                expandScript(local.configuration, "annotated").dependencies.map { it.value })
+            NativeFiles.removeEntry("$root/other/main.kts")
+            NativeFiles.publish("$root/other/main.kts", "@file:Import(\"../script/outside.kts\")\n".encodeToByteArray(), 4096)
+            assertFailsWith<SnapshotFailure> { observer.capture(LogicalPath("kvik.json"), "$root/kvik.lock.json", selection = selection) }
+        } finally { NativeFiles.removeTree(root) }
+    }
+
+    @Test fun standaloneDeclarationsAreRetainedAndMatchLocalCapture() {
+        val companion = """{"schemaVersion":1,"name":"tool","repositories":[{"id":"central","url":"https://repo.maven.apache.org/maven2"}],
+            "script":{"sources":["script"],"entryScript":"script/main.kts"}}""".encodeToByteArray()
+        val original = MemoryRevision(mapOf("kvik.json" to companion, "kvik.lock.json" to "locked".encodeToByteArray(),
+            "script/main.kts" to "@file:Import(\"helper.kts\")\n".encodeToByteArray(),
+            "script/helper.kts" to "@file:DependsOn(\"example:library:1\")\n".encodeToByteArray()), listOf("script"))
+        val store = ProviderStore()
+        val captured = capture(MemoryProvider(original), store, SnapshotSelection.StandaloneScript).snapshot
+        store.bytes.clear()
+        assertEquals(listOf(Dependency.External(Coordinate.parse("example:library:1"))),
+            captured.standaloneConfiguration.expanded().dependencies.map { it.value })
+        assertContentEquals(companion, captured.configurationBytes)
+        val root = NativeFiles.tempDirectory("/private/tmp")
+        try {
+            NativeFiles.ensureDirectory("$root/script")
+            original.contents.forEach { (path, bytes) -> NativeFiles.writeNew("$root/$path", bytes) }
+            val local = assertIs<SnapshotCapture.Captured>(NativeProjectSnapshotter(root, ProviderStore()).capture(
+                LogicalPath("kvik.json"), "$root/kvik.lock.json", selection = SnapshotSelection.StandaloneScript)).snapshot
+            assertEquals(captured.fingerprint, local.fingerprint)
+            assertEquals(captured.standaloneConfiguration.sourceDeclarations, local.standaloneConfiguration.sourceDeclarations)
+            NativeFiles.removeEntry("$root/script/main.kts")
+            NativeFiles.publish("$root/script/main.kts", "@file:Import(\"alias/helper.kts\")\n".encodeToByteArray(), 4096)
+            assertEquals(0, platform.posix.symlink(".", "$root/script/alias"))
+            assertFailsWith<SnapshotFailure> { NativeProjectSnapshotter(root, ProviderStore()).capture(
+                LogicalPath("kvik.json"), "$root/kvik.lock.json", selection = SnapshotSelection.StandaloneScript) }
+        } finally { NativeFiles.removeTree(root) }
+    }
+
+    @Test fun immutableImportCannotReadOutsideDeclaredSourceRoots() {
+        val companion = """{"schemaVersion":1,"name":"tool","repositories":[{"id":"central","url":"https://repo.maven.apache.org/maven2"}],
+            "script":{"sources":["script"],"entryScript":"script/main.kts"}}""".encodeToByteArray()
+        val original = MemoryRevision(mapOf("kvik.json" to companion, "kvik.lock.json" to "locked".encodeToByteArray(),
+            "script/main.kts" to "@file:Import(\"../outside.kts\")\n".encodeToByteArray(),
+            "outside.kts" to "@file:DependsOn(\"example:outside:1\")\n".encodeToByteArray()), listOf("script"))
+        assertFails { capture(MemoryProvider(original), selection = SnapshotSelection.StandaloneScript) }
+        assertFalse(original.manifest.files.single { it.path.value == "outside.kts" }.blob in original.requested)
+    }
+
     @Test fun localAndProviderSelectionsHaveIdenticalPortableInputsAndFingerprint() {
         val revision = revision()
         val root = NativeFiles.tempDirectory("/private/tmp")

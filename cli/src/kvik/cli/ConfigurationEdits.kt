@@ -120,7 +120,7 @@ private fun editPaths(project: ProjectFile, lock: String, store: String) {
 }
 
 private fun planConfigurationEdit(project: ProjectFile, options: ProjectOptions, edits: JsonValue): JsonValue {
-    val changed = editProjectConfiguration(project.configuration, edits)
+    val changed = editProjectConfiguration(project.configuration, edits).withScriptDeclarations(localScriptSourceReader(project.root))
     val bytes = if (changed.document == project.configuration.document) project.bytes else (changed.document.canonical() + "\n").encodeToByteArray()
     require(bytes.size <= CONFIG_LIMIT) { "Edited configuration exceeds 4 MiB" }
     val effective = effectiveConfiguration(changed, options.resolverPolicy())
@@ -141,6 +141,8 @@ private fun planConfigurationEdit(project: ProjectFile, options: ProjectOptions,
     require(lockBytes.size <= EDIT_LOCK_LIMIT) { "Edited dependency lock exceeds 16 MiB" }
     if (fileDigest(project.path, CONFIG_LIMIT) != Sha256.digest(project.bytes) || fileDigest(lockPath, EDIT_LOCK_LIMIT) != previous)
         conflict("Configuration or lock changed while preparing the edit; plan again")
+    if (effectiveConfiguration(changed.withScriptDeclarations(localScriptSourceReader(project.root)), options.resolverPolicy()).digest != effective.digest)
+        conflict("Script declarations changed while preparing the edit; plan again")
     return obj("schemaVersion" to 1.json(), "kind" to "configuration-edit-plan".json(),
         "root" to project.root.json(), "project" to project.name.value.json(), "lock" to lockPath.removePrefix("${project.root}/").json(),
         "store" to store.json(), "policy" to policyDocument(options), "edits" to edits,
@@ -175,7 +177,9 @@ private fun applyConfigurationPlan(value: JsonValue): JsonValue {
     val configFile = entry("$root/${name.value}", fields.getValue("configuration"), CONFIG_LIMIT, true)
     val lockFile = entry("$root/${lockName.value}", fields.getValue("dependencyLock"), EDIT_LOCK_LIMIT)
     val original = parseProjectConfiguration(parseJson(beforeBytes.decodeToString(throwOnInvalidSequence = true)))
+        .withScriptDeclarations(localScriptSourceReader(root))
     val changed = parseProjectConfiguration(parseJson(configFile.bytes.decodeToString(throwOnInvalidSequence = true)))
+        .withScriptDeclarations(localScriptSourceReader(root))
     require(editProjectConfiguration(original, fields.getValue("edits")).document == changed.document) { "Plan content does not match its declared edits" }
     val effective = effectiveConfiguration(changed, editPolicy(fields.getValue("policy")))
     require(effective.digest == Digest.fromJson(fields.getValue("effectiveConfiguration"))) { "Effective configuration digest differs from plan" }
@@ -204,6 +208,11 @@ private fun applyConfigurationPlan(value: JsonValue): JsonValue {
                 if (current != file.before && !(resumed && current == file.after))
                     conflict("${file.path} changed since planning; retained recovery directory: $directory")
             }
+            fun checkDeclarations() {
+                if (effectiveConfiguration(changed.withScriptDeclarations(localScriptSourceReader(root)), editPolicy(fields.getValue("policy"))).digest != effective.digest)
+                    conflict("Script declarations changed since planning; plan again")
+            }
+            checkDeclarations()
             files.forEach(::checkInput)
             NativeFiles.ensureDirectory(directory)
             NativeFiles.publish(intent, planBytes, EDIT_PLAN_LIMIT)
@@ -221,12 +230,14 @@ private fun applyConfigurationPlan(value: JsonValue): JsonValue {
                     check(descriptor >= 0) { "Cannot open staged configuration edit" }
                     try { check(fsync(descriptor) == 0) { "Cannot persist edited file permissions" } } finally { close(descriptor) }
                     checkInput(file)
+                    checkDeclarations()
                     if (rename(temporary, file.path) != 0) NativeFiles.fail("publish configuration edit")
                     NativeFiles.syncDirectory(parent)
                     writes++
                 } finally { NativeFiles.removeTree(stage) }
             }
             for (file in files) if (fileDigest(file.path, file.limit) != file.after) conflict("Edited files changed during publication; inspect $directory")
+            checkDeclarations()
             NativeFiles.publish("$directory/completion.json", obj("schemaVersion" to 1.json(), "plan" to identity.toJson()).canonical().encodeToByteArray(), 4096)
         }
     }

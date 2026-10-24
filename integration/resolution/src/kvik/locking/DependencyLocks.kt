@@ -145,7 +145,7 @@ class DependencyLocks(private val content: ContentStore, private val pomParser: 
         return configuration.requests.groupBy { it.domain }.flatMap { (domain, requests) ->
             require(requests.map { it.variant }.distinct().size == 1) { "Conflicting producer variants within resolution domain" }
             val resolver = MavenResolver(transport, pomParser, policy.pinsFor(domain), policy.maxComponents, policy.maxRequests, resolutionArtifactByteLimit(domain), policy.exclusionsFor(domain))
-            resolver.resolveAll(requests.map { it.coordinate }, requests.first().variant, configuration.repositories, requireAllExclusions = true).map { ScopedSelection(domain, it) }
+            resolver.resolveAll(requests.map { it.coordinate }, requests.first().variant, configuration.repositoriesFor(domain), requireAllExclusions = true).map { ScopedSelection(domain, it) }
         }
     }
 }

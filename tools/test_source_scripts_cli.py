@@ -118,7 +118,13 @@ def main():
             primary = declaration['sources'][0] + 's'
             declaration.update(sources=[primary, str(Path(primary).with_name('Helper.kts'))], entryScript=primary)
             source_paths[kind] += 's'
-    helper = 'fun sourceMarker(value: String) = value\n'
+    helper = '''@file:DependsOn("org.jetbrains:annotations:13.0")
+@file:Repository("https://repo.maven.apache.org/maven2/")
+fun sourceMarker(value: String): String {
+    check(org.jetbrains.annotations.NotNull::class.java.simpleName == "NotNull")
+    return value
+}
+'''
     names = {'named': 'task', 'standalone': 'plain'}
     markers = {kind: kind + '-' + uuid.uuid4().hex for kind in configurations}
     kode_command('init', 'init')
@@ -220,6 +226,8 @@ def main():
         assert inspection['requestedChecks'] == [f'script:{name}:jvm:run']
         if args.kts:
             assert inspection['entrypoint']['status'] == 'declared-kotlin-script', inspection
+            assert [item['reference'] for item in inspection['dependencies']] == [dict(coordinate='org.jetbrains:annotations:13.0')], inspection
+            assert inspection['dependencies'][0]['origin']['declaration'].startswith('/scriptDeclarations/'), inspection
         first_key = run('cold', locked, markers[kind], cached=False)
         assert run('warm', locked, markers[kind], cached=True) == first_key
         print('PASS', kind, 'explicit lock publication, inspection, captured bytes, literal arguments and fresh execution', flush=True)
@@ -231,17 +239,19 @@ def main():
         if args.kts:
             helper_revision = tx(kind + '-edit-helper', edited, [dict(op='write',
                 path=str(Path(source_paths[kind]).with_name('Helper.kts')),
-                content='fun sourceMarker(value: String) = value + "-helper"\n')], publish=False)
+                content=helper.replace('return value', 'return value + "-helper"'))], publish=False)
             assert run('helper-changed', helper_revision, new_marker + '-helper', cached=False) != first_key
+            query('helper-body-lock-unchanged', 'check-script-lock', helper_revision)
+            dependency_revision = tx(kind + '-edit-dependency', edited, [dict(op='write',
+                path=str(Path(source_paths[kind]).with_name('Helper.kts')),
+                content=helper.replace('annotations:13.0', 'annotations:23.0.0'))], publish=False)
+            invoke('changed-dependency-requires-resolve', 'check-script-lock', dependency_revision, success=False)
+            invoke('changed-dependency-prevents-run', 'run-script', dependency_revision, success=False)
             bad_import = tx(kind + '-uncaptured-import', edited, [dict(op='write', path=source_paths[kind],
                 content=script_text(new_marker, True).replace('"Helper.kts"', '"Uncaptured.kts"'))], publish=False)
             failure = invoke('uncaptured-import', 'run-script', bad_import, success=False)
             failed_events = [json.loads(line) for line in failure.stdout.splitlines()]
-            failed_record = failed_events[-1]['payload']
-            assert failed_record['status'] == 'failed', failed_record
-            failed_actions = {item['actionId']: item for item in failed_record['actions']}
-            assert failed_actions[f'script:{name}:jvm:compile']['status'] == 'failed', failed_record
-            assert failed_actions[f'script:{name}:jvm:run']['status'] != 'executed', failed_record
+            assert all(event.get('type') != 'run-started' for event in failed_events), failed_events
             print('PASS', kind, 'import edits invalidate compilation and uncaptured imports prevent execution', flush=True)
         # Captured immutable revisions remain usable with no provider store available.
         hidden = case / 'hidden-kode-home'
@@ -302,6 +312,14 @@ def main():
             ['inspect-script', *common, '--tools', case / 'tools.json', '--offline']).stdout)
         validate(inspection, 'scriptInspection')
         assert 'source' not in inspection and inspection['script'] == name, inspection
+        if args.kts:
+            assert [item['reference'] for item in inspection['dependencies']] == [dict(coordinate='org.jetbrains:annotations:13.0')], inspection
+            if kind == 'named':
+                general = ['--project', config, '--store', store, '--offline']
+                command('local-general-check', runtime, ['check-lock', *general])
+                dependencies = json.loads(command('local-general-dependencies', runtime, ['dependencies', *general, '--script', name, '--json']).stdout)
+                assert dependencies['status'] == 'complete', dependencies
+                assert [item['coordinate'] for item in dependencies['declarations'] if item.get('script') == name] == ['org.jetbrains:annotations:13.0'], dependencies
         result = command('local-' + kind + '-run', runtime,
             ['run-script', *common, '--tools', case / 'tools.json', '--runs', runs, '--offline', '--', *ARGUMENTS])
         events = [json.loads(line) for line in result.stdout.splitlines()]
@@ -324,6 +342,13 @@ def main():
         execution = uuid.UUID(output[-1].removeprefix('EXECUTION='))
         assert execution not in executions
         executions.add(execution)
+        if args.kts:
+            helper_path = source.with_name('Helper.kts')
+            helper_path.write_text(helper + '\n// Body-only edits retain the lock.\n')
+            command('local-' + kind + '-body-edit-check', runtime, ['check-script-lock', *common, '--offline'])
+            helper_path.write_text(helper.replace('annotations:13.0', 'annotations:23.0.0'))
+            command('local-' + kind + '-dependency-edit-check', runtime, ['check-script-lock', *common, '--offline'], success=False)
+            assert json.loads(config.read_text()) == configuration
         print('PASS local', kind, 'resolve/check/inspect/run, normal lock and no revision metadata', flush=True)
 
 

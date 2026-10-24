@@ -38,6 +38,7 @@ class ProjectInputSnapshot internal constructor(
     val inputs: TreeManifest,
     val fingerprint: Digest,
     private val parsedConfiguration: ProjectConfiguration? = null,
+    private val parsedStandaloneConfiguration: StandaloneScriptConfiguration? = null,
 ) {
     private val config = configurationBytes.copyOf()
     private val lock = lockBytes.copyOf()
@@ -49,7 +50,7 @@ class ProjectInputSnapshot internal constructor(
     }
     val standaloneConfiguration: StandaloneScriptConfiguration get() {
         require(selection == SnapshotSelection.StandaloneScript) { "Snapshot contains a project" }
-        return parseStandaloneScriptConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
+        return parsedStandaloneConfiguration ?: parseStandaloneScriptConfiguration(parseJson(config.decodeToString(throwOnInvalidSequence = true)))
     }
 }
 
@@ -145,11 +146,22 @@ private class Observation(private val root: String, private val content: Content
             throw SnapshotRace("Configuration changed after input/store preflight")
         val lockBytes = readFile(lockPath, minOf(limits.maxFileBytes, 16 * 1024 * 1024), publish = false)
         var configuration: ProjectConfiguration? = null
+        var standalone: StandaloneScriptConfiguration? = null
+        fun declarationSource(path: LogicalPath): ByteArray {
+            requireDeclared(path)
+            ancestors(path.value)
+            val data = readFile("$root/${path.value}", minOf(limits.maxFileBytes, 4 * 1024 * 1024))
+            addFile(path.value)
+            return data
+        }
         val plan = try {
-            if (selection == SnapshotSelection.StandaloneScript) standaloneScriptInputPlan(parseStandaloneScriptConfiguration(
-                parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true))))
+            if (selection == SnapshotSelection.StandaloneScript) {
+                standalone = parseStandaloneScriptConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
+                    .withScriptDeclarations(::declarationSource)
+                standaloneScriptInputPlan(standalone!!)
+            }
             else {
-                configuration = parseConfiguration(configurationBytes)
+                configuration = parseConfiguration(configurationBytes).withScriptDeclarations(::declarationSource)
                 projectInputPlan(configuration!!, selection)
             }
         } catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Invalid configuration") }
@@ -176,7 +188,7 @@ private class Observation(private val root: String, private val content: Content
         }
         val tree = TreeManifest(entries.values.sortedBy { it.path.value })
         return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree,
-            projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, directories, selection), configuration)
+            projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, directories, selection), configuration, standalone)
     }
 
     private fun requireDeclared(path: LogicalPath) {
@@ -264,7 +276,10 @@ private class Observation(private val root: String, private val content: Content
     }
 
     private fun readFile(path: String, limit: Int, publish: Boolean = true): ByteArray {
-        bytes[path]?.let { return it }
+        bytes[path]?.let {
+            if (it.size > limit) throw SnapshotFailure("Input byte limit exceeded: $path")
+            return it
+        }
         if (bytes.size >= limits.maxFiles) throw SnapshotFailure("Too many input files (including configuration and lock)")
         val before = status(path) ?: throw SnapshotFailure("Missing required input file: $path")
         if (before.kind != S_IFREG) throw SnapshotFailure("Not a physical regular input file: $path")
@@ -290,5 +305,6 @@ internal fun projectSnapshotFingerprint(configurationPath: LogicalPath, configur
         "directories" to JsonValue.Object(directories.toMap()))
     return Sha256.digest(JsonValue.Object(identity.objectValue() +
         (if (plan.scriptRoots.isEmpty()) emptyMap() else mapOf("scriptRoots" to plan.scriptRoots.map { it.value.json() }.json())) +
+        (if (plan.declarationRoots.isEmpty()) emptyMap() else mapOf("declarationRoots" to plan.declarationRoots.map { it.value.json() }.json())) +
         (if (selection == SnapshotSelection.Project) emptyMap() else mapOf("selection" to selection.toJson()))))
 }

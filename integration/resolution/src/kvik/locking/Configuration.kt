@@ -114,10 +114,16 @@ class EffectiveConfiguration internal constructor(
     val requests: List<ResolutionRequest>,
     val repositories: List<Repository>,
     val policy: ResolverPolicy,
+    private val scripts: Map<String, ExpandedScript> = emptyMap(),
+    private val scriptRepositories: Map<String, List<Repository>> = emptyMap(),
 ) {
     val digest: Digest = Sha256.digest(document.canonical().encodeToByteArray())
     /** Configure bounded transport/CAS readers; individual domains still enforce their smaller cap. */
     val maxArtifactBytes: Int get() = requests.maxOfOrNull { resolutionArtifactByteLimit(it.domain) } ?: 64 * 1024 * 1024
+    fun script(name: String): ExpandedScript = requireNotNull(scripts[name]) { "Unknown resolved script: $name" }
+    fun repositoriesFor(domain: ResolutionDomain): List<Repository> =
+        if (domain.consumer is ResolutionConsumer.Script && domain.purpose == "dependencies")
+            scriptRepositories[domain.consumer.name] ?: repositories else repositories
 }
 
 fun defaultDependencyScopes(configuration: ProjectConfiguration): List<DependencyScope> = configuration.project.modules.flatMap { module ->
@@ -134,24 +140,27 @@ fun defaultDependencyScopes(configuration: ProjectConfiguration): List<Dependenc
 fun effectiveConfiguration(configuration: ProjectConfiguration, policy: ResolverPolicy = ResolverPolicy(),
                            scopes: List<DependencyScope> = defaultDependencyScopes(configuration),
                            scriptScopes: List<ScriptDependencyScope> = defaultScriptDependencyScopes(configuration)): EffectiveConfiguration {
-    val snapshot = parseProjectConfiguration(parseJson(configuration.document.canonical()))
+    val snapshot = parseProjectConfiguration(parseJson(configuration.document.canonical())).copy(scriptDeclarations = configuration.scriptDeclarations.toMap())
     require(snapshot.project == configuration.project) { "Configuration document and model disagree" }
-    val scripts = scriptScopes.map { it.script }.distinct().associateWith { expandScript(snapshot.project, it) }
-    return effectiveConfiguration(snapshot.project, "project" to snapshot.document, policy, scopes, scriptScopes, scripts)
+    require(snapshot.scriptDeclarations.keys.all { it in snapshot.project.scripts }) { "Declarations refer to an unknown script" }
+    val scripts = scriptScopes.map { it.script }.distinct().associateWith { expandScript(snapshot, it) }
+    return effectiveConfiguration(snapshot.project, "project" to snapshot.document, policy, scopes, scriptScopes, scripts, snapshot.scriptDeclarations)
 }
 
 /** Companion declarations retain their own document and origins; no synthetic module is published. */
 fun effectiveConfiguration(configuration: StandaloneScriptConfiguration, policy: ResolverPolicy = ResolverPolicy()): EffectiveConfiguration {
-    val snapshot = parseStandaloneScriptConfiguration(parseJson(configuration.document.canonical()))
+    val snapshot = parseStandaloneScriptConfiguration(parseJson(configuration.document.canonical())).copy(sourceDeclarations = configuration.sourceDeclarations)
     require(snapshot == configuration) { "Standalone configuration document and model disagree" }
     val scopes = listOf("java-api", "java-runtime").map { ScriptDependencyScope(snapshot.name, it) }
     // Empty workspace is used solely by shared closure traversal, never serialized as a project.
     val workspace = ProjectSpec(snapshot.name, snapshot.repositories, emptyList())
-    return effectiveConfiguration(workspace, "standaloneScript" to snapshot.document, policy, emptyList(), scopes, mapOf(snapshot.name to snapshot.expanded()))
+    return effectiveConfiguration(workspace, "standaloneScript" to snapshot.document, policy, emptyList(), scopes, mapOf(snapshot.name to snapshot.expanded()),
+        snapshot.sourceDeclarations?.let { mapOf(snapshot.name to it) } ?: emptyMap())
 }
 
 private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String, JsonValue>, policy: ResolverPolicy,
-                                   scopes: List<DependencyScope>, scriptScopes: List<ScriptDependencyScope>, scripts: Map<String, ExpandedScript>): EffectiveConfiguration {
+                                   scopes: List<DependencyScope>, scriptScopes: List<ScriptDependencyScope>, scripts: Map<String, ExpandedScript>,
+                                   declarations: Map<String, ScriptSourceDeclarations>): EffectiveConfiguration {
     val pinned = policy.copy(pins = policy.pins.toList(), scopedPins = policy.scopedPins.toList(), metadataExclusions = canonicalExclusions(policy.metadataExclusions))
     require(scopes.distinct().size == scopes.size) { "Duplicate dependency scope" }
     val orderedScopes = scopes.sortedBy { it.toJson().canonical() }
@@ -272,9 +281,11 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
     val base = obj("schemaVersion" to CONTRACT_VERSION.json(), authoring,
         "resolver" to pinned.toJson(domains.any { it.purpose == "ksp-runtime" }, domains.any { it.target == "common" }), "scopes" to orderedScopes.map { it.toJson() }.json(),
         "domains" to domains.sortedBy { it.toJson().canonical() }.map { it.toJson() }.json())
-    val document = if (orderedScriptScopes.isEmpty()) base else JsonValue.Object(base.objectValue() +
-        ("scriptScopes" to orderedScriptScopes.map { it.toJson() }.json()))
-    return EffectiveConfiguration(document, orderedRequests, project.repositories.toList(), pinned)
+    val document = JsonValue.Object(base.objectValue() +
+        (if (orderedScriptScopes.isEmpty()) emptyMap() else mapOf("scriptScopes" to orderedScriptScopes.map { it.toJson() }.json())) +
+        (if (declarations.isEmpty()) emptyMap() else mapOf("scriptDeclarations" to JsonValue.Object(declarations.mapValues { it.value.toJson() }))))
+    return EffectiveConfiguration(document, orderedRequests, project.repositories.toList(), pinned, scripts.toMap(),
+        scripts.keys.associateWith { scriptRepositories(project.repositories, declarations[it]) })
 }
 
 internal fun VariantRequest.toLockJson(): JsonValue = obj("platform" to platform.json(), "usage" to usage.json(),

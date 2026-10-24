@@ -59,8 +59,9 @@ sealed interface SnapshotSelection {
 
 /** Kinds are deliberate: module roots are directories, plugin inputs required files, and
  * script roots can be a file or directory. Consumers must not merge them into an implicit source set. */
-data class ProjectInputPlan(val directories: List<LogicalPath>, val files: List<LogicalPath>, val scriptRoots: List<LogicalPath>) {
-    val paths: List<LogicalPath> get() = (directories + files + scriptRoots).distinct()
+data class ProjectInputPlan(val directories: List<LogicalPath>, val files: List<LogicalPath>, val scriptRoots: List<LogicalPath>,
+    val declarationRoots: List<LogicalPath> = emptyList()) {
+    val paths: List<LogicalPath> get() = (directories + files + scriptRoots + declarationRoots).distinct()
 }
 
 fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSelection = SnapshotSelection.Project): ProjectInputPlan {
@@ -68,10 +69,10 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
     val modules = project.modules.associateBy { it.id }
     val wholeProject = selection == SnapshotSelection.Project || selection is SnapshotSelection.AbiCheck || selection is SnapshotSelection.Documentation
     val scripts = when (selection) {
-        SnapshotSelection.Project -> project.scripts.keys.map { expandScript(project, it) }
-        is SnapshotSelection.AbiCheck -> project.scripts.keys.map { expandScript(project, it) }
-        is SnapshotSelection.Documentation -> project.scripts.keys.map { expandScript(project, it) }
-        is SnapshotSelection.Script -> listOf(expandScript(project, selection.name))
+        SnapshotSelection.Project -> project.scripts.keys.map { expandScript(configuration, it) }
+        is SnapshotSelection.AbiCheck -> project.scripts.keys.map { expandScript(configuration, it) }
+        is SnapshotSelection.Documentation -> project.scripts.keys.map { expandScript(configuration, it) }
+        is SnapshotSelection.Script -> listOf(expandScript(configuration, selection.name))
         SnapshotSelection.StandaloneScript -> error("Standalone selection requires companion configuration")
     }
     val selected = if (wholeProject) project.modules else
@@ -96,7 +97,8 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
         requireNotNull(module.documentation) { "Declare documentation settings for $id before generating documentation" }.includes
     } else emptyList()
     return plan(sources.flatMap { it.directories + it.resources } + selected.mapNotNull { it.sqlDelight?.sourceDirectory }, plugins.flatMap { it.inputs } + baselines + documentation,
-        scripts.flatMap { it.declaration.sources + it.declaration.resources })
+        scripts.flatMap { it.declaration.sources + it.declaration.resources }).copy(
+            declarationRoots = project.scripts.values.filter { it.entryScript != null }.flatMap { it.sources }.distinct().sortedBy { it.value })
 }
 
 fun standaloneScriptInputPlan(configuration: StandaloneScriptConfiguration): ProjectInputPlan {

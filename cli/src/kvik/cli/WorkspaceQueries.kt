@@ -85,6 +85,13 @@ internal fun workspaceCommand(args: List<String>): JsonValue.Object {
                     }
                     val configurationBytes = read(configPath, 4 * 1024 * 1024)
                     val parsed = parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
+                        .withScriptDeclarations(boundedScriptSourceReader { path ->
+                            val data = read(LogicalPath(if (root.isEmpty()) path.value else "$root/${path.value}"), 4 * 1024 * 1024)
+                            retainedBytes += data.size
+                            if (retainedBytes > 16 * 1024 * 1024) throw CliFailure("KVIK_WORKSPACE_BOUND", DiagnosticCategory.CONFIGURATION,
+                                "Workspace script inputs exceed 16 MiB; select fewer projects", ExitStatus.INCOMPLETE)
+                            data
+                        })
                     val policy = projectOptions(commonPolicy + projectPolicy[entry.name].orEmpty(), lockOptions = true).resolverPolicy()
                     val effective = effectiveConfiguration(parsed, policy)
                     val lockRelative = locks[entry.name] ?: lock

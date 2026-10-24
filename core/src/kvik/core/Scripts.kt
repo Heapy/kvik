@@ -119,7 +119,7 @@ data class ScriptSpec(
 // Runtime launcher controls these values; explicit application data cannot inject JVM/loader flags.
 private val SCRIPT_RESERVED_ENV = setOf("PATH", "JAVA_HOME", "JAVACMD", "JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH")
 
-/** JSON pointers are relative to the retained project/companion document, independent of host paths. */
+/** JSON pointers address authoring declarations or the effective configuration's scriptDeclarations. */
 data class ScriptOrigin(val declaration: String, val profileSelection: String? = null, val catalog: String? = null) {
     fun toJson(): JsonValue = obj("declaration" to declaration.json(),
         "profileSelection" to (profileSelection?.json() ?: JsonValue.Null), "catalog" to (catalog?.json() ?: JsonValue.Null))
@@ -147,9 +147,11 @@ data class StandaloneScriptConfiguration(
     val dependencyProfiles: Map<String, ScriptDependencyProfile>,
     val script: ScriptSpec,
     val document: JsonValue.Object,
+    val sourceDeclarations: ScriptSourceDeclarations? = null,
 ) {
     val digest: Digest get() = Sha256.digest(document.canonical().encodeToByteArray())
     fun expanded(): ExpandedScript = expandScriptValues(name, script, dependencyCatalog, dependencyProfiles, emptyList(), "/script")
+        .withSourceDeclarations(sourceDeclarations)
     /** CLI must call this with the selected file relative to the companion directory, before effects. */
     fun requirePrimarySource(source: LogicalPath) {
         require(source in script.sources && if (script.entryScript == null) source.value.endsWith(".kt") else source == script.entryScript) {

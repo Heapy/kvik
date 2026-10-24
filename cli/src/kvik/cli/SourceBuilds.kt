@@ -19,10 +19,16 @@ internal class PreparedSourceProject(
     val claims: RevisionClaims,
     private val resolved: ResolvedSourceSnapshot,
     val retention: KodeRetentionReference? = null,
+    private val sourceStore: String? = null,
 ) {
     val project: ProjectFile by lazy {
         ProjectFile(configuration.root, configuration.name, configuration.bytes,
-            parseProjectConfiguration(parseJson(configuration.bytes.decodeToString(throwOnInvalidSequence = true))))
+            parseProjectConfiguration(parseJson(configuration.bytes.decodeToString(throwOnInvalidSequence = true)))
+                .withScriptDeclarations(scriptSourceReader()))
+    }
+
+    fun scriptSourceReader(): (LogicalPath) -> ByteArray = boundedScriptSourceReader { path ->
+        read(entry(path) ?: error("Script source is absent from source revision: ${path.value}"), sourceStore, 4 * 1024 * 1024)
     }
 
     fun revisionPath(path: LogicalPath): LogicalPath =
@@ -39,10 +45,11 @@ internal class PreparedSourceProject(
         return resolved.manifest.files.singleOrNull { it.path == absolute }
     }
 
-    fun read(entry: SourceFileEntry, store: String, maxBytes: Int): ByteArray {
+    fun read(entry: SourceFileEntry, store: String?, maxBytes: Int): ByteArray {
         require(entry.blob.sizeBytes <= maxBytes) { "Source file exceeds byte limit: ${entry.path.value}" }
-        val bytes = resolved.knownDigest(entry.blob)?.let(ReadOnlySourceContent(store)::get)
+        val bytes = store?.let { resolved.knownDigest(entry.blob)?.let(ReadOnlySourceContent(it)::get) }
             ?: resolved.fetch(entry.blob, maxBytes, ::sourceCheckpoint) ?: error("Source file is unavailable: ${entry.path.value}")
+        require(bytes.size.toLong() == entry.blob.sizeBytes && bytes.size <= maxBytes) { "Source file size mismatch: ${entry.path.value}" }
         resolved.verify(entry.blob, bytes, ::sourceCheckpoint)
         return bytes
     }
@@ -171,7 +178,7 @@ private fun prepareResolvedSource(source: KodeProjectOptions, root: String, stor
         resolved.verify(entry.blob, bytes, ::sourceCheckpoint)
         sourceCheckpoint()
         return PreparedSourceProject(CapturedSourceConfiguration(root, LogicalPath(configuration.value.substringAfterLast('/')), bytes),
-            source, reference, namespace, if (loadClaims) resolved.claims(::sourceCheckpoint) else RevisionClaims(emptyMap()), resolved, retention).also {
+            source, reference, namespace, if (loadClaims) resolved.claims(::sourceCheckpoint) else RevisionClaims(emptyMap()), resolved, retention, store).also {
                 // Replacements may repair invalid configuration; its original bytes still carry the native blob guard.
                 if (validateConfiguration) it.project
             }

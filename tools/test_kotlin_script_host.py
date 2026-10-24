@@ -94,6 +94,20 @@ java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), java.util.UUID.r
     assert effects[0] != effects[1]
     print('PASS compiler-free relocated evaluation, top-level effects, arguments and declared annotation imports', flush=True)
 
+    _, response = compile_script('literal-alias', {'main/Main.kts': '''@file:Dependency(coordinates = ["org.example:fixture:1",])
+@file:kvik /* qualification */ . jvm . Repository("https://repo.maven.apache.org/maven2/")
+import kvik.jvm.DependsOn as Dependency
+println("EFFECT literal declarations")
+'''}, declaredDependencies=['org.example:fixture:1'], declaredRepositories=['https://repo.maven.apache.org/maven2'])
+    assert response['successful'], response
+    _, response = compile_script('literal-bom', {'main/Main.kts': '\ufeff@file:DependsOn("org.example:fixture:1")\nprintln("EFFECT")'},
+        declaredDependencies=['org.example:fixture:1'])
+    assert response['successful'], response
+    _, response = compile_script('nonliteral-dependency', {'main/Main.kts':
+        '@file:DependsOn("org.example:" + "fixture:1")\nprintln("EFFECT")'}, declaredDependencies=['org.example:fixture:1'])
+    assert not response['successful'], response
+    print('PASS shared declaration parser agrees with compiler aliases/arrays and rejects computed dependencies', flush=True)
+
     for label, changes in [
         ('missing-coordinate', {}),
         ('missing-repository', dict(declaredDependencies=['org.example:fixture:1'])),
@@ -104,6 +118,7 @@ java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), java.util.UUID.r
     for label, text in [
         ('missing-import', '@file:Import("../missing.kts")\nprintln("EFFECT")'),
         ('escaping-import', '@file:Import("../../outside.kts")\nprintln("EFFECT")'),
+        ('empty-import-component', '@file:Import("../helpers//Helper.kts")\nprintln("EFFECT")'),
         ('syntax', 'val broken: Int = "wrong type"'),
     ]:
         output, failure = compile_script(label, {'main/Main.kts': text})

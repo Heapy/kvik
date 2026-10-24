@@ -6,6 +6,7 @@ import kvik.cache.NativeContentStore
 import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.locking.*
+import kvik.projectsnapshot.projectInputPlan
 import kvik.resolution.NativeHttpsTransport
 import kvik.resolution.NativePomParser
 import kotlinx.cinterop.*
@@ -58,7 +59,7 @@ internal fun <T> withDependencyPublicationLock(destination: String, action: () -
     NativeFiles.withLock("${destination.substringBeforeLast('/')}/$PUBLICATION_LOCK", action)
 
 /** Only explicit resolve publishes. Concurrent edits are checked under a persistent publication lock. */
-private fun publishLock(configurationPath: String, configurationBytes: ByteArray, destination: String, previous: Digest?, bytes: ByteArray) {
+private fun publishLock(configurationPath: String, configurationBytes: ByteArray, destination: String, previous: Digest?, bytes: ByteArray, declarationsCurrent: () -> Boolean) {
     val parent = destination.substringBeforeLast('/')
     // One persistent inode per destination directory also coordinates different projects
     // and case/Unicode aliases of the same destination filename.
@@ -75,6 +76,7 @@ private fun publishLock(configurationPath: String, configurationBytes: ByteArray
             val fd = open(path, O_RDONLY or O_NOFOLLOW)
             if (fd < 0) NativeFiles.fail("open staged dependency lock")
             try { if (fsync(fd) != 0) NativeFiles.fail("fsync dependency lock") } finally { close(fd) }
+            requireCurrentScriptDeclarations(declarationsCurrent)
             if (rename(path, destination) != 0) NativeFiles.fail("publish dependency lock")
             NativeFiles.syncDirectory(parent)
         } finally { NativeFiles.removeTree(stage) }
@@ -90,12 +92,19 @@ internal fun dependencyCommand(args: List<String>, updateRequested: Boolean): Js
     }
     if (source != null) return sourceDependencyCommand(source, options, updateRequested, replacement)
     val project = readProject(options.project)
+    val inputs = projectInputPlan(project.configuration)
+    val lockPath = projectPath(project.root, options.lock)
+    val storePath = projectPath(project.root, options.store)
+    requireDisjointInputPath(project.root, project.path, inputs, lockPath, listOf(storePath))
+    requireDisjointInputPath(project.root, project.path, inputs, storePath, listOf(lockPath))
     val effective = effectiveConfiguration(project.configuration, options.resolverPolicy())
-    return dependencyOperation(options, project.root, project.path, project.bytes, effective, updateRequested)
+    return dependencyOperation(options, project.root, project.path, project.bytes, effective, updateRequested) {
+        effectiveConfiguration(readProject(options.project).configuration, options.resolverPolicy()).digest == effective.digest
+    }
 }
 
 internal fun dependencyOperation(options: ProjectOptions, root: String, configurationPath: String, configurationBytes: ByteArray,
-                                 effective: EffectiveConfiguration, updateRequested: Boolean): JsonValue {
+                                 effective: EffectiveConfiguration, updateRequested: Boolean, declarationsCurrent: () -> Boolean): JsonValue {
     val destination = projectPath(root, options.lock)
     val store = projectPath(root, options.store)
     require(destination.substringAfterLast('/').lowercase() !in setOf(PUBLICATION_LOCK, ".kvik-configuration-publication.lock")) { "Dependency lock cannot replace its publication coordination file" }
@@ -117,7 +126,7 @@ internal fun dependencyOperation(options: ProjectOptions, root: String, configur
         } catch (failure: Exception) {
             throw CliFailure("KVIK_RESOLUTION_FAILED", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Dependency resolution failed")
         }
-        publishLock(configurationPath, configurationBytes, destination, previous, resolved.bytes())
+        publishLock(configurationPath, configurationBytes, destination, previous, resolved.bytes(), declarationsCurrent)
         observedLock = resolved.digest
         resolved
     } else try {
@@ -128,6 +137,7 @@ internal fun dependencyOperation(options: ProjectOptions, root: String, configur
     } catch (failure: Exception) {
         throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Dependency lock is unavailable", ExitStatus.INVALID_CONFIGURATION)
     }
+    requireCurrentScriptDeclarations(declarationsCurrent)
     // Checking also refuses success if its configuration changed while verifying the lock.
     if (!NativeFiles.read(configurationPath, 4 * 1024 * 1024).contentEquals(configurationBytes) || existingLock(destination) != observedLock) {
         throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, "Project or dependency lock changed during verification; retry", ExitStatus.INCOMPLETE)
@@ -136,4 +146,10 @@ internal fun dependencyOperation(options: ProjectOptions, root: String, configur
         "configuration" to effective.digest.toJson(), "dependencyLock" to lock.digest.toJson(), "lockPath" to destination.json(),
         "selections" to lock.selections.size.json(), "artifacts" to lock.selections.flatMap { it.artifacts }.map { it.digest }.distinct().size.json(),
         "metadata" to lock.selections.flatMap { it.metadata }.map { it.digest }.distinct().size.json())
+}
+
+private fun requireCurrentScriptDeclarations(current: () -> Boolean) {
+    val unchanged = try { current() } catch (_: Exception) { false }
+    if (!unchanged) throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
+        "Script declarations changed during dependency resolution or verification; retry", ExitStatus.INCOMPLETE)
 }

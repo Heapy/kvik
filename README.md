@@ -341,10 +341,21 @@ workspace module dependencies for helpers written as ordinary `.kt` files.
 `update.main.kts` uses `update.main.kvik.json` and `update.main.kvik.lock.json`.
 
 The adapter supports the same locked dependencies, compiler options and published
-or workspace compiler plugins as ordinary scripts. `@file:DependsOn` and
-`@file:Repository` currently validate coordinates and URLs already declared in
-the companion/project configuration; they do not fetch dependencies during
-compilation or execution. Annotation-driven lock resolution is still pending.
+or workspace compiler plugins as ordinary scripts. `resolve-script` reads
+`@file:DependsOn("group:artifact:version")` and `@file:Repository("https://host/path")`
+from the entry script and imported helpers into the same dependency lock. There
+is no need to repeat those dependencies in JSON. Added repositories apply only
+to that script's dependencies, leaving module and compiler-plugin repositories
+unchanged. Compilation and execution use the existing lock without fetching.
+
+Declarations accept literal strings (including escaped or triple-quoted strings),
+named arrays, and explicit imports/aliases of `kvik.jvm` annotations. Computed
+values, interpolation and spread arguments are rejected before resolution.
+Dependency, repository or import changes require `resolve-script`; body and
+comment edits retain the lock. A project lock covers all named scripts, so their
+entry files and reachable imports must be available even when running one script.
+Standalone companions retain independent locks. The same rules apply to immutable
+Kode revisions and offline checks.
 Compilation produces relocatable classes and a script descriptor; cache hits
 still evaluate the script in a fresh foreground-owned JVM.
 

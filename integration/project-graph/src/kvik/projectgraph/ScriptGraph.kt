@@ -24,8 +24,7 @@ private class ScriptGraphBuilder(
     private val project = authoring["project"]?.let(::parseProjectConfiguration)?.project
         ?: standalone?.let { ProjectSpec(it.name, it.repositories, emptyList()) } ?: error("Missing script authoring document")
     private val request = request.copy(arguments = request.arguments.toList())
-    private val script = standalone?.also { require(it.name == request.name) { "Unknown standalone script: ${request.name}" } }?.expanded()
-        ?: expandScript(project, request.name)
+    private val script = effective.script(request.name)
     private val files = TreeManifest(snapshot.files.toList()).files.sortedBy { it.path.value }
     private val tools = toolchains.toMap()
     private val selections = lock.selections.associateBy { it.request() }
@@ -186,7 +185,7 @@ private class ScriptGraphBuilder(
                 LogicalPath("classes"), plugin.published, jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi,
                 warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications,
                 declaredDependencies = script.dependencies.mapNotNull { (it.value as? Dependency.External)?.coordinate?.toString() }.distinct(),
-                declaredRepositories = project.repositories.map { it.url }.distinct()), inputs, composition, tools)
+                declaredRepositories = effective.repositoriesFor(ResolutionDomain.script(script.name, "java-api")).map { it.url }.distinct()), inputs, composition, tools)
             else jvmCompileAction(JvmCompilation("script-${script.name}", sources.map { it.path }, classpath,
                 LogicalPath("classes"), plugin.published, jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi,
                 warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications, includeStandardLibrary = true),

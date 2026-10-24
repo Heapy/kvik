@@ -33,7 +33,31 @@ internal fun readProject(projectPath: String, parse: (ByteArray) -> ProjectConfi
     NativeFiles.ensureDirectory(root, create = false)
     val name = LogicalPath(absolute.substringAfterLast('/'))
     val bytes = NativeFiles.read("$root/${name.value}", 4 * 1024 * 1024)
-    return ProjectFile(root, name, bytes, parse(bytes))
+    return ProjectFile(root, name, bytes, parse(bytes).withScriptDeclarations(localScriptSourceReader(root)))
+}
+
+/** Bounded preflight reads reject links in every ancestor as well as the leaf. */
+internal fun localScriptSourceReader(root: String): (LogicalPath) -> ByteArray = boundedScriptSourceReader { path ->
+    NativeFiles.ensureDirectory(root, create = false)
+    var current = root
+    for (part in path.value.split('/').dropLast(1)) {
+        current += "/$part"
+        NativeFiles.ensureDirectory(current, create = false)
+    }
+    NativeFiles.read("$root/${path.value}", 4 * 1024 * 1024)
+}
+
+/** Shared reads stay bounded across all named scripts, including duplicate imports. */
+internal fun boundedScriptSourceReader(read: (LogicalPath) -> ByteArray): (LogicalPath) -> ByteArray {
+    val observed = mutableMapOf<LogicalPath, ByteArray>()
+    var total = 0L
+    return { path -> observed.getOrPut(path) {
+        require(observed.size < 20_000) { "Too many script declaration inputs" }
+        val bytes = read(path)
+        require(bytes.size <= 4 * 1024 * 1024 && total + bytes.size <= 256L * 1024 * 1024) { "Script declaration input byte limit exceeded" }
+        total += bytes.size
+        bytes
+    } }
 }
 
 internal fun projectPath(root: String, value: String): String = (if (value.startsWith('/')) value else "$root/${LogicalPath(value).value}").also {

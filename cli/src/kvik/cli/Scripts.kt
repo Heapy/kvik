@@ -60,13 +60,13 @@ internal data class ScriptFile(val root: String, val name: LogicalPath, val byte
     val path: String get() = "$root/${name.value}"
     fun effective(policy: ResolverPolicy) = project?.let { effectiveConfiguration(it, policy) } ?: effectiveConfiguration(checkNotNull(standalone), policy)
     fun inputPlan() = project?.let { projectInputPlan(it, selection) } ?: standaloneScriptInputPlan(checkNotNull(standalone))
-    fun expanded() = project?.let { expandScript(it.project, scriptName) } ?: checkNotNull(standalone).expanded()
+    fun expanded() = project?.let { expandScript(it, scriptName) } ?: checkNotNull(standalone).expanded()
 }
 
 internal fun readScript(options: ScriptOptions): ScriptFile {
     options.name?.let { name ->
         val project = readProject(options.project.project)
-        expandScript(project.configuration.project, name)
+        expandScript(project.configuration, name)
         return ScriptFile(project.root, project.name, project.bytes, name, SnapshotSelection.Script(name), project.configuration, null, null)
     }
     val file = checkNotNull(options.file)
@@ -84,6 +84,7 @@ internal fun readScript(options: ScriptOptions): ScriptFile {
     val companion = LogicalPath(stem + ".kvik.json")
     val bytes = NativeFiles.read("$root/${companion.value}", 4 * 1024 * 1024)
     val configuration = parseStandaloneScriptConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+        .withScriptDeclarations(localScriptSourceReader(root))
     configuration.requirePrimarySource(selected)
     return ScriptFile(root, companion, bytes, configuration.name, SnapshotSelection.StandaloneScript, null, configuration, selected)
 }
@@ -110,11 +111,12 @@ internal fun readSourceScript(options: ScriptOptions, prepared: PreparedSourcePr
     val captured = prepared.configuration
     options.name?.let { name ->
         val project = prepared.project.configuration
-        expandScript(project.project, name)
+        expandScript(project, name)
         return ScriptFile(captured.root, captured.name, captured.bytes, name, SnapshotSelection.Script(name), project, null, null)
     }
     val primary = LogicalPath(checkNotNull(options.file).substringAfterLast('/'))
     val configuration = parseStandaloneScriptConfiguration(parseJson(captured.bytes.decodeToString(throwOnInvalidSequence = true)))
+        .withScriptDeclarations(prepared.scriptSourceReader())
     configuration.requirePrimarySource(primary)
     require(prepared.entry(primary) != null) { "Selected standalone script is absent from source revision" }
     return ScriptFile(captured.root, captured.name, captured.bytes, configuration.name,
@@ -142,7 +144,9 @@ internal fun scriptDependencyCommand(args: List<String>, updateRequested: Boolea
     val store = projectPath(file.root, project.store)
     requireDisjointInputPath(file.root, file.path, file.inputPlan(), lock, listOf(store))
     requireDisjointInputPath(file.root, file.path, file.inputPlan(), store, listOf(lock))
-    return dependencyOperation(project, file.root, file.path, file.bytes, file.effective(project.resolverPolicy()), updateRequested)
+    return dependencyOperation(project, file.root, file.path, file.bytes, file.effective(project.resolverPolicy()), updateRequested) {
+        readScript(options).effective(project.resolverPolicy()).digest == file.effective(project.resolverPolicy()).digest
+    }
 }
 
 /** Inspection verifies inputs/tools/lock but never compiles, executes a script, or publishes CAS bytes. */
@@ -190,7 +194,7 @@ private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: Prep
     val graph = composedScriptActionGraph(buildPlugins, ProjectBuildContext(effective, lock, snapshot.inputs,
         Digest(runtimeComposition, runtimeCompositionSize), mapOf("jvm" to identities)), ScriptGraphRequest(file.scriptName))
     val expanded = if (file.selection == SnapshotSelection.StandaloneScript) snapshot.standaloneConfiguration.expanded()
-        else expandScript(snapshot.configuration.project, file.scriptName)
+        else expandScript(snapshot.configuration, file.scriptName)
     val worker = verifiedRuntimeJvmWorker()
     val stdlib = Sha256.digest(NativeFiles.read(worker.stdlib, 64 * 1024 * 1024))
     if (source == null && observer.freshness(snapshot) != Freshness.CURRENT) throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,

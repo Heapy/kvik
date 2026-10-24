@@ -6,6 +6,7 @@ import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.execution.platform.*
 import kvik.locking.*
+import kvik.projectsnapshot.projectInputPlan
 import kvik.resolution.NativeHttpsTransport
 import kvik.resolution.NativePomParser
 
@@ -47,13 +48,17 @@ internal fun sourceDependencyCommand(source: KodeProjectOptions, options: Projec
             val previous = prepared.entry(lockPath)
             val update = updateRequested && !options.offline
             // Capture the replacement once. The proposal embeds these exact bytes, never a mutable local path.
-            val transformed = configurationEdit?.let { editProjectConfiguration(prepared.project.configuration, it) }
+            val transformed = configurationEdit?.let { editProjectConfiguration(prepared.project.configuration, it).withScriptDeclarations(prepared.scriptSourceReader()) }
             val bytes = if (transformed != null && transformed.document != prepared.project.configuration.document)
                 (transformed.document.canonical() + "\n").encodeToByteArray()
                 else replacementPath?.let { NativeFiles.read(it, 4 * 1024 * 1024) } ?: project.bytes
             val configuration = if (scriptFile?.standalone != null) null else transformed ?: if (replacementPath == null) prepared.project.configuration
                 else parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+                    .withScriptDeclarations(prepared.scriptSourceReader())
             require(bytes.size <= 4 * 1024 * 1024) { "Edited source configuration exceeds 4 MiB" }
+            if (configuration != null) require(projectInputPlan(configuration).paths.none { input ->
+                input == lockPath || input.value.startsWith("${lockPath.value}/") || lockPath.value.startsWith("${input.value}/")
+            }) { "Dependency lock overlaps a declared source input" }
             if (configurationEdit != null) {
                 for (candidate in listOf(prepared.project.configuration, checkNotNull(configuration))) {
                     require(configurationEditInputs(candidate).paths.none { input ->

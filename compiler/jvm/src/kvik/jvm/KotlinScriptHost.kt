@@ -14,7 +14,7 @@ import kotlin.script.experimental.jvm.impl.KJvmCompiledScript
 import kotlin.script.experimental.jvmhost.JvmScriptCompiler
 import kotlin.script.templates.standard.ScriptTemplateWithArgs
 
-/** These annotations constrain the supplied lock and captured sources; they never resolve dependencies. */
+/** Resolution reads these literals before compilation; the compiler only validates the supplied lock. */
 @Target(AnnotationTarget.FILE)
 @Retention(AnnotationRetention.SOURCE)
 @Repeatable
@@ -65,7 +65,10 @@ object KotlinScriptHost {
         require(imported.keys.all { it in sourceTexts } && imported.values.flatten().all { it in sourceTexts }) { "Import is not a captured script" }
         validateGraph(sourceTexts.keys.associateWith { imported[it].orEmpty().toSet() })
         val declaredDependencies = request.declaredDependencies.toSet()
-        val declaredRepositories = request.declaredRepositories.toSet()
+        val declaredRepositories = request.declaredRepositories.map { it.trimEnd('/') }.toSet()
+        // Match the Native resolver's declarative subset before the compiler instantiates annotations.
+        val declarationDiagnostics = validateDeclarations(request.primary, sourceTexts, imported, declaredDependencies, declaredRepositories)
+        if (declarationDiagnostics.isNotEmpty()) return KotlinScriptCompileResult(false, declarationDiagnostics)
         val output = request.output.toAbsolutePath().normalize()
         require(!Files.exists(output, NOFOLLOW_LINKS)) { "Script bundle output already exists" }
         val inputs = request.classpath.map(::classpathEntry)
@@ -92,7 +95,8 @@ object KotlinScriptHost {
             }
             val support = listOf(annotationClasses,
                 classpathEntry(Path.of(ScriptTemplateWithArgs::class.java.protectionDomain.codeSource.location.toURI())))
-            val sources = sourceTexts.mapValues { (path, text) -> StringScriptSource(text, path.substringAfterLast('/'), path) }
+            // StringScriptSource bypasses file decoding, so remove the optional UTF-8 BOM explicitly.
+            val sources = sourceTexts.mapValues { (path, text) -> StringScriptSource(text.removePrefix("\uFEFF"), path.substringAfterLast('/'), path) }
             val annotationImports = mutableMapOf<String, List<String>>()
             val config = ScriptCompilationConfiguration {
                 baseClass(ScriptTemplateWithArgs::class)
@@ -120,7 +124,7 @@ object KotlinScriptHost {
                             when (annotation.annotationClass.java.name) {
                                 "kvik.jvm.DependsOn" -> for (coordinate in values("coordinates")) if (coordinate !in declaredDependencies)
                                     refuse("@DependsOn is not present in the declared dependency lock: $coordinate")
-                                "kvik.jvm.Repository" -> for (url in values("urls")) if (url !in declaredRepositories)
+                                "kvik.jvm.Repository" -> for (url in values("urls")) if (url.trimEnd('/') !in declaredRepositories)
                                     refuse("@Repository is not declared in the configuration: $url")
                                 "kvik.jvm.Import" -> for (reference in values("paths")) {
                                     val resolved = try { relativeImport(requireNotNull(path), reference) }
@@ -216,16 +220,45 @@ object KotlinScriptHost {
     private fun diagnostic(value: ScriptDiagnostic) = KotlinScriptDiagnostic(value.code, value.severity.name.lowercase(),
         value.message, value.sourcePath, value.location?.start?.line, value.location?.start?.col)
 
-    private fun relativeImport(source: String, reference: String): String {
-        require(reference.isNotEmpty() && !reference.startsWith('/') && '\\' !in reference && ':' !in reference) { "@Import requires a relative captured path" }
-        val components = source.split('/').dropLast(1).toMutableList()
-        for (part in reference.split('/')) when (part) {
-            "", "." -> require(part == ".") { "Empty script import path component" }
-            ".." -> { require(components.isNotEmpty()) { "Script import escapes captured root" }; components.removeAt(components.lastIndex) }
-            else -> components += part
+    private fun validateDeclarations(primary: String, sources: Map<String, String>, imports: Map<String, List<String>>,
+                                     dependencies: Set<String>, repositories: Set<String>): List<KotlinScriptDiagnostic> {
+        val diagnostics = mutableListOf<KotlinScriptDiagnostic>()
+        val visited = mutableSetOf<String>()
+        val active = mutableSetOf<String>()
+        fun visit(path: String) {
+            if (path in active || active.size >= 128) {
+                diagnostics += KotlinScriptDiagnostic(-1, "error", "Script import cycle or depth limit exceeded", path, 1, 1)
+                return
+            }
+            if (!visited.add(path)) return
+            active += path
+            val declarations = try { parseScriptDeclarations(sources.getValue(path)) }
+            catch (failure: IllegalArgumentException) {
+                diagnostics += KotlinScriptDiagnostic(-1, "error", failure.message ?: "Invalid script declaration", path, 1, 1)
+                emptyList()
+            }
+            val children = imports[path].orEmpty().toMutableList()
+            for (declaration in declarations) for (value in declaration.values) try {
+                when (declaration.annotation) {
+                    "DependsOn" -> require(value in dependencies) { "@DependsOn is not present in the declared dependency lock: $value" }
+                    "Repository" -> require(value.trimEnd('/') in repositories) { "@Repository is not declared in the configuration: $value" }
+                    "Import" -> {
+                        val child = relativeImport(path, value)
+                        require(child in sources) { "@Import is not a captured source: $value" }
+                        children += child
+                    }
+                }
+            } catch (failure: IllegalArgumentException) {
+                diagnostics += KotlinScriptDiagnostic(-1, "error", failure.message ?: "Invalid script declaration", path, declaration.line, declaration.column)
+            }
+            children.distinct().forEach(::visit)
+            active -= path
         }
-        return components.joinToString("/").also(::LogicalPath)
+        visit(primary)
+        return diagnostics
     }
+
+    private fun relativeImport(source: String, reference: String): String = scriptImportPath(LogicalPath(source), reference).value
 
     private fun classpathEntry(path: Path): Path {
         val absolute = path.toAbsolutePath().normalize()

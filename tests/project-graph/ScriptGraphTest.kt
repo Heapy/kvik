@@ -44,6 +44,35 @@ private const val scriptCompile = "script:task:jvm:compile"
 private const val scriptRun = "script:task:jvm:run"
 
 class ScriptGraphTest {
+    @Test fun sourceDependenciesEnterBothLockDomainsAndCompilationWithoutChangingAuthoring() {
+        val spec = ScriptSpec(listOf(LogicalPath("scripts")), entryScript = LogicalPath("scripts/task.kts"),
+            dependencies = listOf(ScriptDependencyReference.External(Coordinate.parse("g:explicit:1"))))
+        val original = scriptConfig(spec)
+        val sources = mapOf("scripts/task.kts" to "@file:Import(\"helper.kts\")\n@file:DependsOn(\"g:explicit:1\")",
+            "scripts/helper.kts" to "@file:DependsOn(\"g:automatic:2\")\n@file:Repository(\"https://example.org/maven\")")
+        val configuration = original.withScriptDeclarations { sources.getValue(it.value).encodeToByteArray() }
+        assertEquals(original.document, configuration.document)
+        assertEquals(original.project, configuration.project)
+        val effective = effectiveConfiguration(configuration)
+        assertEquals(setOf("g:explicit:1", "g:automatic:2"), effective.requests.map { it.coordinate.toString() }.toSet())
+        assertEquals(4, effective.requests.size)
+        val graph = scriptActionGraph(effective, scriptLock(effective), scriptFiles(*sources.keys.toTypedArray()),
+            scriptDigest("composition"), scriptTools, ScriptGraphRequest("task"))
+        val compile = KtsCompilation.fromJson(scriptActions(graph).getValue(scriptCompile).parameters)
+        assertEquals(setOf("g:explicit:1", "g:automatic:2"), compile.declaredDependencies.toSet())
+        assertEquals(listOf("https://repo.maven.apache.org/maven2", "https://example.org/maven"), compile.declaredRepositories)
+        assertEquals(1, effective.script("task").dependencies.count { (it.value as? Dependency.External)?.coordinate?.name == "explicit" })
+        assertTrue(effective.script("task").dependencies.single { (it.value as? Dependency.External)?.coordinate?.name == "automatic" }
+            .origin.declaration.startsWith("/scriptDeclarations/task/files/scripts~1helper.kts/"))
+        for (domain in listOf(ResolutionDomain("library", "jvm", "main", "java-api"),
+            ResolutionDomain.script("other", "java-api"), ResolutionDomain.script("task", "java-runtime", "compiler-plugin")))
+            assertEquals(original.project.repositories, effective.repositoriesFor(domain))
+        val bodyEdit = original.withScriptDeclarations { (sources.getValue(it.value) + "\nprintln(42)").encodeToByteArray() }
+        assertEquals(effective.digest, effectiveConfiguration(bodyEdit).digest)
+        val dependencyEdit = original.withScriptDeclarations { sources.getValue(it.value).replace("automatic:2", "automatic:3").encodeToByteArray() }
+        assertNotEquals(effective.digest, effectiveConfiguration(dependencyEdit).digest)
+    }
+
     @Test fun kotlinScriptsCapturePrimaryAndImportsWithSeparateFreshExecution() {
         val primary = LogicalPath("scripts/task.main.kts")
         val spec = ScriptSpec(listOf(LogicalPath("scripts")), entryScript = primary,

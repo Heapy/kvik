@@ -101,9 +101,12 @@ internal fun packageCommand(args: List<String>): JsonValue.Object {
 }
 
 private fun unchangedQueryProject(result: JsonValue.Object, project: ProjectFile): JsonValue.Object {
-    val unchanged = try { NativeFiles.read(project.path, 4 * 1024 * 1024).contentEquals(project.bytes) } catch (_: Exception) { false }
+    val unchanged = try {
+        NativeFiles.read(project.path, 4 * 1024 * 1024).contentEquals(project.bytes) &&
+            project.configuration.withScriptDeclarations(localScriptSourceReader(project.root)).scriptDeclarations == project.configuration.scriptDeclarations
+    } catch (_: Exception) { false }
     return if (unchanged) result else JsonValue.Object(result.values + mapOf("status" to "incomplete".json(), "freshness" to "indeterminate".json(),
-        "diagnostics" to (result.values.getValue("diagnostics").arrayValue() + QueryDiagnostic("KVIK_QUERY_INPUT_CHANGED", "Project configuration changed during query; retry").toJson()).json()))
+        "diagnostics" to (result.values.getValue("diagnostics").arrayValue() + QueryDiagnostic("KVIK_QUERY_INPUT_CHANGED", "Project configuration or script declarations changed during query; retry").toJson()).json()))
 }
 
 internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {

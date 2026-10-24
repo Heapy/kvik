@@ -53,7 +53,7 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
     }.toJson()
 }
 
-/** Inspection reads only the configuration blob; source ownership comes from the frozen inventory. */
+/** Declaration bytes and source ownership are bound to the same frozen revision. */
 internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: LogicalPath,
                                  policy: ResolverPolicy, checkpoint: () -> Unit): JsonValue {
     val manifest = resolved.manifest
@@ -61,9 +61,19 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
     require(entry.blob.sizeBytes <= 4 * 1024 * 1024) { "Project configuration exceeds 4 MiB" }
     val bytes = resolved.fetch(entry.blob, 4 * 1024 * 1024, checkpoint) ?: error("Configuration blob is unavailable")
     resolved.verify(entry.blob, bytes, checkpoint)
-    val configuration = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
     val root = fileName.value.substringBeforeLast('/', "")
     val prefix = if (root.isEmpty()) "" else "$root/"
+    val sourceFiles = manifest.files.associateBy { it.path.value }
+    val configuration = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+        .withScriptDeclarations(boundedScriptSourceReader { path ->
+            checkpoint()
+            val source = sourceFiles[prefix + path.value] ?: error("Script source is absent from revision: ${path.value}")
+            require(source.blob.sizeBytes <= 4 * 1024 * 1024) { "Script source exceeds 4 MiB" }
+            val data = resolved.fetch(source.blob, 4 * 1024 * 1024, checkpoint) ?: error("Script source is unavailable: ${path.value}")
+            require(data.size.toLong() == source.blob.sizeBytes) { "Script source size mismatch" }
+            resolved.verify(source.blob, data, checkpoint)
+            data
+        })
     val files = manifest.files.map { it.path.value }.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
     val directories = manifest.directories.map { it.value }.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
     val inspected = inspectConfiguration(configuration, LogicalPath(fileName.value.substringAfterLast('/')), policy,
