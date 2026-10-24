@@ -118,7 +118,7 @@ expect fun platformName(): String
     assert 'workerId' not in html
     assert 'nativeTokenId' not in html
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in selected['actions'])
-    native, html = invoke('native-selection-preserves-shared-metadata', selected_targets=[targets[1]])
+    native, html = invoke('native-selection-preserves-shared-metadata', selected_targets=[targets[-1]])
     assert all(text in html for text in ['NativeToken', 'nativeTokenId', 'Worker'])
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in native['actions'])
     write('Module.md', '# Module library\nRevised module description\n')
