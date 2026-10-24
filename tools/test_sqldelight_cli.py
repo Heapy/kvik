@@ -114,12 +114,16 @@ def main():
     failed, events = run('invalid-sql', passed=False)
     assert status(failed, 'data:jvm:sqldelight') == 'failed'
     assert 'data:jvm:main' not in failed or status(failed, 'data:jvm:main') not in ('executed', 'local_hit')
-    assert any(event['type'] == 'diagnostic' for event in events)
+    assert any(event['type'] == 'diagnostic' and event['payload']['code'] == 'KVIK_SQLDELIGHT_COMPILATION' and
+               event['payload']['category'] == 'compilation' and event['payload']['path'] == 'data/sql/fixture/database/Person.sq' and
+               event['payload']['line'] >= 1 and event['payload']['column'] >= 1 for event in events)
     sql.unlink()
     write('data/src/Marker.kt', 'package fixture\nclass Marker\n')
     deleted, _ = run('deleted-last-sql-with-ordinary-kotlin')
     assert status(deleted, 'data:jvm:sqldelight') == status(deleted, 'data:jvm:main') == 'executed'
     assert status(deleted, 'plain:jvm:main') == 'local_hit'
+    assert deleted['data:jvm:sqldelight']['outputs']['files'] == []
+    assert [entry['path'] for entry in deleted['data:jvm:main']['outputs']['files'] if entry['path'].endswith('.class')] == ['classes/fixture/Marker.class']
     deleted_warm, _ = run('warm-empty-generated-tree')
     assert all(action['status'] == 'local_hit' for action in deleted_warm.values())
 
