@@ -21,6 +21,27 @@ class RunEvidenceTest {
         digest("snapshot"), digest("configuration"), digest("lock"), digest("composition"), mapOf("compiler" to digest("compiler")),
         listOf("kvik", "test", "--module", "app"), freshness, cancelled)
 
+    @Test fun benchmarkProfilesRequireFreshMeasurementAndAcceptCachedPreparation() {
+        for (profile in listOf("smoke", "measurement")) {
+            val check = "bench:jvm:benchmark-$profile"
+            val dependencies = mapOf("harness" to emptySet<String>(), check to setOf("harness"))
+            fun run(status: ActionStatus) = aggregate(checks = setOf(check), terminals = mapOf(check to check),
+                dependencies = dependencies, actions = listOf(result("harness", ActionStatus.LOCAL_HIT), result(check, status)), reports = emptyMap())
+            val passed = run(ActionStatus.EXECUTED).record
+            assertEquals(VerificationStatus.PASSED, passed.status)
+            assertEquals(passed, verificationRecordFromJson(passed.toJson()))
+            assertEquals(VerificationStatus.FAILED, run(ActionStatus.FAILED).record.status)
+            for (status in listOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) {
+                assertFails { run(status) }
+                assertFails { verificationRecordFromJson(passed.copy(actions = passed.actions.map {
+                    if (it.actionId == check) it.copy(status = status) else it
+                }).toJson()) }
+            }
+            assertFails { aggregate(checks = setOf(check), terminals = mapOf(check to "harness"),
+                dependencies = dependencies, actions = dependencies.keys.map(::result), reports = emptyMap()) }
+        }
+    }
+
     @Test fun passingEvidenceRetainsExactIdentitiesAndDeterministicOrdering() {
         val evidence = aggregate()
         assertEquals(VerificationStatus.PASSED, evidence.record.status)

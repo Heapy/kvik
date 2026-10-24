@@ -33,7 +33,7 @@ private fun command(args: Array<String>) {
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
@@ -59,6 +59,7 @@ private fun command(args: Array<String>) {
             Standalone companions: FILE.kvik.json and default FILE.kvik.lock.json alongside FILE.kt; no nearby-project discovery
             Libraries: package-library plus build options; selected modules and ordinary dependencies require publication coordinates
             Documentation: docs plus build selectors; requires module documentation settings; emits documentation-ready with HTML index
+            Benchmarks: benchmark --profile smoke|measurement plus JVM build options; requires target benchmarkSettings
             ABI: abi-dump or abi-check plus build options; check requires target abi.baseline, dump never updates it
             Applications: prepare-application or run-application plus build options; select exactly one module and target
             Prepared replay: run-prepared --run PATH --descriptor DIGEST_JSON (requires current successful preparation)
@@ -110,6 +111,7 @@ private fun command(args: Array<String>) {
         "docs" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.DOCUMENTATION).status.code)
         "config" -> println(configurationCommand(args.drop(1)).canonical())
         "verify" -> exitProcess(changeVerificationCommand(args.drop(1)).code)
+        "benchmark" -> exitProcess(benchmarkCommand(args.drop(1)).code)
         "compile-tests" -> exitProcess(compileTestsCommand(args.drop(1)).code)
         "build", "test" -> exitProcess(buildCommand(args.drop(1), test = args[0] == "test").code)
         "run-script" -> exitProcess(runScriptCommand(args.drop(1)))

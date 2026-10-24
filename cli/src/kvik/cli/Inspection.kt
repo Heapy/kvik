@@ -113,6 +113,6 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
                 entries.map { it.sourceSet }.distinct().sorted(), entries.flatMap { it.targets }.distinct().sorted(),
                 tags.getValue(path).tags.sorted())
         }, origins = origins,
-        capabilities = listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "verification"),
+        capabilities = listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "jvm-benchmarks", "verification"),
     )
 }

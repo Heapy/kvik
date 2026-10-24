@@ -8,6 +8,7 @@ import kvik.documentation.DocumentationActionExecutor
 import kvik.application.*
 import kvik.cache.*
 import kvik.cache.remote.*
+import kvik.compiler.jvm.JvmBenchmarkExecutor
 import kvik.compiler.jvm.JvmClasspathExecutor
 import kvik.compiler.jvm.JvmActionExecutor
 import kvik.compiler.js.JsCompilerExecutor
@@ -67,6 +68,15 @@ internal fun jvmClasspathCommand(args: List<String>): ExitStatus {
     return projectBuildCommand(remaining, if (scope == "main") ProjectMode.CLASSPATH_MAIN else ProjectMode.CLASSPATH_TEST)
 }
 
+internal fun benchmarkCommand(args: List<String>): ExitStatus {
+    require(args.count { it == "--profile" } <= 1) { "Duplicate --profile" }
+    val index = args.indexOf("--profile")
+    val profile = if (index < 0) "smoke" else args.getOrNull(index + 1) ?: error("Missing --profile value")
+    require(profile in setOf("smoke", "measurement")) { "Benchmark profile must be smoke or measurement" }
+    val remaining = if (index < 0) args else args.filterIndexed { i, _ -> i != index && i != index + 1 }
+    return projectBuildCommand(remaining, if (profile == "smoke") ProjectMode.BENCHMARK_SMOKE else ProjectMode.BENCHMARK_MEASUREMENT)
+}
+
 private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStatus {
     val (source, remaining) = sourceProjectOptions(args)
     if (source == null) return executeBuild(remaining, mode).status
@@ -119,6 +129,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.ABI_DUMP -> "abi-dump"
         ProjectMode.ABI_CHECK -> "abi-check"
         ProjectMode.DOCUMENTATION -> "docs"
+        ProjectMode.BENCHMARK_SMOKE, ProjectMode.BENCHMARK_MEASUREMENT -> "benchmark"
     }
     val project = sourceProject?.project ?: if (scriptFile == null) {
         if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
@@ -195,7 +206,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         else if (scriptFile == null) listOf("--project", checkNotNull(project).path)
         else scriptFile.primary?.let { listOf("--file", "$root/${it.value}") } ?: listOf(scriptFile.scriptName, "--project", scriptFile.path)
     val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) +
-        (if (mode in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)) listOf("--compilation", if (mode == ProjectMode.CLASSPATH_MAIN) "main" else "test") else emptyList()) + selector + listOf(
+        (if (mode in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)) listOf("--compilation", if (mode == ProjectMode.CLASSPATH_MAIN) "main" else "test") else emptyList()) +
+        (if (mode in setOf(ProjectMode.BENCHMARK_SMOKE, ProjectMode.BENCHMARK_MEASUREMENT)) listOf("--profile", if (mode == ProjectMode.BENCHMARK_SMOKE) "smoke" else "measurement") else emptyList()) + selector + listOf(
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         (remotePath?.let { listOf("--remote-cache", it) } ?: emptyList()) +
@@ -268,6 +280,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider(target))
                     }
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content)
+                    val benchmarks = JvmBenchmarkExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val classpath = JvmClasspathExecutor(content)
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
@@ -278,6 +291,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
                             "kvik-jvm-script-v1" -> scripts
                             "kvik-jvm-classpath-v1" -> classpath
+                            "kvik-jvm-benchmark-harness-v1", "kvik-jvm-benchmark-v1" -> benchmarks
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
                             "kvik-kmp-library-package-v1" -> kmpLibrary
@@ -331,6 +345,10 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         } ?: test }
                     }
                     fun observations() {
+                        for ((id, observation) in benchmarks.observations) if (seen.add(id)) {
+                            retain(id, observation.toJson())
+                            observation.diagnostics.forEach { journal.diagnostic(it.copy(actionId = id, module = it.module ?: id.substringBefore(':'), target = "jvm")) }
+                        }
                         for ((id, observation) in js?.observations.orEmpty()) if (seen.add(id)) {
                             retain(id, obj("result" to observation.result.toJson(), "diagnostics" to observation.diagnostics.map { it.toJson() }.json(),
                                 "tests" to (observation.tests?.toJson() ?: JsonValue.Null), "directory" to observation.directory.json(),
@@ -495,6 +513,29 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
                 journal.diagnostic(Diagnostic("KVIK_CLASSPATH_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
                     failure.message ?: "Cannot materialize JVM classpath"))
+            }
+        }
+        if (mode in setOf(ProjectMode.BENCHMARK_SMOKE, ProjectMode.BENCHMARK_MEASUREMENT) && record.status == VerificationStatus.PASSED) {
+            val profile = if (mode == ProjectMode.BENCHMARK_SMOKE) "smoke" else "measurement"
+            val selections = options.modules.sorted().map { BenchmarkSelection(it, profile) }
+            try {
+                var current = Freshness.INDETERMINATE
+                val exposed = materializeBenchmarks(record, selections, content, run.path) {
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
+                    cancelled = kvik_interrupt_requested() != 0
+                    !cancelled && current == Freshness.CURRENT
+                }
+                cancelled = cancelled || kvik_interrupt_requested() != 0
+                if (!exposed || cancelled) record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                    freshnessAtCompletion = current)
+                else selections.forEach { journal.emit("benchmark-ready", it.event(run.path)) }
+            } catch (failure: Exception) {
+                failedSetup = true
+                failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_BENCHMARK_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize benchmark results"))
             }
         }
         if (mode == ProjectMode.DOCUMENTATION && record.status == VerificationStatus.PASSED) {

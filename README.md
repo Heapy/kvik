@@ -796,6 +796,33 @@ Module documentation settings support `includes` (Markdown files), `documentedVi
 
 Dokka 2.2.0 runs offline in an owned JVM, using a separate pinned tool distribution. Common metadata and Native stdlib are declared inputs. Successful sites are cached locally and can be restored without installed tools. This command generates per-module HTML for the supported JVM/Native source sets; aggregation, custom Dokka plugins, external documentation links, SDK/cinterop documentation and deployment need separate integrations.
 
+### JVM benchmarks
+
+Declare JMH benchmarks in a JVM module's main source set. Add `org.openjdk.jmh:jmh-core:1.37` as a compile dependency and `org.openjdk.jmh:jmh-generator-reflection:1.37` as a runtime dependency. Set `benchmarkSettings` on its JVM target:
+
+```json
+"benchmarkSettings": {
+  "classes": ["example.CollectionBenchmark"],
+  "warmups": 3,
+  "iterations": 5,
+  "iterationMillis": 1000,
+  "forks": 1,
+  "threads": 1,
+  "mode": "avgt",
+  "outputTimeUnit": "ns",
+  "timeoutMillis": 3600000
+}
+```
+
+Use JMH annotations directly; Kotlin state classes must be `open`. Benchmark modules can depend on other workspace modules. Run `resolve` after adding dependencies or changing configuration, then:
+
+```sh
+./kvik --no-build -- benchmark --project /absolute/project/kvik.json --tools /absolute/tools.json --module benchmarks --target jvm --profile smoke
+./kvik --no-build -- benchmark --project /absolute/project/kvik.json --tools /absolute/tools.json --module benchmarks --target jvm --profile measurement
+```
+
+The default `smoke` profile uses one warmup and one measurement iteration, each 50 ms. `measurement` uses the declared settings. Both reuse ordinary compilation and the same generated JMH harness. Measurements always execute in fresh forked JVMs; cancellation and timeout stop the owned process tree. `benchmark-ready` identifies the normalized summary and original JMH JSON in the run directory. Scores in the normalized summary are decimal strings; an unavailable score error is `null`. Empty selections, failed benchmarks and incomplete parameter combinations fail the invocation.
+
 ## Current checks
 
 On macOS ARM64, supply a Kotlin/Native 2.4.20 installation and Liberica JDK 25.0.4:

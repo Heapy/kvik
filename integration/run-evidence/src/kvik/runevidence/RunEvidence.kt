@@ -6,13 +6,14 @@ import kvik.core.*
 data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus)
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
-internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test)")) ||
+internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(js|wasmJs):(build|test|compile-tests)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(iosArm64|iosSimulatorArm64):(build|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)")) ||
     check.matches(Regex("script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)"))
+internal fun benchmarkExecutionCheck(check: String): Boolean = check.endsWith(":benchmark-smoke") || check.endsWith(":benchmark-measurement")
 internal fun scriptExecutionCheck(check: String): Boolean = check.startsWith("script:") && check.endsWith(":run") && validCheck(check)
 
 /**
@@ -40,7 +41,7 @@ fun aggregateRunEvidence(
 ): RunEvidence {
     val checks = requestedChecks.sorted().toSet()
     require(checks.isNotEmpty() && checks.all(::validCheck)) {
-        "Requested checks must identify module:target:build|test|compile-tests|classpath-main|classpath-test|application|package|abi-dump|abi-check or script:name:jvm:prepare|run"
+        "Requested checks must identify module:target:build|test|compile-tests|classpath-main|classpath-test|benchmark-smoke|benchmark-measurement|application|package|abi-dump|abi-check or script:name:jvm:prepare|run"
     }
     val terminals = terminalActions.toMap()
     val graph = actionDependencies.mapValues { it.value.toSet() }
@@ -57,6 +58,10 @@ fun aggregateRunEvidence(
         terminals[check]?.let { terminal ->
             require(terminal == check) { "Script execution requires its distinct run terminal: $check" }
         }
+    }
+    for (check in checks.filter(::benchmarkExecutionCheck)) {
+        require(byId[check]?.status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) { "Benchmark measurement cannot be a cache hit: $check" }
+        terminals[check]?.let { require(it == check) { "Benchmark requires its distinct measurement terminal: $check" } }
     }
     val testChecks = checks.filter { it.endsWith(":test") }
     val testTerminals = testChecks.mapNotNull { check -> terminals[check]?.let { it to check } }.toMap()
