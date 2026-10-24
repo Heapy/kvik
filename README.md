@@ -390,8 +390,10 @@ JS/Wasm main KLIBs support `abi-dump` and `abi-check` with separate target basel
 these commands do not launch Node. Web targets still require its tool declaration.
 See [public API baselines](docs/abi.md).
 
-Browser and WASI runtimes, npm dependencies, documentation adapters and
-application launching are still pending.
+`docs --target js --target wasmJs` generates API documentation with shared and
+platform source sets. See [API documentation](docs/documentation.md).
+
+Browser and WASI runtimes, npm dependencies and application launching are still pending.
 See the [compiler adapter](compiler/js/README.md) for its current boundaries and the
 pinned compiler workaround that suppresses Wasm application startup during tests.
 
@@ -900,11 +902,11 @@ Run `abi-dump --module library --target jvm` with your project and tools options
 
 Checks require an exact public API match, allowing CRLF/LF and an optional final newline in the baseline. Additions and removals both fail; this is not a binary compatibility classification. Successful extraction and comparisons are cached locally. Baseline edits invalidate comparison and retained verification freshness while preserving compilation and extraction caches. ABI readers use pinned BCV and Kotlin compiler versions in an owned, isolated JVM process.
 
-Enable API documentation with `"documentation": {}` on a module, then run `resolve` to capture its documentation dependencies. `docs --module library --target jvm --target macosArm64` accepts the usual project and tools options and creates one HTML site for the selected module and targets. The `documentation-ready` event gives the site's directory and `index.html`. Documentation consumes source-set relationships and compiled dependency artifacts from the same graph as builds; publication coordinates are optional.
+Enable API documentation with `"documentation": {}` on a module, then run `resolve` to capture its documentation dependencies. `docs --module library --target jvm --target macosArm64` accepts the usual project and tools options and creates one HTML site for the selected module and targets, including JS and WasmJS when selected. The `documentation-ready` event gives the site's directory and `index.html`. Documentation consumes source-set relationships and compiled dependency artifacts from the same graph as builds; publication coordinates are optional. See [API documentation](docs/documentation.md) for the JS/Wasm workflow.
 
 Module documentation settings support `includes` (Markdown files), `documentedVisibilities`, `reportUndocumented`, `failOnWarning`, `skipDeprecated`, `suppressInheritedMembers`, and `timeoutMillis`. For example, `"documentation": {"includes": ["Module.md"], "reportUndocumented": true, "failOnWarning": true}` enables strict documentation checks. Include edits invalidate the site and retained verification freshness while preserving compilation caches. Failed or cancelled generation never exposes a completed site.
 
-Dokka 2.2.0 runs offline in an owned JVM, using a separate pinned tool distribution. Common metadata and Native stdlib are declared inputs. Successful sites are cached locally and can be restored without installed tools. This command generates per-module HTML for the supported JVM/Native source sets; aggregation, custom Dokka plugins, external documentation links, SDK/cinterop documentation and deployment need separate integrations.
+Dokka 2.2.0 runs offline in an owned JVM, using a separate pinned tool distribution. Common metadata and Native stdlib are declared inputs. Successful sites are cached locally and can be restored without installed tools. This command generates per-module HTML for supported JVM, Native, JS and WasmJS source sets; tests are neither compiled nor run. Aggregation, custom Dokka plugins, external documentation links, SDK/cinterop documentation and deployment need separate integrations.
 
 ### JVM benchmarks
 
