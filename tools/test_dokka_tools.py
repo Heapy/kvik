@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--artifacts', type=Path, required=True)
+    parser.add_argument('--maven-cache', type=Path, help='Also document real JS/Wasm sources and compiled KLIB dependencies using offline pinned standard libraries')
     parser.add_argument('--dependency-repository', type=Path, help='Existing real KMP fixture Maven tree with dev.kvik.fixture:base:1.0')
     parser.add_argument('--extract-common', action='store_true', help='Test direct commonMain KLIBs instead of unsupported root metadata containers')
     parser.add_argument('--native-common-stdlib', action='store_true', help='Probe Native API resolution using only extracted common stdlib metadata')
@@ -34,14 +35,47 @@ def main():
         'jvmMain': '/** JVM implementation greeting. */\nactual class Platform { actual fun name(): String = "JVM" }\n',
         'nativeMain': '/** Native implementation greeting. */\nactual class Platform { actual fun name(): String = "Native" }\n',
     }
+    platforms = {'commonMain': 'common', 'jvmMain': 'jvm', 'nativeMain': 'native'}
+    targets_by_source = {'jvmMain': 'jvm', 'nativeMain': 'macosArm64'}
+    web_libraries = {}
+    if args.maven_cache:
+        for name, target, platform, suffix in [('jsMain', 'js', 'js', 'js'), ('wasmMain', 'wasmJs', 'wasm', 'wasm-js')]:
+            artifact = 'kotlin-stdlib-' + suffix
+            library = args.maven_cache/'org/jetbrains/kotlin'/artifact/'2.4.20'/(artifact+'-2.4.20.klib')
+            assert library.is_file(), library
+            web_libraries[name] = library
+            files[name] = f'/** {target} implementation greeting. */\nactual class Platform {{ actual fun name(): String = "{target}" }}\n'
+            platforms[name] = platform
+            targets_by_source[name] = target
     source_sets = []
     for name, source in files.items():
         root = case/name; root.mkdir(); (root/'Platform.kt').write_text('package fixture\n'+source)
         source_sets.append(dict(sourceSetID=dict(scopeId='fixture', sourceSetName=name), displayName=name,
-            analysisPlatform={'commonMain':'common','jvmMain':'jvm','nativeMain':'native'}[name],
+            analysisPlatform=platforms[name],
             sourceRoots=[str(root)], dependentSourceSets=[] if name=='commonMain' else [dict(scopeId='fixture',sourceSetName='commonMain')],
-            classpath=[] if name=='commonMain' else [str(args.artifacts/'kotlin-stdlib-2.4.20.jar')] if name=='jvmMain' else [str(args.konan_home/'klib/common/stdlib')],
+            classpath=[] if name=='commonMain' else [str(args.artifacts/'kotlin-stdlib-2.4.20.jar')] if name=='jvmMain' else [str(web_libraries[name])] if name in web_libraries else [str(args.konan_home/'klib/common/stdlib')],
             documentedVisibilities=['PUBLIC'], noStdlibLink=True, noJdkLink=True, externalDocumentationLinks=[]))
+    if web_libraries:
+        compiler = [args.artifacts/item['filename'] for item in lock['compilerArtifacts']]
+        compiler_cp = os.pathsep.join(map(str, compiler))
+        env = dict(PATH='/usr/bin:/bin:/usr/sbin:/sbin', HOME=str(case), LANG='C.UTF-8', LC_ALL='C.UTF-8', TZ='UTC')
+        for name, library in web_libraries.items():
+            wasm = name == 'wasmMain'
+            token = 'WasmToken' if wasm else 'JsToken'
+            value = 'kotlin.js.JsAny?' if wasm else 'kotlin.js.Promise<String>'
+            dependency = case/(name+'-dependency'); dependency.mkdir()
+            source = dependency/'Token.kt'
+            source.write_text(f'package sharedweb\n/** Compiled {token} dependency. */\nclass {token}(val value: {value})\n')
+            with (dependency/'compile.log').open('wb') as log:
+                subprocess.run(list(map(str, [args.java_home/'bin/java', '-Xmx2G', '--enable-native-access=ALL-UNNAMED',
+                    '-cp', compiler_cp, 'org.jetbrains.kotlin.cli.js.' + ('KotlinWasmCompiler' if wasm else 'K2JSCompiler'),
+                    *(['-Xwasm-target=wasm-js'] if wasm else []), '-ir-output-dir', dependency, '-ir-output-name', 'dependency',
+                    '-Xir-module-name=dependency', '-language-version', '2.4', '-api-version', '2.4', '-libraries', library, source])),
+                    env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+            node = next(node for node in source_sets if node['sourceSetID']['sourceSetName'] == name)
+            node['classpath'].append(str(dependency/'dependency.klib'))
+            source = case/name/'Platform.kt'
+            source.write_text(source.read_text() + f'\n/** Consumes a compiled {token} and its platform API. */\nfun dependency{token}(token: sharedweb.{token}): {value} = token.value\n')
     if args.dependency_repository:
         import shutil
         dependency = case/'dependency'; dependency.mkdir()
@@ -142,7 +176,7 @@ def main():
             node['sourceRoots'] = [str(source)]
             node['classpath'] = [str(workspace/'input'/path) for path in classpath]
             node['includes'] = [str(workspace/'input/Module.md')]
-            supporting = ['jvm', 'macosArm64'] if name=='commonMain' else ['jvm'] if name=='jvmMain' else ['macosArm64']
+            supporting = list(targets_by_source.values()) if name == 'commonMain' else [targets_by_source[name]]
             descriptions.append(dict(name=name, platform=node['analysisPlatform'], sourceRoot='sources/'+name,
                 classpath=classpath, dependsOn=[] if name=='commonMain' else ['commonMain'], supportingTargets=supporting))
         distribution = jvm_worker.documentation_distribution(lock)
@@ -153,7 +187,7 @@ def main():
         config['includes'] = [str(workspace/'input/Module.md')]
         config['pluginsConfiguration'] = [dict(fqPluginName='org.jetbrains.dokka.base.DokkaBase', serializationFormat='JSON', values=json.dumps(dict(footerMessage='Generated by Kvik')))]
         settings = dict(includes=['Module.md'], failOnWarning=True)
-        specification = dict(schemaVersion=1, module='fixture', targets=['jvm','macosArm64'], sourceSets=descriptions, settings=settings)
+        specification = dict(schemaVersion=1, module='fixture', targets=list(targets_by_source.values()), sourceSets=descriptions, settings=settings)
         files = sorted(p for p in (workspace/'input').rglob('*') if p.is_file())
         for path in files: path.chmod(0o644)
         tree = dict(schemaVersion=1, files=[dict(path=p.relative_to(workspace/'input').as_posix(), digest=file_digest(p), executable=False) for p in files])
@@ -169,9 +203,18 @@ def main():
     html = '\n'.join(p.read_text() for p in html_root.rglob('*.html'))
     for marker in ['Shared platform greeting', 'JVM implementation greeting', 'Native implementation greeting', 'Pinned standalone source-set documentation']:
         assert marker in html, marker
+    if web_libraries:
+        for marker in ['js implementation greeting', 'wasmJs implementation greeting', 'dependencyJsToken', 'dependencyWasmToken', 'JsToken', 'WasmToken', 'Promise', 'JsAny']:
+            assert marker in html, marker
+        if args.worker:
+            actual_sets = json.loads((workspace/'dokka.json').read_text())['sourceSets']
+            for name, platform in [('jsMain', 'js'), ('wasmMain', 'wasm')]:
+                actual = next(node for node in actual_sets if node['sourceSetID']['sourceSetName'] == name)
+                assert actual['analysisPlatform'] == platform
+                assert len(actual['classpath']) == 2 and all(path.endswith('.klib') for path in actual['classpath'])
     assert 'ERROR CLASS: Symbol not found for' not in html
     assert 'Explains the compiler message ERROR CLASS: Symbol not found.' in html
-    print('PASS '+('production worker' if args.worker else 'standalone')+' Dokka 2.2.0 common/JVM/Native KDoc + module include: '+str(case))
+    print('PASS '+('production worker' if args.worker else 'standalone')+' Dokka 2.2.0 common/JVM/Native'+('/JS/Wasm' if web_libraries else '')+' KDoc + module include: '+str(case))
 
 
 if __name__ == '__main__': main()

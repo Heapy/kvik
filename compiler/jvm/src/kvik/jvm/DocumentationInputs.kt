@@ -47,7 +47,7 @@ object DocumentationInputs {
                         scratch.resolve("$index/$pathIndex"), source.supportingTargets, minimumTargets = 1)
                     else if (Files.isDirectory(path, NOFOLLOW_LINKS)) listOf(workspace.classpath("input/${logical.value}"))
                     else {
-                        require(logical.value.endsWith(".jar") || source.platform == "native" && logical.value.endsWith(".klib")) { "Unsupported documentation classpath file" }
+                        require(logical.value.endsWith(".jar") || source.platform in setOf("native", "js", "wasm") && logical.value.endsWith(".klib")) { "Unsupported documentation classpath file" }
                         listOf(path)
                     }
                 }
