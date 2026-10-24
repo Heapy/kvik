@@ -41,6 +41,71 @@ class BspSqlDelightSourcesTest {
     private fun owners(model: BspProjectModel, target: BspTarget, runtime: Boolean = false, classpath: Boolean = false) =
         model.generatedSourceOwners(target, runtime, classpath).map { "${it.module}:${it.target}:${it.compilation}" }.toSet()
 
+    private fun platforms(module: JsonValue.Object, vararg names: String): JsonValue.Object {
+        val target = module.values.getValue("targets").arrayValue().single().objectValue()
+        return JsonValue.Object(module.values + ("targets" to names.map { name ->
+            JsonValue.Object(target + ("name" to name.json()))
+        }.json()))
+    }
+
+    @Test fun oneHostGeneratorOwnsAllConsumingMainTargetsWithoutAJvmTarget() {
+        val model = model(platforms(module("db", sql = true), "js", "wasmJs", "macosArm64"))
+        val action = "db:jvm:sqldelight"
+        val expected = model.allTargets().filter { it.compilation == "main" }
+        assertEquals(expected, model.generatedSourceTargets(action))
+        assertEquals(expected, model.diagnosticTargets(action))
+        assertNull(model.actionTarget(action))
+        assertEquals(bspFileUri("$root/db/sql/Query.sq"), model.diagnosticUri(action, "db/sql/Query.sq"))
+        val file = FileEntry(LogicalPath("generated/sqldelight/db/fixture/Database.kt"), digest)
+        val source = BspGeneratedSources("$root/.kvik/bsp/first/generated", action, digest, TreeManifest(listOf(file)))
+        for (owner in expected) assertTrue(model.replaceGeneratedSources(owner, listOf(source)))
+        assertEquals(expected.map { it.uri }.toSet(), model.inverseSources(source.uri(file)).items("targets")
+            .map { it.objectValue().getValue("uri").stringValue() }.toSet())
+        for (owner in expected) {
+            assertEquals(source.uri(file), model.sourceUri(owner, file.path.value))
+            assertEquals(source.uri(file), model.diagnosticUri("db:${owner.target}:main", file.path.value))
+            assertEquals(1, model.sources(listOf(owner.uri)).items("items").single().items("sources").count {
+                it.objectValue().getValue("generated").booleanValue()
+            })
+        }
+        // Tests consume main binaries, and must prepare/clear the shared producer for all main owners.
+        for (test in model.allTargets().filter { it.compilation == "test" }) {
+            assertEquals(expected.toSet(), model.generatedSourceOwners(test).toSet())
+            assertNull(model.sourceUri(test, file.path.value))
+            assertFails { model.replaceGeneratedSources(test, listOf(source)) }
+        }
+        val cleared = model.generatedSourceOwners(model.target("db", "test", "wasmJs"))
+        for (owner in cleared) assertTrue(model.replaceGeneratedSources(owner, emptyList()))
+        assertTrue(model.inverseSources(source.uri(file)).items("targets").isEmpty())
+        assertTrue(expected.all { model.sourceUri(it, file.path.value) == null })
+    }
+
+    @Test fun sharedGeneratorPrerequisitesIncludeAllConsumersButExcludeUnrelatedTargetClosures() {
+        val db = platforms(module("db", sql = true), "jvm", "js", "wasmJs", "macosArm64")
+        val unrelated = obj("name" to "unrelated".json(), "directories" to listOf("db/unrelated".json()).json(),
+            "resources" to emptyList<JsonValue>().json(), "dependsOn" to emptyList<JsonValue>().json(),
+            "dependencies" to emptyList<JsonValue>().json())
+        val targets = db.values.getValue("targets").arrayValue().map {
+            if (it.objectValue().getValue("name").stringValue() == "wasmJs")
+                JsonValue.Object(it.objectValue() + ("main" to "unrelated".json())) else it
+        }
+        val partialDb = JsonValue.Object(db.values + mapOf("targets" to targets.json(),
+            "sourceSets" to (db.values.getValue("sourceSets").arrayValue() + unrelated).json()))
+        val app = platforms(module("app", dependencies = listOf(dependency("db"))), "jvm", "js", "wasmJs", "macosArm64")
+        val model = model(partialDb, app)
+        val expected = setOf("db:jvm:main", "db:js:main", "db:macosArm64:main")
+        for (platform in listOf("jvm", "js", "macosArm64")) {
+            assertEquals(expected, owners(model, model.target("app", platform = platform)))
+            assertEquals(expected, owners(model, model.target("app", "test", platform)))
+        }
+        assertEquals(expected, owners(model, model.target("app"), classpath = true))
+        assertEquals(expected, owners(model, model.target("db", "test"), classpath = true))
+        assertTrue(owners(model, model.target("app", platform = "wasmJs")).isEmpty())
+        assertTrue(owners(model, model.target("db", platform = "wasmJs")).isEmpty())
+        assertEquals(setOf("jvm", "js", "macosArm64"), model.generatedSourceTargets("db:jvm:sqldelight").map { it.target }.toSet())
+        assertTrue(model.generatedSourceTargets("db:js:sqldelight").isEmpty())
+    }
+
     @Test fun sqlSourcesBelongToMainOnlyAndReplacementRemovesDeletedFiles() {
         val model = model(module("db", sql = true), module("plain"))
         val target = model.target("db")
@@ -48,7 +113,7 @@ class BspSqlDelightSourcesTest {
         val second = first.copy(path = LogicalPath("generated/sqldelight/db/fixture/Queries.kt"))
         val sources = BspGeneratedSources("$root/.kvik/bsp/first/generated", "db:jvm:sqldelight", digest,
             TreeManifest(listOf(first, second)))
-        assertEquals(target, model.generatedSourceTarget(sources.producer))
+        assertEquals(listOf(target), model.generatedSourceTargets(sources.producer))
         assertTrue(model.replaceGeneratedSources(target, listOf(sources)))
         for (file in sources.files.files) {
             assertEquals(sources.uri(file), model.sourceUri(target, file.path.value))
@@ -66,7 +131,7 @@ class BspSqlDelightSourcesTest {
         assertTrue(model.inverseSources(replacement.uri(first)).items("targets").isEmpty())
         assertNull(model.sourceUri(target, first.path.value))
         for (producer in listOf("plain:jvm:sqldelight", "db:macosArm64:sqldelight", "db:jvm:sqldelight-worker",
-            "db:jvm:sqldelight:main", "missing:jvm:sqldelight", "db:jvm:ksp-test")) assertNull(model.generatedSourceTarget(producer))
+            "db:jvm:sqldelight:main", "missing:jvm:sqldelight", "db:jvm:ksp-test")) assertTrue(model.generatedSourceTargets(producer).isEmpty())
         assertFails { model.replaceGeneratedSources(model.target("db", "test"), listOf(sources)) }
     }
 
@@ -74,7 +139,7 @@ class BspSqlDelightSourcesTest {
         val model = model(module("db", sql = true), module("other", sql = true), module("plain"),
             module("native", platform = "macosArm64", kotest = true))
         val action = "db:jvm:sqldelight"
-        assertEquals(model.target("db"), model.diagnosticTarget(action))
+        assertEquals(listOf(model.target("db")), model.diagnosticTargets(action))
         assertNull(model.actionTarget(action))
         // New files need no reimport; diagnostic paths refer to the latest completed build.
         for (path in listOf("db/sql/New.sq", "db/sql/nested/café #%.sq")) {
@@ -92,7 +157,7 @@ class BspSqlDelightSourcesTest {
         }
         for (id in listOf("plain:jvm:sqldelight", "db:macosArm64:sqldelight", "db:jvm:sqldelight-worker",
             "db:jvm:sqldelight:main", "db:jvm:test", "native:macosArm64:ksp-test", "missing:jvm:sqldelight")) {
-            assertNull(model.diagnosticTarget(id), id)
+            assertTrue(model.diagnosticTargets(id).isEmpty(), id)
             assertNull(model.diagnosticUri(id, "db/sql/Query.sq"), id)
         }
         // A percent escape in a logical file name remains literal; it cannot become URI traversal.
@@ -105,7 +170,7 @@ class BspSqlDelightSourcesTest {
     @Test fun compilerDiagnosticOwnershipPreservesDeclaredAndGeneratedKotlinFiles() {
         val model = model(module("db", sql = true), module("other", sql = true))
         for (action in listOf("db:jvm:main", "db:jvm:test-compile", "db:jvm:test-link")) {
-            assertEquals(model.actionTarget(action), model.diagnosticTarget(action))
+            assertEquals(listOf(model.actionTarget(action)), model.diagnosticTargets(action))
             assertEquals(bspFileUri("$root/db/main/New.kt"), model.diagnosticUri(action, "db/main/New.kt"))
             assertNull(model.diagnosticUri(action, "other/main/New.kt"))
             assertNull(model.diagnosticUri(action, "db/main/Query.sq"))

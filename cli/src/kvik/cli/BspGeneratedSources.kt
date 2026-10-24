@@ -25,7 +25,8 @@ internal fun materializeBspGeneratedSources(
     require(record.freshnessAtCompletion == Freshness.CURRENT)
     val generated = linkedMapOf<BspTarget, MutableList<BspGeneratedSources>>()
     for (result in record.actions) {
-        val target = model.generatedSourceTarget(result.actionId) ?: continue
+        val targets = model.generatedSourceTargets(result.actionId)
+        val target = targets.firstOrNull() ?: continue
         if (!result.successful) continue
         val name = Sha256.digest(result.actionId.encodeToByteArray()).hash
         val retained = parseJson(NativeFiles.read("$runDirectory/actions/$name.json", 16 * 1024 * 1024)
@@ -49,7 +50,7 @@ internal fun materializeBspGeneratedSources(
             "kvik-sqldelight-v1" -> {
                 val generation = SqlDelightGeneration.fromJson(fields.getValue("parameters"))
                 val module = model.inspection.project.project.modules.single { it.id == target.module }
-                require(generation.module == target.module && target.target == "jvm" && target.compilation == "main" &&
+                require(generation.module == target.module && targets.all { it.compilation == "main" } &&
                     generation.settings == module.sqlDelight) { "SQLDelight generation differs from imported configuration" }
                 require(result.outputs.files.size <= 10_000 && result.outputs.files.all {
                     !it.executable && it.path.value.startsWith("${generation.output.value}/") &&
@@ -65,7 +66,7 @@ internal fun materializeBspGeneratedSources(
             else -> error("Unsupported generated source producer")
         }
         require(expected.toJson() == action && expected.key(Sha256) == result.key) { "Generated source action differs from the supported contract" }
-        val sources = generated.getOrPut(target) { mutableListOf() }
+        val owners = targets.map { generated.getOrPut(it) { mutableListOf() } }
         if (result.outputs.files.isEmpty()) continue
         val content = NativeContentStore(store, maxBlobBytes = 8 * 1024 * 1024)
         for (output in result.outputs.files) {
@@ -75,8 +76,8 @@ internal fun materializeBspGeneratedSources(
         }
         val directory = "$childDirectory/generated-$name"
         NativeOutputTrees(content).materialize(result.outputs, directory)
-        sources += BspGeneratedSources(directory, result.actionId,
-            checkNotNull(result.key), result.outputs)
+        val sources = BspGeneratedSources(directory, result.actionId, checkNotNull(result.key), result.outputs)
+        owners.forEach { it += sources }
     }
     return generated
 }

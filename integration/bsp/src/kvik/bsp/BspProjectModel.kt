@@ -62,24 +62,25 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
 
     fun allTargets(): List<BspTarget> = select(byUri.keys.toList())
 
-    /** Only adapters with an explicit source-output contract may contribute generated sources. */
-    fun generatedSourceTarget(actionId: String): BspTarget? {
+    /** A host generator may serve several target compilations without exposing a host BSP target. */
+    fun generatedSourceTargets(actionId: String): List<BspTarget> {
         val parts = actionId.split(':')
-        if (parts.size != 3) return null
-        val scope = when (parts[2]) {
-            "ksp-test" -> "test"
-            "sqldelight" -> "main"
-            else -> return null
-        }
-        val compilation = byUri[targetUri(parts[0], parts[1], scope)] ?: return null
-        when (parts[2]) {
-            "ksp-test" -> if (compilation.target.nativeTestSettings == null || NativeTarget.find(parts[1]) == null) return null
-            "sqldelight" -> {
-                val settings = compilation.module.sqlDelight ?: return null
-                if (parts[1] != "jvm" || compilation.sourceSets.none { it.name == settings.sourceSet }) return null
+        if (parts.size != 3) return emptyList()
+        val owners = when (parts[2]) {
+            "ksp-test" -> listOfNotNull(byUri[targetUri(parts[0], parts[1], "test")]).filter {
+                it.target.nativeTestSettings != null && NativeTarget.find(parts[1]) != null
             }
+            "sqldelight" -> {
+                if (parts[1] != "jvm") return emptyList()
+                compilations.filter { compilation ->
+                    val settings = compilation.module.sqlDelight
+                    compilation.module.id == parts[0] && compilation.scope == "main" && settings != null &&
+                        compilation.sourceSets.any { it.name == settings.sourceSet }
+                }
+            }
+            else -> emptyList()
         }
-        return BspTarget(compilation.uri, parts[0], parts[1], scope)
+        return owners.map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
     }
 
     /** Generator owners in the requested build's prerequisite graph, including host compiler plugins.
@@ -93,8 +94,10 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         fun visit(module: String, platform: String, scope: String, includeRuntime: Boolean) {
             val compilation = byUri.getValue(targetUri(module, platform, scope))
             if (!visited.add(compilation.uri to includeRuntime)) return
-            val generator = if (scope == "main") "sqldelight" else "ksp-test"
-            generatedSourceTarget("$module:$platform:$generator")?.let { owners += it }
+            if (scope == "main") {
+                val shared = generatedSourceTargets("$module:jvm:sqldelight")
+                if (shared.any { it.uri == compilation.uri }) owners += shared
+            } else owners += generatedSourceTargets("$module:$platform:ksp-test")
             dependencyClosure(project, module, platform, scope,
                 if (includeRuntime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE).modules.forEach {
                 visit(it, platform, "main", false)
@@ -123,7 +126,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         require(sources.map { it.producer }.distinct().size == sources.size) { "Duplicate generated-source producer" }
         for (source in sources) {
             require(source.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated sources must belong to a retained BSP run" }
-            require(generatedSourceTarget(source.producer) == target) { "Unsupported generated-source producer for target" }
+            require(target in generatedSourceTargets(source.producer)) { "Unsupported generated-source producer for target" }
         }
         require(sources.flatMap { it.files.files }.map { it.path }.distinct().size == sources.sumOf { it.files.files.size }) {
             "Ambiguous generated-source logical paths"
@@ -147,11 +150,11 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     }
 
     /** Attribute source diagnostics without treating generator inputs as compiler source roots. */
-    fun diagnosticTarget(actionId: String): BspTarget? = actionTarget(actionId)
-        ?: if (actionId.endsWith(":sqldelight")) generatedSourceTarget(actionId) else null
+    fun diagnosticTargets(actionId: String): List<BspTarget> = actionTarget(actionId)?.let(::listOf)
+        ?: if (actionId.endsWith(":sqldelight")) generatedSourceTargets(actionId) else emptyList()
 
     fun diagnosticUri(actionId: String, path: String): String? {
-        val target = diagnosticTarget(actionId) ?: return null
+        val target = diagnosticTargets(actionId).firstOrNull() ?: return null
         if (actionTarget(actionId) != null) return if (path.endsWith(".kt")) sourceUri(target, path) else null
         return try {
             val logical = LogicalPath(path)

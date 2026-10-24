@@ -134,7 +134,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         if (record.freshnessAtCompletion != Freshness.CURRENT) return values
         val replayed = mutableListOf<Diagnostic>()
         for (action in record.actions) {
-            if (!action.successful || state.model.diagnosticTarget(action.actionId) == null) continue
+            if (!action.successful || state.model.diagnosticTargets(action.actionId).isEmpty()) continue
             val key = checkNotNull(action.key)
             if (action.status == ActionStatus.EXECUTED) {
                 actionDiagnostics.record(action.actionId, key, values.filter { it.actionId == action.actionId })
@@ -152,9 +152,9 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         for (diagnostic in values) {
             val path = diagnostic.path
             val actionId = diagnostic.actionId
-            val target = actionId?.let(state.model::diagnosticTarget)
+            val targets = actionId?.let(state.model::diagnosticTargets).orEmpty()
             val uri = if (path == null || actionId == null) null else state.model.diagnosticUri(actionId, path)
-            if (!fresh || path == null || diagnostic.line == null || diagnostic.column == null || target == null ||
+            if (!fresh || path == null || diagnostic.line == null || diagnostic.column == null || targets.isEmpty() ||
                 actionId == null || uri == null) { log(state, diagnostic.message); continue }
             val position = obj("line" to (diagnostic.line - 1).json(), "character" to (diagnostic.column - 1).json())
             val severity = if ("WARNING" in diagnostic.code) 2 else if ("INFO" in diagnostic.code) 3 else 1
@@ -164,10 +164,13 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         if (!fresh) return
         // A generator and its compiler can share a target. Completing one producer
         // must not clear diagnostics for another producer blocked by this build.
-        val completed = record.actions.filter { it.successful && state.model.diagnosticTarget(it.actionId) != null }.map { it.actionId }
-        val updates = (completed + files.keys).distinct().associateWith { actionId ->
-            BspActionDiagnostics(checkNotNull(state.model.diagnosticTarget(actionId)), files[actionId].orEmpty())
-        }
+        val completed = record.actions.filter { it.successful && state.model.diagnosticTargets(it.actionId).isNotEmpty() }.map { it.actionId }
+        val updates = (completed + files.keys).distinct().flatMap { actionId ->
+            state.model.diagnosticTargets(actionId).map { target ->
+                // The same host producer publishes independently for each consuming compilation.
+                "$actionId@${target.uri}" to BspActionDiagnostics(target, files[actionId].orEmpty())
+            }
+        }.toMap()
         publishedDiagnostics.replace(updates).forEach { notification(state, "build/publishDiagnostics", it) }
     }
 

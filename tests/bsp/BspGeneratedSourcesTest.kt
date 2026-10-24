@@ -27,7 +27,7 @@ class BspGeneratedSourcesTest {
         val model = model()
         val target = model.select(listOf(targetUri)).single()
         val source = sources()
-        assertEquals(target, model.generatedSourceTarget(source.producer))
+        assertEquals(listOf(target), model.generatedSourceTargets(source.producer))
         assertTrue(model.replaceGeneratedSources(target, listOf(source)))
         val result = model.sources(listOf(targetUri)).items("items").single()
         val generated = result.items("sources").single { it.objectValue().getValue("generated").booleanValue() }.objectValue()
@@ -81,7 +81,7 @@ class BspGeneratedSourcesTest {
     @Test fun undeclaredGeneratorsAndPathsOutsideRetainedRunsAreRejected() {
         val model = model(); val target = model.select(listOf(targetUri)).single()
         for (producer in listOf("lib:jvm:ksp-test", "lib:macosArm64:main", "missing:macosArm64:ksp-test", "lib:linuxX64:ksp-test")) {
-            assertNull(model.generatedSourceTarget(producer))
+            assertTrue(model.generatedSourceTargets(producer).isEmpty())
             assertFails { model.replaceGeneratedSources(target, listOf(sources().copy(producer = producer))) }
         }
         assertFails { model.replaceGeneratedSources(target.copy(module = "other"), listOf(sources())) }
