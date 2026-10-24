@@ -3,6 +3,7 @@
 package kvik.toolchains
 
 import kotlinx.cinterop.*
+import kvik.files.platform.*
 import platform.posix.*
 import kvik.core.*
 import kvik.toolchains.hash.*
@@ -56,10 +57,10 @@ private fun names(path: String, limit: Int, checkpoint: () -> Unit): List<String
         val result = mutableListOf<String>()
         while (true) {
             checkpoint()
-            __error()!!.pointed.value = 0
+            set_posix_errno(0)
             val entry = readdir(directory)
             if (entry == null) { if (errno != 0) ioFailure("readdir $path"); break }
-            val name = entry.pointed.d_name.readBytes(entry.pointed.d_namlen.toInt()).decodeToString(throwOnInvalidSequence = true)
+            val name = entry.pointed.d_name.readBytes(strlen(entry.pointed.d_name).toInt()).decodeToString(throwOnInvalidSequence = true)
             if (name == "." || name == "..") continue
             require(result.size < limit) { "Directory entry limit exceeded: $path" }
             result += name
@@ -155,8 +156,8 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
                                 }
                                 if (fstat(fd, after.ptr) != 0) ioFailure("fstat $path")
                                 require(before.st_size == digest.sizeBytes && before.st_size == after.st_size && before.st_mode == after.st_mode &&
-                                    before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec && before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec &&
-                                    before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec && before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec) { "File changed during inventory: $path" }
+                                    kvik_files_mtime_seconds(before.ptr) == kvik_files_mtime_seconds(after.ptr) && kvik_files_mtime_nanoseconds(before.ptr) == kvik_files_mtime_nanoseconds(after.ptr) &&
+                                    kvik_files_ctime_seconds(before.ptr) == kvik_files_ctime_seconds(after.ptr) && kvik_files_ctime_nanoseconds(before.ptr) == kvik_files_ctime_nanoseconds(after.ptr)) { "File changed during inventory: $path" }
                                 emit(obj("path" to relative.json(), "digest" to digest.toJson(), "executable" to (before.st_mode.toInt() and 73 != 0).json()))
                                 files++; fileBytes += digest.sizeBytes
                                 if (capture) settings = captured

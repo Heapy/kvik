@@ -2,6 +2,13 @@ package kvik.foreground
 
 import kvik.core.*
 
+@OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+fun terminalLeasePlatform(): String = when (kotlin.native.Platform.osFamily to kotlin.native.Platform.cpuArchitecture) {
+    kotlin.native.OsFamily.MACOSX to kotlin.native.CpuArchitecture.ARM64 -> "macos-arm64"
+    kotlin.native.OsFamily.LINUX to kotlin.native.CpuArchitecture.X64 -> "linux-x64"
+    else -> error("Unsupported terminal lease host")
+}
+
 /** A replacement must explicitly accept a live terminal lease before raw-mode exec. */
 fun requireKeySessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, leaseBytes: Int) {
     requireSessionCapabilities(bytes, selected, 2, leaseBytes)
@@ -24,7 +31,7 @@ fun requireSessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, vers
     val terminal = fields.getValue("terminalLease").fields(setOf("schemaVersion", "platform", "sizeBytes"))
     terminal.requireVersion()
     val size = terminal.getValue("sizeBytes").longValue()
-    require(terminal.getValue("platform").stringValue() == "macos-arm64" && size in 1..2048 && (leaseBytes == null || size == leaseBytes.toLong())) {
+    require(terminal.getValue("platform").stringValue() == terminalLeasePlatform() && size in 1..2048 && (leaseBytes == null || size == leaseBytes.toLong())) {
         "Replacement terminal lease is incompatible"
     }
 }

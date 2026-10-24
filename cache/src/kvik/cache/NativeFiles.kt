@@ -3,6 +3,7 @@
 package kvik.cache
 
 import kotlinx.cinterop.*
+import kvik.files.platform.*
 import platform.posix.*
 
 class CacheFailure(message: String) : Exception(message)
@@ -108,14 +109,14 @@ internal object NativeFiles {
         try {
             val names = mutableListOf<String>()
             while (true) {
-                __error()!!.pointed.value = 0
+                set_posix_errno(0)
                 val entry = readdir(handle)
                 if (entry == null) {
                     if (errno != 0) fail("readdir $directory")
                     break
                 }
                 val raw = entry.pointed.d_name
-                val name = raw.readBytes(entry.pointed.d_namlen.toInt()).decodeToString(throwOnInvalidSequence = true)
+                val name = raw.readBytes(strlen(entry.pointed.d_name).toInt()).decodeToString(throwOnInvalidSequence = true)
                 if (name != "." && name != "..") names += name
             }
             return names.sorted()
@@ -143,8 +144,8 @@ internal object NativeFiles {
         } finally { removeTree(stage) }
     }
     fun exposeDirectory(stage: String, destination: String) {
-        // macOS exclusive rename gives atomic visibility without overwriting even an empty directory.
-        if (renamex_np(stage, destination, RENAME_EXCL.toUInt()) != 0) fail("expose $destination")
+        // Exclusive rename gives atomic visibility without overwriting even an empty directory.
+        if (kvik_files_rename_exclusive(stage, destination) != 0) fail("expose $destination")
         syncDirectory(destination.substringBeforeLast('/'))
     }
 }

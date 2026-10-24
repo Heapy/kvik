@@ -10,6 +10,9 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args, files_interop_inputs
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT))
 from bootstrap.identity import file_digest
@@ -44,7 +47,7 @@ def main():
     tests = sorted((ROOT / 'tests/script-executor').glob('*.kt'))
     fixture = ROOT / 'tests/script-executor/fixture/Main.kt'
     platform = ROOT / 'execution/platform'
-    inputs = [*sources, *tests, fixture, *sorted(platform.glob('*')), Path(__file__).resolve(),
+    inputs = [*files_interop_inputs(ROOT), *sources, *tests, fixture, *sorted(platform.glob('*')), Path(__file__).resolve(),
         ROOT / 'bootstrap/jvm-artifacts.lock.json', *sorted((ROOT / 'bootstrap').glob('*.py'))]
     tools = [java, clang, Path('/usr/bin/ar'), Path('/usr/bin/xcrun'), konan / 'bin/konanc', konan / 'bin/cinterop',
         konan / 'bin/run_konan', konan / 'tools/env_blacklist', *sorted((konan / 'konan/lib').glob('*.jar')), *artifacts.values()]
@@ -73,7 +76,8 @@ def main():
             '-compiler-option', '-isysroot', '-compiler-option', sdk,
             '-libraryPath', case, '-target', 'macos_arm64', '-o', case / 'process'])
         executable = case / 'tests.kexe'
-        run('native-compile', [konan / 'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
+        run('files-interop', files_interop_command(ROOT, konan, case))
+        run('native-compile', [konan / 'bin/konanc', *files_library_args(case), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
             '-library', case / 'process.klib', '-generate-test-runner', '-o', executable, *sources, *tests])
         receipt['binaries'] = {name: file_digest(case / name) for name in ('tests.kexe', 'guardian', 'process.klib', 'libkvik-process.a')}
         evidence = case / 'scenarios'; evidence.mkdir()

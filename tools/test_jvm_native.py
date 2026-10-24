@@ -12,6 +12,10 @@ from test_jvm import acquire, acquire_jacoco_cli, canonical, digest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def json_digest(value):
     data = canonical(value)
@@ -82,7 +86,8 @@ def main():
     command(["ar", "rcs", output / "libkvik-process.a", output / "process.o"])
     command([args.konan_home / "bin/cinterop", "-def", platform / "process.def", "-compiler-option", f"-I{platform}", "-libraryPath", output, "-target", "macos_arm64", "-o", output / "process"])
     sources = [p for base in ("core/src", "execution/src", "cache/src", "compiler/jvm/native/src") for p in sorted((ROOT / base).rglob("*.kt"))]
-    base = [args.konan_home / "bin/konanc", "-target", "macos_arm64", "-library", output / "process.klib", *sources]
+    command(files_interop_command(ROOT, args.konan_home, output))
+    base = [args.konan_home / "bin/konanc", *files_library_args(output), "-target", "macos_arm64", "-library", output / "process.klib", *sources]
     command([*base, ROOT / "tests/jvm-native/BridgeUnitTest.kt", "-generate-test-runner", "-o", output / "unit.kexe"])
     command([output / "unit.kexe"])
     command([*base, ROOT / "tests/jvm-native/BridgeProbe.kt", "-entry", "kvik.compiler.jvm.probe.main", "-o", output / "probe.kexe"])

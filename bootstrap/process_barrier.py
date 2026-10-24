@@ -189,10 +189,40 @@ class _ShortProcessInfo(ctypes.Structure):
     _fields_ += [(name, ctypes.c_uint32) for name in ("flags", "uid", "gid", "ruid", "rgid", "svuid", "svgid", "reserved")]
 
 
+def _linux_group_alive(group, proc_root="/proc"):
+    """Inspect procfs without treating failed reads as an empty process group."""
+    try:
+        with os.scandir(proc_root) as entries:
+            for count, entry in enumerate(entries):
+                if count >= 262144:
+                    raise OwnershipError("Process inventory exceeds bound")
+                if not entry.name.isascii() or not entry.name.isdecimal():
+                    continue
+                try:
+                    with open(os.path.join(entry.path, "stat"), "rb") as source:
+                        data = source.read(4097)
+                except (FileNotFoundError, ProcessLookupError):
+                    continue  # The process exited between listing and observation.
+                if len(data) > 4096:
+                    raise OwnershipError("Process stat exceeds bound")
+                prefix, separator, tail = data.rpartition(b") ")
+                fields = tail.split()
+                if (not separator or not prefix.startswith(entry.name.encode() + b" (") or
+                        len(fields) < 3 or len(fields[0]) != 1 or not fields[2].isdigit()):
+                    raise OwnershipError("Invalid process stat")
+                if int(fields[2]) == group and fields[0] not in (b"Z", b"X"):
+                    return True
+    except OSError as failure:
+        raise OwnershipError(f"Cannot inventory owned process group: {failure}") from failure
+    return False
+
+
 def group_alive(group):
-    """Bounded Darwin snapshot; errors never mean an empty group."""
+    """Bounded host snapshot; errors never mean an empty group."""
+    if sys.platform == "linux":
+        return _linux_group_alive(group)
     if sys.platform != "darwin":
-        raise OwnershipError("Bootstrap recursive cleanup requires the Darwin process API")
+        raise OwnershipError("Unsupported bootstrap process inventory host")
     library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
     listing = library.proc_listpids
     listing.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]

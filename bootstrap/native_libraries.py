@@ -15,7 +15,7 @@ def c_toolchain(roots):
         directory = roots['xcodeToolchain'] / 'usr/bin'
         return directory / 'clang', directory / 'ar', ['-D_DARWIN_C_SOURCE', '-isysroot', roots['sdk']]
     directory = roots['system'] / 'bin'
-    return directory / 'clang', directory / 'ar', ['-D_GNU_SOURCE']
+    return directory / 'clang', directory / 'ar', ['-D_GNU_SOURCE', '-pthread']
 
 
 def interop_options(roots):

@@ -90,7 +90,7 @@ private fun nativeLibraries(layout: NativeToolchainLayout): List<String> = memSc
     val names = mutableListOf<String>()
     try {
         while (true) {
-            __error()!!.pointed.value = 0
+            set_posix_errno(0)
             val entry = readdir(stream)
             if (entry == null) { check(errno == 0); break }
             val name = entry.pointed.d_name.toKString()

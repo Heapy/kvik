@@ -27,6 +27,7 @@ class InstalledNativeToolchainProvider(
         val requested = identities.toMap()
         require(requested.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Native tool identities require exactly native, jdk, sdk and native-dependencies" }
         val installed = InstalledToolchainVerifier().verify(trustedToolLock, toolRoots, checkpoint)
+        require(installed.host.os == "Darwin" && installed.host.architecture == "arm64") { "macosArm64 compilation requires a Darwin arm64 host" }
         val native = installed[ToolComponent.KOTLIN_NATIVE]
         val jdk = installed[ToolComponent.JDK]
         val sdk = installed[ToolComponent.SDK]

@@ -14,6 +14,10 @@ from audit_workspace_plugins import audit
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -59,7 +63,8 @@ def main():
         sources = [p for base in ['core/src', 'execution/src', 'cache/src', 'compiler/jvm/native/src', 'resolution/src', 'integration/resolution/src', 'integration/project-graph/src', 'integration/library/src', 'integration/action-cache/src', 'integration/application/src'] for p in sorted((ROOT / base).rglob('*.kt'))]
         sources += [ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt',
                     ROOT / 'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt', ROOT / 'tests/workspace-plugins/GraphProbe.kt']
-        command([args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-library', output / 'process.klib', '-library', output / 'resolution.klib', '-entry', 'kvik.workspaceplugins.main', '-o', output / 'probe.kexe', *sources])
+        command(files_interop_command(ROOT, args.konan_home, output))
+        command([args.konan_home / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-library', output / 'process.klib', '-library', output / 'resolution.klib', '-entry', 'kvik.workspaceplugins.main', '-o', output / 'probe.kexe', *sources])
     compiler = dict(schemaVersion=1, version='2.4.20', artifacts=[dict(path=p.name, digest=digest(p)) for p in jars.values()], serializationPlugin=digest(plugin))
     manifest = output / 'compiler-manifest.json'
     manifest.write_bytes(canonical(compiler))

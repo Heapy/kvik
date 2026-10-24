@@ -69,7 +69,7 @@ class ApplicationProtocolTest {
         val selected = BootstrapLaunch.parse(launchBytes)
         fun capabilities(versions: List<Int>) = obj("schemaVersion" to 1.json(), "composition" to digest.toJson(),
             "runtime" to selected.runtime.json(), "processOwnershipVersion" to 1.json(), "resumeVersions" to versions.map { it.json() }.json(),
-            "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to "macos-arm64".json(), "sizeBytes" to 256.json())).canonical().encodeToByteArray()
+            "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to terminalLeasePlatform().json(), "sizeBytes" to 256.json())).canonical().encodeToByteArray()
         assertFails { requireSessionCapabilities(capabilities(listOf(1, 2)), selected, 3) }
         requireSessionCapabilities(capabilities(listOf(1, 2, 3)), selected, 3)
         val complete = parseJson(capabilities(listOf(1, 2, 3)).decodeToString()).objectValue()

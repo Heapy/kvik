@@ -12,7 +12,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 from bootstrap.identity import canonical, digest, inventory
 from bootstrap.pin_tools import tool_roots
 
@@ -34,7 +36,8 @@ def main():
                     '-target', 'macos_arm64', '-o', str(library)], env=env, check=True)
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'integration/toolchains/src').rglob('*.kt')) + sorted((ROOT / 'tests/toolchains').rglob('*.kt'))
     executable = output / 'toolchains.kexe'
-    subprocess.run([str(native / 'konanc'), '-target', 'macos_arm64', '-entry', 'kvik.toolchains.tests.main', '-library', str(library),
+    subprocess.run(files_interop_command(ROOT, args.konan_home, output), env=env, check=True)
+    subprocess.run([str(native / 'konanc'), *files_library_args(output), '-target', 'macos_arm64', '-entry', 'kvik.toolchains.tests.main', '-library', str(library),
                     '-o', str(executable), *map(str, sources)], env=env, check=True)
     process = subprocess.Popen([str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     count = 0

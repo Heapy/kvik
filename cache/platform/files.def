@@ -1,0 +1,5 @@
+headers = files.h
+headerFilter = files.h
+package = kvik.files.platform
+
+compilerOpts.linux = -D_GNU_SOURCE

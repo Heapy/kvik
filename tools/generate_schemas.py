@@ -254,10 +254,10 @@ DEFS["sourceGraphNativeArtifact"] = object_({"id": SOURCE_ID,
     "providedDependencies": array({"const": "stdlib"}, maxItems=1, uniqueItems=True)})
 for suffix in ("Input", "Observed"):
     DEFS["sourceGraph" + suffix] = object_({"schemaVersion": {"const": 1}, "implementation": {"const": "kvik-source-graph-v1"},
-        "pluginApiVersion": {"const": 1}, "target": {"const": "macos_arm64"}, "kotlinVersion": {"const": "2.4.20"},
+        "pluginApiVersion": {"const": 1}, "target": enum("macos_arm64", "linux_x64"), "kotlinVersion": {"const": "2.4.20"},
         "sources": array(ref("sourceGraphNode" + suffix), minItems=1, maxItems=64),
         "runtime": object_({"source": SOURCE_ID, "nativePlatform": SOURCE_PATH,
-            "nativeLibraries": array(enum("resolution", "toolchains", "remote"), maxItems=3, uniqueItems=True),
+            "nativeLibraries": array(enum("files", "resolution", "toolchains", "remote"), maxItems=4, uniqueItems=True),
             "jvmWorkerSources": {"const": "compiler/jvm/src"}}),
         "plugins": array(object_({"id": {"type": "string", "maxLength": 128, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"},
             "source": SOURCE_ID, "implementation": {"type": "string", "maxLength": 1024,
@@ -265,7 +265,7 @@ for suffix in ("Input", "Observed"):
         "nativeArtifacts": array(ref("sourceGraphNativeArtifact"), maxItems=128),
         "providedLibraries": array({"const": {"id": "stdlib", "toolchain": "kotlinNative", "path": "klib/common/stdlib", "uniqueName": "stdlib"}}, maxItems=1),
         "nativeLibraryOrder": array(SOURCE_ID, maxItems=128, uniqueItems=True),
-        "compilerOptions": array(enum("-target", "macos_arm64", "-entry", "kvik.cli.main", "-opt", "-g"), minItems=4, maxItems=6, uniqueItems=True)})
+        "compilerOptions": array(enum("-target", "macos_arm64", "linux_x64", "-entry", "kvik.cli.main", "-opt", "-g"), minItems=4, maxItems=6, uniqueItems=True)})
     DEFS["sourceGraph" + suffix]["description"] = (
         "Structural source graph contract. Semantic validation must additionally check sorted unique IDs/lists, "
         "acyclic reachable dependency closures, exact library order, directory coverage, normalized nonoverlapping paths, "
@@ -282,11 +282,17 @@ _graph_runtime.update(schemaVersion={"const": 2}, sourceGraph=versioned({"inputL
 DEFS["runtimeLockV2"] = object_(_graph_runtime)
 DEFS["runtimeLock"] = {"oneOf": [ref("runtimeLockV1"), ref("runtimeLockV2")]}
 TOOL_COMPONENTS = ("jdk", "kotlinNative", "llvm", "libffi", "sdk", "xcodeToolchain")
-DEFS["installedToolLock"] = versioned({"kotlinVersion": {"const": "2.4.20"},
+DEFS["installedDarwinToolLock"] = versioned({"kotlinVersion": {"const": "2.4.20"},
     "host": object_({"os": {"const": "Darwin"}, "architecture": {"const": "arm64"}, "release": NONEMPTY, "sdk": NONEMPTY}),
     "components": object_({name: ref("digest") for name in TOOL_COMPONENTS})})
-DEFS["toolInstallation"] = versioned({"toolLock": ref("installedToolLock"),
-    "roots": object_({name: NONEMPTY for name in TOOL_COMPONENTS}), "konanData": NONEMPTY, "compilerArtifacts": NONEMPTY})
+LINUX_TOOL_COMPONENTS = ("jdk", "kotlinNative", "llvm", "libffi", "nativeToolchain", "system")
+DEFS["installedLinuxToolLock"] = versioned({"kotlinVersion": {"const": "2.4.20"},
+    "host": object_({"os": {"const": "Linux"}, "architecture": {"const": "x86_64"}, "release": NONEMPTY, "sdk": {"const": ""}}),
+    "components": object_({name: ref("digest") for name in LINUX_TOOL_COMPONENTS})})
+DEFS["installedToolLock"] = {"oneOf": [ref("installedDarwinToolLock"), ref("installedLinuxToolLock")]}
+DEFS["toolInstallation"] = {"oneOf": [versioned({"toolLock": ref(lock),
+    "roots": object_({name: NONEMPTY for name in components}), "konanData": NONEMPTY, "compilerArtifacts": NONEMPTY})
+    for lock, components in (("installedDarwinToolLock", TOOL_COMPONENTS), ("installedLinuxToolLock", LINUX_TOOL_COMPONENTS))]}
 DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1})})
 DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest")), "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"), "outputs": ref("tree"), "exitCode": nullable({"type": "integer"}), "diagnostic": nullable(STRING)})
 DEFS["actionResult"]["allOf"] = [{"if": {"properties": {"status": enum("executed", "local_hit", "remote_hit")}}, "then": {"properties": {"key": ref("digest"), "exitCode": {"const": 0}}}}]

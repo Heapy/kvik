@@ -7,6 +7,10 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -37,7 +41,8 @@ def main():
         'resolution/src/kvik/resolution/ResolutionGraph.kt', 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt',
         'compiler/jvm/native/src/kvik/compiler/jvm/JvmScriptActions.kt', 'compiler/native/src/kvik/compiler/native/NativeActions.kt',
         'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt', 'integration/application/src/kvik/application/ApplicationActions.kt')]
-    commands.append([args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
+    commands.append(files_interop_command(ROOT, args.konan_home, output))
+    commands.append([args.konan_home / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
                      '-library', output / 'process.klib', '-generate-test-runner', '-o', output / 'tests.kexe', *sources])
     with (output / 'compile.log').open('wb') as log:
         for command in commands:

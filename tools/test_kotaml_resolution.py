@@ -9,6 +9,10 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -27,7 +31,8 @@ def main():
     sources = [path for directory in ('core/src', 'cache/src', 'resolution/src', 'integration/resolution/src')
                for path in sorted((ROOT/directory).rglob('*.kt'))]
     sources.append(ROOT/'tests/resolution/probes/KotamlResolutionProbe.kt')
-    subprocess.run([args.konan_home/'bin/konanc', '-target', 'macos_arm64', '-entry', 'kvik.resolution.probe.main', '-library', output/'resolution.klib',
+    subprocess.run(files_interop_command(ROOT, args.konan_home, output), env=env, check=True)
+    subprocess.run([args.konan_home/'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-entry', 'kvik.resolution.probe.main', '-library', output/'resolution.klib',
         '-o', output/'probe.kexe', *sources], env=env, check=True)
     print('Native resolver evidence:', work, flush=True)
     with (work/'stdout.log').open('w') as stdout, (work/'stderr.log').open('w') as stderr:

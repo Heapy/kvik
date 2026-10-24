@@ -12,7 +12,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 from bootstrap.identity import canonical, digest, inventory
 from bootstrap.pin_tools import tool_roots
 
@@ -29,6 +31,7 @@ def main():
     env = dict(os.environ, JAVA_HOME=str(args.java_home.resolve()))
     native = args.konan_home.resolve() / 'bin'
     def command(parts): subprocess.run(list(map(str, parts)), env=env, check=True)
+    command(files_interop_command(ROOT, args.konan_home, output))
     boundary = ROOT / 'integration/toolchains/platform'
     command([native / 'cinterop', '-def', boundary / 'stream_hash.def', '-compiler-option', '-I' + str(boundary),
              '-target', 'macos_arm64', '-o', output / 'stream_hash'])
@@ -41,7 +44,7 @@ def main():
                               'integration/compiler-tools/src', 'tests/compiler-tools') for p in sorted((ROOT / base).rglob('*.kt'))]
     sources += [ROOT / 'cli/src/kvik/cli/RuntimeWorkers.kt', ROOT / 'cli/src/kvik/cli/RuntimeProcesses.kt']
     executable = output / 'compiler-tools.kexe'
-    command([native / 'konanc', '-target', 'macos_arm64', '-library', output / 'process.klib', '-library', output / 'stream_hash.klib',
+    command([native / 'konanc', *files_library_args(output), '-target', 'macos_arm64', '-library', output / 'process.klib', '-library', output / 'stream_hash.klib',
              '-entry', 'kvik.compilertools.tests.main', '-o', executable, *sources])
     child = subprocess.Popen([str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     count = 0

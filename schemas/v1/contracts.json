@@ -2682,7 +2682,10 @@
           "const": 1
         },
         "target": {
-          "const": "macos_arm64"
+          "enum": [
+            "macos_arm64",
+            "linux_x64"
+          ]
         },
         "kotlinVersion": {
           "const": "2.4.20"
@@ -2712,12 +2715,13 @@
               "type": "array",
               "items": {
                 "enum": [
+                  "files",
                   "resolution",
                   "toolchains",
                   "remote"
                 ]
               },
-              "maxItems": 3,
+              "maxItems": 4,
               "uniqueItems": true
             },
             "jvmWorkerSources": {
@@ -2795,6 +2799,7 @@
             "enum": [
               "-target",
               "macos_arm64",
+              "linux_x64",
               "-entry",
               "kvik.cli.main",
               "-opt",
@@ -2836,7 +2841,10 @@
           "const": 1
         },
         "target": {
-          "const": "macos_arm64"
+          "enum": [
+            "macos_arm64",
+            "linux_x64"
+          ]
         },
         "kotlinVersion": {
           "const": "2.4.20"
@@ -2866,12 +2874,13 @@
               "type": "array",
               "items": {
                 "enum": [
+                  "files",
                   "resolution",
                   "toolchains",
                   "remote"
                 ]
               },
-              "maxItems": 3,
+              "maxItems": 4,
               "uniqueItems": true
             },
             "jvmWorkerSources": {
@@ -2949,6 +2958,7 @@
             "enum": [
               "-target",
               "macos_arm64",
+              "linux_x64",
               "-entry",
               "kvik.cli.main",
               "-opt",
@@ -3134,7 +3144,7 @@
       ],
       "additionalProperties": false
     },
-    "installedToolLock": {
+    "installedDarwinToolLock": {
       "type": "object",
       "properties": {
         "schemaVersion": {
@@ -3210,41 +3220,60 @@
       ],
       "additionalProperties": false
     },
-    "toolInstallation": {
+    "installedLinuxToolLock": {
       "type": "object",
       "properties": {
         "schemaVersion": {
           "const": 1
         },
-        "toolLock": {
-          "$ref": "#/$defs/installedToolLock"
+        "kotlinVersion": {
+          "const": "2.4.20"
         },
-        "roots": {
+        "host": {
           "type": "object",
           "properties": {
-            "jdk": {
-              "type": "string",
-              "pattern": "\\S"
+            "os": {
+              "const": "Linux"
             },
-            "kotlinNative": {
-              "type": "string",
-              "pattern": "\\S"
+            "architecture": {
+              "const": "x86_64"
             },
-            "llvm": {
-              "type": "string",
-              "pattern": "\\S"
-            },
-            "libffi": {
+            "release": {
               "type": "string",
               "pattern": "\\S"
             },
             "sdk": {
-              "type": "string",
-              "pattern": "\\S"
+              "const": ""
+            }
+          },
+          "required": [
+            "os",
+            "architecture",
+            "release",
+            "sdk"
+          ],
+          "additionalProperties": false
+        },
+        "components": {
+          "type": "object",
+          "properties": {
+            "jdk": {
+              "$ref": "#/$defs/digest"
             },
-            "xcodeToolchain": {
-              "type": "string",
-              "pattern": "\\S"
+            "kotlinNative": {
+              "$ref": "#/$defs/digest"
+            },
+            "llvm": {
+              "$ref": "#/$defs/digest"
+            },
+            "libffi": {
+              "$ref": "#/$defs/digest"
+            },
+            "nativeToolchain": {
+              "$ref": "#/$defs/digest"
+            },
+            "system": {
+              "$ref": "#/$defs/digest"
             }
           },
           "required": [
@@ -3252,28 +3281,163 @@
             "kotlinNative",
             "llvm",
             "libffi",
-            "sdk",
-            "xcodeToolchain"
+            "nativeToolchain",
+            "system"
           ],
           "additionalProperties": false
-        },
-        "konanData": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "compilerArtifacts": {
-          "type": "string",
-          "pattern": "\\S"
         }
       },
       "required": [
         "schemaVersion",
-        "toolLock",
-        "roots",
-        "konanData",
-        "compilerArtifacts"
+        "kotlinVersion",
+        "host",
+        "components"
       ],
       "additionalProperties": false
+    },
+    "installedToolLock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/installedDarwinToolLock"
+        },
+        {
+          "$ref": "#/$defs/installedLinuxToolLock"
+        }
+      ]
+    },
+    "toolInstallation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "toolLock": {
+              "$ref": "#/$defs/installedDarwinToolLock"
+            },
+            "roots": {
+              "type": "object",
+              "properties": {
+                "jdk": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "kotlinNative": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "llvm": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "libffi": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "sdk": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "xcodeToolchain": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              },
+              "required": [
+                "jdk",
+                "kotlinNative",
+                "llvm",
+                "libffi",
+                "sdk",
+                "xcodeToolchain"
+              ],
+              "additionalProperties": false
+            },
+            "konanData": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "compilerArtifacts": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "toolLock",
+            "roots",
+            "konanData",
+            "compilerArtifacts"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "toolLock": {
+              "$ref": "#/$defs/installedLinuxToolLock"
+            },
+            "roots": {
+              "type": "object",
+              "properties": {
+                "jdk": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "kotlinNative": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "llvm": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "libffi": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "nativeToolchain": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "system": {
+                  "type": "string",
+                  "pattern": "\\S"
+                }
+              },
+              "required": [
+                "jdk",
+                "kotlinNative",
+                "llvm",
+                "libffi",
+                "nativeToolchain",
+                "system"
+              ],
+              "additionalProperties": false
+            },
+            "konanData": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "compilerArtifacts": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "toolLock",
+            "roots",
+            "konanData",
+            "compilerArtifacts"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "diagnostic": {
       "type": "object",

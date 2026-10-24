@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the native cache driver and exercise real filesystems and competing native processes."""
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -9,6 +10,10 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 
 
 def main():
@@ -20,7 +25,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     executable = output / 'cache.kexe'
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'tests/cache').rglob('*.kt'))
-    subprocess.run([str(args.konan_home.resolve() / 'bin/konanc'), '-target', 'macos_arm64', '-entry', 'kvik.cache.tests.main', '-o', str(executable), *map(str, sources)],
+    subprocess.run(files_interop_command(ROOT, args.konan_home, output), env=dict(os.environ, JAVA_HOME=str(args.java_home.resolve())), check=True)
+    subprocess.run([str(args.konan_home.resolve() / 'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64', '-entry', 'kvik.cache.tests.main', '-o', str(executable), *map(str, sources)],
                    env=dict(os.environ, JAVA_HOME=str(args.java_home.resolve())), check=True)
     count = 0
     with tempfile.TemporaryDirectory(prefix='kvik-cache-') as raw:
@@ -148,6 +154,24 @@ def main():
                 run('restore', manifest((left, 'hello', False), (right, 'hello', False)), root / ('distinct-' + left))
             (probe / left).unlink()
         passed('actual-filesystem case and Unicode normalization alias handling')
+
+        # POSIX byte names must remain strict UTF-8 after replacing Darwin d_namlen.
+        invalid_names = root / 'invalid-names'
+        invalid_names.mkdir()
+        invalid_path = os.fsencode(invalid_names) + b'/\xff'
+        try:
+            descriptor = os.open(invalid_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError as error:
+            if error.errno not in (errno.EPERM, errno.EINVAL, errno.EILSEQ):
+                raise
+            print(f'SKIP invalid UTF-8 filename probe: filesystem refused creation (errno={error.errno})', flush=True)
+        else:
+            os.close(descriptor)
+            try:
+                run('capture', invalid_names, succeeds=False)
+            finally:
+                os.unlink(invalid_path)
+            passed('invalid UTF-8 directory names are rejected')
 
         forbidden = root / 'forbidden'
         forbidden.mkdir()

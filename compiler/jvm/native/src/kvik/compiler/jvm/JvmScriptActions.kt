@@ -46,7 +46,7 @@ fun jvmScriptAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: 
         it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/")
     }) { "Undeclared script classpath: ${path.value}" }
     require(inputs.files.any { it.path.value.startsWith(launch.scriptClasses.value + "/") && it.path.value.endsWith(".class") }) { "No compiled script classes" }
-    return ActionSpec("kvik-jvm-script-v1", composition, ActionKind.SCRIPT, mapOf("os" to "macos", "arch" to "arm64"), "jvm",
+    return ActionSpec("kvik-jvm-script-v1", composition, ActionKind.SCRIPT, jvmHostPlatform(), "jvm",
         toolchains.toMap(), TreeManifest(inputs.files.toList()), emptyList(), launch.arguments.toList(), environment.toMap(),
         launch.toJson(), timeoutMillis, CachePolicy.NEVER)
 }

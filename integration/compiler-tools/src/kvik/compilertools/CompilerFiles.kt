@@ -3,6 +3,7 @@
 package kvik.compilertools
 
 import kotlinx.cinterop.*
+import kvik.files.platform.*
 import platform.posix.*
 import kvik.core.Digest
 import kvik.toolchains.StreamHash
@@ -16,10 +17,10 @@ internal object CompilerFiles {
             val names = mutableListOf<String>()
             while (true) {
                 checkpoint()
-                __error()!!.pointed.value = 0
+                set_posix_errno(0)
                 val entry = readdir(handle)
                 if (entry == null) { check(errno == 0) { "Cannot read directory: $directory" }; break }
-                val name = entry.pointed.d_name.readBytes(entry.pointed.d_namlen.toInt()).decodeToString(throwOnInvalidSequence = true)
+                val name = entry.pointed.d_name.readBytes(strlen(entry.pointed.d_name).toInt()).decodeToString(throwOnInvalidSequence = true)
                 if (name == "." || name == "..") continue
                 require(names.size < 8192) { "Compiler tool directory exceeds 8192 entries" }
                 names += name
@@ -52,8 +53,8 @@ internal object CompilerFiles {
             }
             check(fstat(fd, after.ptr) == 0)
             require(before.st_size == digest.sizeBytes && after.st_size == before.st_size && after.st_mode == before.st_mode &&
-                before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec && before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec &&
-                before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec && before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec) { "Compiler tool changed while hashing: $path" }
+                kvik_files_mtime_seconds(before.ptr) == kvik_files_mtime_seconds(after.ptr) && kvik_files_mtime_nanoseconds(before.ptr) == kvik_files_mtime_nanoseconds(after.ptr) &&
+                kvik_files_ctime_seconds(before.ptr) == kvik_files_ctime_seconds(after.ptr) && kvik_files_ctime_nanoseconds(before.ptr) == kvik_files_ctime_nanoseconds(after.ptr)) { "Compiler tool changed while hashing: $path" }
             checkpoint()
             digest
         } finally { close(fd) }

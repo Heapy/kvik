@@ -18,7 +18,9 @@ import tempfile
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args, files_interop_inputs
 from bootstrap.launcher import run_owned
 
 
@@ -68,19 +70,19 @@ def main():
     java = args.java_home.resolve(strict=True); native = args.konan_home.resolve(strict=True)
     output = ROOT / '.kvik/tests/script-resolution'; output.mkdir(parents=True, exist_ok=True)
     binary = output / 'unit.kexe'; receipt = output / 'build.json'; compile_log = output / 'compile.log'
-    command = [str(native / 'bin/konanc'), '-target', 'macos_arm64',
+    command = [str(native / 'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64',
                '-Xoverride-konan-properties=airplaneMode=true', '-generate-test-runner', '-o', str(binary), *map(str, sources())]
     environment = dict(PATH='/usr/bin:/bin:/usr/sbin:/sbin', JAVA_HOME=str(java), HOME=str(Path.home().resolve()),
         KONAN_DATA_DIR=str((Path.home() / '.konan').resolve()), DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
         TMPDIR=str(Path(tempfile.gettempdir()).resolve()), LANG='C', LC_ALL='C', TZ='UTC', KONAN_USE_INTERNAL_SERVER='0')
-    tools = [java / 'bin/java', native / 'bin/konanc', native / 'bin/run_konan', native / 'tools/env_blacklist',
+    tools = [native/'bin/cinterop', java / 'bin/java', native / 'bin/konanc', native / 'bin/run_konan', native / 'tools/env_blacklist',
              *sorted((native / 'konan/lib').glob('*.jar'))]
     def identity():
         return dict(command=command, environment=environment,
             sources={str(path.relative_to(ROOT)): digest(path) for path in sources()},
             compilerInputs={str(path): digest(path) for path in tools},
             harnessInputs={str(path.relative_to(ROOT)): digest(path) for path in
-                [Path(__file__).resolve(), *sorted((ROOT / 'bootstrap').glob('*.py'))]})
+                [Path(__file__).resolve(), *files_interop_inputs(ROOT), *sorted((ROOT / 'bootstrap').glob('*.py'))]})
     stamp = identity()
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
     (case / 'build-inputs.json').write_text(json.dumps(stamp, indent=2) + '\n')
@@ -92,6 +94,7 @@ def main():
         (output / 'build-inputs.json').write_text(json.dumps(stamp, indent=2) + '\n')
         try:
             with (case / 'compile.log').open('w') as log:
+                run_owned(files_interop_command(ROOT, native, output), environment, log, timeout=300)
                 run_owned(command, environment, log, timeout=300)
         except BaseException as failure:
             (case / 'summary.json').write_text(json.dumps(dict(passed=False, phase='compile', error=str(failure),

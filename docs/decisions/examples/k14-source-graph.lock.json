@@ -17,6 +17,7 @@
         }
       },
       "contentPaths": [
+        "cache/platform",
         "cache/remote/platform",
         "cache/remote/src",
         "cache/src",
@@ -151,9 +152,10 @@
     "source": "kvik",
     "nativePlatform": "execution/platform",
     "nativeLibraries": [
+      "files",
+      "remote",
       "resolution",
-      "toolchains",
-      "remote"
+      "toolchains"
     ],
     "jvmWorkerSources": "compiler/jvm/src"
   },

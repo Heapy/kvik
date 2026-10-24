@@ -25,6 +25,9 @@ import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -52,7 +55,8 @@ def main():
         sources = [p for directory in ('core/src', 'execution/src', 'integration/foreground/src')
                    for p in sorted((ROOT/directory).rglob('*.kt'))]
         sources += [ROOT/'cache/src/kvik/cache/NativeFiles.kt']
-        base = [args.konan_home/'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
+        command(files_interop_command(ROOT, args.konan_home, output))
+        base = [args.konan_home/'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
                 '-library', output/'process.klib', *sources]
         command([*base, ROOT/'tests/foreground/ProtocolTest.kt', '-generate-test-runner', '-o', output/'unit.kexe'])
         command([*base, ROOT/'tests/foreground/SessionProbe.kt', '-entry', 'kvik.foreground.probe.main', '-o', output/'probe.kexe'])

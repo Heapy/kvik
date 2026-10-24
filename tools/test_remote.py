@@ -14,7 +14,9 @@ import urllib.request
 import threading
 
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 sys.path.insert(0, str(ROOT / 'tests/remote'))
 from experiments.k01.cache_probe import fields, field, digest as wire_digest
 from fixture_proxy import DropAfterProxy
@@ -42,7 +44,8 @@ def main():
     command([args.konan_home / 'bin/cinterop', '-def', platform / 'remote.def', '-compiler-option', '-I' + str(platform),
              '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'remote'])
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'cache/remote/src').rglob('*.kt')) + sorted((ROOT / 'integration/action-cache/src').rglob('*.kt'))
-    command([args.konan_home / 'bin/konanc', '-target', 'macos_arm64', '-library', output / 'remote.klib', *sources,
+    command(files_interop_command(ROOT, args.konan_home, output))
+    command([args.konan_home / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-library', output / 'remote.klib', *sources,
              *sorted((ROOT / 'tests/remote').glob('*.kt')), '-entry', 'kvik.cache.remote.tests.main', '-o', output / 'probe.kexe'])
     executable = output / 'probe.kexe'
 

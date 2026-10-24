@@ -7,10 +7,20 @@ import platform.posix.*
 import kvik.core.*
 
 enum class ToolComponent(val lockName: String) {
-    JDK("jdk"), KOTLIN_NATIVE("kotlinNative"), LLVM("llvm"), LIBFFI("libffi"), SDK("sdk"), XCODE_TOOLCHAIN("xcodeToolchain")
+    JDK("jdk"), KOTLIN_NATIVE("kotlinNative"), LLVM("llvm"), LIBFFI("libffi"), SDK("sdk"), XCODE_TOOLCHAIN("xcodeToolchain"),
+    NATIVE_TOOLCHAIN("nativeToolchain"), SYSTEM("system")
 }
 
 data class ToolHost(val os: String, val architecture: String, val release: String, val sdk: String)
+
+fun toolComponentsFor(os: String, architecture: String): Set<ToolComponent> {
+    val shared = setOf(ToolComponent.JDK, ToolComponent.KOTLIN_NATIVE, ToolComponent.LLVM, ToolComponent.LIBFFI)
+    return when (os to architecture) {
+        "Darwin" to "arm64" -> shared + setOf(ToolComponent.SDK, ToolComponent.XCODE_TOOLCHAIN)
+        "Linux" to "x86_64" -> shared + setOf(ToolComponent.NATIVE_TOOLCHAIN, ToolComponent.SYSTEM)
+        else -> error("Unsupported toolchain host: $os/$architecture")
+    }
+}
 
 /** Created only by successful verification, and valid only while the caller keeps this root stable. */
 class VerifiedToolComponent internal constructor(val root: String, val inventory: InventorySummary) {
@@ -32,9 +42,9 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
         checkpoint()
         val lock = parseLock(lockJson)
         checkpoint()
-        require(roots.keys == ToolComponent.entries.toSet()) { "Explicit roots for all six tool components are required" }
+        require(roots.keys == lock.components.keys) { "Explicit roots for all host tool components are required" }
         val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
-        for (component in ToolComponent.entries) {
+        for (component in lock.components.keys) {
             val captured = captureInventory(roots.getValue(component), limits, component == ToolComponent.SDK, checkpoint)
             require(captured.summary.digest == lock.components.getValue(component)) { "Tool inventory mismatch: ${component.lockName}; expected ${lock.components.getValue(component)}, actual ${captured.summary.digest}" }
             if (component == ToolComponent.SDK) {
@@ -74,9 +84,10 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
             hostFields.getValue("release").stringValue(), hostFields.getValue("sdk").stringValue())
         val actualHost = nativeHost()
         require(expectedHost.os == actualHost.first && expectedHost.architecture == actualHost.second && expectedHost.release == actualHost.third) { "Tool lock host does not match uname: $actualHost" }
-        require(actualHost.first == "Darwin" && actualHost.second == "arm64") { "Unsupported toolchain host: $actualHost" }
-        val components = lock.getValue("components").fields(ToolComponent.entries.map { it.lockName }.toSet())
-        val expected = ToolComponent.entries.associateWith { Digest.fromJson(components.getValue(it.lockName)) }
+        val required = toolComponentsFor(expectedHost.os, expectedHost.architecture)
+        if (expectedHost.os == "Linux") require(expectedHost.sdk.isEmpty()) { "Linux host must not declare an Apple SDK" }
+        val components = lock.getValue("components").fields(required.map { it.lockName }.toSet())
+        val expected = required.associateWith { Digest.fromJson(components.getValue(it.lockName)) }
         return Lock(expectedHost, kotlinVersion, expected)
     }
 }

@@ -4,6 +4,7 @@ package kvik.projectsnapshot
 import kvik.core.*
 import kvik.cache.NativeFiles
 import kotlinx.cinterop.*
+import kvik.files.platform.*
 import platform.posix.*
 
 class SnapshotFailure(message: String) : Exception(message)
@@ -108,7 +109,8 @@ private data class Status(val device: ULong, val inode: ULong, val mode: Int, va
     val identity: Pair<ULong, ULong> get() = device to inode
 }
 private fun stat.status() = Status(st_dev.toULong(), st_ino, st_mode.toInt(), st_size,
-    st_mtimespec.tv_sec to st_mtimespec.tv_nsec, st_ctimespec.tv_sec to st_ctimespec.tv_nsec)
+    kvik_files_mtime_seconds(ptr) to kvik_files_mtime_nanoseconds(ptr),
+    kvik_files_ctime_seconds(ptr) to kvik_files_ctime_nanoseconds(ptr))
 private fun status(path: String): Status? = memScoped {
     val value = alloc<stat>()
     if (lstat(path, value.ptr) != 0) {
@@ -223,13 +225,13 @@ private class Observation(private val root: String, private val content: Content
         val names = mutableListOf<String>()
         try {
             while (true) {
-                __error()!!.pointed.value = 0
+                set_posix_errno(0)
                 val entry = readdir(handle)
                 if (entry == null) {
                     if (errno != 0) throw SnapshotRace("Cannot enumerate input directory: $logical")
                     break
                 }
-                val name = entry.pointed.d_name.readBytes(entry.pointed.d_namlen.toInt()).decodeToString(throwOnInvalidSequence = true)
+                val name = entry.pointed.d_name.readBytes(strlen(entry.pointed.d_name).toInt()).decodeToString(throwOnInvalidSequence = true)
                 if (name == "." || name == "..") continue
                 LogicalPath(name)
                 if (++entryCount > limits.maxEntries) throw SnapshotFailure("Too many input directory entries")

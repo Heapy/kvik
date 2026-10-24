@@ -14,7 +14,7 @@ internal fun devCommand(args: List<String>): Int {
     if (args == listOf("--session-capabilities")) {
         println(obj("schemaVersion" to 1.json(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
             "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "processOwnershipVersion" to kvik_process_ownership_version().json(), "resumeVersions" to listOf(1.json(), 2.json(), 3.json()).json(),
-            "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to "macos-arm64".json(),
+            "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to terminalLeasePlatform().json(),
                 "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
         return 0
     }

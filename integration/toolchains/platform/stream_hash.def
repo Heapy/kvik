@@ -1,3 +1,4 @@
 headers = stream_hash.h
 package = kvik.toolchains.hash
 compilerOpts = -Wno-deprecated-declarations
+linkerOpts.linux = -lcrypto

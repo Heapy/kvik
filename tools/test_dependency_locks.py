@@ -10,6 +10,10 @@ import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -28,7 +32,8 @@ def main():
                     '-target', 'macos_arm64', '-o', str(output / 'resolution')], env=env, check=True)
     sources = [str(p) for directory in ['core/src', 'cache/src', 'resolution/src', 'integration/resolution/src', 'tests/locking']
                for p in sorted((ROOT / directory).rglob('*.kt'))]
-    subprocess.run([str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner',
+    subprocess.run(files_interop_command(ROOT, args.konan_home, output), env=env, check=True)
+    subprocess.run([str(args.konan_home / 'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64', '-generate-test-runner',
                     '-library', str(output / 'resolution.klib'), '-o', str(output / 'tests.kexe'), *sources], env=env, check=True)
     subprocess.run([str(output / 'tests.kexe')], env=env, check=True)
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())

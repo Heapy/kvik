@@ -10,7 +10,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 from bootstrap.source_process import OwnedProcessRequest, OwnedProcessCancelled, run_owned
 
 
@@ -64,7 +66,8 @@ def main():
         command('archive-process', ['/usr/bin/ar','rcs',case/'libkvik-process.a',case/'process.o'])
         command('process-interop', [native/'bin/cinterop','-def',boundary/'process.def','-compiler-option','-I'+str(boundary),'-libraryPath',case,'-target','macos_arm64','-o',case/'process'])
         sources = [p for root in ('core/src','cache/src','execution/src','compiler/native/src','compiler/jvm/native/src') for p in sorted((ROOT/root).rglob('*.kt'))]
-        command('build-unit', [native/'bin/konanc','-target','macos_arm64','-Xoverride-konan-properties=airplaneMode=true','-library',case/'process.klib',
+        command('files-interop', files_interop_command(ROOT, native, case))
+        command('build-unit', [native/'bin/konanc', *files_library_args(case),'-target','macos_arm64','-Xoverride-konan-properties=airplaneMode=true','-library',case/'process.klib',
             *sources,ROOT/'tests/native/NativeUnitTest.kt',ROOT/'tests/native/NativeWorkspacePluginTest.kt','-generate-test-runner','-o',case/'unit.kexe'])
         command('unit', [case/'unit.kexe'])
         print('PASS Native existing and workspace-plugin unit tests',flush=True)

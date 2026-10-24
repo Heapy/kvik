@@ -25,7 +25,7 @@ fun main(args: Array<String>) {
     if (args.toList() == listOf("dev", "--session-capabilities")) {
         println(obj("schemaVersion" to 1.json(), "composition" to composition.toJson(), "runtime" to executable.json(),
             "processOwnershipVersion" to kvik_process_ownership_version().json(), "resumeVersions" to listOf(1.json(), 2.json(), 3.json()).json(), "terminalLease" to obj("schemaVersion" to 1.json(),
-                "platform" to "macos-arm64".json(), "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
+                "platform" to terminalLeasePlatform().json(), "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
         return
     }
     if (args.firstOrNull() in setOf("snapshot-query", "stage-application", "stage-prepared", "test")) {

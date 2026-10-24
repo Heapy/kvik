@@ -17,8 +17,10 @@ internal class BuildTools(path: String) {
     init {
         fields.requireVersion()
         lock = fields.getValue("toolLock").canonical()
-        val paths = fields.getValue("roots").fields(ToolComponent.entries.map { it.lockName }.toSet())
-        roots = ToolComponent.entries.associateWith { component -> paths.getValue(component.lockName).stringValue().also(NativeFiles::validateAbsolute) }
+        val host = fields.getValue("toolLock").objectValue().getValue("host").objectValue()
+        val components = toolComponentsFor(host.getValue("os").stringValue(), host.getValue("architecture").stringValue())
+        val paths = fields.getValue("roots").fields(components.map { it.lockName }.toSet())
+        roots = components.associateWith { component -> paths.getValue(component.lockName).stringValue().also(NativeFiles::validateAbsolute) }
         data = fields.getValue("konanData").stringValue().also(NativeFiles::validateAbsolute)
         artifacts = fields.getValue("compilerArtifacts").stringValue().also(NativeFiles::validateAbsolute)
     }
@@ -35,6 +37,7 @@ internal class BuildTools(path: String) {
             jvmProvider().verified(result.getValue("jvm"))
         }
         if ("macosArm64" in targets) {
+            require(ToolComponent.SDK in roots && ToolComponent.XCODE_TOOLCHAIN in roots) { "macosArm64 compilation requires a Darwin arm64 host" }
             result["macosArm64"] = mapOf("native" to identity(ToolComponent.KOTLIN_NATIVE),
                 "jdk" to identity(ToolComponent.JDK), "sdk" to identity(ToolComponent.SDK),
                 "native-dependencies" to nativeDependenciesIdentity(identity(ToolComponent.LLVM),

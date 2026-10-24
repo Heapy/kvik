@@ -24,6 +24,9 @@ import jsonschema
 from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 BROKER = r'''
 import fcntl,json,os,signal,subprocess,sys,termios
 os.setsid();terminal=os.open(sys.argv[1],os.O_RDWR|os.O_NOCTTY)
@@ -64,7 +67,8 @@ def main():
         run([args.konan_home/'bin/cinterop', '-def', native/'process.def', '-compiler-option', '-I'+str(native),
              '-libraryPath', output, '-target', 'macos_arm64', '-o', output/'process'])
         core = sorted((ROOT/'core/src').rglob('*.kt'))
-        compiler = [args.konan_home/'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true']
+        run(files_interop_command(ROOT, args.konan_home, output))
+        compiler = [args.konan_home/'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true']
         pure = [ROOT/'integration/foreground/src/kvik/foreground'/name for name in
                 ('Protocol.kt', 'BootstrapLaunch.kt', 'SessionResume.kt', 'SessionCapabilities.kt', 'ApplicationActivation.kt')]
         if not args.skip_unit_build:

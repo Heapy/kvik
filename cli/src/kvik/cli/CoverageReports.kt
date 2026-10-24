@@ -3,6 +3,7 @@ package kvik.cli
 
 import kvik.cache.NativeFiles
 import kvik.compiler.jvm.JvmTestSelection
+import kvik.compiler.jvm.jvmHostPlatform
 import kvik.core.*
 import kvik.execution.EventJournal
 import kvik.execution.SchedulerRun
@@ -135,7 +136,7 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
         var report: CoverageReport? = null
         val recipes = linkedMapOf<String, ActionSpec>()
         fun recipe(id: String, inputs: TreeManifest, outputs: List<String>) = ActionSpec("kvik-$id-v1", composition,
-            ActionKind.GENERATE, mapOf("os" to "macos", "arch" to "arm64"), "reports", identities + ("jacoco" to specification.reporter),
+            ActionKind.GENERATE, jvmHostPlatform(), "reports", identities + ("jacoco" to specification.reporter),
             inputs, outputs.map(::LogicalPath), emptyList(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"),
             obj("specification" to specification.toJson()), cachePolicy = CachePolicy.NEVER).also { recipes[id] = it }
         val nodes = listOf(

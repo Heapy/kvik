@@ -14,7 +14,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args, files_interop_inputs
 from bootstrap.identity import canonical, digest, file_digest
 from bootstrap.runtime_store import RuntimeStore, RuntimeStoreConflict
 
@@ -33,7 +35,7 @@ def compiler_environment(java_home, home, temporary_directory):
 
 
 def launcher_inputs(konan_home, java_home):
-    return [konan_home / 'bin/konanc', konan_home / 'bin/run_konan', konan_home / 'tools/env_blacklist',
+    return [konan_home / 'bin/cinterop', konan_home / 'bin/konanc', konan_home / 'bin/run_konan', konan_home / 'tools/env_blacklist',
             java_home / 'bin/java', *sorted((konan_home / 'konan/lib').glob('*.jar'))]
 
 
@@ -47,9 +49,9 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     executable = output / 'probe.kexe'
     sources = sorted((ROOT / 'core/src').rglob('*.kt')) + sorted((ROOT / 'cache/src').rglob('*.kt')) + sorted((ROOT / 'tests/runtime-store').rglob('*.kt'))
-    command = [str(args.konan_home.resolve() / 'bin/konanc'), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-entry',
+    command = [str(args.konan_home.resolve() / 'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-entry',
                'kvik.runtimestore.tests.main', '-o', str(executable), *map(str, sources)]
-    inputs = {str(p.relative_to(ROOT)): file_digest(p) for p in sources}
+    inputs = {str(p.relative_to(ROOT)): file_digest(p) for p in [*sources, *files_interop_inputs(ROOT)]}
     tool_inputs = {str(p): file_digest(p) for p in launcher_inputs(args.konan_home.resolve(), args.java_home.resolve())}
     compiler_env = compiler_environment(args.java_home, Path.home(), Path(tempfile.gettempdir()))
     stamp = {'command': command, 'inputs': inputs, 'toolInputs': tool_inputs, 'environment': compiler_env}
@@ -60,9 +62,11 @@ def main():
     else:
         write(output / 'build-command.json', stamp)
         with (output / 'compile.log').open('wb') as log:
+            subprocess.run(files_interop_command(ROOT, args.konan_home, output), cwd=ROOT, env=compiler_env,
+                           stdout=log, stderr=subprocess.STDOUT, check=True, timeout=300)
             subprocess.run(command, cwd=ROOT, env=compiler_env,
                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=300)
-        assert inputs == {str(p.relative_to(ROOT)): file_digest(p) for p in sources}, 'Sources changed during build'
+        assert inputs == {str(p.relative_to(ROOT)): file_digest(p) for p in [*sources, *files_interop_inputs(ROOT)]}, 'Sources changed during build'
         assert tool_inputs == {str(p): file_digest(p) for p in launcher_inputs(args.konan_home.resolve(), args.java_home.resolve())}, 'Compiler launch inputs changed during build'
         write(receipt, {'stamp': stamp, 'binary': file_digest(executable), 'log': file_digest(output / 'compile.log')})
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output))

@@ -28,7 +28,7 @@ fun main() {
                     val supplied = ToolComponent.entries.filter { it.lockName in roots }.associateWith { roots.getValue(it.lockName).stringValue() }
                     val lock = request.getValue("lock")
                     val verified = verifier.verify(if (lock is JsonValue.StringValue) lock.value else lock.canonical(), supplied)
-                    obj("components" to JsonValue.Object(ToolComponent.entries.associate { component ->
+                    obj("components" to JsonValue.Object(supplied.keys.associate { component ->
                         component.lockName to obj("root" to verified[component].root.json(), "inventory" to summary(verified[component].inventory))
                     }), "sdk" to verified.host.sdk.json())
                 }

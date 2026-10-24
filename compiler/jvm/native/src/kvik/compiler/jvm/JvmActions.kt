@@ -13,7 +13,14 @@ fun jvmWorkerIdentity(workerTree: Digest, api: Digest, stdlib: Digest, junit: Di
     return Sha256.digest(if (jacocoAgent == null) identity else JsonValue.Object(identity.values + mapOf(
         "jacocoAgent" to jacocoAgent.toJson(), "jacocoCli" to jacocoCli!!.toJson(), "jacocoVersion" to jacocoVersion!!.json())))
 }
-private val hostPlatform = mapOf("os" to "macos", "arch" to "arm64")
+@OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+fun jvmHostPlatform(): Map<String, String> = when (kotlin.native.Platform.osFamily to kotlin.native.Platform.cpuArchitecture) {
+    kotlin.native.OsFamily.MACOSX to kotlin.native.CpuArchitecture.ARM64 -> mapOf("os" to "macos", "arch" to "arm64")
+    kotlin.native.OsFamily.LINUX to kotlin.native.CpuArchitecture.X64 -> mapOf("os" to "linux", "arch" to "x64")
+    else -> error("Unsupported JVM worker host")
+}
+
+private val hostPlatform = jvmHostPlatform()
 private val workerEnvironment = mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin")
 
 /** Supported compiler settings, deliberately without a free-form flag escape hatch. */

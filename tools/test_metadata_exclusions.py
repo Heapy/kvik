@@ -11,6 +11,10 @@ import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args, files_interop_inputs
+
 
 def file_identity(path):
     with Path(path).open('rb') as source:
@@ -82,12 +86,12 @@ def main():
     interop = [str(args.konan_home / 'bin/cinterop'), '-def', str(ROOT / 'resolution/native/resolution.def'),
                '-compiler-option', '-I' + str(ROOT / 'resolution/native'), '-compiler-option', '-I' + sdk + '/usr/include/libxml2',
                '-target', 'macos_arm64', '-o', str(output / 'resolution')]
-    compile_command = [str(args.konan_home / 'bin/konanc'), '-target', 'macos_arm64', '-generate-test-runner',
+    compile_command = [str(args.konan_home / 'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64', '-generate-test-runner',
                        '-library', str(output / 'resolution.klib'), '-o', str(output / 'unit.kexe'), *sources]
-    tracked = [*map(Path, sources), *sorted((ROOT / 'resolution/native').glob('*')), Path(__file__),
+    tracked = [*files_interop_inputs(ROOT), *map(Path, sources), *sorted((ROOT / 'resolution/native').glob('*')), Path(__file__),
                ROOT / 'bootstrap/toolchains.lock.json', *launcher_inputs(args.konan_home, args.java_home)]
     def current_inputs():
-        return dict(commands=[interop, compile_command], sdk=sdk,
+        return dict(commands=[files_interop_command(ROOT, args.konan_home, output), interop, compile_command], sdk=sdk,
                     environment=compiler_env,
                     files={str(path.resolve()): file_identity(path) for path in tracked if path.is_file()})
     inputs = current_inputs()
@@ -97,6 +101,7 @@ def main():
     if args.skip_build:
         verify_build_stamp(stamp_path, inputs, binary)
     else:
+        run(files_interop_command(ROOT, args.konan_home, output))
         run(interop)
         run(compile_command)
         assert current_inputs() == inputs, 'Build inputs changed during compilation'

@@ -29,7 +29,7 @@ data class SessionResume(
         "partialInput" to partialInput.map { (it.toInt() and 255).json() }.json(),
         "launch" to parseJson(launchBytes.decodeToString(throwOnInvalidSequence = true)))
         val withTerminal = if (terminalLease == null) value else JsonValue.Object(value.values + ("terminalLease" to obj(
-            "schemaVersion" to 1.json(), "platform" to "macos-arm64".json(), "state" to terminalLease.json())))
+            "schemaVersion" to 1.json(), "platform" to terminalLeasePlatform().json(), "state" to terminalLease.json())))
         return if (mode == SessionMode.LIBRARY) withTerminal else JsonValue.Object(withTerminal.values + mapOf(
             "mode" to mode.value.json(), "pendingIntents" to pendingIntents.map { it.command.json() }.json(),
             "preparedApplication" to (preparedApplication?.toJson() ?: JsonValue.Null),
@@ -63,7 +63,7 @@ data class SessionResume(
             if (version == 3L) launchContext.requireApplicationOwnership()
             val terminal = if ("terminalLease" !in fields) null else fields.getValue("terminalLease").fields(setOf("schemaVersion", "platform", "state")).let { lease ->
                 lease.requireVersion()
-                require(lease.getValue("platform").stringValue() == "macos-arm64") { "Unsupported terminal lease platform" }
+                require(lease.getValue("platform").stringValue() == terminalLeasePlatform()) { "Unsupported terminal lease platform" }
                 require(!fields.getValue("jsonControls").booleanValue() && partial.isEmpty()) { "Terminal lease requires key controls" }
                 lease.getValue("state").stringValue().also {
                     require(it.length in 2..4096 && it.length % 2 == 0 && it.all { c -> c in '0'..'9' || c in 'a'..'f' }) { "Invalid terminal lease encoding" }

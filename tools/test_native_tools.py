@@ -12,7 +12,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
 sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
 from bootstrap.identity import canonical, digest, inventory
 
 LLVM = 'llvm-21-aarch64-macos-essentials-97'
@@ -53,7 +55,8 @@ def main():
         sources = [p for base in ('core/src', 'cache/src', 'execution/src', 'compiler/native/src', 'compiler/jvm/native/src', 'integration/toolchains/src')
                    for p in sorted((ROOT/base).rglob('*.kt'))]
         sources += [ROOT/'integration/compiler-tools/src/kvik/compilertools'/name for name in ('CompilerFiles.kt', 'NativeTools.kt')]
-        base = [native/'konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
+        command(files_interop_command(ROOT, args.konan_home, output))
+        base = [native/'konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
                 '-library', output/'process.klib', '-library', output/'stream_hash.klib', *sources]
         command([*base, ROOT/'tests/native/NativeUnitTest.kt', '-generate-test-runner', '-o', output/'unit.kexe'])
         command([output/'unit.kexe', '--ktest_filter=kvik.compiler.native.NativeUnitTest.verifiedToolEnvironmentAndOfflinePolicyCannotBeOverridden'])

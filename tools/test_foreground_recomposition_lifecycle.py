@@ -8,6 +8,9 @@ from pathlib import Path
 import jsonschema
 ROOT=Path(__file__).resolve().parents[1]
 
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--java-home',type=Path,required=True);p.add_argument('--konan-home',type=Path,required=True);p.add_argument('--skip-build',action='store_true');args=p.parse_args()
  output=ROOT/'.kvik/tests/foreground-recomposition';output.mkdir(parents=True,exist_ok=True)
@@ -18,7 +21,8 @@ def main():
   run([*flags,native/'guardian.c','-o',output/'guardian']);run([*flags,'-c',native/'process.c','-o',output/'process.o']);run(['ar','rcs',output/'libkvik-process.a',output/'process.o'])
   run([args.konan_home/'bin/cinterop','-def',native/'process.def','-compiler-option',f'-I{native}','-libraryPath',output,'-target','macos_arm64','-o',output/'process'])
   sources=[f for d in ('core/src','execution/src','integration/foreground/src') for f in sorted((ROOT/d).rglob('*.kt'))]
-  run([args.konan_home/'bin/konanc','-target','macos_arm64','-Xoverride-konan-properties=airplaneMode=true','-library',output/'process.klib',*sources,ROOT/'cache/src/kvik/cache/NativeFiles.kt',ROOT/'tests/foreground-recomposition/RecompositionProbe.kt','-entry','kvik.foreground.recompositionprobe.main','-o',output/'probe.kexe'])
+  run(files_interop_command(ROOT,args.konan_home,output))
+  run([args.konan_home/'bin/konanc', *files_library_args(output),'-target','macos_arm64','-Xoverride-konan-properties=airplaneMode=true','-library',output/'process.klib',*sources,ROOT/'cache/src/kvik/cache/NativeFiles.kt',ROOT/'tests/foreground-recomposition/RecompositionProbe.kt','-entry','kvik.foreground.recompositionprobe.main','-o',output/'probe.kexe'])
  evidence=Path(tempfile.mkdtemp(prefix='lifecycle-',dir=output)).resolve();schema=json.loads((ROOT/'schemas/v1/session.json').read_text());validator=jsonschema.Draft202012Validator({**schema,'$ref':'#/$defs/event'})
  processes=[]
  def cleanup():

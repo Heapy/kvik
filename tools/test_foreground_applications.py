@@ -24,6 +24,9 @@ from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[1]
 
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args, files_interop_inputs
+
 def sha(path):
     data = path.read_bytes()
     return dict(hash=hashlib.sha256(data).hexdigest(), sizeBytes=len(data))
@@ -66,6 +69,7 @@ def main():
              ROOT/'tests/foreground-applications/worker.py', ROOT/'tools/test_foreground_applications.py', *support]
     env = dict(PATH='/usr/bin:/bin:/usr/sbin:/sbin', HOME=str(Path.home()), JAVA_HOME=str(args.java_home.resolve()),
                KONAN_DATA_DIR=str(Path.home()/'.konan'), TMPDIR=str(temporary)+'/', LANG='C', LC_ALL='C', TZ='UTC')
+    files += files_interop_inputs(ROOT)
     stamp = dict(files={str(path): sha(path) for path in files}, environment=env)
     command_log = []
     def run(argv):
@@ -85,7 +89,8 @@ def main():
         run(['/usr/bin/ar', 'rcs', output/'libkvik-process.a', output/'process.o'])
         run([args.konan_home/'bin/cinterop', '-def', native/'process.def', '-compiler-option', '-I'+str(native),
              '-libraryPath', output, '-target', 'macos_arm64', '-o', output/'process'])
-        base = [args.konan_home/'bin/konanc', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
+        run(files_interop_command(ROOT, args.konan_home, output))
+        base = [args.konan_home/'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
                 '-library', output/'process.klib', *sources]
         run([*base, *units, '-generate-test-runner', '-o', output/'unit.kexe'])
         run([*base, probe, '-entry', 'kvik.foreground.applicationprobe.main', '-o', output/'kvik.kexe'])

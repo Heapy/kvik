@@ -8,6 +8,10 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import sys
+sys.path.insert(0, str(ROOT))
+from tools.native_files_interop import files_interop_command, files_library_args
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -19,7 +23,8 @@ def main():
                for p in sorted((ROOT/base).rglob('*.kt'))]
     sources += [ROOT/'execution/src/kvik/execution/Scheduler.kt']
     executable = output/'action-cache.kexe'
-    subprocess.run([str(args.konan_home.resolve()/'bin/konanc'), '-target', 'macos_arm64',
+    subprocess.run(files_interop_command(ROOT, args.konan_home, output), env=dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KONAN_USE_INTERNAL_SERVER='0'), check=True)
+    subprocess.run([str(args.konan_home.resolve()/'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64',
         '-Xoverride-konan-properties=airplaneMode=true', '-entry', 'kvik.actioncache.tests.main', '-o', str(executable), *map(str, sources)],
         env=dict(os.environ, JAVA_HOME=str(args.java_home.resolve()), KONAN_USE_INTERNAL_SERVER='0'), check=True)
     with tempfile.TemporaryDirectory(prefix='kvik-action-cache-') as root:
