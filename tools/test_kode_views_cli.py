@@ -216,6 +216,19 @@ def main():
         assert history[0] == merged and len(history) == len(set(history)) == 5
         assert set(history) == {empty, base, ours, theirs, merged}
 
+        task = store('tasks', 'create', 'fixture', 'view-change', '--base', base,
+                     '--rev', ours, '--intent', 'Update application and its tests')
+        selected = store('tasks', 'update', 'fixture', 'view-change', '--expect-record', task['record'],
+                         '--rev', merged, '--intent', 'Include the merged test change')
+        review = store('tasks', 'review', 'fixture', 'view-change', '--record', selected['record'])
+        assert {change['path'] for change in review['changes']} == {'sub/jvm/Main.kt', 'sub/test/Test.kt'}
+        assert selected['revision'] == merged and selected['previousRecord'] == task['record']
+        assert selected['record'] != selected['revision']
+        selected_view = export(selected['revision'], 'production')
+        assert selected_view['source']['provenance']['revision'] == merged
+        assert paths(selected_view) == paths(production)
+        assert store('tasks', 'show', 'fixture', 'view-change', '--record', task['record'])['revision'] == ours
+
         merge_view = save(export(merged, 'production'), 'merged')
         first = tx(merged, {'sub/test/Test.kt': '// ours\n'}, ref='main', view=merge_view)
         second = tx(merged, {'sub/test/Test.kt': '// theirs\n', 'sub/common/Common.kt': 'fun common() = 7\n'}, view=merge_view)

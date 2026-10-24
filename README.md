@@ -222,6 +222,44 @@ commit's captured log data is limited to 2 MiB and the response to 16 MiB.
 `--claim-values-as-text` preserves claim values as JSON text for consumers that
 cannot represent every JSON number exactly. History is not filtered by `--view`.
 
+Kode tasks group source experiments into a reviewable change:
+
+```sh
+/absolute/bin/kode --home /absolute/kode-store tasks create library fix-parser \
+  --base BASE_REVISION --rev FIRST_CANDIDATE --intent 'Handle empty input'
+/absolute/bin/kode --home /absolute/kode-store tasks update library fix-parser \
+  --expect-record PREVIOUS_TASK_RECORD --rev SELECTED_CANDIDATE \
+  --intent 'Handle empty input and preserve valid parsing'
+/absolute/bin/kode --home /absolute/kode-store tasks review library fix-parser \
+  --record TASK_RECORD --patch
+```
+
+The response distinguishes `record` (immutable task metadata) from `revision`
+(selected source). Use `revision` with Kvik's `--revision` or Kode's guarded
+`merge`/`export` commands. Review returns the final base-to-candidate changes and,
+with `--patch`, their patch. It includes the full source tree, including files
+outside a role view. The base remains fixed; selecting another branch experiment
+or returning to the base creates a new task record without rewriting source history.
+
+`tasks show --record ID` opens a historical selection. Follow `previousRecord`
+to inspect earlier attempts, or use `log-page --rev SOURCE_REVISION` for their
+individual edits and intents. Task refs retain these metadata records and source
+snapshots through Git reachability. `--result REFERENCE` may be repeated to attach
+up to 32 opaque run/result references to the selected source revision; Kode does
+not validate their contents or retain external artifacts. Each update supplies
+its own references, while previous records keep theirs.
+
+Updates require `--expect-record`; conflicting selections fail. Retrying the
+same create/update returns the existing record while it remains the latest task
+selection. After a later update, a stale retry conflicts and can be reconciled
+through historical records. `tasks list library --limit 100 --after TASK_ID`
+enumerates live task heads in name order; `nextAfter` continues that listing,
+which is not an immutable snapshot. Task IDs are single lowercase name segments.
+The implementation scans the ref inventory with an 8 MiB bound. Review limits
+captured change data and optional patch data to 8 MiB each and response JSON to
+16 MiB; oversized reviews fail explicitly. Task grouping preserves detailed
+history and does not squash it into a new source commit.
+
 Kode can propose a text-first identifier rename in `.kt` and `.kts` sources:
 
 ```sh
