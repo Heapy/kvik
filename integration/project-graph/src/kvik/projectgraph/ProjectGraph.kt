@@ -263,6 +263,8 @@ private class Builder(
         val selectedTargets = request.targets.sorted()
         selectedTargets.forEach { ensureMain(module, it) }
         val selectedSets = selectedTargets.flatMap { sourceSets(module, it, "main") }.distinctBy { it.name }
+        val sqlDelight = spec.sqlDelight?.takeIf { settings -> selectedSets.any { it.name == settings.sourceSet } }
+        val sqlDelightId = sqlDelight?.let { ensureSqlDelight(module) }
         val reached = spec.targets.associate { it.name to sourceSets(module, it.name, "main").map { source -> source.name }.toSet() }
         fun platform(set: SourceSet): String {
             val families = reached.filterValues { set.name in it }.keys.map { if (it == "jvm") "jvm" else "native" }.toSet()
@@ -281,7 +283,7 @@ private class Builder(
         for ((target, dependencies) in targetDependencies) dependencies.forEach { ensureMain(it, target) }
         val targetArtifacts = leafTargets.associateWith { artifactEntries(external(module, it, "main", if (it == "jvm") "java-api" else "kotlin-api"), it) }
         val edges = selectedTargets.map { mainId(module, it) }.toSet() + metadataEdges + nativeStdlibIds.values +
-            targetDependencies.flatMap { (target, dependencies) -> dependencies.map { mainId(it, target) } }
+            targetDependencies.flatMap { (target, dependencies) -> dependencies.map { mainId(it, target) } } + listOfNotNull(sqlDelightId)
         val sources = selectedSets.flatMap { set -> set.directories.flatMapIndexed { index, directory ->
             require(files.none { it.path == directory }) { "Documentation source directory is a file" }
             files.filter { it.path.value.startsWith(directory.value + "/") }.map { entry ->
@@ -296,6 +298,10 @@ private class Builder(
             val dependencyFiles = targetDependencies.flatMap { (target, dependencies) -> dependencies.flatMap { remap(results, it, target, "main") } }
             val metadataFiles = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.flatMap { documentationMetadataOutputs(results, it, targets) } }
             val stdlibFiles = nativeStdlibIds.flatMap { (target, id) -> documentationStdlibOutputs(results, id, target) }
+            val generated = sqlDelightId?.let { generation -> sqlDelightOutputs(module, generation, results).map { entry ->
+                entry.copy(path = LogicalPath("sources/${sqlDelight!!.sourceSet}/sqldelight/" +
+                    entry.path.value.removePrefix("generated/sqldelight/$module/")))
+            } } ?: emptyList()
             val sets = selectedSets.map { set ->
                 val kind = platform(set)
                 val targets = selectedTargets.filter { set.name in reached.getValue(it) }
@@ -311,7 +317,7 @@ private class Builder(
                 DocumentationSourceSet(set.name, kind, LogicalPath("sources/${set.name}"), (classpath + stdlibs).distinct(), set.dependsOn, supporting(set).toSet())
             }
             documentationAction(DocumentationSpec(module, request.targets, sets, settings),
-                merge(sources, includes, (dependencyFiles + metadataFiles + stdlibFiles + metadataArtifacts.values.flatten() + targetArtifacts.values.flatten()).filter { file ->
+                merge(sources, generated, includes, (dependencyFiles + metadataFiles + stdlibFiles + metadataArtifacts.values.flatten() + targetArtifacts.values.flatten()).filter { file ->
                     sets.any { source -> source.classpath.any { file.path == it || file.path.value.startsWith(it.value + "/") } }
                 }), composition, tools.getValue("jvm"))
         }

@@ -10,7 +10,7 @@ class SqlDelightGraphTest {
     private fun digest(value: String) = Sha256.digest(value.encodeToByteArray())
     private val tools = mapOf("jvm" to listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith(::digest))
     private val settings = SqlDelightSpec("main", LogicalPath("data/sql"), "fixture.database", "Database")
-    private fun configuration(spec: SqlDelightSpec = settings): ProjectConfiguration {
+    private fun configuration(spec: SqlDelightSpec = settings, documentation: Boolean = false): ProjectConfiguration {
         fun module(id: String, sql: SqlDelightSpec?) = obj("id" to id.json(),
             "sourceSets" to listOf(obj("name" to "main".json(), "directories" to listOf("$id/src".json()).json(),
                 "resources" to emptyList<JsonValue>().json(), "dependsOn" to emptyList<JsonValue>().json(),
@@ -18,6 +18,7 @@ class SqlDelightGraphTest {
             "targets" to listOf(obj("name" to "jvm".json(), "main" to "main".json(), "test" to JsonValue.Null,
                 "compilerOptions" to emptyList<JsonValue>().json())).json(), "compilerPlugins" to emptyList<JsonValue>().json())
             .let { if (sql == null) it else JsonValue.Object(it.values + ("sqlDelight" to sql.toJson())) }
+            .let { if (!documentation || id != "data") it else JsonValue.Object(it.values + ("documentation" to DocumentationSettings().toJson())) }
         return parseProjectConfiguration(obj("schemaVersion" to 1.json(), "name" to "sqlFixture".json(),
             "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(),
             "modules" to listOf(module("data", spec), module("other", spec.copy(sourceDirectory = LogicalPath("other/sql"))), module("plain", null)).json()))
@@ -28,7 +29,7 @@ class SqlDelightGraphTest {
             if (module != "plain" && (includeSql || module != "data")) add(FileEntry(LogicalPath("$module/sql/fixture/Tables.sq"), digest(if (module == "data") sql else "other SQL")))
         }
     })
-    private fun graph(configuration: ProjectConfiguration = configuration(), files: TreeManifest = files(), changedTool: Boolean = false): ProjectActionGraph {
+    private fun graph(configuration: ProjectConfiguration = configuration(), files: TreeManifest = files(), changedTool: Boolean = false, mode: ProjectMode = ProjectMode.BUILD): ProjectActionGraph {
         val effective = effectiveConfiguration(configuration)
         val lock = DependencyLock(effective.digest, effective.requests.map { request ->
             val artifact = LockedArtifact(request.coordinate, request.variant.usage, "central",
@@ -38,13 +39,14 @@ class SqlDelightGraphTest {
                 listOf(MetadataIdentity("https://repo.maven.apache.org/maven2/${request.coordinate.name}.pom", digest("metadata")))))
         })
         return projectActionGraph(effective, lock, files, digest("runtime"), tools,
-            ProjectGraphRequest(setOf("data", "other", "plain"), setOf("jvm"), ProjectMode.BUILD))
+            ProjectGraphRequest(if (mode == ProjectMode.DOCUMENTATION) setOf("data") else setOf("data", "other", "plain"), setOf("jvm"), mode))
     }
     private fun resolve(graph: ProjectActionGraph, emptyGeneration: Boolean = false, invalidGeneration: Boolean = false): Map<String, ActionSpec> {
         val results = mutableMapOf<String, ActionResult>()
         return graph.nodes.associate { node ->
             val action = node.resolve(results.filterKeys { it in node.dependencies })
             val output = when {
+                node.id.endsWith(":documentation") -> listOf(FileEntry(LogicalPath("html/index.html"), digest("documentation")))
                 node.id.endsWith(":sqldelight") -> if (emptyGeneration && node.id.startsWith("data:")) emptyList() else {
                     val prefix = if (invalidGeneration) "other-output" else "generated/sqldelight/${node.id.substringBefore(':')}"
                     listOf(FileEntry(LogicalPath("$prefix/Database.kt"), digest(action.key(Sha256).toString())))
@@ -95,6 +97,27 @@ class SqlDelightGraphTest {
         assertEquals(listOf(LogicalPath("src/data/src/Main.kt")), JvmCompilation.fromJson(deleted.getValue("data:jvm:main").parameters).sources)
         assertTrue(SqlDelightGeneration.fromJson(deleted.getValue("data:jvm:sqldelight").parameters).sources.isEmpty())
         assertFailsWith<IllegalArgumentException> { resolve(graph(files = files(includeSql = false, includeKotlin = false)), emptyGeneration = true) }
+    }
+
+
+    @Test fun documentationIncludesGeneratedApiAndRemovesDeletedSqlSources() {
+        val config = configuration(documentation = true)
+        fun build(files: TreeManifest, empty: Boolean = false) = resolve(graph(config, files, mode = ProjectMode.DOCUMENTATION), emptyGeneration = empty)
+        val built = graph(config, files(includeKotlin = false), mode = ProjectMode.DOCUMENTATION)
+        assertContains(built.nodes.single { it.id == "data:common:documentation" }.dependencies, "data:jvm:sqldelight")
+        val initial = resolve(built).getValue("data:common:documentation")
+        val source = LogicalPath("sources/main/sqldelight/Database.kt")
+        assertTrue(initial.inputs.files.any { it.path == source })
+        assertFalse(initial.inputs.files.any { it.path.value.endsWith(".sq") || it.path.value.startsWith("tools/") })
+        val spec = DocumentationSpec.fromJson(initial.parameters)
+        assertEquals("main", spec.sourceSets.single().name)
+        assertEquals("jvm", spec.sourceSets.single().platform)
+        assertEquals(LogicalPath("sources/main"), spec.sourceSets.single().sourceRoot)
+        val edited = build(files(sql = "changed SQL", includeKotlin = false)).getValue("data:common:documentation")
+        assertNotEquals(initial.key(Sha256), edited.key(Sha256))
+        val deleted = build(files(includeSql = false), empty = true).getValue("data:common:documentation")
+        assertFalse(deleted.inputs.files.any { it.path.value.startsWith("sources/main/sqldelight/") })
+        assertTrue(deleted.inputs.files.any { it.path.value == "sources/main/root0/Main.kt" })
     }
 
     @Test fun rejectsUnownedOutputsAndUnsupportedSqlInputs() {
