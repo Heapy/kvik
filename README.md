@@ -25,8 +25,38 @@ origins and capabilities. Kotlin consumers can parse it with
 `ProjectInspection.fromJson(parseJson(output))` from
 [the core inspection model](core/src/kvik/core/ProjectInspection.kt). Provider-backed
 inspection also carries the source revision, project root and manifest identity as
-one source context. This model is the foundation for IDE integration; an IDE adapter
-and unsaved-buffer synchronization are still pending.
+one source context.
+
+### BSP project import
+
+Register a project for a BSP client with:
+
+```sh
+./kvik --no-build -- bsp-install --project /absolute/project/kvik.json
+```
+
+This writes complete connection details atomically under the project's `.bsp/`
+directory. A launch through `./kvik` records that source launcher's explicit tool
+and cache settings; invoking the native executable directly records that exact
+cached executable. The file contains machine-specific paths. Repeating the same
+installation is harmless; different settings require removing the old connection
+file before installing again.
+
+`bsp --project PATH` serves [BSP 2.2](https://build-server-protocol.github.io/docs/specification)
+on foreground stdio. A client can initialize the connection, list module/target/
+compilation targets, query source directories and resources, map an existing source
+file back to its targets, and request `workspace/reload`. A failed reload keeps the
+previous model available. The `kvik/projectModel` extension returns the same typed
+model as `inspect`; target data with kind `kvik-kotlin` includes source sets, compiler
+options and configuration identities. Closing input, sending `build/exit`, or losing
+the parent process ends the connection.
+
+This adapter currently imports project structure and workspace dependency edges.
+External library classpaths, IDE-triggered build/test/debug operations, generated
+source synchronization and unsaved-buffer support remain pending. Those operations
+are not advertised as supported capabilities. Compatibility has been exercised
+through the framed protocol client in `tools/test_bsp_cli.py`; individual IDE clients
+still need integration testing.
 
 ### Configuration changes
 
