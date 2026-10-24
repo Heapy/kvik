@@ -447,6 +447,9 @@
         "nativeTimeouts": {
           "$ref": "#/$defs/nativeTimeouts"
         },
+        "benchmarkSettings": {
+          "$ref": "#/$defs/jvmBenchmarkSettings"
+        },
         "abi": {
           "$ref": "#/$defs/abiSettings"
         },
@@ -482,6 +485,20 @@
               "test": {
                 "type": "string",
                 "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "benchmarkSettings"
+            ]
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "jvm"
               }
             }
           }
@@ -668,6 +685,182 @@
           }
         }
       ]
+    },
+    "jvmBenchmarkSettings": {
+      "type": "object",
+      "properties": {
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "warmups": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "iterationMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "forks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "mode": {
+          "enum": [
+            "avgt",
+            "thrpt"
+          ]
+        },
+        "outputTimeUnit": {
+          "enum": [
+            "ns",
+            "us",
+            "ms",
+            "s",
+            "m"
+          ]
+        },
+        "timeoutMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        }
+      },
+      "required": [
+        "classes"
+      ],
+      "additionalProperties": false
+    },
+    "jvmBenchmarkHarness": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "module",
+        "classpath",
+        "classes"
+      ],
+      "additionalProperties": false
+    },
+    "jvmBenchmarkRun": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "profile": {
+          "enum": [
+            "smoke",
+            "measurement"
+          ]
+        },
+        "settings": {
+          "$ref": "#/$defs/jvmBenchmarkSettings"
+        }
+      },
+      "required": [
+        "module",
+        "classpath",
+        "profile",
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "benchmarkReady": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "target": {
+          "const": "jvm"
+        },
+        "profile": {
+          "enum": [
+            "smoke",
+            "measurement"
+          ]
+        },
+        "actionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:benchmark-(smoke|measurement)$(?![\\s\\S])"
+        },
+        "directory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "summary": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "results": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "profile",
+        "actionId",
+        "directory",
+        "summary",
+        "results"
+      ],
+      "additionalProperties": false
     },
     "abiSettings": {
       "type": "object",
@@ -4809,7 +5002,7 @@
       "oneOf": [
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test)$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -9426,7 +9619,8 @@
             "application-finished",
             "framework-ready",
             "abi-ready",
-            "documentation-ready"
+            "documentation-ready",
+            "benchmark-ready"
           ]
         },
         "payload": {
@@ -9541,6 +9735,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/documentationReady"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "benchmark-ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/benchmarkReady"
               }
             }
           }

@@ -38,7 +38,7 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
         "modules" to modules.map { m -> obj("id" to m.id.json(), "sourceSets" to m.sourceSets.map { s -> obj("name" to s.name.json(),
             "directories" to paths(s.directories), "resources" to paths(s.resources), "dependsOn" to strings(s.dependsOn), "dependencies" to s.dependencies.map { d -> when(d) {
                 is Dependency.Module -> obj("module" to d.module.json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()); is Dependency.External -> obj("coordinate" to d.coordinate.toString().json(), "scope" to d.scope.name.lowercase().json(), "exported" to d.exported.json()) } }.json()) }.json(),
-            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.abi == null) fields else JsonValue.Object(fields.values + ("abi" to t.abi.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
+            "targets" to m.targets.map { t -> obj("name" to t.name.json(), "main" to t.main.json(), "test" to (t.test?.json() ?: JsonValue.Null), "compilerOptions" to strings(t.compilerOptions)).let { fields -> if (t.testCompilerOptions == null) fields else JsonValue.Object(fields.objectValue() + ("testCompilerOptions" to strings(t.testCompilerOptions))) }.let { fields -> if (t.benchmarkSettings == null) fields else JsonValue.Object(fields.values + ("benchmarkSettings" to t.benchmarkSettings.toJson())) }.let { fields -> if (t.application == null) fields else JsonValue.Object(fields.objectValue() + ("application" to t.application.toJson())) }.let { fields -> if (t.nativeFramework == null) fields else JsonValue.Object(fields.objectValue() + ("nativeFramework" to t.nativeFramework.toJson())) }.let { fields -> if (t.abi == null) fields else JsonValue.Object(fields.values + ("abi" to t.abi.toJson())) }.let { fields -> if (t.nativeTimeouts == null) fields else JsonValue.Object(fields.objectValue() + ("nativeTimeouts" to JsonValue.Object(buildMap {
                 t.nativeTimeouts.compileMillis?.let { put("compileMillis", it.json()) }; t.nativeTimeouts.linkMillis?.let { put("linkMillis", it.json()) }
             }))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
@@ -78,6 +78,7 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-documentation-native-stdlib-v1" -> listOf(FileEntry(LogicalPath("stdlib/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
+    "kvik-jvm-benchmark-harness-v1" -> listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "generated/Harness.class").map { FileEntry(LogicalPath("benchmark-harness/$it"), digest("$salt:$it")) }
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
     "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).let { compilation ->
         listOf(FileEntry(compilation.output, digest(salt), true)) + if (compilation.target == NativeTarget.MACOS_ARM64)
@@ -1623,5 +1624,56 @@ class JsProjectGraphTest {
                 tools + (target.projectName to tools.getValue(target.projectName).filterKeys { it != "node" }),
                 request(ProjectMode.TEST, target.projectName)) }
         }
+    }
+}
+
+class JvmBenchmarkGraphTest {
+    private fun fixture(settings: JvmBenchmarkSettings = JvmBenchmarkSettings(listOf("example.Bench")), generator: Boolean = true): ProjectConfiguration {
+        val benchmark = module("app", listOf(Dependency.Module("base"), external("org.openjdk.jmh:jmh-core:1.37")) +
+            if (generator) listOf(Dependency.External(Coordinate.parse("org.openjdk.jmh:jmh-generator-reflection:1.37"), DependencyScopeKind.RUNTIME)) else emptyList())
+        return configuration(base, benchmark.copy(targets = benchmark.targets.map { if (it.name == "jvm") it.copy(benchmarkSettings = settings) else it }))
+    }
+    @Test fun profilesShareCompilationAndHarnessButAlwaysMeasureFresh() {
+        val config = fixture()
+        val smoke = resolved(graph(config, request = request(ProjectMode.BENCHMARK_SMOKE)))
+        val measurement = resolved(graph(config, request = request(ProjectMode.BENCHMARK_MEASUREMENT)))
+        for (id in listOf("base:jvm:main", "app:jvm:main", "app:jvm:benchmark-harness")) assertEquals(smoke.getValue(id).key(Sha256), measurement.getValue(id).key(Sha256))
+        val harness = smoke.getValue("app:jvm:benchmark-harness")
+        assertEquals(ActionKind.GENERATE, harness.kind)
+        assertEquals(CachePolicy.LOCAL, harness.cachePolicy)
+        val changedSettings = resolved(graph(fixture(JvmBenchmarkSettings(listOf("example.Bench"), warmups = 7, forks = 2)), request = request(ProjectMode.BENCHMARK_MEASUREMENT)))
+        assertEquals(harness.key(Sha256), changedSettings.getValue("app:jvm:benchmark-harness").key(Sha256))
+        for ((mode, actions, profile) in listOf(Triple(ProjectMode.BENCHMARK_SMOKE, smoke, BenchmarkProfile.SMOKE), Triple(ProjectMode.BENCHMARK_MEASUREMENT, measurement, BenchmarkProfile.MEASUREMENT))) {
+            val check = "app:jvm:benchmark-${profile.wireName}"
+            assertEquals(setOf(check), projectRequestedChecks(request(mode)))
+            val action = actions.getValue(check)
+            assertEquals(ActionKind.BENCHMARK, action.kind)
+            assertEquals(CachePolicy.NEVER, action.cachePolicy)
+            val run = JvmBenchmarkRun.fromJson(action.parameters)
+            assertEquals(profile, run.profile)
+            assertEquals(LogicalPath("harness/app"), run.classpath.first())
+            assertTrue(run.classpath.any { it.value == "runtime/base/main" })
+            assertEquals(action, jvmBenchmarkAction(run, action.inputs, composition, tools.getValue("jvm")))
+            assertEquals(if (profile == BenchmarkProfile.SMOKE) 50L else 1000L, run.effectiveSettings.iterationMillis)
+        }
+    }
+    @Test fun missingSettingsDependenciesOrRuntimeAuthorizationFailBeforeExecution() {
+        assertFails { graph(request = request(ProjectMode.BENCHMARK_SMOKE)) }
+        assertFails { graph(fixture(generator = false), request = request(ProjectMode.BENCHMARK_SMOKE)) }
+        assertFails { graph(fixture(), request = request(ProjectMode.BENCHMARK_SMOKE, "macosArm64")) }
+        val effective = effectiveConfiguration(fixture(), scopes = listOf(DependencyScope("app", "jvm", "main", "java-api")))
+        assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition, tools, request(ProjectMode.BENCHMARK_SMOKE)) }
+        assertFails { TargetSpec("macosArm64", "main", null, emptyList(), benchmarkSettings = JvmBenchmarkSettings(listOf("example.Bench"))) }
+    }
+    @Test fun runtimeOnlyWorkspaceDependenciesParticipateInHarnessWithoutPollutingCompilation() {
+        val original = fixture()
+        val updated = configuration(*original.project.modules.map { if (it.id != "app") it else it.copy(sourceSets = it.sourceSets.map { source ->
+            if (source.name != "jvmMain") source else source.copy(dependencies = source.dependencies + Dependency.Module("runtime", DependencyScopeKind.RUNTIME))
+        }) }.toTypedArray(), module("runtime"))
+        val files = TreeManifest(snapshot().files + FileEntry(LogicalPath("runtime/common/Runtime.kt"), digest("runtime")))
+        val actions = resolved(graph(updated, files, request(ProjectMode.BENCHMARK_SMOKE)))
+        assertTrue("runtime:jvm:main" in actions)
+        assertFalse(JvmCompilation.fromJson(actions.getValue("app:jvm:main").parameters).classpath.any { it.value.startsWith("modules/runtime/") })
+        assertTrue(JvmBenchmarkHarness.fromJson(actions.getValue("app:jvm:benchmark-harness").parameters).classpath.any { it.value.startsWith("modules/runtime/") })
     }
 }

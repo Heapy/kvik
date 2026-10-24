@@ -42,7 +42,7 @@ def main():
         TMPDIR=tempfile.gettempdir(), LANG='C', LC_ALL='C', TZ='UTC', KONAN_USE_COMPILER_SERVER='false', KVIK_GRAPH_FIXTURE=str(fixture))
     sources = [p for directory in ['core/src', 'integration/resolution/src', 'integration/project-graph/src', 'integration/library/src', 'tests/project-graph', 'tests/library-package']
                for p in sorted((ROOT / directory).rglob('*.kt'))]
-    sources += [ROOT / 'compiler/documentation/src/kvik/documentation/DocumentationActions.kt', ROOT / 'compiler/abi/src/kvik/abi/AbiActions.kt', ROOT / 'resolution/src/kvik/resolution/MavenResolver.kt', ROOT / 'resolution/src/kvik/resolution/PomModel.kt', ROOT / 'resolution/src/kvik/resolution/ResolutionGraph.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmScriptActions.kt',
+    sources += [ROOT / 'compiler/documentation/src/kvik/documentation/DocumentationActions.kt', ROOT / 'compiler/abi/src/kvik/abi/AbiActions.kt', ROOT / 'resolution/src/kvik/resolution/MavenResolver.kt', ROOT / 'resolution/src/kvik/resolution/PomModel.kt', ROOT / 'resolution/src/kvik/resolution/ResolutionGraph.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmScriptActions.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmBenchmarkActions.kt',
                 ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt', ROOT / 'compiler/js/src/kvik/compiler/js/JsActions.kt', ROOT / 'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt']
     sources += [args.application_actions.resolve(), ROOT / 'tests/native/NativeApplicationActionsTest.kt']
     sources += [ROOT / 'tests/locking/CommonPublicationTest.kt']

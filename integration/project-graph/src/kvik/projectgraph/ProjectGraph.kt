@@ -11,8 +11,9 @@ import kvik.library.*
 import kvik.abi.*
 import kvik.documentation.*
 
-enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, CLASSPATH_MAIN, CLASSPATH_TEST, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
+enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, CLASSPATH_MAIN, CLASSPATH_TEST, BENCHMARK_SMOKE, BENCHMARK_MEASUREMENT, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
 private fun ProjectMode.isClasspath() = this in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)
+private fun ProjectMode.isBenchmark() = this in setOf(ProjectMode.BENCHMARK_SMOKE, ProjectMode.BENCHMARK_MEASUREMENT)
 private fun ProjectMode.checkScope() = name.lowercase().replace('_', '-')
 data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
@@ -38,6 +39,7 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
         require(request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
         return setOf("jvm")
     }
+    require(!request.mode.isBenchmark() || request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
     val modules = project.modules.associateBy { it.id }
     val visited = mutableSetOf<List<String>>()
     val targets = request.targets.toMutableSet()
@@ -56,7 +58,7 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
         }
     }
     for (module in request.modules) for (target in request.targets) {
-        visit(module, target, "main", request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
+        visit(module, target, "main", request.mode.isBenchmark() || request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
             request.mode == ProjectMode.BUILD && modules.getValue(module).targets.single { it.name == target }.nativeFramework != null)
         if (request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS))
             visit(module, target, "test", request.mode == ProjectMode.TEST || target != "jvm")
@@ -113,6 +115,7 @@ private class Builder(
             "JS/Wasm currently supports build, test and compile-tests; packaging, ABI, documentation and application modes require their own adapters"
         }
         require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
+        require(!this.request.mode.isBenchmark() || this.request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
         for (module in this.request.modules) for (target in this.request.targets) {
@@ -123,7 +126,8 @@ private class Builder(
             val scope = if (this.request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.CLASSPATH_TEST)) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
-            val runtime = scope == "test" && (this.request.mode == ProjectMode.TEST || target != "jvm") || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
+            if (this.request.mode.isBenchmark()) require(target(module, target).benchmarkSettings != null) { "No benchmarkSettings: $module:$target" }
+            val runtime = this.request.mode.isBenchmark() || scope == "test" && (this.request.mode == ProjectMode.TEST || target != "jvm") || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
                 this.request.mode == ProjectMode.BUILD && target(module, target).nativeFramework != null
             val usages = if (target == "jvm") if (runtime) listOf("java-api", "java-runtime") else listOf("java-api") else if (runtime) listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
@@ -148,6 +152,8 @@ private class Builder(
                 ProjectMode.COMPILE_TESTS -> ensureTest(module, target, execute = false)
                 ProjectMode.CLASSPATH_MAIN -> ensureClasspath(module, "main")
                 ProjectMode.CLASSPATH_TEST -> ensureClasspath(module, "test")
+                ProjectMode.BENCHMARK_SMOKE -> ensureBenchmark(module, BenchmarkProfile.SMOKE)
+                ProjectMode.BENCHMARK_MEASUREMENT -> ensureBenchmark(module, BenchmarkProfile.MEASUREMENT)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
                 ProjectMode.ABI_DUMP -> ensureAbiDump(module, target)
@@ -560,6 +566,44 @@ private class Builder(
                 classpathInputs(classpath, "jvm", results), composition, tools.getValue("jvm"))
         }
         return id
+    }
+
+    private fun ensureBenchmark(module: String, profile: BenchmarkProfile): String {
+        val settings = target(module, "jvm").benchmarkSettings ?: error("No benchmarkSettings: $module:jvm")
+        val runtimeModules = (listOf(module) + closure(module, "jvm", "main", true).modules).distinct()
+        runtimeModules.forEach { ensureMain(it, "jvm") }
+        val compileArtifacts = external(module, "jvm", "main", "java-api")
+        val runtimeArtifacts = external(module, "jvm", "main", "java-runtime")
+        val jmhCore = Coordinate("org.openjdk.jmh", "jmh-core", "1.37")
+        val jmhGenerator = Coordinate("org.openjdk.jmh", "jmh-generator-reflection", "1.37")
+        require(compileArtifacts.any { it.coordinate == jmhCore }) { "Benchmarks require org.openjdk.jmh:jmh-core:1.37 on the compilation classpath" }
+        require(runtimeArtifacts.any { it.coordinate == jmhCore } && runtimeArtifacts.any { it.coordinate == jmhGenerator }) {
+            "Benchmarks require JMH 1.37 core and reflection generator on the declared runtime classpath"
+        }
+        require((compileArtifacts + runtimeArtifacts).none { it.coordinate.group == "org.openjdk.jmh" && it.coordinate.version != "1.37" }) { "Mixed JMH versions are unsupported" }
+        val artifacts = artifactEntries(runtimeArtifacts, "jvm")
+        val resourceFiles = runtimeModules.flatMap { resources(it, "jvm", "main") }
+        val classpath = runtimeModules.flatMap { producer ->
+            listOfNotNull(modulePath(producer, "jvm", "main"), LogicalPath("runtime/$producer/main").takeIf { root -> resourceFiles.any { it.path.value.startsWith(root.value + "/") } })
+        } + artifacts.map { it.path }
+        val edges = runtimeModules.map { mainId(it, "jvm") }.toSet()
+        val harnessId = "$module:jvm:benchmark-harness"
+        fun runtimeInputs(results: Map<String, ActionResult>) = merge(runtimeModules.flatMap { remap(results, it, "jvm", "main") }, resourceFiles, artifacts)
+        nodes[harnessId] = ActionNode(harnessId, edges) { results ->
+            validateResults(results, edges)
+            jvmBenchmarkHarnessAction(JvmBenchmarkHarness(module, classpath, settings.classes), runtimeInputs(results), composition, tools.getValue("jvm"))
+        }
+        val runId = "$module:jvm:benchmark-${profile.wireName}"
+        val runEdges = edges + harnessId
+        nodes[runId] = ActionNode(runId, runEdges) { results ->
+            validateResults(results, runEdges)
+            val generated = results.getValue(harnessId).outputs.files
+            require(generated.isNotEmpty() && generated.all { it.path.value.startsWith("benchmark-harness/") && !it.executable }) { "Unexpected JMH harness outputs" }
+            val harness = generated.map { it.copy(path = LogicalPath("harness/$module/" + it.path.value.removePrefix("benchmark-harness/"))) }
+            jvmBenchmarkAction(JvmBenchmarkRun(module, listOf(LogicalPath("harness/$module")) + classpath, profile, settings),
+                merge(runtimeInputs(results).files, harness), composition, tools.getValue("jvm"))
+        }
+        return runId
     }
 
     private fun ensureMain(module: String, target: String) {

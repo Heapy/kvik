@@ -93,6 +93,19 @@ DEFS["applicationLaunch"]["allOf"] = [{
 }]
 DEFS["applicationLaunch"]["description"] = "Canonical UTF-8 metadata must additionally fit 256 KiB; paths must bind to the declared input tree."
 DEFS["target"] = object_({"name": enum(*PROJECT_TARGETS), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING), "nativeTestSettings": ref("nativeTestSettings"), "nativeTimeouts": ref("nativeTimeouts")}, optional=("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
+BENCHMARK_CLASSES = array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\s\S])"}, minItems=1, uniqueItems=True)
+DEFS["jvmBenchmarkSettings"] = object_({"classes": BENCHMARK_CLASSES,
+    "warmups": {"type": "integer", "minimum": 1, "maximum": 1000}, "iterations": {"type": "integer", "minimum": 1, "maximum": 1000},
+    "iterationMillis": {"type": "integer", "minimum": 1, "maximum": 3600000}, "forks": {"type": "integer", "minimum": 1, "maximum": 100},
+    "threads": {"type": "integer", "minimum": 1, "maximum": 1024}, "mode": enum("avgt", "thrpt"), "outputTimeUnit": enum("ns", "us", "ms", "s", "m"),
+    "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 86400000}},
+    optional=("warmups", "iterations", "iterationMillis", "forks", "threads", "mode", "outputTimeUnit", "timeoutMillis"))
+DEFS["target"]["properties"]["benchmarkSettings"] = ref("jvmBenchmarkSettings")
+DEFS["jvmBenchmarkHarness"] = object_({"module": ID, "classpath": array(PATH, minItems=1, uniqueItems=True), "classes": BENCHMARK_CLASSES})
+DEFS["jvmBenchmarkRun"] = object_({"module": ID, "classpath": array(PATH, minItems=1, uniqueItems=True), "profile": enum("smoke", "measurement"), "settings": ref("jvmBenchmarkSettings")})
+DEFS["benchmarkReady"] = object_({"module": ID, "target": {"const": "jvm"}, "profile": enum("smoke", "measurement"),
+    "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:benchmark-(smoke|measurement)$(?![\s\S])"},
+    "directory": NONEMPTY, "summary": NONEMPTY, "results": NONEMPTY})
 DEFS["abiSettings"] = object_({"baseline": PATH})
 DEFS["target"]["properties"]["abi"] = ref("abiSettings")
 DEFS["jsTestSettings"] = object_({"filter": nullable({"type": "string", "minLength": 1, "maxLength": 4096,
@@ -104,6 +117,7 @@ DEFS["nativeFramework"] = object_({"baseName": {"type": "string", "minLength": 1
 DEFS["target"]["properties"]["application"] = ref("applicationSettings")
 DEFS["target"]["properties"]["nativeFramework"] = ref("nativeFramework")
 DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"properties": {"name": {"const": "jvm"}, "test": ID}}}]
+DEFS["target"]["allOf"].append({"if": {"required": ["benchmarkSettings"]}, "then": {"properties": {"name": {"const": "jvm"}}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["jsTestSettings"]}, "then": {"properties": {"name": enum(*JS_TARGETS), "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"properties": {"name": enum(*JS_TARGETS)}},
     "then": {"not": {"anyOf": [{"required": [name]} for name in ("application", "abi")]}}})
@@ -381,7 +395,7 @@ DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "fai
 DEFS["jvmClasspath"] = versioned({"module": ID, "compilation": enum("main", "test"), "classpath": array(PATH, uniqueItems=True)})
 DEFS["jvmClasspath"]["description"] = "Ordered compiler classpath; accompanying input tree must cover every JAR or directory and contain no unrelated files."
 DEFS["requestedCheck"] = {"oneOf": [
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test)$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests))$(?![\s\S])"},
@@ -741,7 +755,7 @@ DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] 
     "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True),
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
 DEFS["configurationEditOperation"] = {"oneOf": [
     object_({"op": {"const": "set-dependency"}, "module": ID, "sourceSet": ID, "dependency": ref("dependency")}),
     object_({"op": {"const": "set-dependency-version"}, "module": ID, "sourceSet": ID, "package": NONEMPTY, "version": NONEMPTY}),
@@ -798,6 +812,7 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "framework-ready": ref("frameworkReady"),
     "abi-ready": ref("abiReady"),
     "documentation-ready": ref("documentationReady"),
+    "benchmark-ready": ref("benchmarkReady"),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-cache-decision": ref("actionCacheDecision"),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),
