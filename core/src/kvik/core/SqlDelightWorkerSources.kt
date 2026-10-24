@@ -357,8 +357,8 @@ object Generate {
         val outputRoot = Path.of(output).toAbsolutePath().normalize()
         var status = "success"
         var code = 0
-        var diagnostics = emptyList<String>()
-        try {
+        var diagnostics = emptySequence<String>()
+        val result = try {
             require(sourceRoot.startsWith(inputRoot) && sourceRoot != inputRoot)
             require(Files.isDirectory(outputRoot, LinkOption.NOFOLLOW_LINKS))
             val sources = if (Files.exists(sourceRoot, LinkOption.NOFOLLOW_LINKS)) Files.walk(sourceRoot).use { paths ->
@@ -374,7 +374,7 @@ object Generate {
                 when (val generated = environment.generateSqlDelightFiles(::println)) {
                     is SqlDelightEnvironment.CompilationStatus.Failure -> {
                         status = "compilation-error"; code = 1
-                        diagnostics = generated.errors.take(1000).map { problem ->
+                        diagnostics = generated.errors.asSequence().map { problem ->
                             val path = Path.of(problem.path).toAbsolutePath().normalize()
                             require(path.startsWith(sourceRoot) && path in sources) { "SQL diagnostic refers to an undeclared source" }
                             diagnostic("KVIK_SQLDELIGHT_COMPILATION", "compilation", problem.message.take(16384), inputRoot.relativize(path).toString(), problem.line, problem.column)
@@ -383,15 +383,41 @@ object Generate {
                     SqlDelightEnvironment.CompilationStatus.Success -> Unit
                 }
             }
+            workerResult(requestId, status, code, diagnostics)
         } catch (failure: Exception) {
-            status = "infrastructure-error"; code = 2
-            diagnostics = listOf(diagnostic("KVIK_SQLDELIGHT_WORKER", "infrastructure", (failure.message ?: failure.javaClass.name).take(16384)))
+            code = 2
+            workerResult(requestId, "infrastructure-error", code,
+                sequenceOf(diagnostic("KVIK_SQLDELIGHT_WORKER", "infrastructure", (failure.message ?: failure.javaClass.name).take(16384))))
         }
         if (code != 0) Files.walk(outputRoot).use { paths -> paths.sorted(Comparator.reverseOrder()).filter { it != outputRoot }.forEach(Files::delete) }
-        val result = "{\"schemaVersion\":1,\"requestId\":" + quote(requestId) + ",\"status\":" + quote(status) + ",\"exitCode\":" + code + ",\"diagnostics\":[" + diagnostics.joinToString(",") + "]}"
+
         Files.writeString(Path.of(resultFile), result, StandardOpenOption.CREATE_NEW)
         exitProcess(code)
     }
+}
+
+
+/** Includes escaped paths, request identity, separators and an explicit truncation marker in the byte budget. */
+internal fun workerResult(requestId: String, status: String, code: Int, diagnostics: Sequence<String>): String {
+    val prefix = "{\"schemaVersion\":1,\"requestId\":" + quote(requestId) + ",\"status\":" + quote(status) + ",\"exitCode\":" + code + ",\"diagnostics\":["
+    val suffix = "]}"
+    val marker = diagnostic("KVIK_SQLDELIGHT_DIAGNOSTICS_TRUNCATED", if (status == "compilation-error") "compilation" else "infrastructure",
+        "Additional SQLDelight diagnostics were omitted to keep the worker result within its size limit")
+    val limit = 2 * 1024 * 1024
+    var bytes = prefix.toByteArray(Charsets.UTF_8).size + suffix.length
+    val reservedMarker = marker.toByteArray(Charsets.UTF_8).size + 1
+    require(bytes + reservedMarker <= limit) { "Oversized SQLDelight request identity" }
+    val selected = mutableListOf<String>()
+    for (entry in diagnostics) {
+        val addedBytes = entry.toByteArray(Charsets.UTF_8).size + if (selected.isEmpty()) 0 else 1
+        if (selected.size == 1000 || bytes.toLong() + addedBytes + reservedMarker > limit) {
+            selected += marker
+            break
+        }
+        selected += entry
+        bytes += addedBytes
+    }
+    return prefix + selected.joinToString(",") + suffix
 }
 
 private fun diagnostic(code: String, category: String, message: String, path: String? = null, line: Int? = null, column: Int? = null): String =
