@@ -52,8 +52,8 @@ class TestAggregateSchemaTest(unittest.TestCase):
 
     def test_matrix_grammar_bounds_and_contributor_duplicates(self):
         scope = aggregate()['scope']
-        validator('testAggregationScope').validate({**scope, 'expectedChecks': [CHECK, 'library:macosArm64:test']})
-        for checks in ([], [CHECK, CHECK], ['library:js:test'], ['library:jvm:build'], ['library:jvm:test\n'],
+        validator('testAggregationScope').validate({**scope, 'expectedChecks': [CHECK, 'library:macosArm64:test', 'library:js:test', 'library:wasmJs:test']})
+        for checks in ([], [CHECK, CHECK], ['library:unsupported:test'], ['library:jvm:build'], ['library:jvm:test\n'],
                        ['m' + str(i) + ':jvm:test' for i in range(1001)]):
             self.assertFalse(validator('testAggregationScope').is_valid({**scope, 'expectedChecks': checks}), str(checks)[:100])
         value = aggregate()
