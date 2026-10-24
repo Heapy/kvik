@@ -107,14 +107,16 @@ class FixtureSpec : FunSpec({
 ''')
     environment = dict(os.environ)
     environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
-    common = ['--project', str(project), '--store', str(store)]
-    resolved = subprocess.run([str(runtime), 'resolve', *common, *resolution_options(native)],
+    policy = resolution_options(native)
+    common = ['--project', str(project), '--store', str(store), *policy]
+    resolved = subprocess.run([str(runtime), 'resolve', *common],
                               env=environment, capture_output=True, timeout=600)
     assert resolved.returncode == 0, (resolved.stdout.decode(errors='replace'), resolved.stderr.decode(errors='replace'))
     client = BuildClient([str(runtime), 'bsp', *common, '--tools', str(tools), '--jobs', '1'])
     try:
-        client.request('build/initialize', dict(displayName='generated fixture', version='1', bspVersion='2.2.0',
-            rootUri=root.as_uri(), capabilities=dict(languageIds=['kotlin'])))
+        capabilities = client.request('build/initialize', dict(displayName='generated fixture', version='1', bspVersion='2.2.0',
+            rootUri=root.as_uri(), capabilities=dict(languageIds=['kotlin'])))['capabilities']
+        assert capabilities['buildTargetChangedProvider'] is True, capabilities
         client.notify('build/initialized')
         targets = client.request('workspace/buildTargets')['targets']
         by_suffix = {t['id']['uri'].split('#')[1]: t['id'] for t in targets}
