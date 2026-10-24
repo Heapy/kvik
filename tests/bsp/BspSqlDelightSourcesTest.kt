@@ -68,7 +68,7 @@ class BspSqlDelightSourcesTest {
                 it.objectValue().getValue("generated").booleanValue()
             })
         }
-        // Tests consume main binaries, and must prepare/clear the shared producer for all main owners.
+        // Test prerequisites prepare/clear the shared producer without changing main source ownership.
         for (test in model.allTargets().filter { it.compilation == "test" }) {
             assertEquals(expected.toSet(), model.generatedSourceOwners(test).toSet())
             assertNull(model.sourceUri(test, file.path.value))
@@ -78,6 +78,48 @@ class BspSqlDelightSourcesTest {
         for (owner in cleared) assertTrue(model.replaceGeneratedSources(owner, emptyList()))
         assertTrue(model.inverseSources(source.uri(file)).items("targets").isEmpty())
         assertTrue(expected.all { model.sourceUri(it, file.path.value) == null })
+    }
+
+    @Test fun recompiledMainSourcesKeepTestDiagnosticAttributionAndClearWithTheirOwner() {
+        val model = model(platforms(module("db", sql = true), "jvm", "js", "wasmJs", "macosArm64"))
+        val file = FileEntry(LogicalPath("generated/sqldelight/db/fixture/Database.kt"), digest)
+        val source = BspGeneratedSources("$root/.kvik/bsp/first/generated", "db:jvm:sqldelight", digest, TreeManifest(listOf(file)))
+        val state = BspDiagnostics()
+        val ordinaryUri = bspFileUri("$root/db/main/Existing.kt")
+        val message = obj("message" to "type mismatch".json())
+        for (owner in model.generatedSourceTargets(source.producer)) {
+            model.replaceGeneratedSources(owner, listOf(source))
+            val test = model.target("db", "test", owner.target)
+            val action = "db:${owner.target}:test-compile"
+            assertEquals(listOf(test), model.diagnosticTargets(action))
+            assertNull(model.sourceUri(test, file.path.value))
+            assertEquals(if (owner.target == "jvm") null else source.uri(file), model.diagnosticUri(action, file.path.value))
+            assertEquals(if (owner.target == "jvm") listOf(owner) else listOf(owner, test), model.generatedDiagnosticTargets(owner))
+            assertNull(model.diagnosticUri(action, "generated/sqldelight/db/fixture/Absent.kt"))
+            assertNull(model.diagnosticUri(action, "generated/sqldelight/db/../Other.kt"))
+            assertEquals(listOf(test), model.generatedDiagnosticTargets(test))
+            if (owner.target != "jvm") state.replace(mapOf(action to BspActionDiagnostics(test,
+                mapOf(source.uri(file) to listOf(message), ordinaryUri to listOf(message)))))
+        }
+        for (owner in model.generatedSourceOwners(model.target("db", "test", "js"))) {
+            for (consumer in model.generatedDiagnosticTargets(owner)) {
+                val changes = state.clearDocuments(consumer, setOf(source.uri(file)))
+                if (consumer.compilation == "test") {
+                    val change = changes.single()
+                    assertEquals(consumer.uri, change.values.getValue("buildTarget").objectValue().getValue("uri").stringValue())
+                    assertEquals(source.uri(file), change.values.getValue("textDocument").objectValue().getValue("uri").stringValue())
+                    assertTrue(change.values.getValue("diagnostics").arrayValue().isEmpty())
+                } else assertTrue(changes.isEmpty())
+            }
+            model.replaceGeneratedSources(owner, emptyList())
+        }
+        for (platform in listOf("js", "wasmJs", "macosArm64")) {
+            assertNull(model.diagnosticUri("db:$platform:test-compile", file.path.value))
+        }
+        val remaining = state.clear()
+        assertEquals(3, remaining.size)
+        assertTrue(remaining.all { it.values.getValue("textDocument").objectValue().getValue("uri").stringValue() == ordinaryUri })
+        assertFails { model.generatedDiagnosticTargets(model.target("db").copy(module = "other")) }
     }
 
     @Test fun sharedGeneratorPrerequisitesIncludeAllConsumersButExcludeUnrelatedTargetClosures() {

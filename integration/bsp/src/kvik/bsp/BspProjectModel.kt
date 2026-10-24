@@ -155,7 +155,17 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
 
     fun diagnosticUri(actionId: String, path: String): String? {
         val target = diagnosticTargets(actionId).firstOrNull() ?: return null
-        if (actionTarget(actionId) != null) return if (path.endsWith(".kt")) sourceUri(target, path) else null
+        if (actionTarget(actionId) != null) {
+            if (!path.endsWith(".kt")) return null
+            // Native and web tests compile main Kotlin again; source ownership remains with main.
+            if (target.compilation == "test" && recompilesMainSources(target.target)) {
+                val logical = try { LogicalPath(path) } catch (_: IllegalArgumentException) { return null }
+                return generatedSourceUri(target.uri, logical)
+                    ?: generatedSourceUri(targetUri(target.module, target.target, "main"), logical)
+                    ?: sourceUri(target, path)
+            }
+            return sourceUri(target, path)
+        }
         return try {
             val logical = LogicalPath(path)
             val settings = byUri.getValue(target.uri).module.sqlDelight ?: return null
@@ -163,11 +173,27 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         } catch (_: IllegalArgumentException) { null }
     }
 
+    private fun recompilesMainSources(target: String): Boolean =
+        NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null
+
+    /** Generated main files can have diagnostics from both main and a recompiling test compiler. */
+    fun generatedDiagnosticTargets(owner: BspTarget): List<BspTarget> {
+        require(select(listOf(owner.uri)).single() == owner) { "Generated-source owner differs from imported target" }
+        if (owner.compilation != "main" || !recompilesMainSources(owner.target)) return listOf(owner)
+        val test = byUri[targetUri(owner.module, owner.target, "test")]
+            ?.let { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
+        return listOfNotNull(owner, test)
+    }
+
+    private fun generatedSourceUri(uri: String, path: LogicalPath): String? =
+        generated[uri].orEmpty().firstNotNullOfOrNull { source ->
+            source.files.files.singleOrNull { it.path == path }?.let(source::uri)
+        }
+
     fun sourceUri(target: BspTarget, path: String): String? = try {
         val logical = LogicalPath(path)
-        generated[target.uri].orEmpty().firstNotNullOfOrNull { source ->
-            source.files.files.singleOrNull { it.path == logical }?.let(source::uri)
-        } ?: if (belongs(logical, byUri.getValue(target.uri).directories)) fileUri(logical) else null
+        generatedSourceUri(target.uri, logical)
+            ?: if (belongs(logical, byUri.getValue(target.uri).directories)) fileUri(logical) else null
     } catch (_: IllegalArgumentException) { null }
 
     fun containsSource(target: BspTarget, path: String): Boolean = sourceUri(target, path) != null
