@@ -55,4 +55,27 @@ class ReportTest {
         assertFailsWith<IllegalArgumentException> { parseTestResult(testJson(tests = listOf(test.toJson())), "request", "m", 0) }
     }
 
+    @Test fun abortedContainersCannotPassOrHideRealFailures() {
+        val abortion = Diagnostic("KVIK_TEST_CONTAINER_ABORTED", DiagnosticCategory.TEST, "teardown aborted", module = "m", target = "jvm")
+        fun record(status: String, exit: Int, complete: Boolean = false, failed: Boolean = false, diagnostic: Diagnostic = abortion): JsonValue =
+            JsonValue.Object(testJson(exit = exit, status = status, tests = listOf(
+                TestResult("concrete-id", "m", "jvm", if (failed) TestStatus.FAILED else TestStatus.PASSED).toJson())).values + mapOf(
+                "testCounts" to TestCounts(1, 1, if (failed) 1 else 0, 0, complete).toJson(),
+                "diagnostics" to listOf(diagnostic.toJson()).json()))
+        val result = parseTestResult(record("incomplete", 3), "request", "m", 3)
+        assertEquals(VerificationStatus.INCOMPLETE, result.report.status)
+        assertEquals(TestStatus.PASSED, result.report.tests.single().status)
+        assertEquals(listOf(abortion), result.diagnostics)
+        assertFails { parseTestResult(record("passed", 0), "request", "m", 0) }
+        assertFails { parseTestResult(record("passed", 0, complete = true), "request", "m", 0) }
+        assertFails { parseTestResult(record("incomplete", 3, complete = true), "request", "m", 3) }
+        assertFails { parseTestResult(record("failed", 1), "request", "m", 1) }
+        assertFails { parseTestResult(record("incomplete", 3, failed = true), "request", "m", 3) }
+        assertEquals(VerificationStatus.FAILED, parseTestResult(record("failed", 1, failed = true), "request", "m", 1).report.status)
+        // A matching code in a different category must not conceal an infrastructure failure.
+        val infrastructure = abortion.copy(category = DiagnosticCategory.INFRASTRUCTURE)
+        assertFails { parseTestResult(record("incomplete", 3, diagnostic = infrastructure), "request", "m", 3) }
+        assertEquals(VerificationStatus.FAILED, parseTestResult(record("failed", 1, diagnostic = infrastructure), "request", "m", 1).report.status)
+    }
+
 }

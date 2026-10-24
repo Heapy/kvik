@@ -19,6 +19,8 @@ New runner results include elapsed durations when available, suite and display n
 
 JUnit XML uses a separate case for each known attempt so an earlier failure remains visible. Test names include stable identity and scope to avoid collisions. Missing durations are omitted. The normalized report remains authoritative for completeness, provenance and conversion notices that JUnit XML cannot fully represent. Incomplete scopes and runner failures remain visible even when their observed leaf tests passed.
 
+On JVM, an aborted JUnit container (including setup, teardown or dynamic-test discovery) makes verification incomplete, even if its observed tests passed. The `KVIK_TEST_CONTAINER_ABORTED` diagnostic retains the container identity and reason; observed tests and skip reasons are preserved. Discovery remains incomplete because the container may have stopped before registering all dynamic tests. A failed test or container still takes precedence and yields a failed result. An individual test's assumption abort remains a skipped test.
+
 The initial XML consumer contract is [GitLab unit test reports](https://docs.gitlab.com/ci/testing/unit_test_reports/). Publication is separate: this command creates local files and requires no service credentials.
 
 [JVM line coverage](coverage.md) is captured separately with `test --coverage`. Use `coverage-check` to evaluate a retained coverage report against a line threshold. Use `coverage-aggregate` for compatible coverage reports with an explicit expected-check matrix. GitHub Checks publication below sends test summaries; it does not publish coverage.

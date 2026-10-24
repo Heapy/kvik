@@ -209,7 +209,7 @@ def main():
     container = run_tests("container-failure", ["fixture.ContainerFailureTests"], 1)
     assert any(d["code"] == "KVIK_TEST_CONTAINER_FAILURE" for d in container["diagnostics"])
     aborted = run_tests("container-assumption", ["fixture.ContainerAssumptionTests"], 3)
-    assert aborted["testCounts"] == {"discovered": 1, "executed": 0, "failed": 0, "skipped": 1, "discoveryComplete": True}, aborted
+    assert aborted["testCounts"] == {"discovered": 1, "executed": 0, "failed": 0, "skipped": 1, "discoveryComplete": False}, aborted
     for name, declared, actual in [("undeclared-runtime", [std], test_cp),
                                    ("reordered-runtime", list(reversed(test_cp)), test_cp),
                                    ("extra-runtime-entry", test_cp, test_cp + ["tests-classes"])]:

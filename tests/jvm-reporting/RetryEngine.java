@@ -10,6 +10,16 @@ public final class RetryEngine implements TestEngine {
     public TestDescriptor discover(EngineDiscoveryRequest request, UniqueId id) {
         String selected = request.getSelectorsByType(ClassSelector.class).get(0).getClassName();
         EngineDescriptor root = new EngineDescriptor(id, selected);
+        if (selected.endsWith("ContainerAbort")) {
+            var container = new AbstractTestDescriptor(id.append("test", "container"), "Test and container") {
+                @Override public Type getType() { return Type.CONTAINER_AND_TEST; }
+            };
+            container.addChild(new AbstractTestDescriptor(container.getUniqueId().append("test", "leaf"), "Leaf") {
+                @Override public Type getType() { return Type.TEST; }
+            });
+            root.addChild(container);
+            return root;
+        }
         root.addChild(new AbstractTestDescriptor(id.append("test", "repeated"), "Repeated display") {
             @Override public Type getType() { return Type.TEST; }
         });
@@ -20,6 +30,15 @@ public final class RetryEngine implements TestEngine {
         var test = root.getChildren().iterator().next();
         var listener = request.getEngineExecutionListener();
         listener.executionStarted(root);
+        if (root.getDisplayName().endsWith("ContainerAbort")) {
+            var leaf = test.getChildren().iterator().next();
+            listener.executionStarted(test);
+            listener.executionStarted(leaf);
+            listener.executionFinished(leaf, TestExecutionResult.successful());
+            listener.executionFinished(test, TestExecutionResult.aborted(new org.opentest4j.TestAbortedException("test container aborted")));
+            listener.executionFinished(root, TestExecutionResult.successful());
+            return;
+        }
         boolean capped = root.getDisplayName().endsWith("Limit");
         int count = capped ? 1001 : 2;
         for (int n = 0; n < count; n++) {

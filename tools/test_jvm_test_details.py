@@ -83,8 +83,29 @@ def main():
     assert len(bounded['stackTrace'].encode('utf-16-le')) // 2 <= 32768
     assert bounded['message'] == 'x' * 8191  # Do not split the next surrogate pair.
     aborted = invoke('container', 'fixture.AbortedSuite', 'junit-jupiter', 3)
-    assert aborted['testCounts'] == dict(discovered=1, executed=0, failed=0, skipped=1, discoveryComplete=True)
+    assert aborted['testCounts'] == dict(discovered=1, executed=0, failed=0, skipped=1, discoveryComplete=False)
     assert 'container assumption' in aborted['tests'][0]['details']['attempts'][0]['skipReason']
+    for label, selected, reason in [
+        ('after-all-abort', 'AfterAllAbort', 'teardown aborted'),
+        ('dynamic-abort', 'DynamicAbort', 'dynamic discovery aborted'),
+        ('empty-factory-abort', 'EmptyFactoryAbort', 'factory aborted before discovery'),
+    ]:
+        result = invoke(label, 'fixture.AbortedSuite$' + selected, 'junit-jupiter', 3)
+        assert result['status'] == 'incomplete'
+        assert result['testCounts']['executed'] == 1 and result['testCounts']['failed'] == 0
+        assert result['testCounts']['discoveryComplete'] is False
+        assert result['tests'][0]['status'] == 'passed'
+        assert any(d['code'] == 'KVIK_TEST_CONTAINER_ABORTED' and reason in d['message'] for d in result['diagnostics'])
+    result = invoke('failure-and-abort', 'fixture.AbortedSuite$FailureAndAbort', 'junit-jupiter', 1)
+    assert result['status'] == 'failed' and result['testCounts']['failed'] == 1
+    assert any(d['code'] == 'KVIK_TEST_CONTAINER_ABORTED' for d in result['diagnostics'])
+    result = invoke('leaf-assumption', 'fixture.AbortedSuite$LeafAssumption', 'junit-jupiter', 0)
+    assert result['status'] == 'passed' and result['diagnostics'] == []
+    assert result['testCounts'] == dict(discovered=2, executed=1, failed=0, skipped=1, discoveryComplete=True)
+    result = invoke('test-container-abort', 'fixture.ContainerAbort', 'kotest', 3)
+    assert result['status'] == 'incomplete'
+    assert result['testCounts'] == dict(discovered=2, executed=1, failed=0, skipped=1, discoveryComplete=False)
+    assert any(d['code'] == 'KVIK_TEST_CONTAINER_ABORTED' and 'test container aborted' in d['message'] for d in result['diagnostics'])
     for label, selected, status in [('retry', 'fixture.Retry', 'passed'), ('retry-skip', 'fixture.RetrySkip', 'skipped')]:
         result = invoke(label, selected, 'kotest', 1)
         assert result['status'] == 'failed'
@@ -99,7 +120,7 @@ def main():
          ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmReports.kt', ROOT / 'tests/jvm-native/ReportTest.kt',
          '-generate-test-runner', '-o', output / 'reports.kexe'], 'compile-native-reports')
     run([output / 'reports.kexe'], 'native-reports')
-    print(f'PASS: 5 real worker scenarios and Native report-parser tests ({output})', flush=True)
+    print(f'PASS: 11 real worker scenarios and Native report-parser tests ({output})', flush=True)
 
 
 if __name__ == '__main__':

@@ -113,11 +113,15 @@ object TestWorker {
                                     TestExecutionResult.Status.ABORTED -> TestStatus.SKIPPED
                                 }
                                 record(identifier, state, result.throwable.orElse(null))
-                            } else if (result.status == TestExecutionResult.Status.ABORTED) {
+                            }
+                            if (identifier.isContainer && result.status == TestExecutionResult.Status.ABORTED) {
+                                diagnostics += Diagnostic("KVIK_TEST_CONTAINER_ABORTED", DiagnosticCategory.TEST,
+                                    reportText("${identifier.uniqueId}: ${result.throwable.orElse(null)?.message ?: "Container aborted"}"),
+                                    module = module, target = target)
                                 for (test in plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in tests }) {
                                     record(test, TestStatus.SKIPPED, skipReason = result.throwable.orElse(null)?.message ?: "Container aborted")
                                 }
-                            } else if (result.status == TestExecutionResult.Status.FAILED) {
+                            } else if (!identifier.isTest && result.status == TestExecutionResult.Status.FAILED) {
                                 diagnostics += Diagnostic("KVIK_TEST_CONTAINER_FAILURE", DiagnosticCategory.TEST,
                                     reportText("${identifier.uniqueId}: ${result.status}: ${result.throwable.orElse(null)?.message ?: ""}"), module = module, target = target)
                             }
@@ -129,11 +133,15 @@ object TestWorker {
                         diagnostics += Diagnostic("KVIK_TEST_RETRY_FAILURE", DiagnosticCategory.TEST,
                             "Test had a failed attempt before its final ${test.status.name.lowercase()} result: ${reportText(test.id)}", module = module, target = target)
                     }
-                    val allDiscoveredReported = finished && started.isEmpty() && discovered.keys == tests.keys
+                    // An aborted factory can stop before registering all dynamic tests. Even when
+                    // every observed leaf passed, the container did not complete its requested scope.
+                    val containerAborted = diagnostics.any { it.code == "KVIK_TEST_CONTAINER_ABORTED" }
+                    val allDiscoveredReported = finished && !containerAborted && started.isEmpty() && discovered.keys == tests.keys
                     counts = TestCounts(discovered.size, tests.values.count { it.status != TestStatus.SKIPPED },
                         tests.values.count { it.status == TestStatus.FAILED }, tests.values.count { it.status == TestStatus.SKIPPED }, allDiscoveredReported)
                     when {
-                        tests.values.any { it.hasFailedAttempt } || counts.failed > 0 || diagnostics.isNotEmpty() -> { status = "failed"; exit = 1 }
+                        tests.values.any { it.hasFailedAttempt } || counts.failed > 0 ||
+                            diagnostics.any { it.code != "KVIK_TEST_CONTAINER_ABORTED" } -> { status = "failed"; exit = 1 }
                         counts.satisfiesExecution -> { status = "passed"; exit = 0 }
                         else -> diagnostics += Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST,
                             "Selected scope has no completed passing execution or discovery is incomplete", module = module, target = target)

@@ -23,9 +23,14 @@ internal fun parseTestResult(value: JsonValue, requestId: String, module: String
     require(counts.executed == tests.count { it.status != TestStatus.SKIPPED } && counts.failed == tests.count { it.status == TestStatus.FAILED } && counts.skipped == tests.count { it.status == TestStatus.SKIPPED }) { "Test counts do not match concrete test records" }
     require(!counts.discoveryComplete || counts.discovered == tests.size) { "Complete discovery has unreported tests" }
     val diagnostics = d.getValue("diagnostics").arrayValue().map(Diagnostic::fromJson)
-    // TestWorker chooses failures before incomplete execution and only adds this diagnostic
-    // after deciding that neither concrete tests nor containers/infrastructure failed.
-    val failureDiagnostic = diagnostics.any { it.code != "KVIK_TEST_INCOMPLETE" || it.category != DiagnosticCategory.TEST }
+    // Container abortion leaves verification incomplete, while genuine test, container and
+    // infrastructure failures still take precedence over the incomplete result.
+    val failureDiagnostic = diagnostics.any {
+        it.code !in setOf("KVIK_TEST_INCOMPLETE", "KVIK_TEST_CONTAINER_ABORTED") || it.category != DiagnosticCategory.TEST
+    }
+    require(diagnostics.none { it.code == "KVIK_TEST_CONTAINER_ABORTED" && it.category == DiagnosticCategory.TEST } || !counts.discoveryComplete) {
+        "Aborted test containers cannot establish complete discovery"
+    }
     val failedAttempt = tests.any { it.hasFailedAttempt }
     val status = when (d.getValue("status").stringValue()) {
         "passed" -> VerificationStatus.PASSED.also { require(exitCode == 0 && counts.satisfiesExecution && !failedAttempt && diagnostics.isEmpty()) { "Inconsistent passing test result" } }
