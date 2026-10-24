@@ -99,12 +99,13 @@ def main():
     main_text = f'package fixture\n// {root.name}\nfun answer() = 42\n'
     main_file = write('app/src/App.kt', main_text)
     write('other/src/Other.kt', 'package other\nfun unrelated() = 0\n')
-    write('app/test/FixtureSpec.kt', '''package fixture
+    test_file = write('app/test/FixtureSpec.kt', '''package fixture
 import io.kotest.core.spec.style.FunSpec
 class FixtureSpec : FunSpec({
     test("answer") { check(answer() == 42) }
 })
 ''')
+    test_text = test_file.read_text()
     environment = dict(os.environ)
     environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     policy = resolution_options(native)
@@ -181,11 +182,29 @@ class FixtureSpec : FunSpec({
         changed_since(seen)
         print('PASS real KSP launcher, generated source metadata, owner mapping and cached rematerialization', flush=True)
 
+        # KSP discovers the valid spec declaration even when its test body fails
+        # Native compilation. Its fresh generated source remains useful to the IDE.
+        test_file.write_text(test_text.replace('check(answer() == 42)', 'missingGeneratedSourceSymbol()'))
+        seen = len(client.notifications)
+        _, downstream_failure = compile_tests(status=2)
+        statuses = {a['actionId']: a['status'] for a in downstream_failure['actions']}
+        assert statuses[f'app:{native}:ksp-test'] == 'executed', statuses
+        assert statuses[f'app:{native}:test-compile'] == 'failed', statuses
+        failed_uri, failed_path, failed_bytes = generated(downstream_failure)
+        assert failed_uri != second_uri and failed_bytes == first_bytes
+        changed_since(seen)
+        assert client.request('buildTarget/inverseSources', dict(textDocument=dict(uri=second_uri))) == dict(targets=[])
+        test_file.write_text(test_text)
+        _, recovered = compile_tests()
+        before_failure_uri, _, _ = generated(recovered)
+        assert failed_path.read_bytes() == failed_bytes
+        print('PASS successful generation remains visible after downstream Native compilation fails', flush=True)
+
         # Fail the prerequisite main compilation, before KSP can generate output.
         main_file.write_text('package fixture\nfun answer() = )\n')
         seen = len(client.notifications)
         compile_tests(status=2)
-        assert_empty([first_uri, second_uri])
+        assert_empty([first_uri, second_uri, failed_uri, before_failure_uri])
         changed_since(seen)
         assert first_path.read_bytes() == first_bytes and second_path.read_bytes() == second_bytes
         main_file.write_text(main_text)
