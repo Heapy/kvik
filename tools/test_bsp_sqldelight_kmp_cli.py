@@ -97,7 +97,7 @@ SELECT name FROM person ORDER BY id;
             result = client.request('buildTarget/compile', dict(targets=[js]), timeout=1200)
             directory, record = retained(result, [js], status=status, test_count=0)[0]
             assert all(not key.endswith(':node') for key in record['toolchains']), record['toolchains']
-            assert set(action['actionId'] for action in record['actions']) == {PRODUCER, 'data:js:main'}, record
+            assert set(action['actionId'] for action in record['actions']) == {PRODUCER, 'data:jvm:sqldelight-worker', 'data:js:main'}, record
             return record, [json.loads(line) for line in (directory / 'events.jsonl').read_text().splitlines()]
 
         def generated(record):
@@ -157,7 +157,8 @@ SELECT name FROM person ORDER BY id;
         sql.write_text(edited_sql)
         seen = len(client.notifications)
         edited, _ = compile_js()
-        assert all(action['status'] == 'executed' for action in edited['actions']), edited
+        assert all(action['status'] == ('local_hit' if action['actionId'].endswith(':sqldelight-worker') else 'executed')
+                   for action in edited['actions']), edited
         assert next(action for action in cold['actions'] if action['actionId'] == PRODUCER)['key'] != next(
             action for action in edited['actions'] if action['actionId'] == PRODUCER)['key']
         current = generated(edited)

@@ -195,7 +195,7 @@ SQLDELIGHT_IDENTIFIER = {"type": "string", "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(
 DEFS["sqlDelight"] = object_({"sourceSet": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "sourceDirectory": PATH,
     "packageName": {"type": "string", "pattern": r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?![\s\S])"},
     "className": SQLDELIGHT_IDENTIFIER, "version": {"const": "2.3.2"}}, optional=("version",))
-DEFS["sqlDelight"]["$comment"] = "Runtime validation rejects Kotlin keyword package segments and requires the source set to be consumed only by JVM main."
+DEFS["sqlDelight"]["$comment"] = "Runtime validation rejects Kotlin keyword package segments and requires a main source-set consumer; shared JVM/Native/JS/Wasm sources are supported, while test-only generator attachments are rejected."
 DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1),
     "compilerPlugins": array(ref("compilerPlugin")), "publication": ref("libraryPublication")}, optional=("publication",))
 DEFS["module"]["properties"]["documentation"] = ref("documentationSettings")

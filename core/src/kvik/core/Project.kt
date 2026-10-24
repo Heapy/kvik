@@ -150,11 +150,11 @@ data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targe
         sqlDelight?.let { spec ->
             require(sourceSets.any { it.name == spec.sourceSet }) { "Unknown SQLDelight source set in $id" }
             val consumers = targets.filter { target -> sourceSetClosure(this, listOf(target.main)).any { it.name == spec.sourceSet } }
-            val unsupportedTests = targets.filter { it.name != "jvm" && it.test != null }.any { target ->
+            val unsupportedTests = targets.filter { it !in consumers && it.test != null }.any { target ->
                 sourceSetClosure(this, listOfNotNull(target.test)).any { it.name == spec.sourceSet }
             }
-            require(consumers.isNotEmpty() && consumers.all { it.name == "jvm" } && !unsupportedTests) {
-                "SQLDelight currently requires a source set consumed only by JVM main in $id"
+            require(consumers.isNotEmpty() && !unsupportedTests) {
+                "SQLDelight requires a main source-set consumer and cannot be attached only to tests in $id"
             }
         }
         publication?.let { spec ->

@@ -10,14 +10,19 @@ fun commonPublicationSourceSets(module: ModuleSpec): List<SourceSet> {
     return closures.first().filter { it.name in shared }
 }
 
+/** Generated Kotlin can be the only source of a common publication. */
+fun hasCommonPublicationSources(module: ModuleSpec): Boolean = commonPublicationSourceSets(module).any {
+    it.directories.isNotEmpty() || it.name == module.sqlDelight?.sourceSet
+}
+
 /** Common metadata sees its own compile dependencies and only exported transitive declarations. */
 fun commonPublicationDependencyClosure(project: ProjectSpec, module: String): DependencyClosure {
     val modules = project.modules.associateBy { it.id }
     fun sources(id: String): List<SourceSet> {
         val specification = modules[id] ?: error("Unknown common publication module: $id")
         require(specification.publication != null) { "Common library dependency requires publication: $id" }
-        return commonPublicationSourceSets(specification).also { sets ->
-            require(sets.any { it.directories.isNotEmpty() }) { "Module $id has no shared publication sources" }
+        return commonPublicationSourceSets(specification).also {
+            require(hasCommonPublicationSources(specification)) { "Module $id has no shared publication sources" }
         }
     }
     val reached = linkedSetOf<String>()

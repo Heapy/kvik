@@ -125,7 +125,7 @@ fun defaultDependencyScopes(configuration: ProjectConfiguration): List<Dependenc
         (if (target.name == "jvm") listOf("java-api", "java-runtime") else listOf("kotlin-api", "kotlin-runtime")).map { usage ->
             DependencyScope(module.id, target.name, scope, usage)
         }
-    } } + if (commonPublicationSourceSets(module).any { it.directories.isNotEmpty() } ||
+    } } + if (hasCommonPublicationSources(module) ||
         module.documentation != null && documentationCommonSourceSets(module).isNotEmpty())
         listOf(DependencyScope(module.id, "common", "main", "kotlin-metadata")) else emptyList()
 }
@@ -162,6 +162,13 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         .flatMap { listOf(it.id) + documentationCommonDependencyClosure(project, it.id).modules }.toSet()
     val requests = linkedSetOf<ResolutionRequest>()
     val domains = linkedSetOf<ResolutionDomain>()
+    fun sqlDelightTools(module: ModuleSpec, sourceSets: List<SourceSet>) {
+        val settings = module.sqlDelight?.takeIf { spec -> sourceSets.any { it.name == spec.sourceSet } } ?: return
+        val compilerDomain = ResolutionDomain(module.id, "jvm", "main", "java-runtime", "sqldelight-compiler")
+        if (!domains.add(compilerDomain)) return
+        val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
+        sqlDelightCompilerCoordinates(settings.version).forEach { requests += ResolutionRequest(it, host, compilerDomain) }
+    }
     fun visit(domain: ResolutionDomain) {
         if (!domains.add(domain)) return
         val module = modules[domain.module] ?: error("Unknown dependency scope module: ${domain.module}")
@@ -171,6 +178,8 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
             val documentation = if (module.id in documentationModules) documentationCommonDependencyClosure(project, module.id) else null
             val closure = DependencyClosure((publication?.modules.orEmpty() + documentation?.modules.orEmpty()).distinct(),
                 (publication?.external.orEmpty() + documentation?.external.orEmpty()).distinct())
+            sqlDelightTools(module, commonPublicationSourceSets(module) +
+                if (module.id in documentationModules) documentationCommonSourceSets(module) else emptyList())
             val variant = VariantRequest("common", "kotlin-metadata", emptyMap())
             (closure.external + Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct().forEach {
                 requests += ResolutionRequest(it, variant, domain)
@@ -196,14 +205,7 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         val api = if (target.name == "jvm") "java-api" else "kotlin-api"
         closure.modules.forEach { visit(ResolutionDomain(it, target.name, "main", api)) }
         if (domain.compilation == "test") visit(ResolutionDomain(module.id, target.name, "main", api))
-        if (target.name == "jvm" && domain.compilation == "main") module.sqlDelight?.let { settings ->
-            val compilerDomain = domain.copy(usage = "java-runtime", purpose = "sqldelight-compiler")
-            domains += compilerDomain
-            val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
-            sqlDelightCompilerCoordinates(settings.version).forEach {
-                requests += ResolutionRequest(it, host, compilerDomain)
-            }
-        }
+        if (domain.compilation == "main") sqlDelightTools(module, sourceSetClosure(module, listOf(target.main)))
         if (domain.compilation == "test") target.nativeTestSettings?.let { settings ->
             val runtimeDomain = domain.copy(usage = "java-runtime", purpose = "ksp-runtime")
             val processorDomain = domain.copy(usage = "java-runtime", purpose = "symbol-processor")

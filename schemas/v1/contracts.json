@@ -1688,7 +1688,7 @@
         "className"
       ],
       "additionalProperties": false,
-      "$comment": "Runtime validation rejects Kotlin keyword package segments and requires the source set to be consumed only by JVM main."
+      "$comment": "Runtime validation rejects Kotlin keyword package segments and requires a main source-set consumer; shared JVM/Native/JS/Wasm sources are supported, while test-only generator attachments are rejected."
     },
     "module": {
       "type": "object",

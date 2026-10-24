@@ -1,6 +1,6 @@
 package kvik.core
 
-/** One synchronous SQLite 3.38 database, generated into the declared JVM main source set. */
+/** One synchronous SQLite 3.38 database, generated into the declared main source set, including shared multiplatform sources. */
 data class SqlDelightSpec(
     val sourceSet: String,
     val sourceDirectory: LogicalPath,
