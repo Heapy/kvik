@@ -119,6 +119,8 @@ interface BspOperations {
     val compileTargets: Set<String>
     val testTargets: Set<String>
     val runTargets: Set<String> get() = emptySet()
+    val generatedSourcesProvider: Boolean get() = false
+    fun modelReloaded(previous: BspProjectModel, next: BspProjectModel) {}
     fun start(request: BspBuildRequest, model: BspProjectModel)
     fun cancel(id: JsonValue)
 }
@@ -180,6 +182,7 @@ class BspSession(private val operations: BspOperations? = null,
                             put("compileProvider", obj("languageIds" to listOf("kotlin".json()).json()))
                             put("testProvider", obj("languageIds" to listOf("kotlin".json()).json()))
                             if (operations.runTargets.isNotEmpty()) put("runProvider", obj("languageIds" to listOf("kotlin".json()).json()))
+                            if (operations.generatedSourcesProvider) put("buildTargetChangedProvider", true.json())
                         }
                     })))
             } catch (failure: Exception) { bspError(id, -32602, failure.message ?: "Cannot initialize project") }
@@ -200,7 +203,7 @@ class BspSession(private val operations: BspOperations? = null,
             }
             val result = when (method) {
                 "workspace/buildTargets" -> if (kotlinClient) current.targets(operations?.compileTargets.orEmpty(), operations?.testTargets.orEmpty(), operations?.runTargets.orEmpty()) else obj("targets" to emptyList<JsonValue>().json())
-                "workspace/reload" -> { check(operations?.activeId == null) { "Cannot reload during an active build" }; val next = load(); require(next.rootUri == current.rootUri); model = next; JsonValue.Null }
+                "workspace/reload" -> { check(operations?.activeId == null) { "Cannot reload during an active build" }; val next = load(); require(next.rootUri == current.rootUri); operations?.modelReloaded(current, next); model = next; JsonValue.Null }
                 "buildTarget/sources" -> current.sources(targets())
                 "buildTarget/resources" -> current.resources(targets())
                 "buildTarget/dependencyModules" -> {

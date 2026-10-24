@@ -52,12 +52,39 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     }
     private val byUri = compilations.associateBy { it.uri }
     private val filesByUri = inspection.files.associateBy { fileUri(it.path) }
+    private val generated = mutableMapOf<String, List<BspGeneratedSources>>()
 
     private fun selected(targetUris: List<String>): List<Compilation> = targetUris.distinct().map { uri ->
         requireNotNull(byUri[uri]) { "Unknown BSP target: $uri" }
     }
 
     fun select(targetUris: List<String>): List<BspTarget> = selected(targetUris).map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
+
+    fun allTargets(): List<BspTarget> = select(byUri.keys.toList())
+
+    /** Only adapters with an explicit source-output contract may contribute generated sources. */
+    fun generatedSourceTarget(actionId: String): BspTarget? {
+        val parts = actionId.split(':')
+        if (parts.size != 3 || parts[2] != "ksp-test") return null
+        val compilation = byUri[targetUri(parts[0], parts[1], "test")] ?: return null
+        if (compilation.target.nativeTestSettings == null || NativeTarget.find(parts[1]) == null) return null
+        return BspTarget(compilation.uri, parts[0], parts[1], "test")
+    }
+
+    fun replaceGeneratedSources(target: BspTarget, sources: List<BspGeneratedSources>): Boolean {
+        require(select(listOf(target.uri)).single() == target) { "Generated-source owner differs from imported target" }
+        require(sources.map { it.producer }.distinct().size == sources.size) { "Duplicate generated-source producer" }
+        for (source in sources) {
+            require(source.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated sources must belong to a retained BSP run" }
+            require(generatedSourceTarget(source.producer) == target) { "Unsupported generated-source producer for target" }
+        }
+        require(sources.flatMap { it.files.files }.map { it.path }.distinct().size == sources.sumOf { it.files.files.size }) {
+            "Ambiguous generated-source logical paths"
+        }
+        if (generated[target.uri].orEmpty() == sources) return false
+        if (sources.isEmpty()) generated.remove(target.uri) else generated[target.uri] = sources.toList()
+        return true
+    }
 
     fun isRunnable(target: BspTarget): Boolean = byUri[target.uri]?.let {
         it.module.id == target.module && it.target.name == target.target && it.scope == target.compilation &&
@@ -72,9 +99,15 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         return byUri[targetUri(parts[0], parts[1], scope)]?.let { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
     }
 
-    fun containsSource(target: BspTarget, path: String): Boolean = try {
-        belongs(LogicalPath(path), byUri.getValue(target.uri).directories)
-    } catch (_: IllegalArgumentException) { false }
+    fun sourceUri(target: BspTarget, path: String): String? = try {
+        val logical = LogicalPath(path)
+        if (belongs(logical, byUri.getValue(target.uri).directories)) fileUri(logical)
+        else generated[target.uri].orEmpty().firstNotNullOfOrNull { source ->
+            source.files.files.singleOrNull { it.path == logical }?.let(source::uri)
+        }
+    } catch (_: IllegalArgumentException) { null }
+
+    fun containsSource(target: BspTarget, path: String): Boolean = sourceUri(target, path) != null
 
     fun targets(compileTargets: Set<String> = emptySet(), testTargets: Set<String> = emptySet(), runTargets: Set<String> = emptySet()): JsonValue.Object = obj("targets" to compilations.map { compilation ->
         val (module, target, scope) = compilation
@@ -102,7 +135,9 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     fun sources(targetUris: List<String>): JsonValue.Object = obj("items" to selected(targetUris).map { compilation ->
         obj("target" to compilation.id(), "sources" to compilation.directories.map {
             obj("uri" to directoryUri(it).json(), "kind" to 2.json(), "generated" to false.json())
-        }.json(), "roots" to compilation.directories.map { directoryUri(it).json() }.json())
+        }.let { it + generated[compilation.uri].orEmpty().flatMap(BspGeneratedSources::sourceItems) }.json(),
+            "roots" to (compilation.directories.map { directoryUri(it) } +
+                generated[compilation.uri].orEmpty().map { bspFileUri(it.directory) + "/" }).distinct().map { it.json() }.json())
     }.json())
 
     fun resources(targetUris: List<String>): JsonValue.Object = obj("items" to selected(targetUris).map { compilation ->
@@ -112,9 +147,12 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     }.json())
 
     fun inverseSources(documentUri: String): JsonValue.Object {
-        val file = canonicalFileUri(documentUri)?.let(filesByUri::get)
-        return obj("targets" to if (file == null) emptyList<JsonValue>().json() else compilations.filter {
-            belongs(file.path, it.directories)
+        val uri = canonicalFileUri(documentUri)
+        val file = uri?.let(filesByUri::get)
+        return obj("targets" to compilations.filter {
+            file != null && belongs(file.path, it.directories) || uri != null && generated[it.uri].orEmpty().any { source ->
+                source.files.files.any { generatedFile -> source.uri(generatedFile) == uri }
+            }
         }.map { it.id() }.json())
     }
 }
