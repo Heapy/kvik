@@ -146,6 +146,20 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         return byUri[targetUri(parts[0], parts[1], scope)]?.let { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
     }
 
+    /** Attribute source diagnostics without treating generator inputs as compiler source roots. */
+    fun diagnosticTarget(actionId: String): BspTarget? = actionTarget(actionId)
+        ?: if (actionId.endsWith(":sqldelight")) generatedSourceTarget(actionId) else null
+
+    fun diagnosticUri(actionId: String, path: String): String? {
+        val target = diagnosticTarget(actionId) ?: return null
+        if (actionTarget(actionId) != null) return if (path.endsWith(".kt")) sourceUri(target, path) else null
+        return try {
+            val logical = LogicalPath(path)
+            val settings = byUri.getValue(target.uri).module.sqlDelight ?: return null
+            if (path.endsWith(".sq") && belongs(logical, listOf(settings.sourceDirectory))) fileUri(logical) else null
+        } catch (_: IllegalArgumentException) { null }
+    }
+
     fun sourceUri(target: BspTarget, path: String): String? = try {
         val logical = LogicalPath(path)
         generated[target.uri].orEmpty().firstNotNullOfOrNull { source ->

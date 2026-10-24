@@ -70,6 +70,55 @@ class BspSqlDelightSourcesTest {
         assertFails { model.replaceGeneratedSources(model.target("db", "test"), listOf(sources)) }
     }
 
+    @Test fun sqlDiagnosticsUseOnlyDeclaredSqlInputsAndMainOwner() {
+        val model = model(module("db", sql = true), module("other", sql = true), module("plain"),
+            module("native", platform = "macosArm64", kotest = true))
+        val action = "db:jvm:sqldelight"
+        assertEquals(model.target("db"), model.diagnosticTarget(action))
+        assertNull(model.actionTarget(action))
+        // New files need no reimport; diagnostic paths refer to the latest completed build.
+        for (path in listOf("db/sql/New.sq", "db/sql/nested/café #%.sq")) {
+            assertEquals(bspFileUri("$root/$path"), model.diagnosticUri(action, path))
+            assertNull(model.sourceUri(model.target("db"), path))
+            assertNull(model.diagnosticUri("db:jvm:main", path))
+            assertNull(model.diagnosticUri("db:jvm:test-compile", path))
+            assertNull(model.diagnosticUri("other:jvm:sqldelight", path))
+        }
+        for (path in listOf("db/sql", "db/sql.sq", "db/sql-other/Query.sq", "other/sql/Query.sq", "db/main/Query.sq",
+            "db/sql/Query.kt", "db/sql/Query.sqm", "db/sql/Query.SQ", "db/sql/../outside.sq", "db/sql/./Query.sq",
+            "db/sql//Query.sq", "/db/sql/Query.sq", "db\\sql\\Query.sq", "file:///db/sql/Query.sq", "db/sql/Query.sq?query",
+            "db/sql/Query.sq#fragment", "db/sql/Query\u0000.sq", "db/sql/Query\uD800.sq")) {
+            assertNull(model.diagnosticUri(action, path), path)
+        }
+        for (id in listOf("plain:jvm:sqldelight", "db:macosArm64:sqldelight", "db:jvm:sqldelight-worker",
+            "db:jvm:sqldelight:main", "db:jvm:test", "native:macosArm64:ksp-test", "missing:jvm:sqldelight")) {
+            assertNull(model.diagnosticTarget(id), id)
+            assertNull(model.diagnosticUri(id, "db/sql/Query.sq"), id)
+        }
+        // A percent escape in a logical file name remains literal; it cannot become URI traversal.
+        assertEquals(bspFileUri("$root/db/sql/%2e%2e/Query.sq"), model.diagnosticUri(action, "db/sql/%2e%2e/Query.sq"))
+        assertTrue(model.sources(listOf(model.target("db").uri)).items("items").single().items("roots").none {
+            it.stringValue() == bspFileUri("$root/db/sql/")
+        })
+    }
+
+    @Test fun compilerDiagnosticOwnershipPreservesDeclaredAndGeneratedKotlinFiles() {
+        val model = model(module("db", sql = true), module("other", sql = true))
+        for (action in listOf("db:jvm:main", "db:jvm:test-compile", "db:jvm:test-link")) {
+            assertEquals(model.actionTarget(action), model.diagnosticTarget(action))
+            assertEquals(bspFileUri("$root/db/main/New.kt"), model.diagnosticUri(action, "db/main/New.kt"))
+            assertNull(model.diagnosticUri(action, "other/main/New.kt"))
+            assertNull(model.diagnosticUri(action, "db/main/Query.sq"))
+            assertNull(model.diagnosticUri(action, "db/main/../outside.kt"))
+        }
+        val file = FileEntry(LogicalPath("generated/sqldelight/db/fixture/Database.kt"), digest)
+        val generated = BspGeneratedSources("$root/.kvik/bsp/run/generated", "db:jvm:sqldelight", digest, TreeManifest(listOf(file)))
+        model.replaceGeneratedSources(model.target("db"), listOf(generated))
+        assertEquals(generated.uri(file), model.diagnosticUri("db:jvm:main", file.path.value))
+        assertNull(model.diagnosticUri("db:jvm:test-compile", file.path.value))
+        assertNull(model.diagnosticUri("db:jvm:sqldelight", file.path.value))
+    }
+
     @Test fun prerequisiteTraversalIncludesPrivateCompilationEdgesAndSeparatesRuntimeAndTestScopes() {
         val model = model(module("db", sql = true), module("runtimeDb", sql = true), module("testDb", sql = true),
             module("unused", sql = true), module("mid", dependencies = listOf(dependency("db"))),
