@@ -30,6 +30,7 @@ class KotestExecutorTest {
                 starts++
                 assertEquals(1, request.arguments.size)
                 assertTrue(request.environment.keys.none { it.startsWith("KOTEST_") })
+                assertTrue(request.environment.keys.none { it in setOf("JAVA_HOME", "SDKROOT", "DEVELOPER_DIR", "KONAN_DATA_DIR") })
                 val token = request.environment.getValue("KVIK_KOTEST_REQUEST")
                 val events = listOf(obj("event" to "inventory".json(), "specs" to listOf("s.S".json()).json()),
                     obj("event" to "engine-start".json()), obj("event" to "engine-initialized".json()), obj("event" to "spec-start".json(), "spec" to "s.S".json()),
@@ -50,8 +51,8 @@ class KotestExecutorTest {
             override fun close() = Unit
         }
         var verifications = 0
-        val executor = KotestNativeExecutor("run", directory, host, content, NativeToolchainProvider { requested ->
-            verifications++; assertEquals(tools, requested); NativeToolchainLayout("/native/bin/konanc", "/jdk", "/sdk", "/konan", "/developer")
+        val executor = KotestNativeExecutor("run", directory, host, content, NativeToolchainProvider {
+            verifications++; error("Kotest execution must not inspect compiler installations")
         })
         assertFails { executor.start("run", "invalid", action.copy(environment = action.environment + ("KOTEST_INCLUDE_PATTERN" to "none"))) }
         assertEquals(0, verifications)
@@ -65,6 +66,7 @@ class KotestExecutorTest {
             assertEquals(result, running.poll())
             assertEquals(if (cancel || failed || missingLog) 0 else 1, result.outputs.files.size)
         }
+        assertEquals(0, verifications)
         assertEquals(1, starts); assertEquals(1, closes); assertEquals(if (cancel) 1 else 0, cancels)
         val report = executor.observations.getValue("test").tests!!
         assertEquals(if (cancel) VerificationStatus.CANCELLED else if (failed) VerificationStatus.FAILED else if (missingLog) VerificationStatus.INCOMPLETE else VerificationStatus.PASSED, report.status)

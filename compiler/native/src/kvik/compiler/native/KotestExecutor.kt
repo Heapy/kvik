@@ -3,7 +3,6 @@ package kvik.compiler.native
 import kvik.core.*
 import kvik.cache.NativeOutputTrees
 import kvik.execution.NativeRunDirectory
-import kvik.execution.preparingAction
 
 /** Single owned engine invocation: eager initialization is execution, never a discovery subprocess. */
 class KotestNativeExecutor(
@@ -11,7 +10,9 @@ class KotestNativeExecutor(
     private val runDirectory: String,
     private val host: ProcessHost,
     private val content: ContentStore,
-    private val toolchains: NativeToolchainProvider,
+    // Compatibility only: an already-built executable never consumes compiler installations.
+    @Suppress("UNUSED_PARAMETER") toolchains: NativeToolchainProvider? = null,
+    private val executionHost: () -> NativeTarget = ::nativeExecutionTarget,
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
     private val startedActions = mutableSetOf<String>()
@@ -24,20 +25,20 @@ class KotestNativeExecutor(
         val executable = LogicalPath(fields.getValue("executable").stringValue())
         require(action == kotestNativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, action.timeoutMillis, target)) { "Kotest action differs from typed parameters" }
         startedActions += actionId
-        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint).also { require(it.target == target) { "Verified Native target differs from action" } } },
-            start = { layout -> startVerified(actionId, action, module, executable, layout) })
+        require(executionHost() == target) { "Native executable target is incompatible with this host" }
+        return startVerified(actionId, action, module, executable)
     }
 
-    private fun startVerified(actionId: String, action: ActionSpec, module: String, executable: LogicalPath,
-                              layout: NativeToolchainLayout): RunningAction {
+    private fun startVerified(actionId: String, action: ActionSpec, module: String, executable: LogicalPath): RunningAction {
         val directory = NativeRunDirectory(runDirectory).path
         val trees = NativeOutputTrees(content)
         trees.materialize(action.inputs, "$directory/input")
+        requireNativeTestExecutable("$directory/input/${executable.value}")
         mkdirNew("$directory/output"); mkdirNew("$directory/home")
         val token = Sha256.digest("$runId\n$actionId\n$directory".encodeToByteArray()).hash
         val reportPath = "$directory/kotest.events.jsonl"
         val process = host.start(ProcessRequest(listOf("$directory/input/${executable.value}"), directory,
-            action.environment + layout.environment() + mapOf("HOME" to "$directory/home", "KVIK_KOTEST_REQUEST" to token, "KVIK_KOTEST_REPORT" to reportPath),
+            action.environment + mapOf("HOME" to "$directory/home", "KVIK_KOTEST_REQUEST" to token, "KVIK_KOTEST_REPORT" to reportPath),
             "$directory/test.stdout", "$directory/test.stderr", action.timeoutMillis))
         return object : RunningAction {
             private var result: ActionResult? = null
@@ -53,7 +54,7 @@ class KotestNativeExecutor(
                 val stderr = text("$directory/test.stderr")
                 val journal = try { readNativeFile(reportPath, 16 * 1024 * 1024) }
                     catch (failure: Exception) { readFailure = "Kotest result/log unavailable: ${failure.message}"; byteArrayOf() }
-                val parsed = kotestNativeReport(module, token, journal, exit, layout.target)
+                val parsed = kotestNativeReport(module, token, journal, exit, NativeTarget.require(action.target))
                 val report = if (readFailure == null) parsed else parsed.copy(counts = parsed.counts.copy(discovered = null, discoveryComplete = false),
                     status = when (parsed.status) {
                         VerificationStatus.CANCELLED, VerificationStatus.FAILED -> parsed.status
