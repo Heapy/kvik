@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise JS/Wasm compilation, fresh Node tests and dependency reuse through Kvik."""
+"""Exercise Node-free JS/Wasm compilation, fresh Node tests and dependency reuse through Kvik."""
 import argparse
 import json
 import os
@@ -28,7 +28,7 @@ def main():
     store = args.store.resolve()
     node = args.node_root.resolve(strict=True)
     tools = json.loads(args.tools.read_bytes())
-    tools['node'] = {'root': str(node), 'identity': digest(canonical(inventory(node, True)))}
+    tools.pop('node', None)
     (root / 'tools.json').write_text(json.dumps(tools))
     env = dict(os.environ)
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
@@ -80,7 +80,8 @@ class Tests {
 
     def invoke(*argv, expected=0):
         process = subprocess.run([str(runtime), *map(str, argv)], cwd=root, env=env, capture_output=True, timeout=360)
-        assert process.returncode == expected, (argv, process.returncode, process.stdout[-8000:], process.stderr[-2000:])
+        assert (process.returncode != 0 if expected is None else process.returncode == expected), (
+            argv, process.returncode, process.stdout[-8000:], process.stderr[-2000:])
         events = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
         for event in events:
             if event.get('type') == 'run-finished':
@@ -90,16 +91,61 @@ class Tests {
     def resolve():
         invoke('resolve', '--project', 'kvik.json', '--store', store)
 
-    def run(targets=('js', 'wasmJs'), expected=0):
-        events = invoke('test', '--project', 'kvik.json', '--store', store, '--tools', 'tools.json', '--runs', 'runs',
-                        '--module', 'app', '--jobs', '1', *[part for target in targets for part in ('--target', target)],
-                        '--offline', expected=expected)
+    def build_arguments(operation, targets):
+        return [operation, '--project', 'kvik.json', '--store', store, '--tools', 'tools.json', '--runs', 'runs',
+                '--module', 'app', '--jobs', '1', *[part for target in targets for part in ('--target', target)], '--offline']
+
+    def run(targets=('js', 'wasmJs'), expected=0, operation='test'):
+        events = invoke(*build_arguments(operation, targets), expected=expected)
         return next(event['payload'] for event in events if event.get('type') == 'run-finished')
 
+    def current(record):
+        retained, = invoke('verification', '--run', root / 'runs' / record['runId'])
+        assert retained['freshness'] == 'current' and retained['verification'] == record, retained
+
     resolve()
+    built = run(operation='build')
+    assert built['status'] == 'passed' and not built['tests'] and built['testCounts']['executed'] == 0, built
+    assert {action['actionId'] for action in built['actions']} == {
+        f'{module}:{target}:main' for module in ('tests', 'app') for target in ('js', 'wasmJs')}
+    prepared = run(operation='compile-tests')
+    assert prepared['status'] == 'passed' and not prepared['tests'] and prepared['testCounts']['executed'] == 0, prepared
+    prepared_actions = {action['actionId']: action for action in prepared['actions']}
+    assert set(prepared_actions) == {
+        f'{module}:{target}:{phase}' for target in ('js', 'wasmJs')
+        for module, phases in (('tests', ('main',)), ('app', ('main', 'test-compile', 'test-link'))) for phase in phases}
+    for action in built['actions']:
+        reused = prepared_actions[action['actionId']]
+        assert reused['status'] == 'local_hit' and reused['key'] == action['key'], reused
+    for record in (built, prepared):
+        assert record['toolchains'] and not any(name.endswith(':node') for name in record['toolchains']), record['toolchains']
+        assert 'node' not in json.loads((root / 'runs' / record['runId'] / 'tools.json').read_bytes())
+        current(record)
+    for target in ('js', 'wasmJs'):
+        rejected = invoke(*build_arguments('test', (target,)), expected=None)
+        assert not any(event.get('type') == 'action-started' for event in rejected), rejected
+        diagnostics = [event['payload'] for event in rejected if event.get('type') == 'diagnostic']
+        diagnostics += [event['diagnostic'] for event in rejected if 'diagnostic' in event]
+        assert any(item['message'] == 'JS/Wasm test execution requires node.root and node.identity in tools: ' + target
+                   and item['category'] in ('configuration', 'toolchain') for item in diagnostics), diagnostics
+        for event in rejected:
+            if event.get('type') == 'run-finished':
+                assert not event['payload']['actions'] and event['payload']['testCounts']['executed'] == 0, event
+    print('PASS JS/Wasm build and test preparation omit Node; execution rejects its missing declaration before actions start', flush=True)
+
+    tools['node'] = {'root': str(node), 'identity': digest(canonical(inventory(node, True)))}
+    write('tools.json', json.dumps(tools))
+    for record in (built, prepared):
+        current(record)
     first = run()
     assert first['status'] == 'passed' and first['testCounts']['executed'] == 2 and first['testCounts']['skipped'] == 2, first
     assert {test['target'] for test in first['tests']} == {'js', 'wasmJs'}
+    for action in first['actions']:
+        if action['actionId'].endswith(':test'):
+            assert action['status'] == 'executed', action
+        else:
+            assert action['status'] == 'local_hit' and action['key'] == prepared_actions[action['actionId']]['key'], action
+    assert all(f'{target}:node' in first['toolchains'] for target in ('js', 'wasmJs')), first['toolchains']
     second = run()
     compiled = [action for action in second['actions'] if not action['actionId'].endswith(':test')]
     assert compiled and all(action['status'] == 'local_hit' for action in compiled), compiled
