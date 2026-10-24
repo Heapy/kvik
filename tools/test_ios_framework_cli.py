@@ -41,7 +41,8 @@ def main():
             value['nativeFramework'] = dict(baseName='Sample')
         return value
 
-    document = dict(schemaVersion=1, name='iosFrameworkFixture', repositories=[], modules=[
+    document = dict(schemaVersion=1, name='iosFrameworkFixture',
+        repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[
         dict(id='library', sourceSets=[source('library')], targets=[target(t) for t in targets], compilerPlugins=[]),
         dict(id='consumer', sourceSets=[source('consumer', [{'module': 'library'}])],
              targets=[target(t, True) for t in targets], compilerPlugins=[]),
