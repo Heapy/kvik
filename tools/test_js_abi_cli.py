@@ -29,7 +29,12 @@ def main():
     project = case / 'project'
     project.mkdir()
     print('Fixture:', case, flush=True)
-    runtime, tools = args.runtime.resolve(strict=True), args.tools.resolve(strict=True)
+    runtime = args.runtime.resolve(strict=True)
+    tools = project / 'tools.json'
+    tool_configuration = json.loads(args.tools.read_bytes())
+    # Web target admission requires a Node declaration; ABI operations must never consume it.
+    tool_configuration['node'] = dict(root=str(case / 'absent-node'), identity=dict(hash='0' * 64, sizeBytes=1))
+    tools.write_text(json.dumps(tool_configuration))
     store = args.store.resolve() if args.store else case / 'store'
     runs = case / 'runs'
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_bytes())
@@ -163,6 +168,7 @@ def main():
         if not name.endswith(':abi-check'):
             assert action['key'] == changed[name]['key'], name
     verification('accepted-retained-current', accepted, 'current')
+    assert not (case / 'absent-node').exists()
     print('PASS JS/Wasm ABI extraction, independent baselines, cache reuse, main-only scope and retained verification', flush=True)
 
 

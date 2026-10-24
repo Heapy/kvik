@@ -387,7 +387,8 @@ use `-js` and `-wasm-js` suffixes. See [library packaging](docs/library-publicat
 for dependency semantics and scope selection.
 
 JS/Wasm main KLIBs support `abi-dump` and `abi-check` with separate target baselines;
-these commands do not require Node. See [public API baselines](docs/abi.md).
+these commands do not launch Node. Web targets still require its tool declaration.
+See [public API baselines](docs/abi.md).
 
 Browser and WASI runtimes, npm dependencies, documentation adapters and
 application launching are still pending.
