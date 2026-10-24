@@ -149,6 +149,20 @@ private class Builder(
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
     }
 
+    private fun ensureDocumentationStdlib(module: String, target: String): String {
+        val id = "$module:$target:documentation-stdlib"
+        if (id !in nodes) nodes[id] = ActionNode(id, emptySet()) { results ->
+            validateResults(results, emptySet())
+            documentationNativeStdlibAction(NativeTarget.require(target), composition, tools.getValue(target))
+        }
+        return id
+    }
+
+    private fun documentationStdlibOutputs(results: Map<String, ActionResult>, id: String, target: String): List<FileEntry> =
+        results.getValue(id).outputs.files.also { entries ->
+            require(entries.isNotEmpty() && entries.all { it.path.value.startsWith("stdlib/") && !it.executable }) { "Invalid Native documentation stdlib output" }
+        }.map { it.copy(path = LogicalPath("native-stdlib/$target/" + it.path.value.removePrefix("stdlib/"))) }
+
     private fun documentationMetadataHasSources(module: String, targets: Set<String>): Boolean =
         documentationCommonSourceSets(modules.getValue(module), targets).any { set ->
             set.directories.any { directory -> files.any { it.path.value.startsWith(directory.value + "/") } }
@@ -195,20 +209,25 @@ private class Builder(
         val dependencies = documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) }
         val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
-        val artifacts = documentationArtifacts(module, targets)
+        val nativeTarget = if (targets.all { NativeTarget.find(it) != null }) targets.intersect(request.targets).sorted().firstOrNull()
+            ?: error("Native documentation metadata has no selected supporting target") else null
+        val stdlibId = nativeTarget?.let { ensureDocumentationStdlib(module, it) }
+        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(stdlibId)
+        val artifacts = documentationArtifacts(module, targets, includeStdlib = nativeTarget == null)
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val options = spec.targets.filter { it.name in targets }.map { compilerOptions(module, it.name, it.compilerOptions) }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
+            val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
             val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
             jvmMetadataCompileAction(JvmMetadataCompilation(module, source.map { it.path },
-                dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path }, LogicalPath("metadata"),
+                dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path } +
+                    listOfNotNull(nativeTarget?.let { LogicalPath("native-stdlib/shared") }), LogicalPath("metadata"),
                 optIns = options.flatMap { it.optIns }.distinct().sorted(), explicitApi = options.any { it.explicitApi }, warningsAsErrors = options.any { it.warningsAsErrors },
                 targets = targets, plugins = plugin.map { it.path }, pluginApplications = workspace.applications),
-                merge(source, artifacts, dependencyFiles, plugin, workspace.entries), composition, tools.getValue("jvm"))
+                merge(source, artifacts, dependencyFiles, stdlib, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         return id
     }
@@ -224,14 +243,7 @@ private class Builder(
             val families = reached.filterValues { set.name in it }.keys.map { if (it == "jvm") "jvm" else "native" }.toSet()
             return families.singleOrNull() ?: "common"
         }
-        val nativeStdlibIds = selectedTargets.filter { NativeTarget.find(it) != null }.associateWith { target ->
-            val id = "$module:$target:documentation-stdlib"
-            nodes[id] = ActionNode(id, emptySet()) { results ->
-                validateResults(results, emptySet())
-                documentationNativeStdlibAction(NativeTarget.require(target), composition, tools.getValue(target))
-            }
-            id
-        }
+        val nativeStdlibIds = selectedTargets.filter { NativeTarget.find(it) != null }.associateWith { ensureDocumentationStdlib(module, it) }
         fun supporting(set: SourceSet) = reached.filterValues { set.name in it }.keys
         val metadataTargets = selectedSets.filter { platform(it) == "common" || supporting(it).size > 1 }
             .associate { it.name to supporting(it) }
@@ -258,9 +270,7 @@ private class Builder(
             validateResults(results, edges)
             val dependencyFiles = targetDependencies.flatMap { (target, dependencies) -> dependencies.flatMap { remap(results, it, target, "main") } }
             val metadataFiles = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.flatMap { documentationMetadataOutputs(results, it, targets) } }
-            val stdlibFiles = nativeStdlibIds.flatMap { (target, id) -> results.getValue(id).outputs.files.also { entries ->
-                require(entries.isNotEmpty() && entries.all { it.path.value.startsWith("stdlib/") && !it.executable }) { "Invalid Native documentation stdlib output" }
-            }.map { it.copy(path = LogicalPath("native-stdlib/$target/" + it.path.value.removePrefix("stdlib/"))) } }
+            val stdlibFiles = nativeStdlibIds.flatMap { (target, id) -> documentationStdlibOutputs(results, id, target) }
             val sets = selectedSets.map { set ->
                 val kind = platform(set)
                 val targets = selectedTargets.filter { set.name in reached.getValue(it) }

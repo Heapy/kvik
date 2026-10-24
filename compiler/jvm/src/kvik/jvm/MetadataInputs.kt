@@ -20,7 +20,7 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
             val directory = workspace.classpath(logical) // Reject links/special children recursively.
             val manifest = directory.resolve("default/manifest")
             require(Files.isRegularFile(manifest) && Files.size(manifest) <= 1024 * 1024) { "Invalid/oversized metadata manifest" }
-            requireCommonManifest(Files.readAllBytes(manifest))
+            requireCommonManifest(Files.readAllBytes(manifest), targets)
             listOf(directory)
         } else {
             require(Files.isRegularFile(path) && (logical.endsWith(".jar") || logical.endsWith(".klib"))) { "Metadata input must be a root metadata JAR, KLIB or directory" }
@@ -36,7 +36,7 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
                     } }
                 }
                 if (logical.endsWith(".klib")) {
-                    requireCommonManifest(read("default/manifest", 1024 * 1024))
+                    requireCommonManifest(read("default/manifest", 1024 * 1024), targets)
                     listOf(path)
                 } else {
                     val selected = commonSourceSets(parseJson(read(PSM_PATH, 1024 * 1024).decodeToString(throwOnInvalidSequence = true)), targets, minimumTargets)
@@ -46,7 +46,7 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
                         val prefix = "$source/"
                         val entries = zip.entries().asSequence().filter { !it.isDirectory && it.name.startsWith(prefix) }.toList()
                         require(entries.isNotEmpty()) { "Selected metadata source set has no KLIB: $source" }
-                        requireCommonManifest(read("${source}/default/manifest", 1024 * 1024))
+                        requireCommonManifest(read("${source}/default/manifest", 1024 * 1024), targets)
                         for (entry in entries) {
                             val relative = LogicalPath(entry.name.removePrefix(prefix))
                             val output = destination.resolve(relative.value)
@@ -61,11 +61,17 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
     }
 }
 
-private fun requireCommonManifest(bytes: ByteArray) {
+private fun requireCommonManifest(bytes: ByteArray, targets: Set<String>) {
     require(bytes.size <= 1024 * 1024) { "Metadata manifest exceeds 1 MiB" }
     val properties = Properties().apply { bytes.inputStream().use(::load) }
     require(properties.getProperty("unique_name")?.isNotBlank() == true && properties.getProperty("metadata_version") != null) { "Invalid common KLIB manifest" }
-    require(properties.getProperty("builtins_platform") in setOf(null, "COMMON") && properties.getProperty("native_targets") == null) {
+    if (properties.getProperty("builtins_platform") == "NATIVE" && properties.getProperty("unique_name") == "stdlib" &&
+        targets.isNotEmpty() && targets.all { NativeTarget.find(it) != null }) {
+        // Shared Native metadata needs genuine Native builtins. The graph supplies a verified,
+        // digest-bound stdlib capture; no other platform KLIB is admitted as shared metadata.
+        val supported = properties.getProperty("native_targets")?.split(Regex("\\s+"))?.toSet().orEmpty()
+        require(targets.all { NativeTarget.require(it).compilerName in supported }) { "Native stdlib does not support the complete metadata target set" }
+    } else require(properties.getProperty("builtins_platform") in setOf(null, "COMMON") && properties.getProperty("native_targets") == null) {
         "Platform KLIB is not common metadata"
     }
 }

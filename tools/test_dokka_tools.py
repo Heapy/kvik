@@ -90,6 +90,36 @@ def main():
             with (case/'worker-compile.log').open('wb') as output:
                 subprocess.run(list(map(str, command)), env=environment, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=240)
         jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, args.java_home/'bin/java', env, None, compile_worker)
+        cp = os.pathsep.join(map(str, [case/'jvm/classes', artifacts['kotlin-build-tools-api-2.4.20.jar'], artifacts['kotlin-stdlib-2.4.20.jar']]))
+        shared = case/'shared-native'; shared.mkdir()
+        shutil.copytree(args.konan_home/'klib/common/stdlib', shared/'stdlib')
+        (shared/'NativeToken.kt').write_text('package shared\n/** Shared Native-only public type. */\nclass NativeToken(val worker: kotlin.native.concurrent.Worker)\n')
+        compiler_manifest = case/'jvm/compiler-manifest.json'
+        request = dict(schemaVersion=1, requestId='shared-native', operation='metadata-compile', compiler=file_digest(compiler_manifest),
+            sources=['NativeToken.kt'], classpath=['stdlib'], pluginClasspath=[],
+            options=['-module-name', 'fixture:shared', '-language-version', '2.4', '-api-version', '2.4', '-Xmulti-platform'],
+            outputDirectory='metadata', metadataTargets=['iosArm64','iosSimulatorArm64'])
+        def metadata(label, selected, expected):
+            (shared/(label+'.request.json')).write_bytes(canonical(selected))
+            with (shared/(label+'.log')).open('wb') as output:
+                process = subprocess.run([str(args.java_home/'bin/java'), '-cp', cp, 'kvik.jvm.CompilerWorkerKt', str(shared),
+                    label+'.request.json', label+'.result.json', str(args.artifacts), str(compiler_manifest)],
+                    env=env, stdout=output, stderr=subprocess.STDOUT, timeout=120)
+            result = json.loads((shared/(label+'.result.json')).read_bytes())
+            assert process.returncode == expected == result['exitCode'], (label, result, (shared/(label+'.log')).read_text())
+            return result
+        metadata('native', request, 0)
+        assert list((shared/'metadata/default/linkdata').rglob('*.knm'))
+        refused = metadata('mixed', dict(request, requestId='mixed', outputDirectory='mixed', metadataTargets=['jvm','iosArm64']), 1)
+        assert 'Platform KLIB is not common metadata' in json.dumps(refused), refused
+        shutil.copytree(shared/'stdlib', shared/'invalid-stdlib')
+        manifest = shared/'invalid-stdlib/default/manifest'
+        lines = manifest.read_text().splitlines()
+        manifest.write_text('\n'.join('native_targets=ios_arm64' if line.startswith('native_targets=') else line for line in lines)+'\n')
+        refused = metadata('unsupported', dict(request, requestId='unsupported', outputDirectory='unsupported', classpath=['invalid-stdlib']), 1)
+        assert 'complete metadata target set' in json.dumps(refused), refused
+        native_source.write_text(native_source.read_text()+'\n/** Consumes actual shared metadata with a Native-only API. */\nfun sharedToken(): shared.NativeToken = TODO()\n')
+        next(node for node in source_sets if node['sourceSetID']['sourceSetName']=='nativeMain')['classpath'].append(str(shared/'metadata'))
         workspace = case/'workspace'; (workspace/'input').mkdir(parents=True); (workspace/'tools').mkdir()
         def stage(source, logical):
             destination = workspace/'input'/logical
