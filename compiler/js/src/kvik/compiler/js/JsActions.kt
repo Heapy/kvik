@@ -20,8 +20,15 @@ data class JsCompilation(
     val explicitApi: Boolean = false,
     val warningsAsErrors: Boolean = false,
     val plugins: List<LogicalPath> = emptyList(),
+    val pluginApplications: List<JvmPluginApplication> = emptyList(),
 ) {
     init {
+        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
+        require(pluginApplications.all { plugin ->
+            plugin.classpath.none { it in libraries } && plugin.outputs.all { root ->
+                root.value.startsWith("plugins/${plugin.id}/") && !pathsOverlap(root, output)
+            }
+        }) { "Plugin paths overlap compilation inputs/outputs or leave the plugin namespace" }
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(moduleName.matches(Regex("[A-Za-z_][A-Za-z0-9_.-]*")))
         for (paths in listOf(sources, libraries, commonSources, plugins)) {
@@ -35,7 +42,7 @@ data class JsCompilation(
             require(sources.isNotEmpty() && output.value.endsWith(".klib"))
         } else {
             require(includedLibrary.value.endsWith(".klib") && ':' !in includedLibrary.value && ',' !in includedLibrary.value)
-            require(includedLibrary !in libraries && sources.isEmpty() && commonSources.isEmpty() && plugins.isEmpty() && optIns.isEmpty() && !explicitApi)
+            require(includedLibrary !in libraries && sources.isEmpty() && commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && optIns.isEmpty() && !explicitApi)
         }
     }
     val compilerClass: String get() = "org.jetbrains.kotlin.cli.js." + if (target == KotlinJsTarget.JS) "K2JSCompiler" else "KotlinWasmCompiler"
@@ -66,13 +73,15 @@ data class JsCompilation(
         "output" to output.value.json(), "commonSources" to commonSources.map { it.value.json() }.json(),
         "includedLibrary" to (includedLibrary?.value?.json() ?: JsonValue.Null), "moduleName" to moduleName.json(),
         "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(),
-        "warningsAsErrors" to warningsAsErrors.json(), "plugins" to plugins.map { it.value.json() }.json())
+        "warningsAsErrors" to warningsAsErrors.json(), "plugins" to plugins.map { it.value.json() }.json()).let {
+            if (pluginApplications.isEmpty()) it else JsonValue.Object(it.values + ("pluginApplications" to pluginApplications.map(JvmPluginApplication::toJson).json()))
+        }
     companion object {
         fun fromJson(value: JsonValue): JsCompilation {
-            val d = value.fields(setOf("module", "target", "sources", "libraries", "output", "commonSources", "includedLibrary", "moduleName", "optIns", "explicitApi", "warningsAsErrors", "plugins"))
+            val d = value.fields(setOf("module", "target", "sources", "libraries", "output", "commonSources", "includedLibrary", "moduleName", "optIns", "explicitApi", "warningsAsErrors", "plugins"), setOf("pluginApplications"))
             fun paths(key: String) = d.getValue(key).arrayValue().map { LogicalPath(it.stringValue()) }
             return JsCompilation(d.getValue("module").stringValue(), KotlinJsTarget.require(d.getValue("target").stringValue()), paths("sources"), paths("libraries"), LogicalPath(d.getValue("output").stringValue()), paths("commonSources"),
-                d.getValue("includedLibrary").let { if (it == JsonValue.Null) null else LogicalPath(it.stringValue()) }, d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), paths("plugins"))
+                d.getValue("includedLibrary").let { if (it == JsonValue.Null) null else LogicalPath(it.stringValue()) }, d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), paths("plugins"), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
         }
     }
 }
@@ -80,9 +89,15 @@ data class JsCompilation(
 fun jsCompileAction(compilation: JsCompilation, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 180_000): ActionSpec {
     val declared = inputs.files.map { it.path }.toSet()
     require((compilation.sources + compilation.libraries + compilation.plugins + listOfNotNull(compilation.includedLibrary)).all { it in declared }) { "Undeclared JS/Wasm compiler input" }
+    compilation.pluginApplications.forEach { plugin ->
+        require(plugin.inputs.all { it in declared }) { "Undeclared compiler plugin input" }
+        plugin.classpath.forEach { path -> require(inputs.files.any {
+            it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/")
+        }) { "Undeclared/unsupported plugin classpath: ${path.value}" } }
+    }
     require(toolchains.keys == compilerIdentities) { "Complete JVM compiler identities required" }
     return ActionSpec("kvik-js-compiler-v1", composition, if (compilation.includedLibrary == null) ActionKind.COMPILE else ActionKind.LINK,
-        jvmHostPlatform(), compilation.target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()), listOf(compilation.output), compilation.arguments(), environment,
+        jvmHostPlatform(), compilation.target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()), listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs }, compilation.arguments(), environment,
         compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 

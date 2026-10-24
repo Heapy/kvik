@@ -48,7 +48,7 @@ class JsCompilerExecutor(
             if (compile != null) {
                 val layout = toolchains.verified(action.toolchains, checkpoint)
                 require(layout.identities == action.toolchains) { "Compiler provider returned different identities" }
-                PreparedTools(layout.javaExecutable, compilerClasspath(layout, checkpoint))
+                PreparedTools(layout.javaExecutable, compilerClasspath(layout, checkpoint), layout.takeIf { compile.pluginApplications.isNotEmpty() })
             } else {
                 val executable = node.verified(action.toolchains.getValue("node"), checkpoint)
                 requirePhysicalPath(executable)
@@ -72,7 +72,25 @@ class JsCompilerExecutor(
             val arguments = action.arguments.map { argument ->
                 if (compile.includedLibrary != null && argument == "-Xinclude=input/${compile.includedLibrary.value}") "-Xinclude=$directory/input/${compile.includedLibrary.value}" else argument
             }
-            listOf(tools.executable, "-Xmx2G", "-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED", "-Dfile.encoding=UTF-8",
+            if (tools.worker != null) {
+                val worker = tools.worker
+                fun staged(plugin: JvmPluginApplication): JvmPluginApplication {
+                    fun input(path: LogicalPath) = LogicalPath("input/${path.value}")
+                    fun output(path: LogicalPath) = LogicalPath("output/${path.value}")
+                    return plugin.copy(classpath = plugin.classpath.map(::input), inputs = plugin.inputs.map(::input), outputs = plugin.outputs.map(::output),
+                        pathOptions = plugin.pathOptions.map { it.copy(path = if (it.kind == PluginPathKind.INPUT_FILE) input(it.path) else output(it.path)) })
+                }
+                val request = obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to reservation.runId.json(),
+                    "compiler" to action.toolchains.getValue("jvm-compiler").toJson(), "target" to compile.target.projectName.json(),
+                    "arguments" to arguments.map { it.json() }.json(), "libraries" to compile.libraries.map { "input/${it.value}".json() }.json(),
+                    "pluginApplications" to compile.pluginApplications.map { staged(it).toJson() }.json())
+                writeFile("$directory/request.json", request.canonical().encodeToByteArray())
+                listOf(tools.executable, "-ea", "-Xmx2G", "-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED",
+                    "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Djava.awt.headless=true",
+                    "-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp",
+                    listOf(worker.workerClasses, worker.btaApiJar, worker.stdlibJar).joinToString(":"), "kvik.jvm.JsPluginWorker",
+                    directory, "request.json", "result.json", worker.compilerArtifacts, worker.compilerManifest)
+            } else listOf(tools.executable, "-Xmx2G", "-XX:TieredStopAtLevel=1", "--enable-native-access=ALL-UNNAMED", "-Dfile.encoding=UTF-8",
                 "-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", checkNotNull(tools.classpath), compile.compilerClass) + arguments
         } else {
             writeFile("$directory/runner.mjs", jsTestRunnerSource.encodeToByteArray())
@@ -103,10 +121,19 @@ class JsCompilerExecutor(
                         exit.timedOut -> failure = "JS/Wasm action timed out after ${action.timeoutMillis} ms"
                         exit.setupFailure != null -> failure = "JS/Wasm process setup failed at ${exit.setupFailure.stage.name.lowercase()}: errno=${exit.setupFailure.errno}"
                         compile != null -> {
-                            val text = readFile("$directory/process.stdout").decodeToString(throwOnInvalidSequence = true) + "\n" + readFile("$directory/process.stderr").decodeToString(throwOnInvalidSequence = true)
-                            diagnostics = jsCompilerDiagnostics(text, compile.module, actionId, compile.target)
-                            if (exit.exitCode == 0 && diagnostics.none { it.code == "KVIK_JS_ERROR" }) status = ActionStatus.EXECUTED
-                            else failure = "JS/Wasm compiler exited ${exit.exitCode}"
+                            if (tools.worker != null) {
+                                val worker = WorkerResult.fromJson(parseJson(readFile("$directory/result.json", 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
+                                require(worker.requestId == reservation.runId && worker.exitCode == exit.exitCode && worker.status != WorkerStatus.CANCELLED) { "JS/Wasm worker result identity/exit mismatch" }
+                                require(worker.status != WorkerStatus.SUCCESS || worker.diagnostics.none { it.code == "KVIK_JS_ERROR" }) { "JS/Wasm worker success contains errors" }
+                                diagnostics = worker.diagnostics.map { it.copy(actionId = actionId, module = compile.module, target = action.target) }
+                                if (worker.status == WorkerStatus.SUCCESS) status = ActionStatus.EXECUTED
+                                else failure = "JS/Wasm compiler worker exited ${exit.exitCode}"
+                            } else {
+                                val text = readFile("$directory/process.stdout").decodeToString(throwOnInvalidSequence = true) + "\n" + readFile("$directory/process.stderr").decodeToString(throwOnInvalidSequence = true)
+                                diagnostics = jsCompilerDiagnostics(text, compile.module, actionId, compile.target)
+                                if (exit.exitCode == 0 && diagnostics.none { it.code == "KVIK_JS_ERROR" }) status = ActionStatus.EXECUTED
+                                else failure = "JS/Wasm compiler exited ${exit.exitCode}"
+                            }
                         }
                         else -> {
                             report = parseJsTestReport(parseJson(readFile("$directory/output/test-results.json", 64 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)), reservation.runId, checkNotNull(selection), exit.exitCode)
@@ -146,7 +173,7 @@ class JsCompilerExecutor(
     }
 }
 
-private data class PreparedTools(val executable: String, val classpath: String?)
+private data class PreparedTools(val executable: String, val classpath: String?, val worker: JvmToolchainLayout? = null)
 
 private fun compilerClasspath(layout: JvmToolchainLayout, checkpoint: () -> Unit): String {
     val manifest = parseJson(readFile(layout.compilerManifest, 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))

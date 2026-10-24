@@ -28,6 +28,50 @@ class JsAdapterTest {
             assertFails { link.copy(optIns = listOf("example.Experimental")) }
         }
     }
+    @Test fun workspacePluginInputsOptionsAndOutputsBindBothTargetRecipes() {
+        val source = LogicalPath("src/Main.kt")
+        val pluginClasses = LogicalPath("plugin/classes")
+        val config = LogicalPath("config/message.txt")
+        val output = LogicalPath("plugins/example/messages")
+        val plugin = JvmPluginApplication("example", "2.4.20", listOf(pluginClasses), listOf("message=hello"), listOf(config),
+            listOf(PluginPathOption("config", PluginPathKind.INPUT_FILE, config), PluginPathOption("output", PluginPathKind.OUTPUT_DIRECTORY, output)), listOf(output))
+        val inputs = TreeManifest(listOf(FileEntry(source, digest), FileEntry(LogicalPath("plugin/classes/Plugin.class"), digest), FileEntry(config, digest)))
+        for (target in KotlinJsTarget.entries) {
+            val ordinary = JsCompilation("example", target, listOf(source), emptyList(), LogicalPath("main.klib"))
+            assertFalse("pluginApplications" in ordinary.toJson().values)
+            val compilation = ordinary.copy(pluginApplications = listOf(plugin))
+            assertEquals(compilation, JsCompilation.fromJson(compilation.toJson()))
+            fun action(value: JsCompilation = compilation, files: TreeManifest = inputs) = jsCompileAction(value, files, digest, tools)
+            assertEquals(listOf(compilation.output, output), action().outputs)
+            assertEquals(ordinary.arguments(), compilation.arguments())
+            assertNotEquals(action(ordinary).key(Sha256), action().key(Sha256))
+            assertNotEquals(action().key(Sha256), action(compilation.copy(pluginApplications = listOf(plugin.copy(options = listOf("message=changed"))))).key(Sha256))
+            assertNotEquals(action().key(Sha256), action(files = TreeManifest(inputs.files.map { if (it.path == config) it.copy(digest = Sha256.digest(byteArrayOf(2))) else it })).key(Sha256))
+            assertNotEquals(action().key(Sha256), action(files = TreeManifest(inputs.files.map { if (it.path.value.endsWith(".class")) it.copy(digest = Sha256.digest(byteArrayOf(3))) else it })).key(Sha256))
+            assertFails { action(files = TreeManifest(inputs.files.filterNot { it.path == config })) }
+            assertFails { action(files = TreeManifest(inputs.files.filterNot { it.path.value.endsWith(".class") })) }
+            assertFails { compilation.copy(plugins = listOf(LogicalPath("published.jar"))) }
+            assertFails { compilation.copy(pluginApplications = listOf(plugin, plugin.copy(id = "other", outputs = emptyList(), pathOptions = emptyList()))) }
+            assertFails { compilation.copy(output = LogicalPath("plugins/example/messages/main.klib")) }
+            assertFails { compilation.copy(sources = emptyList(), includedLibrary = LogicalPath("input.klib"), output = LogicalPath("linked")) }
+        }
+    }
+    @Test fun workspacePluginRootsAndArtifactRepresentationsAreValidated() {
+        val source = LogicalPath("Main.kt")
+        val jar = LogicalPath("plugin.jar")
+        val plugin = JvmPluginApplication("example", "2.4.20", listOf(jar))
+        val compilation = JsCompilation("example", KotlinJsTarget.JS, listOf(source), emptyList(), LogicalPath("main.klib"), pluginApplications = listOf(plugin))
+        val inputs = TreeManifest(listOf(FileEntry(source, digest), FileEntry(jar, digest)))
+        assertEquals(compilation, JsCompilation.fromJson(compilation.toJson()))
+        jsCompileAction(compilation, inputs, digest, tools)
+        assertFails { jsCompileAction(compilation.copy(pluginApplications = listOf(plugin.copy(classpath = listOf(source)))), inputs, digest, tools) }
+        val root = LogicalPath("arbitrary")
+        assertFails { compilation.copy(pluginApplications = listOf(plugin.copy(outputs = listOf(root), pathOptions = listOf(PluginPathOption("out", PluginPathKind.OUTPUT_DIRECTORY, root))))) }
+        assertFails { plugin.copy(pathOptions = listOf(PluginPathOption("config", PluginPathKind.INPUT_FILE, LogicalPath("missing.txt")))) }
+        assertFails { plugin.copy(options = listOf("invalid")) }
+        val library = LogicalPath("plugin.klib")
+        assertFails { compilation.copy(libraries = listOf(library), pluginApplications = listOf(plugin.copy(classpath = listOf(library)))) }
+    }
     @Test fun nodeTestsRequireNodeIdentityAndAlwaysExecute() {
         val entry = LogicalPath("tests/test.mjs")
         val selection = JsTestSelection("example", KotlinJsTarget.WASM_JS, entry, "example.*")
