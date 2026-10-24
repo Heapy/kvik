@@ -122,7 +122,7 @@ fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManife
     require(filter == null || filter.matches(Regex("[A-Za-z0-9_.*]+"))) { "Unsupported test filter" }
     return ActionSpec("kvik-native-tests-v1", composition, ActionKind.TEST, target.platform, target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("test-results.json")), listOf("--ktest_logger=TEAMCITY") + listOfNotNull(filter?.let { "--ktest_filter=$it" }),
-        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)), timeoutMillis, CachePolicy.NEVER)
+        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)), timeoutMillis, CachePolicy.NEVER)
 }
 
 fun kotestNativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64): ActionSpec {
@@ -130,6 +130,6 @@ fun kotestNativeTestAction(module: String, executable: LogicalPath, inputs: Tree
     require(inputs.files.singleOrNull { it.path == executable }?.executable == true) { "Kotest executable must be a declared executable input" }
     require(toolchains.keys == target.toolIdentityNames) { "Complete Native toolchain identities required" }
     return ActionSpec("kvik-kotest-native-tests-v1", composition, ActionKind.TEST, target.platform, target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(LogicalPath("test-results.json")), emptyList(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"),
+        listOf(LogicalPath("test-results.json")), emptyList(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"),
         obj("module" to module.json(), "executable" to executable.value.json()), timeoutMillis, CachePolicy.NEVER)
 }
