@@ -4,6 +4,7 @@ package kvik.kodesource
 import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.projectsnapshot.*
+import kotlin.io.encoding.Base64
 import platform.posix.usleep
 
 /** One invocation owns the supplied host. Every request closes its child and private output directory. */
@@ -24,7 +25,7 @@ class NativeKodeTransport(
         // A 64 MiB selected file can expand sixfold when encoded as a JSON string.
         require(maxOutputBytes in 0..(64 * 1024 * 1024 * 6 + 4096)) { "Invalid kode output limit" }
         require(arguments.isNotEmpty() && arguments.size <= 32 && arguments.none { '\u0000' in it })
-        require(arguments.first() in setOf("resolve", "tree", "blob")) { "Only read-only kode source operations are supported" }
+        require(arguments.first() in setOf("resolve", "revision-object", "tree", "blob")) { "Only read-only kode source operations are supported" }
         require(arguments.sumOf { it.encodeToByteArray().size.toLong() } <= 64 * 1024)
         require(arguments.none { it == "--home" || it.startsWith("--home=") }) { "Transport owns kode home selection" }
         checkpoint()
@@ -84,6 +85,20 @@ class NativeKodeTransport(
 class NativeKodeSourceCache(private val root: String, private val namespace: Digest) : KodeSourceCache {
     init { NativeFiles.validateAbsolute(root) }
 
+    override fun revision(project: String, revision: String): ByteArray? =
+        read(objectKey("revision", project, revision), REVISION_RECORD_LIMIT)?.let { value ->
+            val encoded = value.stringValue()
+            require(encoded.length <= ((MAX_REVISION_BYTES + 2) / 3) * 4) { "Cached revision exceeds limit" }
+            Base64.decode(encoded).also { bytes ->
+                require(bytes.size in 1..MAX_REVISION_BYTES && Base64.encode(bytes) == encoded) { "Invalid cached revision encoding or size" }
+            }
+        }
+
+    override fun storeRevision(project: String, revision: String, bytes: ByteArray) {
+        require(bytes.size in 1..MAX_REVISION_BYTES) { "Revision object exceeds cache limit" }
+        write(objectKey("revision", project, revision), Base64.encode(bytes).json(), REVISION_RECORD_LIMIT)
+    }
+
     override fun manifest(project: String, tree: String): SourceManifest? =
         read(treeKey(project, tree), MANIFEST_LIMIT)?.let(SourceManifest::fromJson)
 
@@ -104,9 +119,11 @@ class NativeKodeSourceCache(private val root: String, private val namespace: Dig
             "kind" to kind.json(), "project" to project.json(), "identity" to identity)
     }
 
-    private fun treeKey(project: String, tree: String): JsonValue.Object {
-        require(tree.matches(Regex("[0-9a-f]{40}|[0-9a-f]{64}"))) { "Invalid cached Git tree identity" }
-        return key("manifest", project, tree.json())
+    private fun treeKey(project: String, tree: String): JsonValue.Object = objectKey("manifest", project, tree)
+
+    private fun objectKey(kind: String, project: String, identity: String): JsonValue.Object {
+        require(identity.matches(Regex("[0-9a-f]{40}|[0-9a-f]{64}"))) { "Invalid cached Git object identity" }
+        return key(kind, project, identity.json())
     }
 
     private fun path(key: JsonValue): String = "$root/${namespace.hash}/${Sha256.digest(key).hash}.json"
@@ -134,6 +151,8 @@ class NativeKodeSourceCache(private val root: String, private val namespace: Dig
     }
 
     companion object {
+        private const val MAX_REVISION_BYTES = 1024 * 1024
+        private const val REVISION_RECORD_LIMIT = 1536 * 1024
         private const val MANIFEST_LIMIT = 17 * 1024 * 1024
         private const val DIGEST_LIMIT = 16 * 1024
     }

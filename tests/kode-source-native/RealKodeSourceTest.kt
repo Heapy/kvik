@@ -27,13 +27,15 @@ class RealKodeSourceTest {
         NativeProcessHost(environment("KVIK_KODE_GUARDIAN")).use { host ->
             val transport = NativeKodeTransport(host, executable, "$root/store", "$root/work")
             val calls = mutableListOf<List<String>>()
+            var transportAllowed = true
             val observed = KodeTransport { args, bound, checkpoint ->
                 calls += args
+                check(transportAllowed) { "Offline capture attempted to invoke kode" }
                 transport.execute(args, bound, checkpoint)
             }
-            fun capture(selector: String) = ProviderProjectSnapshotter(
-                KodeSourceProvider(observed, NativeKodeSourceCache("$root/cache", Sha256.digest(executable.encodeToByteArray()))),
-                content, SourcePathPolicy.CaseSensitive).capture(SourceSelector("fixture", selector),
+            fun capture(selector: String, offline: Boolean = false, selectedContent: ContentStore = content) = ProviderProjectSnapshotter(
+                KodeSourceProvider(observed, NativeKodeSourceCache("$root/cache", Sha256.digest(executable.encodeToByteArray())), offline),
+                selectedContent, SourcePathPolicy.CaseSensitive).capture(SourceSelector("fixture", selector),
                     LogicalPath("kvik.json"), LogicalPath("kvik.lock.json"))
 
             val first = capture(revision)
@@ -42,7 +44,7 @@ class RealKodeSourceTest {
             assertEquals(local.inputs, first.snapshot.inputs)
             assertEquals(local.fingerprint, first.snapshot.fingerprint)
             assertEquals(revision, first.provenance.revision)
-            assertEquals(listOf("resolve", "tree", "blob", "blob", "blob", "blob"), calls.map { it.first() })
+            assertEquals(listOf("resolve", "revision-object", "tree", "blob", "blob", "blob", "blob"), calls.map { it.first() })
             assertEquals(listOf("assets/binary.bin", "src/Main.kt"), first.snapshot.inputs.files.map { it.path.value })
             assertTrue(first.snapshot.inputs.files.single { it.path.value == "src/Main.kt" }.executable)
 
@@ -50,6 +52,13 @@ class RealKodeSourceTest {
             val repeat = capture(revision)
             assertEquals(first.snapshot.fingerprint, repeat.snapshot.fingerprint)
             assertEquals(listOf(listOf("resolve", "fixture", revision)), calls)
+            calls.clear()
+            transportAllowed = false
+            assertEquals(first.snapshot.fingerprint, capture(revision, offline = true).snapshot.fingerprint)
+            assertFails { capture(revision, offline = true, selectedContent = RealSourceContent()) }
+            assertFails { capture("main", offline = true) }
+            assertTrue(calls.isEmpty())
+            transportAllowed = true
             val current = capture("main")
             assertNotEquals(revision, current.provenance.revision)
             assertNotEquals(first.snapshot.fingerprint, current.snapshot.fingerprint)

@@ -141,4 +141,23 @@ class NativeKodeSourcesTest {
         NativeFiles.writeNew(paths[0], byteArrayOf(0xff.toByte()))
         assertFails { cache.knownDigest("first", blob); cache.knownDigest("second", blob) }
     }
+
+    @Test fun revisionCachePreservesRawBytesAndRejectsConflictingOrOversizedRecords() = fixture { root, _ ->
+        val namespace = Sha256.digest(byteArrayOf(1))
+        val cache = NativeKodeSourceCache("$root/cache", namespace)
+        val revision = "c".repeat(40)
+        val bytes = byteArrayOf(0, -1, 13, 10, 1)
+        assertNull(cache.revision("first", revision))
+        cache.storeRevision("first", revision, bytes)
+        assertContentEquals(bytes, NativeKodeSourceCache("$root/cache", namespace).revision("first", revision))
+        assertNull(cache.revision("second", revision))
+        assertNull(NativeKodeSourceCache("$root/cache", Sha256.digest(byteArrayOf(2))).revision("first", revision))
+        assertFails { cache.storeRevision("first", revision, byteArrayOf(2)) }
+        assertFails { cache.storeRevision("first", "d".repeat(40), ByteArray(1024 * 1024 + 1)) }
+        val path = NativeFiles.names("$root/cache/${namespace.hash}").single().let { "$root/cache/${namespace.hash}/$it" }
+        val fields = parseJson(NativeFiles.read(path, 1536 * 1024).decodeToString()).objectValue()
+        NativeFiles.removeTree(path)
+        NativeFiles.writeNew(path, JsonValue.Object(fields + ("value" to "not-base64!".json())).canonical().encodeToByteArray())
+        assertFails { cache.revision("first", revision) }
+    }
 }
