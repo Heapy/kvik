@@ -12,6 +12,70 @@ import kvik.execution.EventJournal
 import kotlin.concurrent.atomics.AtomicInt
 
 class NativeUnitTest {
+    @Test fun linuxCompilationUsesDistinctIdentityTargetAndOutputContract() {
+        val digest = Sha256.digest(byteArrayOf(1))
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("Main.kt"), digest)))
+        val mac = NativeCompilation("sample", listOf(LogicalPath("Main.kt")), output = LogicalPath("app.kexe"), produce = NativeOutput.PROGRAM)
+        assertFalse("target" in mac.toJson().values)
+        assertEquals(mac, NativeCompilation.fromJson(mac.toJson()))
+        val linux = mac.copy(target = NativeTarget.LINUX_X64)
+        assertEquals(linux, NativeCompilation.fromJson(linux.toJson()))
+        val action = nativeCompileAction(linux, inputs, digest, NativeTarget.LINUX_X64.toolIdentityNames.associateWith { digest })
+        assertEquals("linuxX64", action.target)
+        assertEquals(NativeTarget.LINUX_X64.platform, action.platform)
+        assertEquals("linux_x64", action.arguments[action.arguments.indexOf("-target") + 1])
+        assertEquals(listOf(LogicalPath("app.kexe")), action.outputs)
+        assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+        assertFails { nativeCompileAction(linux, inputs, digest, NativeTarget.MACOS_ARM64.toolIdentityNames.associateWith { digest }) }
+        val macAction = nativeCompileAction(mac, inputs, digest, NativeTarget.MACOS_ARM64.toolIdentityNames.associateWith { digest })
+        assertContains(macAction.outputs, LogicalPath("app.kexe.dSYM"))
+        assertNotEquals(macAction.key(Sha256), action.key(Sha256))
+        assertNotEquals(nativeDependenciesIdentity(digest, digest, digest), linuxNativeDependenciesIdentity(digest, digest, digest))
+    }
+
+    @Test fun linuxTestRecipesAndReportsRetainTargetAndNeverCache() {
+        val digest = Sha256.digest(byteArrayOf(1)); val executable = LogicalPath("test.kexe")
+        val inputs = TreeManifest(listOf(FileEntry(executable, digest, true)))
+        val tools = NativeTarget.LINUX_X64.toolIdentityNames.associateWith { digest }
+        for (action in listOf(nativeTestAction("sample", executable, inputs, digest, tools, target = NativeTarget.LINUX_X64),
+            kotestNativeTestAction("sample", executable, inputs, digest, tools, target = NativeTarget.LINUX_X64))) {
+            assertEquals("linuxX64", action.target); assertEquals(CachePolicy.NEVER, action.cachePolicy)
+            assertEquals(NativeTarget.LINUX_X64.platform, action.platform)
+        }
+        val report = nativeTestReport("sample", listOf("Suite.test"),
+            "##teamcity[testSuiteStarted name='Suite']\n##teamcity[testStarted name='test']\n##teamcity[testFinished name='test']\n##teamcity[testSuiteFinished name='Suite']\n",
+            ProcessResult(0), NativeTarget.LINUX_X64)
+        assertEquals(VerificationStatus.PASSED, report.status)
+        assertEquals("linuxX64", report.tests.single().target)
+        assertEquals("linuxX64", nativeCompilerDiagnostics("error: broken", "sample", "id", NativeTarget.LINUX_X64).single().target)
+    }
+
+    @Test fun linuxLayoutOmitsDarwinEnvironmentAndMismatchedProviderCannotStart() {
+        val linux = NativeToolchainLayout("/native/bin/konanc", "/jdk", "", "/dependencies", "", target = NativeTarget.LINUX_X64)
+        assertEquals(mapOf("JAVA_HOME" to "/jdk", "KONAN_DATA_DIR" to "/dependencies"), linux.environment())
+        assertFails { linux.copy(sdk = "/sdk") }
+        assertFails { linux.copy(developerDirectory = "/developer") }
+        val digest = Sha256.digest(byteArrayOf(1))
+        val action = nativeCompileAction(NativeCompilation("sample", listOf(LogicalPath("Main.kt")), output = LogicalPath("module.klib"), target = NativeTarget.LINUX_X64),
+            TreeManifest(listOf(FileEntry(LogicalPath("Main.kt"), digest))), digest, NativeTarget.LINUX_X64.toolIdentityNames.associateWith { digest })
+        val host = object : ProcessHost {
+            override fun start(request: ProcessRequest): OwnedProcess = error("Mismatched provider must never launch")
+            override fun close() = Unit
+        }
+        val content = object : ContentStore {
+            override fun put(bytes: ByteArray): Digest = error("No CAS publication")
+            override fun get(digest: Digest): ByteArray? = error("No materialization")
+        }
+        val executor = NativeCompilerExecutor("linux", "/uncreated", host, content,
+            NativeToolchainProvider { NativeToolchainLayout("/compiler", "/jdk", "/sdk", "/dependencies", "/developer") })
+        executor.start("linux", "compile", action).use { running ->
+            val started = TimeSource.Monotonic.markNow()
+            var result = running.poll()
+            while (result == null && started.elapsedNow().inWholeSeconds < 3) { usleep(1_000u); result = running.poll() }
+            assertEquals(ActionStatus.FAILED, assertNotNull(result).status)
+        }
+    }
+
     @Test fun slowNeighborVerificationDoesNotConsumeTestDiscoveryDeadline() {
         val root = NativeRunDirectory("/private/tmp").path
         val store = NativeContentStore("$root/store")

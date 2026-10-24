@@ -25,6 +25,9 @@ class KotestReportTest {
         assertEquals(VerificationStatus.PASSED, success.status)
         assertEquals(TestCounts(2, 1, 0, 1, true), success.counts)
         assertEquals(listOf("$spec.leaf", skipped), success.tests.map { it.id })
+        val linux = kotestNativeReport("module", token, journal(passed).encodeToByteArray(), ProcessResult(0), NativeTarget.LINUX_X64)
+        assertEquals(success.counts, linux.counts)
+        assertTrue(linux.tests.all { it.target == "linuxX64" })
         for (failure in listOf("Failure", "Error")) {
             val failed = report(begin() + listOf(test("test-start"), test("test-finish", status = failure)) + end())
             assertEquals(VerificationStatus.FAILED, failed.status)

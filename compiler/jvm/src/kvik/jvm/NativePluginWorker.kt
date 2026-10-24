@@ -58,7 +58,7 @@ object NativePluginWorker {
             val argument = arguments[index++]
             fun value() = arguments.getOrNull(index++) ?: reject("KVIK_NATIVE_ARGUMENT", "Missing argument for $argument")
             when (argument) {
-                "-target" -> require(value() == "macos_arm64")
+                "-target" -> require(value() in NativeTarget.entries.map { it.compilerName })
                 "-produce" -> require(value() == "library") { "Workspace Native plugins require a KLIB compilation before source-free linking" }
                 "-o" -> { val path = value(); require(path.startsWith("output/")); workspace.path(path, false) }
                 "-module-name" -> require(value().matches(Regex("[A-Za-z0-9_.:-]+")))

@@ -18,6 +18,15 @@ class KspUnitTest {
         assertEquals(CachePolicy.LOCAL, action.cachePolicy)
         assertTrue(action.arguments.containsAll(listOf("-language-version=2.4", "-api-version=2.4", "-incremental=false", "-target=macosArm64")))
         assertEquals("./input/processor/processor.jar", action.arguments.last())
+        assertFalse("target" in compilation.toJson().values)
+        val linux = compilation.copy(target = NativeTarget.LINUX_X64)
+        val linuxAction = kspNativeAction(linux, inputs, digest, NativeTarget.LINUX_X64.toolIdentityNames.associateWith { digest })
+        assertEquals(linux, KspNativeCompilation.fromJson(linux.toJson()))
+        assertEquals("linuxX64", linuxAction.target)
+        assertContains(linuxAction.arguments, "-target=linuxX64")
+        assertEquals(NativeTarget.LINUX_X64.platform, linuxAction.platform)
+        assertNotEquals(action.key(Sha256), linuxAction.key(Sha256))
+        assertFails { kspNativeAction(linux, inputs, digest, tools) }
         assertTrue(action.arguments[action.arguments.indexOf("-classpath") + 1].contains("runtime-api.jar"))
         val changed = Sha256.digest(byteArrayOf(2))
         for (path in listOf(source, api, processor, library)) assertNotEquals(action.key(Sha256), kspNativeAction(compilation,

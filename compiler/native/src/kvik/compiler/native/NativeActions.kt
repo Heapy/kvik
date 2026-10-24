@@ -9,6 +9,10 @@ fun nativeDependenciesIdentity(llvm: Digest, libffi: Digest, xcodeToolchain: Dig
     "schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-native-dependencies-v1".json(),
     "llvm" to llvm.toJson(), "libffi" to libffi.toJson(), "xcodeToolchain" to xcodeToolchain.toJson()))
 
+fun linuxNativeDependenciesIdentity(llvm: Digest, libffi: Digest, nativeToolchain: Digest): Digest = Sha256.digest(obj(
+    "schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-native-linux-dependencies-v1".json(),
+    "llvm" to llvm.toJson(), "libffi" to libffi.toJson(), "nativeToolchain" to nativeToolchain.toJson()))
+
 data class NativeCompilation(
     val module: String,
     val sources: List<LogicalPath>,
@@ -25,6 +29,7 @@ data class NativeCompilation(
     val includedLibrary: LogicalPath? = null,
     val entryPoint: String? = null,
     val pluginApplications: List<JvmPluginApplication> = emptyList(),
+    val target: NativeTarget = NativeTarget.MACOS_ARM64,
 ) {
     init {
         require(entryPoint == null || produce == NativeOutput.PROGRAM && entryPoint.length in 1..1024 &&
@@ -34,7 +39,7 @@ data class NativeCompilation(
         require(pluginApplications.all { plugin ->
             plugin.classpath.none { it in libraries } && plugin.outputs.all { root ->
                 root.value.startsWith("plugins/${plugin.id}/") && !pathsOverlap(root, output) &&
-                    !pathsOverlap(root, LogicalPath(output.value + ".dSYM"))
+                    (target != NativeTarget.MACOS_ARM64 || !pathsOverlap(root, LogicalPath(output.value + ".dSYM")))
             }
         }) { "Plugin paths overlap compilation inputs/outputs or leave the plugin namespace" }
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
@@ -56,7 +61,7 @@ data class NativeCompilation(
         require(kotestLauncher !in commonSources) { "Kotest launcher is Native-specific" }
     }
     fun arguments(): List<String> = buildList {
-        addAll(listOf("-target", "macos_arm64", "-produce", if (produce == NativeOutput.LIBRARY) "library" else "program", "-o", "output/${output.value}", "-module-name", moduleName))
+        addAll(listOf("-target", target.compilerName, "-produce", if (produce == NativeOutput.LIBRARY) "library" else "program", "-o", "output/${output.value}", "-module-name", moduleName))
         add("-Xoverride-konan-properties=airplaneMode=true")
         entryPoint?.let { addAll(listOf("-entry", it)) }
         if (produce == NativeOutput.TEST) add("-generate-test-runner")
@@ -82,13 +87,13 @@ data class NativeCompilation(
         "commonSources" to commonSources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
         "plugins" to plugins.map { it.value.json() }.json(), "output" to output.value.json(), "produce" to produce.name.json(),
         "moduleName" to moduleName.json(), "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
-            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
+            JsonValue.Object(it.objectValue() + listOfNotNull(kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, target.takeIf { it != NativeTarget.MACOS_ARM64 }?.let { "target" to it.projectName.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
         }
     companion object {
         fun fromJson(value: JsonValue): NativeCompilation {
-            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications"))
+            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications", "target"))
             fun paths(name: String) = d.getValue(name).arrayValue().map { LogicalPath(it.stringValue()) }
-            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
+            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(), d["target"]?.stringValue()?.let(NativeTarget::require) ?: NativeTarget.MACOS_ARM64)
         }
     }
 }
@@ -102,29 +107,29 @@ fun nativeCompileAction(compilation: NativeCompilation, inputs: TreeManifest, co
             it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/")
         }) { "Undeclared/unsupported plugin classpath: ${path.value}" } }
     }
-    val identities = setOf("native", "jdk", "sdk", "native-dependencies") +
+    val identities = compilation.target.toolIdentityNames +
         if (compilation.pluginApplications.isEmpty()) emptySet() else setOf("jvm-compiler", "jvm-worker", "junit")
     require(toolchains.keys == identities) { "Complete Native toolchain identities required" }
     return ActionSpec("kvik-native-compiler-v1", composition, if (compilation.produce == NativeOutput.LIBRARY) ActionKind.COMPILE else ActionKind.LINK,
-        mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs } + (if (compilation.produce == NativeOutput.LIBRARY) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM"))), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
+        compilation.target.platform, compilation.target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
+        listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs } + (if (compilation.produce == NativeOutput.LIBRARY || compilation.target != NativeTarget.MACOS_ARM64) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM"))), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, filter: String? = null, timeoutMillis: Long = 60_000): ActionSpec {
+fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, filter: String? = null, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64): ActionSpec {
     require(module.matches(Regex("[A-Za-z0-9_.-]+")))
     require(inputs.files.singleOrNull { it.path == executable }?.executable == true) { "Test executable must be a declared executable input" }
-    require(toolchains.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Complete Native toolchain identities required" }
+    require(toolchains.keys == target.toolIdentityNames) { "Complete Native toolchain identities required" }
     require(filter == null || filter.matches(Regex("[A-Za-z0-9_.*]+"))) { "Unsupported test filter" }
-    return ActionSpec("kvik-native-tests-v1", composition, ActionKind.TEST, mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),
+    return ActionSpec("kvik-native-tests-v1", composition, ActionKind.TEST, target.platform, target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("test-results.json")), listOf("--ktest_logger=TEAMCITY") + listOfNotNull(filter?.let { "--ktest_filter=$it" }),
         mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)), timeoutMillis, CachePolicy.NEVER)
 }
 
-fun kotestNativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000): ActionSpec {
+fun kotestNativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64): ActionSpec {
     require(module.matches(Regex("[A-Za-z0-9_.-]+")))
     require(inputs.files.singleOrNull { it.path == executable }?.executable == true) { "Kotest executable must be a declared executable input" }
-    require(toolchains.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Complete Native toolchain identities required" }
-    return ActionSpec("kvik-kotest-native-tests-v1", composition, ActionKind.TEST, mapOf("os" to "macos", "arch" to "arm64"), "macosArm64", toolchains.toMap(), TreeManifest(inputs.files.toList()),
+    require(toolchains.keys == target.toolIdentityNames) { "Complete Native toolchain identities required" }
+    return ActionSpec("kvik-kotest-native-tests-v1", composition, ActionKind.TEST, target.platform, target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("test-results.json")), emptyList(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"),
         obj("module" to module.json(), "executable" to executable.value.json()), timeoutMillis, CachePolicy.NEVER)
 }

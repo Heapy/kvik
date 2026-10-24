@@ -7,7 +7,7 @@ internal fun KmpLibraryPackage.directory() = "library/${coordinate.group.replace
 private fun KmpLibraryPackage.sharedDependencies() = sourceSets.flatMap { it.dependencies }.distinct().sortedBy { it.toString() }
 internal fun LibraryPackage.rootVariants(): List<Pair<String, String>> = if (target == "jvm")
     listOf("jvmApiElements" to "java-api", "jvmRuntimeElements" to "java-runtime")
-    else listOf("macosArm64ApiElements" to "kotlin-api")
+    else listOf("${target}ApiElements" to "kotlin-api")
 
 internal fun KmpLibraryPackage.projectStructure(): ByteArray = obj("projectStructure" to obj(
     "formatVersion" to "0.3.3".json(), "isPublishedAsRoot" to "true".json(),

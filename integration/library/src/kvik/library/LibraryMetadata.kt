@@ -30,7 +30,7 @@ internal fun LibraryPackage.moduleMetadata(artifact: Digest): ByteArray {
             attributes["org.gradle.dependency.bundling"] = "external".json()
             attributes[JVM_TARGET_VERSION_ATTRIBUTE] = checkNotNull(jvmTarget).json()
         } else {
-            attributes["org.jetbrains.kotlin.native.target"] = "macos_arm64".json()
+            attributes["org.jetbrains.kotlin.native.target"] = NativeTarget.require(target).compilerName.json()
             attributes["artifactType"] = "org.jetbrains.kotlin.klib".json()
         }
         return obj("name" to variantName.json(), "attributes" to JsonValue.Object(attributes),
@@ -43,8 +43,8 @@ internal fun LibraryPackage.moduleMetadata(artifact: Digest): ByteArray {
     // KGP/KTC associate resolved variant names with PSM source sets; usage strings are not variant names.
     val variants = if (target == "jvm") listOf(variant("jvmApiElements", "java-api", dependencies.filter { it.api }),
         variant("jvmRuntimeElements", "java-runtime", dependencies))
-        else listOf(variant("macosArm64ApiElements", "kotlin-api", dependencies.filter { it.api }),
-            variant("macosArm64RuntimeElements", "kotlin-runtime", dependencies))
+        else listOf(variant("${target}ApiElements", "kotlin-api", dependencies.filter { it.api }),
+            variant("${target}RuntimeElements", "kotlin-runtime", dependencies))
     val owner = rootCoordinate ?: coordinate
     val component = obj("group" to owner.group.json(), "module" to owner.name.json(), "version" to owner.version.json()).let { value ->
         if (rootCoordinate == null) value else JsonValue.Object(value.values +

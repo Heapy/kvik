@@ -27,7 +27,7 @@ class KspNativeExecutor(
         val compilation = KspNativeCompilation.fromJson(action.parameters)
         require(action == kspNativeAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis)) { "KSP action differs from typed parameters" }
         startedActions += actionId
-        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint) },
+        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint).also { require(it.target == compilation.target) { "Verified Native target differs from KSP action" } } },
             start = { layout -> startVerified(actionId, action, compilation, layout) })
     }
 
@@ -39,8 +39,7 @@ class KspNativeExecutor(
         trees.materialize(action.inputs, "$directory/input")
         for (name in listOf("output", "output/generated", "output/generated/kotlin", "output/generated/classes", "output/generated/resources", "home", "tmp", "caches")) mkdirNew("$directory/$name")
         val process = host.start(ProcessRequest(listOf("${layout.javaHome}/bin/java") + compilation.arguments(directory, platformLibraries), directory,
-            action.environment + mapOf("JAVA_HOME" to layout.javaHome, "SDKROOT" to layout.sdk, "KONAN_DATA_DIR" to layout.dependencies,
-                "DEVELOPER_DIR" to layout.developerDirectory, "HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
+            action.environment + layout.environment() + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
             "$directory/ksp.stdout", "$directory/ksp.stderr", action.timeoutMillis))
         return object : RunningAction {
             private var result: ActionResult? = null
@@ -70,7 +69,7 @@ class KspNativeExecutor(
                 }
                 if (status == ActionStatus.FAILED && problem == null) problem = if (exit.timedOut) "KSP timed out" else "KSP exited ${exit.exitCode}"
                 val diagnostics = if (status == ActionStatus.FAILED) listOf(Diagnostic("KVIK_KSP_NATIVE_FAILED", DiagnosticCategory.COMPILATION,
-                    problem ?: "KSP failed", actionId, compilation.module, "macosArm64")) else emptyList()
+                    problem ?: "KSP failed", actionId, compilation.module, action.target)) else emptyList()
                 return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, problem).also {
                     result = it; observations[actionId] = KspActionObservation(it, diagnostics, stdout, stderr, directory)
                 }
@@ -85,7 +84,7 @@ class KspNativeExecutor(
 private fun nativeLibraries(layout: NativeToolchainLayout): List<String> = memScoped {
     require(layout.compiler.endsWith("/bin/konanc")) { "KSP requires the verified standard Native distribution layout" }
     val root = layout.compiler.removeSuffix("/bin/konanc")
-    val platform = "$root/klib/platform/macos_arm64"
+    val platform = "$root/klib/platform/${layout.target.compilerName}"
     val stream = opendir(platform) ?: error("Missing verified Native platform klibs")
     val names = mutableListOf<String>()
     try {

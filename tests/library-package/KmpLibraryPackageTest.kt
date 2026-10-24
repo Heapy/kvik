@@ -21,17 +21,17 @@ private fun runPackage(executor: ActionExecutor, action: ActionSpec): ActionResu
     repeat(action.inputs.files.size + 10) { running.poll()?.let { return it } }
     error("Package did not complete")
 }
-private class KmpFixture {
+private class KmpFixture(nativeTarget: String = "macosArm64") {
     val store = KmpStore()
     val root = Coordinate("org.example", "root", "1.0")
     val dependency = Coordinate("org.example", "dependency", "2.0")
     val targets = listOf(LibraryPackage("root", "jvm", Coordinate("org.example", "root-jvm", "1.0"),
-        listOf(LibraryDependency(dependency, true)), 11, root), LibraryPackage("root", "macosArm64",
-        Coordinate("org.example", "root-macosarm64", "1.0"), listOf(LibraryDependency(dependency, true)), rootCoordinate = root))
+        listOf(LibraryDependency(dependency, true)), 11, root), LibraryPackage("root", nativeTarget,
+        Coordinate("org.example", "root-${nativeTarget.lowercase()}", "1.0"), listOf(LibraryDependency(dependency, true)), rootCoordinate = root))
     val selection = KmpLibraryPackage("root", root, targets,
         listOf(KmpSourceSetMetadata("commonBase", emptyList(), listOf(dependency)),
             KmpSourceSetMetadata("sharedMain", listOf("commonBase"), listOf(dependency))),
-        mapOf("jvm" to listOf("sharedMain", "commonBase"), "macosArm64" to listOf("commonBase", "sharedMain")))
+        mapOf("jvm" to listOf("sharedMain", "commonBase"), nativeTarget to listOf("commonBase", "sharedMain")))
     // Opaque byte fixtures exercise packaging only, not compiler KLIB validity.
     val metadata = selection.sourceSets.flatMap { source -> listOf(
         store.file("metadata/${source.name}/default/manifest", "fixture=${source.name}\n".encodeToByteArray()),
@@ -69,6 +69,22 @@ private fun jarFiles(bytes: ByteArray): Map<String, ByteArray> {
 }
 
 class KmpLibraryPackageTest {
+    @Test fun linuxRootRedirectAndProjectStructureUseActualTargetNames() {
+        val fixture = KmpFixture("linuxX64")
+        val result = runPackage(KmpLibraryPackageExecutor(fixture.store), fixture.action())
+        assertEquals(ActionStatus.EXECUTED, result.status)
+        val variants = parseJson(fixture.bytes(result, ".module").decodeToString()).objectValue().getValue("variants").arrayValue().map { it.objectValue() }
+        val linux = variants.single { it.getValue("name").stringValue() == "linuxX64ApiElements" }
+        assertEquals("linux_x64", linux.getValue("attributes").objectValue().getValue("org.jetbrains.kotlin.native.target").stringValue())
+        assertEquals("root-linuxx64", linux.getValue("available-at").objectValue().getValue("module").stringValue())
+        val psm = parseJson(jarFiles(fixture.bytes(result, ".jar")).getValue("META-INF/kotlin-project-structure-metadata.json").decodeToString())
+            .objectValue().getValue("projectStructure").objectValue().getValue("variants").arrayValue().map { it.objectValue().getValue("name").stringValue() }
+        assertEquals(listOf("jvmApiElements", "jvmRuntimeElements", "linuxX64ApiElements"), psm)
+        val mac = LibraryPackage("root", "macosArm64", Coordinate("org.example", "root-macosarm64", "1.0"), emptyList(), rootCoordinate = fixture.root)
+        assertEquals(3, fixture.selection.copy(targets = fixture.targets + mac,
+            sourceSetsByTarget = fixture.selection.sourceSetsByTarget + ("macosArm64" to listOf("commonBase", "sharedMain"))).targets.size)
+    }
+
     @Test fun rootJarPreservesEverySuppliedSharedByteAndPublishedHierarchy() {
         val fixture = KmpFixture(); val action = fixture.action()
         assertEquals("common", action.target); assertEquals(CachePolicy.LOCAL, action.cachePolicy)

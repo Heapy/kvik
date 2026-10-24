@@ -13,7 +13,7 @@ private const val PSM_PATH = "META-INF/kotlin-project-structure-metadata.json"
 
 /** Read only declared metadata; no target KLIB substitution, repositories or ambient classpath. */
 internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratch: Path, targets: Set<String>): List<Path> {
-    require(targets == setOf("jvm", "macosArm64"))
+    require(targets.size >= 2 && targets.all { it == "jvm" || NativeTarget.find(it) != null })
     return paths.flatMapIndexed { index, logical ->
         val path = workspace.path(logical)
         if (Files.isDirectory(path)) {
@@ -39,7 +39,7 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
                     requireCommonManifest(read("default/manifest", 1024 * 1024))
                     listOf(path)
                 } else {
-                    val selected = commonSourceSets(parseJson(read(PSM_PATH, 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
+                    val selected = commonSourceSets(parseJson(read(PSM_PATH, 1024 * 1024).decodeToString(throwOnInvalidSequence = true)), targets)
                     selected.map { source ->
                         val destination = scratch.resolve(index.toString()).resolve(source)
                         Files.createDirectories(destination)
@@ -71,7 +71,7 @@ private fun requireCommonManifest(bytes: ByteArray) {
 }
 
 /** Names are the pinned KGP API-variant names, not an inferred arbitrary target prefix. */
-internal fun commonSourceSets(value: JsonValue): List<String> {
+internal fun commonSourceSets(value: JsonValue, targets: Set<String> = setOf("jvm", "macosArm64")): List<String> {
     val root = value.objectValue().getValue("projectStructure").objectValue()
     require(root.getValue("formatVersion").stringValue() in setOf("0.3.1", "0.3.2", "0.3.3")) { "Unsupported project structure metadata" }
     val variants = root.getValue("variants").arrayValue().map(JsonValue::objectValue)
@@ -79,11 +79,13 @@ internal fun commonSourceSets(value: JsonValue): List<String> {
     fun variants(names: Set<String>): List<Set<String>> = variants.filter { it.getValue("name").stringValue() in names }.map {
         it.getValue("sourceSet").arrayValue().map(JsonValue::stringValue).also { names -> require(names.distinct().size == names.size) }.toSet()
     }
-    val jvm = variants(setOf("jvmApiElements", "jvmApiElements-published"))
-    val native = variants(setOf("macosArm64ApiElements", "macosArm64ApiElements-published"))
-        .ifEmpty { variants(setOf("nativeApiElements", "nativeApiElements-published")) }
-    require(jvm.isNotEmpty() && native.isNotEmpty()) { "Metadata has no JVM and macosArm64 API intersection" }
-    val selected = (jvm + native).reduce { a, b -> a intersect b }
+    require(targets.size >= 2 && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+    val selectedByTarget = targets.sorted().flatMap { target ->
+        variants(setOf("${target}ApiElements", "${target}ApiElements-published")).ifEmpty {
+            if (NativeTarget.find(target) != null) variants(setOf("nativeApiElements", "nativeApiElements-published")) else emptyList()
+        }.also { require(it.isNotEmpty()) { "Metadata has no API variant for $target" } }
+    }
+    val selected = selectedByTarget.reduce { a, b -> a intersect b }
     require(selected.isNotEmpty()) { "Metadata has no shared source set" }
     val sourceSets = root.getValue("sourceSets").arrayValue().map(JsonValue::objectValue)
     require(sourceSets.size in 1..256 && sourceSets.map { it.getValue("name").stringValue() }.distinct().size == sourceSets.size)

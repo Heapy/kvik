@@ -3,7 +3,7 @@ package kvik.compiler.native
 import kvik.core.*
 
 /** Decode only complete records; an interrupted UTF-8 tail cannot erase prior evidence. */
-fun kotestNativeReport(module: String, request: String, bytes: ByteArray, process: ProcessResult): NativeTestReport {
+fun kotestNativeReport(module: String, request: String, bytes: ByteArray, process: ProcessResult, target: NativeTarget = NativeTarget.MACOS_ARM64): NativeTestReport {
     val decoded = StringBuilder()
     var start = 0
     if (bytes.size <= 16 * 1024 * 1024) {
@@ -17,11 +17,11 @@ fun kotestNativeReport(module: String, request: String, bytes: ByteArray, proces
     // A deliberately incomplete tail marks undecodable/truncated/oversized bytes;
     // it is never decoded with replacement or interpreted as a protocol record.
     if (start != bytes.size) decoded.append('{')
-    return kotestNativeReport(module, request, decoded.toString(), process)
+    return kotestNativeReport(module, request, decoded.toString(), process, target)
 }
 
 /** Discovery is finalized from typed leaf callbacks only after the single engine invocation closes. */
-fun kotestNativeReport(module: String, request: String, text: String, process: ProcessResult): NativeTestReport {
+fun kotestNativeReport(module: String, request: String, text: String, process: ProcessResult, target: NativeTarget = NativeTarget.MACOS_ARM64): NativeTestReport {
     val results = linkedMapOf<String, TestResult>()
     val activeSpecs = mutableSetOf<String>()
     val doneSpecs = mutableSetOf<String>()
@@ -97,7 +97,7 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
                     require(id !in knownTests) { "Duplicate ignored test" }; knownTests[id] = value
                     val reason = message()
                     val name = displayName()
-                    if (value.second == "leaf") results[id] = TestResult(id, module, "macosArm64", TestStatus.SKIPPED, reason,
+                    if (value.second == "leaf") results[id] = TestResult(id, module, target.projectName, TestStatus.SKIPPED, reason,
                         TestDetails(value.first.boundedTestText(TEST_TEXT_LIMIT), name,
                             listOf(TestAttempt(1, TestStatus.SKIPPED, skipReason = reason))))
                     else unknownLeaves = true
@@ -121,7 +121,7 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
                         val testStatus = when (status) {
                             "Success" -> TestStatus.PASSED; "Ignored" -> TestStatus.SKIPPED; else -> TestStatus.FAILED
                         }
-                        results[id] = TestResult(id, module, "macosArm64", testStatus, detail.takeIf { it.isNotEmpty() },
+                        results[id] = TestResult(id, module, target.projectName, testStatus, detail.takeIf { it.isNotEmpty() },
                             TestDetails(value.first.boundedTestText(TEST_TEXT_LIMIT), displayNames[id],
                                 listOf(TestAttempt(1, testStatus, duration, reason, failure ?: if (testStatus == TestStatus.FAILED) TestFailure(TestFailureKind.UNKNOWN) else null))))
                     }

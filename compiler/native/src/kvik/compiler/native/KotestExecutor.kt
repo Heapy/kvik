@@ -18,12 +18,13 @@ class KotestNativeExecutor(
     override fun resources(action: ActionSpec) = ResourceRequest(512)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(runId == this.runId && actionId !in startedActions && action.implementation == "kvik-kotest-native-tests-v1")
+        val target = NativeTarget.require(action.target)
         val fields = action.parameters.fields(setOf("module", "executable"))
         val module = fields.getValue("module").stringValue()
         val executable = LogicalPath(fields.getValue("executable").stringValue())
-        require(action == kotestNativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, action.timeoutMillis)) { "Kotest action differs from typed parameters" }
+        require(action == kotestNativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, action.timeoutMillis, target)) { "Kotest action differs from typed parameters" }
         startedActions += actionId
-        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint) },
+        return preparingAction(actionId, action, prepare = { checkpoint -> toolchains.verified(action.toolchains, checkpoint).also { require(it.target == target) { "Verified Native target differs from action" } } },
             start = { layout -> startVerified(actionId, action, module, executable, layout) })
     }
 
@@ -36,8 +37,7 @@ class KotestNativeExecutor(
         val token = Sha256.digest("$runId\n$actionId\n$directory".encodeToByteArray()).hash
         val reportPath = "$directory/kotest.events.jsonl"
         val process = host.start(ProcessRequest(listOf("$directory/input/${executable.value}"), directory,
-            action.environment + mapOf("JAVA_HOME" to layout.javaHome, "SDKROOT" to layout.sdk, "KONAN_DATA_DIR" to layout.dependencies,
-                "DEVELOPER_DIR" to layout.developerDirectory, "HOME" to "$directory/home", "KVIK_KOTEST_REQUEST" to token, "KVIK_KOTEST_REPORT" to reportPath),
+            action.environment + layout.environment() + mapOf("HOME" to "$directory/home", "KVIK_KOTEST_REQUEST" to token, "KVIK_KOTEST_REPORT" to reportPath),
             "$directory/test.stdout", "$directory/test.stderr", action.timeoutMillis))
         return object : RunningAction {
             private var result: ActionResult? = null
@@ -53,7 +53,7 @@ class KotestNativeExecutor(
                 val stderr = text("$directory/test.stderr")
                 val journal = try { readNativeFile(reportPath, 16 * 1024 * 1024) }
                     catch (failure: Exception) { readFailure = "Kotest result/log unavailable: ${failure.message}"; byteArrayOf() }
-                val parsed = kotestNativeReport(module, token, journal, exit)
+                val parsed = kotestNativeReport(module, token, journal, exit, layout.target)
                 val report = if (readFailure == null) parsed else parsed.copy(counts = parsed.counts.copy(discovered = null, discoveryComplete = false),
                     status = when (parsed.status) {
                         VerificationStatus.CANCELLED, VerificationStatus.FAILED -> parsed.status
@@ -67,7 +67,7 @@ class KotestNativeExecutor(
                 }
                 val outputs = if (status == ActionStatus.EXECUTED) trees.capture("$directory/output") else TreeManifest(emptyList())
                 val diagnostics = if (status == ActionStatus.FAILED) listOf(Diagnostic("KVIK_KOTEST_NATIVE_RESULT", DiagnosticCategory.TEST,
-                    report.diagnostic ?: "Kotest invocation did not pass", actionId, module, "macosArm64")) else emptyList()
+                    report.diagnostic ?: "Kotest invocation did not pass", actionId, module, action.target)) else emptyList()
                 return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, report.diagnostic).also {
                     result = it
                     observations[actionId] = NativeActionObservation(it, diagnostics, report, stdout, stderr, directory)

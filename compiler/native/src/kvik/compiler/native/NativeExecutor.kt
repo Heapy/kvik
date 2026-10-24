@@ -24,13 +24,20 @@ fun interface NativeToolchainProvider {
     }
 }
 data class NativeToolchainLayout(val compiler: String, val javaHome: String, val sdk: String, val dependencies: String, val developerDirectory: String,
-    val nativeHome: String = compiler.substringBeforeLast('/').substringBeforeLast('/').ifEmpty { "/" }) {
-    init { require(listOf(compiler, javaHome, sdk, dependencies, developerDirectory, nativeHome).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
+    val nativeHome: String = compiler.substringBeforeLast('/').substringBeforeLast('/').ifEmpty { "/" },
+    val target: NativeTarget = NativeTarget.MACOS_ARM64) {
+    init {
+        require(target == NativeTarget.MACOS_ARM64 || sdk.isEmpty() && developerDirectory.isEmpty())
+        require((listOf(compiler, javaHome, dependencies, nativeHome) + if (target == NativeTarget.MACOS_ARM64) listOf(sdk, developerDirectory) else emptyList()).all { it.startsWith('/') && '\u0000' !in it && it.split('/').none { part -> part == ".." || part == "." } }) }
 }
+
+/** Physical tool paths are supplied only by the verified provider, never inherited from the host. */
+fun NativeToolchainLayout.environment(): Map<String, String> = mapOf("JAVA_HOME" to javaHome, "KONAN_DATA_DIR" to dependencies) +
+    if (target == NativeTarget.MACOS_ARM64) mapOf("SDKROOT" to sdk, "DEVELOPER_DIR" to developerDirectory) else emptyMap()
 
 data class NativeActionObservation(val result: ActionResult, val diagnostics: List<Diagnostic>, val tests: NativeTestReport? = null, val stdout: String, val stderr: String, val directory: String)
 
-/** macosArm64 adapter. Owns each compiler/listing/test process through the injected K03 host. */
+/** Native target adapter. Owns each compiler/listing/test process through the injected K03 host. */
 class NativeCompilerExecutor(
     private val runId: String,
     private val runDirectory: String,
@@ -44,7 +51,8 @@ class NativeCompilerExecutor(
     override fun resources(action: ActionSpec) = ResourceRequest(if (action.kind == ActionKind.TEST) 512 else 2048)
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
-        require(action.target == "macosArm64" && action.platform == mapOf("os" to "macos", "arch" to "arm64"))
+        val target = NativeTarget.require(action.target)
+        require(action.platform == target.platform)
         val compile = if (action.implementation == "kvik-native-compiler-v1") NativeCompilation.fromJson(action.parameters) else null
         val module: String
         val executable: LogicalPath?
@@ -57,13 +65,14 @@ class NativeCompilerExecutor(
             val fields = action.parameters.fields(setOf("module", "executable", "filter"))
             module = fields.getValue("module").stringValue(); executable = LogicalPath(fields.getValue("executable").stringValue())
             filter = fields.getValue("filter").let { if (it == JsonValue.Null) null else it.stringValue() }
-            require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis) == action)
+            require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis, target) == action)
         }
-        val nativeIdentities = action.toolchains.filterKeys { it in setOf("native", "jdk", "sdk", "native-dependencies") }
+        val nativeIdentities = action.toolchains.filterKeys { it in target.toolIdentityNames }
         val workspacePlugins = compile?.pluginApplications?.isNotEmpty() == true
         startedActions += actionId
         return preparingAction(actionId, action, prepare = { checkpoint ->
             val layout = toolchains.verified(nativeIdentities, checkpoint)
+            require(layout.target == target) { "Verified Native toolchain target differs from action" }
             val jvm = if (workspacePlugins) {
                 val identities = action.toolchains.filterKeys { it in setOf("jdk", "jvm-compiler", "jvm-worker", "junit") }
                 requireNotNull(jvmToolchains) { "Native workspace plugins require a verified JVM worker provider" }.verified(identities, checkpoint).also {
@@ -99,8 +108,7 @@ class NativeCompilerExecutor(
             parent.split('/').forEach { current += "/$it"; mkdirNew(current) }
         }
         if (workspacePlugins) mkdirNew("$directory/tmp")
-        val environment = action.environment + mapOf("JAVA_HOME" to layout.javaHome, "SDKROOT" to layout.sdk, "KONAN_DATA_DIR" to layout.dependencies,
-            "DEVELOPER_DIR" to layout.developerDirectory, "HOME" to "$directory/home") + if (workspacePlugins) mapOf("TMPDIR" to "$directory/tmp", "LIBCLANG_DISABLE_CRASH_RECOVERY" to "1") else emptyMap()
+        val environment = action.environment + layout.environment() + mapOf("HOME" to "$directory/home") + if (workspacePlugins) mapOf("TMPDIR" to "$directory/tmp", "LIBCLANG_DISABLE_CRASH_RECOVERY" to "1") else emptyMap()
         val started = kotlin.time.TimeSource.Monotonic.markNow()
         var phase = if (compile == null) "discovery" else "compile"
         fun launch(arguments: List<String>, phase: String): OwnedProcess = host.start(ProcessRequest(arguments, directory, environment, "$directory/$phase.stdout", "$directory/$phase.stderr", maxOf(1L, action.timeoutMillis - started.elapsedNow().inWholeMilliseconds)))
@@ -157,20 +165,20 @@ class NativeCompilerExecutor(
                     process = launch(listOf("$directory/input/${executable!!.value}") + action.arguments, phase)
                     return null
                 }
-                var diagnostics = if (compile != null) nativeCompilerDiagnostics(stdout + "\n" + stderr, module, actionId) else emptyList()
+                var diagnostics = if (compile != null) nativeCompilerDiagnostics(stdout + "\n" + stderr, module, actionId, layout.target) else emptyList()
                 if (workspacePlugins && !exit.cancelled && !exit.timedOut) {
                     try {
                         val worker = WorkerResult.fromJson(parseJson(readNativeFile("$directory/result.json", 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
                         require(worker.requestId == reservation.runId && worker.exitCode == exit.exitCode && worker.status != WorkerStatus.CANCELLED) { "Native worker result identity/exit mismatch" }
                         require(worker.status != WorkerStatus.SUCCESS || worker.diagnostics.none { it.code == "KVIK_NATIVE_ERROR" }) { "Native worker success contains errors" }
-                        diagnostics = worker.diagnostics.map { it.copy(actionId = actionId, module = module, target = "macosArm64") }
+                        diagnostics = worker.diagnostics.map { it.copy(actionId = actionId, module = module, target = action.target) }
                     } catch (failure: Exception) {
                         return finish(exit, listOf(Diagnostic("KVIK_NATIVE_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
-                            failure.message ?: "Invalid Native worker result", actionId, module, "macosArm64")), null, stdout, stderr,
+                            failure.message ?: "Invalid Native worker result", actionId, module, action.target)), null, stdout, stderr,
                             failure.message ?: "Invalid Native worker result")
                     }
                 }
-                val report = if (phase == "test") nativeTestReport(module, discovered, stdout, exit) else if (phase == "discovery") NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, "Native discovery failed") else null
+                val report = if (phase == "test") nativeTestReport(module, discovered, stdout, exit, layout.target) else if (phase == "discovery") NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, "Native discovery failed") else null
                 return finish(exit, diagnostics, report, stdout, stderr,
                     if (phase == "discovery") "Native test discovery did not complete" else null)
             }
@@ -193,10 +201,10 @@ class NativeCompilerExecutor(
                     }
                 }
                 val finalDiagnostics = diagnostics + if (timeout != null) listOf(Diagnostic(
-                    "KVIK_NATIVE_TIMEOUT", DiagnosticCategory.INFRASTRUCTURE, timeout, actionId, module, "macosArm64"))
+                    "KVIK_NATIVE_TIMEOUT", DiagnosticCategory.INFRASTRUCTURE, timeout, actionId, module, action.target))
                 else if (status == ActionStatus.FAILED && diagnostics.none { it.code == "KVIK_NATIVE_ERROR" }) listOf(Diagnostic(
                     if (report != null) "KVIK_NATIVE_TEST_RESULT" else "KVIK_NATIVE_PROCESS_FAILED", if (report != null) DiagnosticCategory.TEST else DiagnosticCategory.INFRASTRUCTURE,
-                    diagnostic ?: "Native process exited ${exit.exitCode}", actionId, module, "macosArm64")) else emptyList()
+                    diagnostic ?: "Native process exited ${exit.exitCode}", actionId, module, action.target)) else emptyList()
                 return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostic).also {
                     result = it; observations[actionId] = NativeActionObservation(it, finalDiagnostics, report, stdout, stderr, directory)
                 }

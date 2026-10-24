@@ -101,7 +101,7 @@ data class JvmMetadataCompilation(
     val pluginApplications: List<JvmPluginApplication> = emptyList(),
 ) {
     init {
-        require(targets == setOf("jvm", "macosArm64")) { "Metadata compilation supports the JVM/Native shared intersection" }
+        require(targets.size >= 2 && targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Metadata compilation requires at least two supported targets" }
         require(module.matches(Regex("[A-Za-z0-9_.:-]+"))) { "Invalid metadata module name" }
         require(sources.isNotEmpty() && sources.all { it.value.endsWith(".kt") })
         for (paths in listOf(sources, classpath, plugins)) require(paths.distinct().size == paths.size && paths.none { ':' in it.value })

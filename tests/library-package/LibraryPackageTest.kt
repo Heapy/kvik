@@ -86,6 +86,21 @@ private fun readZip(bytes: ByteArray): List<ZipEntry> {
 }
 
 class LibraryPackageTest {
+    @Test fun linuxKlibMetadataNamesActualPlatformAndApiRuntimeVariants() {
+        val store = Store(); val input = store.file("module.klib", byteArrayOf(9, 8, 7))
+        val result = complete(store, action(store, listOf(input), selection("linuxX64")))
+        assertEquals(ActionStatus.EXECUTED, result.status)
+        assertEquals(input.digest, result.outputs.files.single { it.path.value.endsWith(".klib") }.digest)
+        val variants = parseJson(store.bytes(result, ".module").decodeToString()).objectValue().getValue("variants").arrayValue().map { it.objectValue() }
+        assertEquals(listOf("linuxX64ApiElements", "linuxX64RuntimeElements"), variants.map { it.getValue("name").stringValue() })
+        for (variant in variants) {
+            val attributes = variant.getValue("attributes").objectValue()
+            assertEquals("linux_x64", attributes.getValue("org.jetbrains.kotlin.native.target").stringValue())
+            assertEquals("org.jetbrains.kotlin.klib", attributes.getValue("artifactType").stringValue())
+        }
+        assertEquals(listOf(1, 2), variants.map { it.getValue("dependencies").arrayValue().size })
+    }
+
     @Test fun rootDependencyUsesTargetCoordinateForPomConsumers() {
         val store = Store()
         val root = Coordinate("org.example", "base", "1.0")

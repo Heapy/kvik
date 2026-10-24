@@ -30,7 +30,7 @@ data class LibraryPackage(
 ) {
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && module.length <= 256)
-        require(target in setOf("jvm", "macosArm64")) { "Unsupported library target" }
+        require(target == "jvm" || NativeTarget.find(target) != null) { "Unsupported library target" }
         if (target == "jvm") supportedJvmTarget(requireNotNull(jvmTarget) { "JVM library target is required" }.toString())
         else require(jvmTarget == null) { "Native library cannot declare a JVM target" }
         require(dependencies.size <= 1000 && dependencies.map { it.coordinate.group to it.coordinate.name }.distinct().size == dependencies.size) {

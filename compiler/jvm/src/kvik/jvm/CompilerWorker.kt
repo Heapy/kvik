@@ -137,7 +137,10 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
             common.metadataKlibCompilationOperationBuilder(sources, staging).also {
                 it.compilerArguments.applyArgumentStrings(options)
                 it.compilerArguments[MetadataArguments.CLASSPATH] = classpath
-                it.compilerArguments[MetadataArguments.X_TARGET_PLATFORM] = listOf(MetadataTargetPlatform.JVM, MetadataTargetPlatform.NATIVE)
+                it.compilerArguments[MetadataArguments.X_TARGET_PLATFORM] = buildList {
+                    if ("jvm" in request.metadataTargets) add(MetadataTargetPlatform.JVM)
+                    if (request.metadataTargets.any { NativeTarget.find(it) != null }) add(MetadataTargetPlatform.NATIVE)
+                }
             }
         } else {
             val jvm = toolchains.getToolchain(JvmPlatformToolchain::class.java)

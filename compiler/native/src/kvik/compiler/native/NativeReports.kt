@@ -2,15 +2,15 @@ package kvik.compiler.native
 
 import kvik.core.*
 
-fun nativeCompilerDiagnostics(text: String, module: String, actionId: String): List<Diagnostic> {
+fun nativeCompilerDiagnostics(text: String, module: String, actionId: String, target: NativeTarget = NativeTarget.MACOS_ARM64): List<Diagnostic> {
     val location = Regex("^(?:file://)?(.*?):([0-9]+):([0-9]+): (error|warning|info): (.*)$")
     val generic = Regex("^(error|warning|info): (.*)$")
     return text.lineSequence().mapNotNull { line ->
         val match = location.matchEntire(line)
         if (match != null) {
             val (path, row, column, level, message) = match.destructured
-            Diagnostic("KVIK_NATIVE_${level.uppercase()}", DiagnosticCategory.COMPILATION, message, actionId, module, "macosArm64", path.removePrefix("input/"), row.toInt(), column.toInt())
-        } else generic.matchEntire(line)?.let { Diagnostic("KVIK_NATIVE_${it.groupValues[1].uppercase()}", DiagnosticCategory.COMPILATION, it.groupValues[2], actionId, module, "macosArm64") }
+            Diagnostic("KVIK_NATIVE_${level.uppercase()}", DiagnosticCategory.COMPILATION, message, actionId, module, target.projectName, path.removePrefix("input/"), row.toInt(), column.toInt())
+        } else generic.matchEntire(line)?.let { Diagnostic("KVIK_NATIVE_${it.groupValues[1].uppercase()}", DiagnosticCategory.COMPILATION, it.groupValues[2], actionId, module, target.projectName) }
     }.toList()
 }
 
@@ -70,7 +70,7 @@ data class NativeTestReport(val tests: List<TestResult>, val counts: TestCounts,
     fun toJson(): JsonValue.Object = obj("tests" to tests.map { it.toJson() }.json(), "counts" to counts.toJson(), "status" to status.name.lowercase().json(), "diagnostic" to (diagnostic?.json() ?: JsonValue.Null))
 }
 
-fun nativeTestReport(module: String, discovered: List<String>, text: String, process: ProcessResult): NativeTestReport {
+fun nativeTestReport(module: String, discovered: List<String>, text: String, process: ProcessResult, target: NativeTarget = NativeTarget.MACOS_ARM64): NativeTestReport {
     require(discovered.distinct().size == discovered.size)
     val expected = discovered.toSet()
     val active = mutableSetOf<String>()
@@ -118,14 +118,14 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
                     // TeamCity supplies message and stack text, but no typed throwable/category.
                     val detail = failure?.let { TestFailure(TestFailureKind.UNKNOWN,
                         message = it.first?.boundedTestText(TEST_TEXT_LIMIT), stackTrace = it.second?.boundedTestText(TEST_STACK_TRACE_LIMIT)) }
-                    results[id] = TestResult(id, module, "macosArm64", status,
+                    results[id] = TestResult(id, module, target.projectName, status,
                         failure?.let { it.first.orEmpty() + it.second.orEmpty() },
                         TestDetails(observedName.first, observedName.second, listOf(TestAttempt(1, status, duration, failure = detail))))
                 }
                 "testIgnored" -> {
                     val id = id(); require(id !in active && id !in results)
                     val reason = event.attributes["message"]
-                    results[id] = TestResult(id, module, "macosArm64", TestStatus.SKIPPED, reason,
+                    results[id] = TestResult(id, module, target.projectName, TestStatus.SKIPPED, reason,
                         TestDetails(suites.lastOrNull()?.boundedTestText(TEST_TEXT_LIMIT), name?.boundedTestText(TEST_TEXT_LIMIT),
                             listOf(TestAttempt(1, TestStatus.SKIPPED, skipReason = reason?.boundedTestText(TEST_TEXT_LIMIT)))))
                 }
