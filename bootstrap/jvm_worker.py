@@ -27,8 +27,12 @@ def read_lock(root):
     if (not isinstance(lock, dict) or set(lock) != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
             or type(lock["schemaVersion"]) is not int or lock["schemaVersion"] != 1 or lock["kotlinVersion"] != "2.4.20"
             or lock["jacocoVersion"] != "0.8.14"
-            or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 13):
+            or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 17):
         raise ValueError("Unsupported JVM artifact lock")
+    required_reader = {"org.jetbrains.kotlinx:binary-compatibility-validator:0.18.1",
+        "org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.20", "org.ow2.asm:asm:9.10.1", "org.ow2.asm:asm-tree:9.10.1"}
+    if not required_reader.issubset({a.get("coordinate") for a in lock["compilerArtifacts"] if isinstance(a, dict)}):
+        raise ValueError("Missing pinned ABI reader component")
     artifacts = all_artifacts(lock)
     for item in artifacts:
         if (not isinstance(item, dict) or set(item) != {"coordinate", "filename", "url", "sha256", "size"} | ({"classifier"} if item is lock["jacocoAgent"] or item is lock["jacocoCli"] else set())

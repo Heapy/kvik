@@ -74,7 +74,11 @@ class ArtifactBoundaryTest(unittest.TestCase):
 
     def test_artifact_lock_rejects_ambiguous_and_unlocked_sources(self):
         valid = jvm_worker.read_lock(ROOT)
+        self.assertEqual(17, len(valid["compilerArtifacts"]))
+        self.assertEqual(21, len(jvm_worker.all_artifacts(valid)))
         for change in [lambda x: x.update(schemaVersion=True),
+                       lambda x: x["compilerArtifacts"].pop(),
+                       lambda x: x["compilerArtifacts"][-1].update(coordinate="org.ow2.asm:asm-tree:9.9"),
                        lambda x: x.update(jacocoVersion="0.8.13"),
                        lambda x: x["jacocoAgent"].update(classifier="nodeps"),
                        lambda x: x["jacocoCli"].update(classifier="../escape"),

@@ -92,6 +92,34 @@
       "filename": "annotations-13.0.jar",
       "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
       "size": 17536
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:binary-compatibility-validator:0.18.1",
+      "filename": "binary-compatibility-validator-0.18.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/binary-compatibility-validator/0.18.1/binary-compatibility-validator-0.18.1.jar",
+      "sha256": "7d58cc1a5d6cc846d144640b3a549ab333ff9b8d91cf0f615805011cbff872fd",
+      "size": 411533
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.20",
+      "filename": "kotlin-metadata-jvm-2.4.20.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-metadata-jvm/2.4.20/kotlin-metadata-jvm-2.4.20.jar",
+      "sha256": "98d9b1847908adfde7a8b2d4cc35708d7ddccae0698cec56bcb506bcf9392595",
+      "size": 911359
+    },
+    {
+      "coordinate": "org.ow2.asm:asm:9.10.1",
+      "filename": "asm-9.10.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+      "sha256": "ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb",
+      "size": 126151
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-tree:9.10.1",
+      "filename": "asm-tree-9.10.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar",
+      "sha256": "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b",
+      "size": 51958
     }
   ],
   "testPlatform": {
