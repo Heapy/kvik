@@ -146,8 +146,11 @@ def main():
             worker_pid = None
             while worker_pid is None:
                 processes = subprocess.run(['/bin/ps', '-axo', 'pid=,command='], capture_output=True, text=True, check=True)
-                matching = [int(line.strip().split(None, 1)[0]) for line in processes.stdout.splitlines()
-                            if 'kvik.sqldelight.Generate' in line and str(root) in line]
+                candidates = [int(line.strip().split(None, 1)[0]) for line in processes.stdout.splitlines()
+                              if 'kvik.sqldelight.Generate' in line and str(root) in line]
+                # The process guardian also carries the child command; select the JVM executable itself.
+                matching = [pid for pid in candidates if Path(subprocess.run(
+                    ['/bin/ps', '-p', str(pid), '-o', 'comm='], capture_output=True, text=True).stdout.strip()).name == 'java']
                 assert len(matching) <= 1, matching
                 if matching:
                     worker_pid = matching[0]
