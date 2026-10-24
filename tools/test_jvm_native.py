@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from test_jvm import acquire, acquire_jacoco_cli, acquire_abi_reader, canonical, digest
+from test_jvm import acquire, acquire_jacoco_cli, acquire_compiler_distribution, canonical, digest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,7 +53,7 @@ def main():
     def command(parts):
         subprocess.run(list(map(str, parts)), env=environment, check=True)
 
-    jars = acquire(json.loads((ROOT / "experiments/k01/artifacts.lock.json").read_text()), output / "compiler", args.compiler_artifacts, args.offline)
+    jars = acquire_compiler_distribution(output / "compiler", args.compiler_artifacts, args.offline)
     extras = acquire(json.loads((ROOT / "compiler/jvm/test-artifacts.lock.json").read_text()), output / "artifacts", args.jvm_artifacts, args.offline)
     extra_identities = {coordinate: digest(path) for coordinate, path in extras.items()}
 
@@ -66,12 +66,11 @@ def main():
     plugin = jar("kotlin-serialization-compiler-plugin-embeddable", extras)
     serialization = [jar(name, extras) for name in ("kotlinx-serialization-core-jvm", "kotlinx-serialization-json-jvm")]
     jacoco_cli = acquire_jacoco_cli(output / "artifacts", args.jvm_artifacts, args.offline)
-    abi_reader = acquire_abi_reader(output / "artifacts", args.jvm_artifacts, args.offline)
     worker = output / "worker"
     shutil.rmtree(worker, ignore_errors=True)
     worker_sources = sorted((ROOT / "core/src").rglob("*.kt")) + sorted((ROOT / "compiler/jvm/src").rglob("*.kt"))
     command([java, "-cp", os.pathsep.join(map(str, jars.values())), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler", "-no-stdlib", "-no-reflect", "-jvm-target", "21",
-             "-classpath", os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli, *abi_reader])), "-d", worker, *worker_sources])
+             "-classpath", os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli])), "-d", worker, *worker_sources])
     compiler = {"schemaVersion": 1, "version": "2.4.20", "artifacts": [{"path": p.name, "digest": digest(p)} for p in jars.values()], "serializationPlugin": digest(plugin)}
     manifest = output / "compiler-manifest.json"
     manifest.write_bytes(canonical(compiler))

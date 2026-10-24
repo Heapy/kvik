@@ -82,7 +82,7 @@ private class ScriptGraphBuilder(
             // Empty resource directories have no entries; source roots must contain Kotlin source.
             if (sources) require(matched.isNotEmpty()) { "Empty or missing script source: ${root.value}" }
             for (file in matched) {
-                if (sources) require(file.path.value.endsWith(".kt")) { "Unsupported script source: ${file.path.value}" }
+                if (sources) require(file.path.value.endsWith(if (script.declaration.entryScript == null) ".kt" else ".kts")) { "Unsupported script source: ${file.path.value}" }
                 val relative = if (file.path == root) file.path.value.substringAfterLast('/') else file.path.value.removePrefix(root.value + "/")
                 val path = LogicalPath(if (sources) "src/${file.path.value}" else "scripts/${script.name}/resources/$relative")
                 require(path !in result) { "Ambiguous script resource/source overlay: ${path.value}" }
@@ -167,6 +167,8 @@ private class ScriptGraphBuilder(
 
     fun build(): ProjectActionGraph {
         val sources = selectedRoots(script.declaration.sources, true)
+        val primary = script.declaration.entryScript?.let { LogicalPath("src/${it.value}") }
+        require(primary == null || sources.any { it.path == primary }) { "Missing script entryScript: ${script.declaration.entryScript?.value}" }
         val resources = selectedRoots(script.declaration.resources, false)
         val compileArtifacts = entries(artifacts(compileClosure.external, "java-api"))
         val runtimeArtifacts = entries(artifacts(runtimeClosure.external, "java-runtime"))
@@ -178,10 +180,17 @@ private class ScriptGraphBuilder(
             val modules = compileClosure.modules.flatMap { compiled(results, moduleId(it), moduleRoot(it)) }
             val plugin = pluginInputs(results)
             require(plugin.published.none { path -> plugin.files.single { it.path == path }.digest in compileArtifacts.map { it.digest } }) { "Compiler plugin appears in script compile classpath" }
-            jvmCompileAction(JvmCompilation("script-${script.name}", sources.map { it.path }, compileClosure.modules.map(::moduleRoot) + compileArtifacts.map { it.path },
+            val inputs = merge(sources, resources, compileArtifacts, modules, plugin.files)
+            val classpath = compileClosure.modules.map(::moduleRoot) + compileArtifacts.map { it.path }
+            if (primary != null) ktsCompileAction(KtsCompilation("script-${script.name}", primary, sources.map { it.path }, classpath,
+                LogicalPath("classes"), plugin.published, jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi,
+                warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications,
+                declaredDependencies = script.dependencies.mapNotNull { (it.value as? Dependency.External)?.coordinate?.toString() }.distinct(),
+                declaredRepositories = project.repositories.map { it.url }.distinct()), inputs, composition, tools)
+            else jvmCompileAction(JvmCompilation("script-${script.name}", sources.map { it.path }, classpath,
                 LogicalPath("classes"), plugin.published, jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi,
                 warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications, includeStandardLibrary = true),
-                merge(sources, resources, compileArtifacts, modules, plugin.files), composition, tools)
+                inputs, composition, tools)
         }
         val runEdges = runtimeClosure.modules.map(::moduleId).toSet() + compileId
         val run = ActionNode(runId, runEdges) { results ->
@@ -191,8 +200,11 @@ private class ScriptGraphBuilder(
             val moduleResources = runtimeClosure.modules.flatMap(::moduleResources)
             val classpath = listOf(root) + listOfNotNull(LogicalPath("scripts/${script.name}/resources").takeIf { resources.isNotEmpty() }) +
                 runtimeClosure.modules.flatMap { module -> listOfNotNull(moduleRoot(module), LogicalPath("runtime/$module/main").takeIf { p -> moduleResources.any { it.path.value.startsWith(p.value + "/") } }) } + runtimeArtifacts.map { it.path }
-            jvmScriptAction(JvmScriptLaunch(script.name, root, classpath, script.declaration.mainClass, request.arguments),
-                merge(classes, resources, moduleResources, runtimeArtifacts), composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+            val inputs = merge(classes, resources, moduleResources, runtimeArtifacts)
+            if (primary != null) ktsScriptAction(KtsLaunch(script.name, root, classpath, request.arguments), inputs,
+                composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+            else jvmScriptAction(JvmScriptLaunch(script.name, root, classpath, script.declaration.mainClass, request.arguments),
+                inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
         }
         return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId))
     }

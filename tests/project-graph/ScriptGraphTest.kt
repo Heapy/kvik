@@ -32,7 +32,9 @@ private fun scriptActions(graph: ProjectActionGraph, changedOutput: String? = nu
         val action = node.resolve(results.filterKeys { it in node.dependencies })
         actions[node.id] = action
         val outputs = if (action.kind == ActionKind.COMPILE) TreeManifest(listOf(FileEntry(LogicalPath("classes/MainKt.class"),
-            scriptDigest(node.id + if (node.id == changedOutput) ":changed" else "")))) else TreeManifest(emptyList())
+            scriptDigest(node.id + if (node.id == changedOutput) ":changed" else ""))) +
+            if (action.implementation == "kvik-kotlin-script-compiler-v1") listOf(FileEntry(LogicalPath("classes/kvik-script.json"), scriptDigest("descriptor")))
+            else emptyList()) else TreeManifest(emptyList())
         results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED, outputs, 0)
     }
     return actions
@@ -42,6 +44,36 @@ private const val scriptCompile = "script:task:jvm:compile"
 private const val scriptRun = "script:task:jvm:run"
 
 class ScriptGraphTest {
+    @Test fun kotlinScriptsCapturePrimaryAndImportsWithSeparateFreshExecution() {
+        val primary = LogicalPath("scripts/task.main.kts")
+        val spec = ScriptSpec(listOf(LogicalPath("scripts")), entryScript = primary,
+            dependencies = listOf(ScriptDependencyReference.External(Coordinate.parse("g:helper:1"))))
+        val files = scriptFiles(primary.value, "scripts/helper.kts")
+        val actions = scriptActions(scriptPlan(spec, files, args = listOf("", "argument")))
+        val compile = actions.getValue(scriptCompile)
+        val metadata = KtsCompilation.fromJson(compile.parameters)
+        assertEquals(LogicalPath("src/${primary.value}"), metadata.primary)
+        assertEquals(setOf("src/scripts/task.main.kts", "src/scripts/helper.kts"), metadata.sources.map { it.value }.toSet())
+        assertEquals(listOf("g:helper:1"), metadata.declaredDependencies)
+        assertEquals(listOf("https://repo.maven.apache.org/maven2"), metadata.declaredRepositories)
+        assertEquals(CachePolicy.LOCAL, compile.cachePolicy)
+        val run = actions.getValue(scriptRun)
+        assertEquals("kvik-kotlin-script-v1", run.implementation)
+        assertEquals(CachePolicy.NEVER, run.cachePolicy)
+        val launch = KtsLaunch.fromJson(run.parameters)
+        assertEquals(listOf("", "argument"), launch.arguments)
+        assertEquals(LogicalPath("scripts/task/classes"), launch.bundle)
+        assertTrue(run.inputs.files.any { it.path.value == "scripts/task/classes/kvik-script.json" })
+        assertFalse(run.inputs.files.any { it.path.value.startsWith("src/") })
+        val changedArgs = scriptActions(scriptPlan(spec.copy(environment = mapOf("MODE" to "next")), files, args = listOf("next")))
+        assertEquals(compile.key(Sha256), changedArgs.getValue(scriptCompile).key(Sha256))
+        assertNotEquals(run.key(Sha256), changedArgs.getValue(scriptRun).key(Sha256))
+        val editedHelper = TreeManifest(files.files.map { if (it.path.value.endsWith("helper.kts")) it.copy(digest = scriptDigest("edited")) else it })
+        assertNotEquals(compile.key(Sha256), scriptActions(scriptPlan(spec, editedHelper)).getValue(scriptCompile).key(Sha256))
+        assertFails { scriptPlan(spec, scriptFiles("scripts/helper.kts")) }
+        assertFails { scriptPlan(spec, scriptFiles(primary.value, "scripts/Helper.kt")) }
+    }
+
     @Test fun scriptUsesDistinctChecksAndNeverCachesExecution() {
         val graph = scriptPlan(scriptSpec)
         assertEquals(setOf(scriptRun), graph.requestedChecks)

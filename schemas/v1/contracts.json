@@ -2063,22 +2063,13 @@
           "items": {
             "allOf": [
               {
-                "allOf": [
-                  {
-                    "type": "string",
-                    "minLength": 1,
-                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
-                  },
-                  {
-                    "maxLength": 1024,
-                    "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
-                  }
-                ]
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
               },
               {
-                "not": {
-                  "pattern": "\\.[kK][tT][sS]$(?![\\s\\S])"
-                }
+                "maxLength": 1024,
+                "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
               }
             ]
           },
@@ -2109,6 +2100,26 @@
           "minLength": 1,
           "maxLength": 1024,
           "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\\s\\S])"
+        },
+        "entryScript": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                },
+                {
+                  "maxLength": 1024,
+                  "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+                }
+              ]
+            },
+            {
+              "pattern": "\\.kts$(?![\\s\\S])"
+            }
+          ]
         },
         "profiles": {
           "type": "array",
@@ -2188,6 +2199,42 @@
         "sources"
       ],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "entryScript"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "mainClass"
+              ]
+            },
+            "properties": {
+              "sources": {
+                "items": {
+                  "not": {
+                    "pattern": "\\.[kK][tT]$(?![\\s\\S])"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "sources": {
+                "items": {
+                  "not": {
+                    "pattern": "\\.[kK][tT][sS]$(?![\\s\\S])"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "description": "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
     },
     "project": {
@@ -2334,7 +2381,7 @@
         "script"
       ],
       "additionalProperties": false,
-      "description": "The companion for <stem>.kt is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins, and the CLI must bind the selected .kt to an explicit source file."
+      "description": "The companion for <stem>.kt or <stem>.kts is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins. The selected file must be an explicit source; .kts selection must match entryScript."
     },
     "action": {
       "type": "object",
@@ -12580,7 +12627,10 @@
               ]
             },
             "status": {
-              "const": "requires-compiled-script-metadata"
+              "enum": [
+                "requires-compiled-script-metadata",
+                "declared-kotlin-script"
+              ]
             }
           },
           "required": [

@@ -13,6 +13,11 @@ import platform.posix.*
 internal data class ScriptOptions(val name: String?, val file: String?, val project: ProjectOptions,
     val tools: String?, val runs: String, val budget: ResourceBudget, val arguments: List<String>, val lockExplicit: Boolean)
 
+private fun scriptStem(path: String): String {
+    require(path.endsWith(".kt") || path.endsWith(".kts")) { "Standalone script must be a .kt or .kts file" }
+    return path.substringBeforeLast('.')
+}
+
 /** `--` is the only boundary after which arguments belong to the program, including empty strings. */
 internal fun scriptOptions(args: List<String>, execution: Boolean, toolsRequired: Boolean): ScriptOptions {
     val separator = args.indexOf("--")
@@ -68,7 +73,7 @@ internal fun readScript(options: ScriptOptions): ScriptFile {
     val absolute = if (file.startsWith('/')) file else "${currentDirectory()}/$file"
     NativeFiles.validateAbsolute(absolute)
     val selected = LogicalPath(absolute.substringAfterLast('/'))
-    require(selected.value.endsWith(".kt")) { "Standalone script must be a .kt file" }
+    val stem = scriptStem(selected.value)
     val parent = absolute.substringBeforeLast('/').ifEmpty { "/" }
     val resolved = realpath(parent, null) ?: error("Cannot resolve script directory: errno=$errno")
     val root = try { resolved.toKString() } finally { free(resolved) }
@@ -76,7 +81,7 @@ internal fun readScript(options: ScriptOptions): ScriptFile {
     NativeFiles.ensureDirectory(root, create = false)
     val status = NativeFiles.info("$root/${selected.value}") ?: error("Selected script file is missing")
     require(NativeFiles.regular(status)) { "Selected script must be a physical regular file" }
-    val companion = LogicalPath(selected.value.removeSuffix(".kt") + ".kvik.json")
+    val companion = LogicalPath(stem + ".kvik.json")
     val bytes = NativeFiles.read("$root/${companion.value}", 4 * 1024 * 1024)
     val configuration = parseStandaloneScriptConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
     configuration.requirePrimarySource(selected)
@@ -84,7 +89,7 @@ internal fun readScript(options: ScriptOptions): ScriptFile {
 }
 
 internal fun ScriptOptions.forFile(file: ScriptFile): ProjectOptions = if (file.primary == null || lockExplicit) project
-    else project.copy(lock = file.primary.value.removeSuffix(".kt") + ".kvik.lock.json")
+    else project.copy(lock = scriptStem(file.primary.value) + ".kvik.lock.json")
 
 /** Source selectors before `--` belong to Kvik; everything after it belongs to the script. */
 private fun scriptCommandOptions(args: List<String>, execution: Boolean, toolsRequired: Boolean): Pair<KodeProjectOptions?, ScriptOptions> {
@@ -93,10 +98,9 @@ private fun scriptCommandOptions(args: List<String>, execution: Boolean, toolsRe
     val options = scriptOptions(remaining + if (separator < 0) emptyList() else args.drop(separator), execution, toolsRequired)
     if (source == null) return null to options
     val primary = options.file?.let(::LogicalPath)
-    require(primary == null || primary.value.endsWith(".kt")) { "Standalone script must be a .kt file" }
-    val configuration = primary?.value?.removeSuffix(".kt")?.plus(".kvik.json") ?: options.project.project
+    val configuration = primary?.value?.let(::scriptStem)?.plus(".kvik.json") ?: options.project.project
     LogicalPath(configuration)
-    val lock = if (primary != null && !options.lockExplicit) primary.value.substringAfterLast('/').removeSuffix(".kt") + ".kvik.lock.json"
+    val lock = if (primary != null && !options.lockExplicit) scriptStem(primary.value.substringAfterLast('/')) + ".kvik.lock.json"
         else options.project.lock
     LogicalPath(lock)
     return source to options.copy(project = options.project.copy(project = configuration, lock = lock))
@@ -214,7 +218,8 @@ private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: Prep
         "actions" to graph.nodes.map { obj("id" to it.id.json(), "dependencies" to it.dependencies.sorted().map(String::json).json()) }.json(),
         "requestedChecks" to graph.requestedChecks.sorted().map(String::json).json(),
         "languageRuntime" to obj("path" to worker.stdlib.json(), "digest" to stdlib.toJson(), "classpathPosition" to "after-declared-dependencies".json()),
-        "entrypoint" to obj("requested" to (expanded.declaration.mainClass?.json() ?: JsonValue.Null), "status" to "requires-compiled-script-metadata".json()),
+        "entrypoint" to obj("requested" to ((expanded.declaration.entryScript?.value ?: expanded.declaration.mainClass)?.json() ?: JsonValue.Null),
+            "status" to (if (expanded.declaration.entryScript == null) "requires-compiled-script-metadata" else "declared-kotlin-script").json()),
         "execution" to "not-requested".json()).let { result ->
             if (source == null) result else JsonValue.Object(result.values + ("source" to source.reference.toJson()))
         }.also {

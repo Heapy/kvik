@@ -14,6 +14,15 @@ def validator(name):
 
 
 class ScriptsSchemaTest(unittest.TestCase):
+    def test_kts_entrypoint_requires_explicit_adapter_and_excludes_main_class(self):
+        script = {'sources': ['scripts'], 'entryScript': 'scripts/run.main.kts'}
+        validator('script').validate(script)
+        validator('script').validate({**script, 'sources': ['scripts/run.main.kts', 'helpers']})
+        for change in [dict(entryScript='scripts/run.kt'), dict(entryScript=None),
+                       dict(entryScript='../run.kts'), dict(mainClass='MainKt'),
+                       dict(sources=['scripts/run.main.kts', 'Helper.kt'])]:
+            self.assertFalse(validator('script').is_valid({**script, **change}), change)
+
     def test_named_configuration_edits(self):
         operations = [
             dict(op='set-catalog-entry', alias='json', coordinate='example:json:1'),

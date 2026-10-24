@@ -3,6 +3,21 @@ package kvik.core
 import kotlin.test.*
 
 class ScriptsTest {
+    @Test fun kotlinScriptEntrypointSelectsOneCapturedPrimaryWithoutChangingLegacySerialization() {
+        val primary = LogicalPath("scripts/run.main.kts")
+        val declaration = ScriptSpec(listOf(LogicalPath("scripts")), entryScript = primary)
+        assertEquals(declaration, ScriptSpec.fromJson(parseJson(declaration.toJson().canonical())))
+        assertFalse("entryScript" in ScriptSpec(listOf(LogicalPath("run.kt"))).toJson().values)
+        assertFails { declaration.copy(mainClass = "MainKt") }
+        assertFails { declaration.copy(entryScript = LogicalPath("elsewhere/run.kts")) }
+        assertFails { declaration.copy(entryScript = LogicalPath("scripts/run.kt")) }
+        assertFails { declaration.copy(sources = listOf(primary, LogicalPath("Helper.kt"))) }
+        val standalone = parseStandaloneScriptConfiguration(parseJson(standalone(script =
+            ScriptSpec(listOf(primary), entryScript = primary).toJson().canonical())))
+        standalone.requirePrimarySource(primary)
+        assertFails { standalone.requirePrimarySource(LogicalPath("scripts/helper.kts")) }
+    }
+
     private val repository = Repository("central", "https://repo.maven.apache.org/maven2")
     private val module = ModuleSpec("library", listOf(SourceSet("main", listOf(LogicalPath("lib")), emptyList(), emptyList(),
         listOf(Dependency.External(Coordinate.parse("g:private:1"))))), listOf(TargetSpec("jvm", "main", null, emptyList())), emptyList())

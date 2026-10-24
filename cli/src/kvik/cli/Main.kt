@@ -53,11 +53,11 @@ private fun command(args: Array<String>) {
             Test execution: JVM, JS/WasmJS through Node, or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking
             Execution: --runs PATH --jobs N --memory-mib N
             Remote compilation cache: --remote-cache PATH (transport JSON); --offline disables remote access
-            Scripts: run-script NAME --project PATH --tools PATH -- ARGS; or run-script --file FILE.kt --tools PATH -- ARGS
-            Script locks: resolve-script or check-script-lock with NAME --project PATH or --file FILE.kt, plus lock options
+            Scripts: run-script NAME --project PATH --tools PATH -- ARGS; or run-script --file FILE --tools PATH -- ARGS
+            Script locks: resolve-script or check-script-lock with NAME --project PATH or --file FILE, plus lock options
             Script inspection: inspect-script with the same selector and --tools PATH (read-only; no execution)
             Source scripts: add --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF; --project/--file are revision paths
-            Standalone companions: FILE.kvik.json and default FILE.kvik.lock.json alongside FILE.kt; no nearby-project discovery
+            Standalone companions: FILE.kvik.json and default FILE.kvik.lock.json alongside FILE.kt or FILE.kts; no nearby-project discovery
             Libraries: package-library plus build options; selected modules and ordinary dependencies require publication coordinates
             Documentation: docs plus build selectors; requires module documentation settings; emits documentation-ready with HTML index
             Benchmarks: benchmark --profile smoke|measurement plus JVM build options; requires target benchmarkSettings

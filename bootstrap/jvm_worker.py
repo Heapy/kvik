@@ -27,7 +27,7 @@ def read_lock(root):
     if (not isinstance(lock, dict) or set(lock) - {"documentationArtifacts"} != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
             or type(lock["schemaVersion"]) is not int or lock["schemaVersion"] != 1 or lock["kotlinVersion"] != "2.4.20"
             or lock["jacocoVersion"] != "0.8.14"
-            or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 17):
+            or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 22):
         raise ValueError("Unsupported JVM artifact lock")
     required_reader = {"org.jetbrains.kotlinx:binary-compatibility-validator:0.18.1",
         "org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.20", "org.ow2.asm:asm:9.10.1", "org.ow2.asm:asm-tree:9.10.1"}
@@ -59,7 +59,9 @@ def read_lock(root):
             raise ValueError("JVM artifact URL/name differs from its Maven coordinate")
     if len({a["filename"] for a in artifacts}) != len(artifacts) or len({a["coordinate"] for a in artifacts}) != len(artifacts):
         raise ValueError("Duplicate JVM artifact")
-    for name in ("kotlin-build-tools-api", "kotlin-stdlib", "kotlin-compiler-embeddable"):
+    for name in ("kotlin-build-tools-api", "kotlin-stdlib", "kotlin-compiler-embeddable", "kotlin-script-runtime",
+                 "kotlin-scripting-common", "kotlin-scripting-jvm", "kotlin-scripting-jvm-host",
+                 "kotlin-scripting-compiler-embeddable", "kotlin-scripting-compiler-impl-embeddable"):
         compiler_artifact(lock, name)
     if lock["testPlatform"]["coordinate"] != "org.junit.platform:junit-platform-console-standalone:1.13.4":
         raise ValueError("Unsupported JVM test platform")

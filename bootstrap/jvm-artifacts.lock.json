@@ -120,6 +120,41 @@
       "url": "https://repo.maven.apache.org/maven2/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar",
       "sha256": "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b",
       "size": 51958
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-common:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-common/2.4.20/kotlin-scripting-common-2.4.20.jar",
+      "filename": "kotlin-scripting-common-2.4.20.jar",
+      "sha256": "3385f7f05984a6488809b015727eca9aeba7998dc5995d87b4ae5dc9c8d4124b",
+      "size": 207840
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-jvm:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-jvm/2.4.20/kotlin-scripting-jvm-2.4.20.jar",
+      "filename": "kotlin-scripting-jvm-2.4.20.jar",
+      "sha256": "2be43e56bdaf38db30f87347ad4f42e9cd69ca8433e579780143791933b01fac",
+      "size": 136419
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-jvm-host/2.4.20/kotlin-scripting-jvm-host-2.4.20.jar",
+      "filename": "kotlin-scripting-jvm-host-2.4.20.jar",
+      "sha256": "c4a0faeabc022de4c3d55948336be2336958fbdcd8ae5cdab7e8d0c6a7f7c182",
+      "size": 133836
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-compiler-embeddable/2.4.20/kotlin-scripting-compiler-embeddable-2.4.20.jar",
+      "filename": "kotlin-scripting-compiler-embeddable-2.4.20.jar",
+      "sha256": "6eb8ce1d73b89107804b3bdf295791f52c0394cbe18bcdfb90103aee955ea1c5",
+      "size": 800439
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.4.20",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-compiler-impl-embeddable/2.4.20/kotlin-scripting-compiler-impl-embeddable-2.4.20.jar",
+      "filename": "kotlin-scripting-compiler-impl-embeddable-2.4.20.jar",
+      "sha256": "d895b182c4c7bdbd688efb360a897f2182774d91e6c57a7acbeb2dc8f13f5ff2",
+      "size": 199451
     }
   ],
   "testPlatform": {

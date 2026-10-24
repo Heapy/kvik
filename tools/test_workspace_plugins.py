@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from test_jvm import acquire, acquire_jacoco_cli, acquire_abi_reader, canonical, digest
+from test_jvm import acquire, acquire_jacoco_cli, acquire_compiler_distribution, canonical, digest
 from test_jvm_native import inventory, json_digest
 from audit_workspace_plugins import audit
 
@@ -40,7 +40,7 @@ def main():
     def command(values, **kwargs):
         return subprocess.run(list(map(str, values)), env=env, check=True, **kwargs)
 
-    jars = acquire(json.loads((ROOT / 'experiments/k01/artifacts.lock.json').read_text()), output / 'compiler', args.compiler_artifacts, args.offline)
+    jars = acquire_compiler_distribution(output / 'compiler', args.compiler_artifacts, args.offline)
     extras = acquire(json.loads((ROOT / 'compiler/jvm/test-artifacts.lock.json').read_text()), output / 'artifacts', args.jvm_artifacts, args.offline)
     def jar(name, values=jars):
         return next(p for c, p in values.items() if c.split(':')[1] == name)
@@ -50,10 +50,9 @@ def main():
     worker = output / 'worker'
     if not args.skip_build:
         jacoco_cli = acquire_jacoco_cli(output / 'artifacts', args.jvm_artifacts, args.offline)
-        abi_reader = acquire_abi_reader(output / "artifacts", args.jvm_artifacts, args.offline)
         shutil.rmtree(worker, ignore_errors=True)
         sources = [p for base in ['core/src', 'compiler/jvm/src'] for p in sorted((ROOT / base).rglob('*.kt'))]
-        command([java, '-cp', os.pathsep.join(map(str, jars.values())), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli, *abi_reader])), '-d', worker, *sources])
+        command([java, '-cp', os.pathsep.join(map(str, jars.values())), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli])), '-d', worker, *sources])
         platform = ROOT / 'execution/platform'
         command(['clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', platform / 'guardian.c', '-o', output / 'guardian'])
         command(['clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-c', platform / 'process.c', '-o', output / 'process.o'])

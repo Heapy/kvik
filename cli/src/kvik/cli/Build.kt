@@ -299,7 +299,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
                             "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
                             "kvik-sqldelight-v1" -> sqlDelight
-                            "kvik-jvm-script-v1" -> scripts
+                            "kvik-jvm-script-v1", "kvik-kotlin-script-v1" -> scripts
                             "kvik-jvm-classpath-v1" -> classpath
                             "kvik-jvm-benchmark-harness-v1", "kvik-jvm-benchmark-v1" -> benchmarks
                             "kvik-application-bundle-v1" -> application

@@ -304,7 +304,7 @@ Discovery requires access to Kode;
 there is no offline registry fallback. The output follows the
 [workspace dependency schema](schemas/v1/workspace-dependencies.json).
 
-Named project scripts and standalone `.kt` files use explicit dependency locks:
+Named project scripts and standalone `.kt` or `.kts` files use explicit dependency locks:
 
 ```sh
 ./kvik --no-build -- resolve-script maintenance --project /absolute/project/kvik.json
@@ -315,7 +315,7 @@ Named project scripts and standalone `.kt` files use explicit dependency locks:
   --tools /absolute/scripts/tools.json
 ```
 
-A standalone `update.kt` requires an adjacent `update.kvik.json` companion and defaults
+A standalone `update.kt` or `update.kts` requires an adjacent `update.kvik.json` companion and defaults
 to `update.kvik.lock.json`. Use `check-script-lock` with the same selector to verify an
 existing lock. Compilation supplies the pinned standard library and can be reused;
 script execution always runs afresh. Pass program arguments after `--`. Run stdout
@@ -323,6 +323,30 @@ contains JSON events, while observations identify the script's separate UTF-8 st
 and stderr files. `inspect-script` reports inputs, expanded dependency/profile origins
 and action prerequisites without compiling or running. See the [script contract](docs/decisions/k12-scripts.md)
 and [CLI validation status](docs/evidence/k12-script-cli.md).
+
+For top-level Kotlin scripts, set `entryScript` to a declared `.kts` source:
+
+```json
+{
+  "sources": ["scripts/update.main.kts", "scripts/helpers.kts"],
+  "entryScript": "scripts/update.main.kts"
+}
+```
+
+The primary script can use `@file:Import("helpers.kts")`; paths are relative to
+the importing file and must resolve to captured `.kts` sources. Imported code runs
+with the primary script, after compilation. Use `args` for program arguments and
+workspace module dependencies for helpers written as ordinary `.kt` files.
+`entryScript` and `mainClass` are mutually exclusive. A standalone
+`update.main.kts` uses `update.main.kvik.json` and `update.main.kvik.lock.json`.
+
+The adapter supports the same locked dependencies, compiler options and published
+or workspace compiler plugins as ordinary scripts. `@file:DependsOn` and
+`@file:Repository` currently validate coordinates and URLs already declared in
+the companion/project configuration; they do not fetch dependencies during
+compilation or execution. Annotation-driven lock resolution is still pending.
+Compilation produces relocatable classes and a script descriptor; cache hits
+still evaluate the script in a fresh foreground-owned JVM.
 
 All four script commands also accept `--kode`, `--kode-home`, `--source-project`
 and `--revision` to select an immutable Kode snapshot. For example:

@@ -74,18 +74,20 @@ class JvmActionExecutor(
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
         val compilation = if (action.implementation == "kvik-jvm-compiler-v1") JvmCompilation.fromJson(action.parameters) else null
+        val script = if (action.implementation == "kvik-kotlin-script-compiler-v1") KtsCompilation.fromJson(action.parameters) else null
         val metadata = if (action.implementation == "kvik-jvm-metadata-v1") JvmMetadataCompilation.fromJson(action.parameters) else null
         val selection = if (action.implementation == "kvik-jvm-tests-v1") JvmTestSelection.fromJson(action.parameters) else null
         val expected = when {
             compilation != null -> jvmCompileAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis, action.cachePolicy)
+            script != null -> ktsCompileAction(script, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             metadata != null -> jvmMetadataCompileAction(metadata, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             selection != null -> jvmTestAction(selection, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             else -> error("Unsupported JVM action implementation")
         }
         require(action == expected) { "JVM action does not match its typed parameters" }
         val key = expected.key(Sha256)
-        val module = compilation?.module ?: metadata?.module ?: selection!!.module
-        val compilerOutput = compilation?.output ?: metadata?.output
+        val module = compilation?.module ?: script?.name ?: metadata?.module ?: selection!!.module
+        val compilerOutput = compilation?.output ?: script?.output ?: metadata?.output
         startedActions += actionId
         fun startVerified(layout: JvmToolchainLayout): RunningAction {
             val reservation = NativeRunDirectory(runDirectory)
@@ -115,6 +117,14 @@ class JvmActionExecutor(
             val request = if (compilation != null) WorkerRequest(requestId, "jvm-compile", expected.toolchains.getValue("jvm-compiler"),
                 staged(compilation.sources), staged(compilation.classpath) + languageRuntime, staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}",
                 compilation.pluginApplications.map(::stagedPlugin)).toJson()
+            else if (script != null) obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(),
+                "compiler" to expected.toolchains.getValue("jvm-compiler").toJson(), "primary" to "input/${script.primary.value}".json(),
+                "sources" to staged(script.sources).map { it.json() }.json(), "classpath" to staged(script.classpath).map { it.json() }.json(),
+                "pluginClasspath" to staged(script.plugins).map { it.json() }.json(), "options" to script.options().map { it.json() }.json(),
+                "outputDirectory" to "output/${script.output.value}".json(),
+                "pluginApplications" to script.pluginApplications.map(::stagedPlugin).map { it.toJson() }.json(),
+                "declaredDependencies" to script.declaredDependencies.map { it.json() }.json(),
+                "declaredRepositories" to script.declaredRepositories.map { it.json() }.json())
             else if (metadata != null) WorkerRequest(requestId, "metadata-compile", expected.toolchains.getValue("jvm-compiler"),
                 staged(metadata.sources), staged(metadata.classpath), staged(metadata.plugins), metadata.options("input/"), "output/${metadata.output.value}",
                 metadata.pluginApplications.map(::stagedPlugin), metadataTargets = metadata.targets).toJson()
@@ -129,7 +139,7 @@ class JvmActionExecutor(
                     if (coverage.excludes.isEmpty()) "" else ",excludes=" + coverage.excludes.joinToString(":"))
             } ?: emptyList()
             val arguments = listOf(layout.javaExecutable) + coverageArguments + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
-                if (compilerOutput != null) listOf("kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
+                if (compilerOutput != null) listOf(if (script != null) "kvik.jvm.KotlinScriptCompileWorker" else "kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
                 else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json")
             val process = host.start(ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
                 "$directory/worker.stdout", "$directory/worker.stderr", expected.timeoutMillis))
@@ -176,6 +186,10 @@ class JvmActionExecutor(
                                         outputs = trees.capture("$directory/output")
                                         require(outputs.files.any { it.path.value.startsWith(compilerOutput.value + "/") } &&
                                             outputs.files.all { file -> expected.outputs.any { file.path.value.startsWith(it.value + "/") } }) { "Compiler output inventory does not match declared directories" }
+                                        if (script != null) require(outputs.files.any { it.path.value == "${script.output.value}/kvik-script.json" } &&
+                                            outputs.files.any { it.path.value.startsWith(script.output.value + "/") && it.path.value.endsWith(".class") }) {
+                                            "Script compiler did not produce its descriptor and classes"
+                                        }
                                         status = ActionStatus.EXECUTED
                                     }
                                 } else {

@@ -233,16 +233,23 @@ SCRIPT_COMPILATION = {
 DEFS["scriptDependencyProfile"] = object_(SCRIPT_COMPILATION, optional=tuple(SCRIPT_COMPILATION))
 SCRIPT_ENV_RESERVED = ["PATH", "JAVA_HOME", "JAVACMD", "JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"]
 DEFS["script"] = object_({
-    "sources": array({"allOf": [SCRIPT_PATH, {"not": {"pattern": r"\.[kK][tT][sS]$(?![\s\S])"}}]}, minItems=1, maxItems=256, uniqueItems=True),
+    "sources": array(SCRIPT_PATH, minItems=1, maxItems=256, uniqueItems=True),
     "resources": array(SCRIPT_PATH, maxItems=256, uniqueItems=True),
     "mainClass": APPLICATION_ENTRY,
+    "entryScript": {"allOf": [SCRIPT_PATH, {"pattern": r"\.kts$(?![\s\S])"}]},
     "profiles": array(SCRIPT_ID, maxItems=32, uniqueItems=True),
     **SCRIPT_COMPILATION,
     "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000},
     "environment": {**mapping(APPLICATION_TEXT), "maxProperties": 128,
         "propertyNames": {"type": "string", "maxLength": 128,
             "pattern": r"^(?!KVIK_)[A-Za-z_][A-Za-z0-9_]*(?![\s\S])", "not": {"enum": SCRIPT_ENV_RESERVED}}},
-}, optional=("resources", "mainClass", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "timeoutMillis", "environment"))
+}, optional=("resources", "mainClass", "entryScript", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "timeoutMillis", "environment"))
+DEFS["script"]["allOf"] = [{
+    "if": {"required": ["entryScript"]},
+    "then": {"not": {"required": ["mainClass"]}, "properties": {
+        "sources": {"items": {"not": {"pattern": r"\.[kK][tT]$(?![\s\S])"}}}}},
+    "else": {"properties": {"sources": {"items": {"not": {"pattern": r"\.[kK][tT][sS]$(?![\s\S])"}}}}},
+}]
 for name in ("script", "scriptDependencyProfile"):
     DEFS[name]["description"] = "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
 def script_mapping(value, maximum):
@@ -258,7 +265,7 @@ DEFS["project"] = versioned({"name": ID, "repositories": array(ref("repository")
     optional=("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags"))
 DEFS["standaloneScript"] = versioned({"name": SCRIPT_ID, "repositories": array(ref("repository"), minItems=1),
     **SCRIPT_COLLECTIONS, "script": ref("script")}, optional=("dependencyCatalog", "dependencyProfiles"))
-DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins, and the CLI must bind the selected .kt to an explicit source file."
+DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt or <stem>.kts is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins. The selected file must be an explicit source; .kts selection must match entryScript."
 DEFS["action"] = versioned({
     "implementation": STRING, "composition": ref("digest"), "kind": enum("compile", "generate", "link", "package", "verify", "test", "script", "publish", "benchmark", "server"),
     "platform": mapping(STRING), "target": STRING, "toolchains": mapping(ref("digest")), "inputs": ref("tree"), "outputs": array(PATH, uniqueItems=True),
@@ -946,7 +953,7 @@ DEFS["scriptInspection"] = versioned({
     "actions": array(object_({"id": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True)})),
     "requestedChecks": array(ref("requestedCheck"), minItems=1, maxItems=1),
     "languageRuntime": object_({"path": STRING, "digest": ref("digest"), "classpathPosition": {"const": "after-declared-dependencies"}}),
-    "entrypoint": object_({"requested": nullable(STRING), "status": {"const": "requires-compiled-script-metadata"}}),
+    "entrypoint": object_({"requested": nullable(STRING), "status": enum("requires-compiled-script-metadata", "declared-kotlin-script")}),
     "execution": {"const": "not-requested"},
 }, optional=("source",))
 

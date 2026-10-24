@@ -36,12 +36,7 @@ fun jvmScriptAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: 
                     toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long): ActionSpec {
     require(toolchains.keys == jvmIdentities)
     require(timeoutMillis in 1L..3_600_000L)
-    require(environment.size <= 128 && environment.all { (name, value) ->
-        name.length <= 128 && name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && !name.startsWith("KVIK_") &&
-            name !in setOf("PATH", "JAVA_HOME", "JAVACMD", "JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH",
-                "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH") &&
-            value.length <= 4096 && '\u0000' !in value
-    }) { "Invalid or reserved script environment" }
+    validateScriptEnvironment(environment)
     for (path in launch.classpath) require(inputs.files.any {
         it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/")
     }) { "Undeclared script classpath: ${path.value}" }
@@ -49,4 +44,13 @@ fun jvmScriptAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: 
     return ActionSpec("kvik-jvm-script-v1", composition, ActionKind.SCRIPT, jvmHostPlatform(), "jvm",
         toolchains.toMap(), TreeManifest(inputs.files.toList()), emptyList(), launch.arguments.toList(), environment.toMap(),
         launch.toJson(), timeoutMillis, CachePolicy.NEVER)
+}
+
+internal fun validateScriptEnvironment(environment: Map<String, String>) {
+    require(environment.size <= 128 && environment.all { (name, value) ->
+        name.length <= 128 && name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && !name.startsWith("KVIK_") &&
+            name !in setOf("PATH", "JAVA_HOME", "JAVACMD", "JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH",
+                "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH") &&
+            value.length <= 4096 && '\u0000' !in value
+    }) { "Invalid or reserved script environment" }
 }

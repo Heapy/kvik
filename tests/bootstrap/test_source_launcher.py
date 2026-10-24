@@ -92,6 +92,23 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
         tools.write_bytes(canonical(values))
         self.assertNotEqual(first, self.composition()[3])
 
+    def test_scripting_pin_changes_invalidate_local_and_source_graph_runtimes(self):
+        with patch.object(launcher, 'ROOT', self.project):
+            local_before = launcher.composition()[3]
+        graph_before = self.composition()[3]
+        path = self.project / 'bootstrap/jvm-artifacts.lock.json'
+        lock = json.loads(path.read_bytes())
+        host = next(a for a in lock['compilerArtifacts'] if a['coordinate'] ==
+                    'org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.4.20')
+        host['sha256'] = 'a' * 64
+        path.write_bytes(canonical(lock))
+        with patch.object(launcher, 'ROOT', self.project):
+            local_after = launcher.composition()[3]
+        self.assertNotEqual(local_before, local_after)
+        self.assertNotEqual(graph_before, self.composition()[3])
+        self.assertFalse(self.cache.exists())
+        self.assertFalse(self.artifacts.exists())
+
     def test_local_edits_are_fresh_but_unselected_consumer_edits_do_not_rebuild(self):
         self.document['sources'][0]['pin'] = dict(kind='local', origin='.', tree=None)
         self.write_lock()

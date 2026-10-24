@@ -74,13 +74,13 @@ class ArtifactBoundaryTest(unittest.TestCase):
 
     def test_artifact_lock_rejects_ambiguous_and_unlocked_sources(self):
         valid = jvm_worker.read_lock(ROOT)
-        self.assertEqual(17, len(valid["compilerArtifacts"]))
-        self.assertEqual(26, len(jvm_worker.all_artifacts(valid)))
+        self.assertEqual(22, len(valid["compilerArtifacts"]))
+        self.assertEqual(31, len(jvm_worker.all_artifacts(valid)))
         for change in [lambda x: x.update(schemaVersion=True),
                        lambda x: x.update(documentationArtifacts=[]),
                        lambda x: x["documentationArtifacts"][0].update(coordinate="org.jetbrains.dokka:dokka-cli:2.1.0"),
                        lambda x: x["compilerArtifacts"].pop(),
-                       lambda x: x["compilerArtifacts"][-1].update(coordinate="org.ow2.asm:asm-tree:9.9"),
+                       lambda x: next(a for a in x["compilerArtifacts"] if a["coordinate"].startswith("org.ow2.asm:asm-tree:")).update(coordinate="org.ow2.asm:asm-tree:9.9"),
                        lambda x: x.update(jacocoVersion="0.8.13"),
                        lambda x: x["jacocoAgent"].update(classifier="nodeps"),
                        lambda x: x["jacocoCli"].update(classifier="../escape"),
@@ -94,6 +94,23 @@ class ArtifactBoundaryTest(unittest.TestCase):
             change(lock)
             with patch.object(jvm_worker, "read_json", return_value=lock), self.assertRaises(ValueError):
                 jvm_worker.read_lock(ROOT)
+
+    def test_scripting_distribution_requires_each_pinned_component(self):
+        lock = jvm_worker.read_lock(ROOT)
+        names = ("kotlin-script-runtime", "kotlin-scripting-common", "kotlin-scripting-jvm",
+                 "kotlin-scripting-jvm-host", "kotlin-scripting-compiler-embeddable",
+                 "kotlin-scripting-compiler-impl-embeddable")
+        for name in names:
+            with self.subTest(component=name):
+                item = jvm_worker.compiler_artifact(lock, name)
+                changed = copy.deepcopy(lock)
+                replacement = next(a for a in changed["compilerArtifacts"] if a["filename"] == item["filename"])
+                replacement.update(coordinate=f"org.jetbrains.kotlin:{name}:2.4.10",
+                    filename=f"{name}-2.4.10.jar",
+                    url=f"https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/{name}/2.4.10/{name}-2.4.10.jar")
+                with patch.object(jvm_worker, "read_json", return_value=changed), \
+                        self.assertRaisesRegex(ValueError, "Missing pinned compiler component"):
+                    jvm_worker.read_lock(ROOT)
 
     def test_download_digest_and_size_failures_never_publish(self):
         import io
@@ -136,6 +153,17 @@ class ArtifactBoundaryTest(unittest.TestCase):
                 compile_fixture, source_files=[source])
             bundle = jvm_worker.verify_bundle(runtime, expected)
             self.assertEqual("0.8.14", bundle["jacocoVersion"])
+            distribution = read_json(runtime / "jvm/compiler-manifest.json")
+            self.assertEqual([a["filename"] for a in lock["compilerArtifacts"]],
+                [a["path"] for a in distribution["artifacts"]])
+            self.assertEqual(digest(canonical(distribution)), bundle["compilerManifest"]["digest"])
+            for item in lock["compilerArtifacts"]:
+                for option in ("-cp", "-classpath"):
+                    self.assertIn(str(artifacts[item["filename"]]), commands[0][commands[0].index(option) + 1].split(os.pathsep))
+            changed_distribution = copy.deepcopy(distribution)
+            next(a for a in changed_distribution["artifacts"] if a["path"].startswith("kotlin-scripting-jvm-host-")).update(digest=digest(b"changed host"))
+            self.assertNotEqual(digest(canonical(changed_distribution)), bundle["compilerManifest"]["digest"])
+
             documentation = jvm_worker.documentation_distribution(lock)
             self.assertEqual(digest(canonical(documentation)), bundle["documentationManifest"]["digest"])
             for item in lock["documentationArtifacts"]:

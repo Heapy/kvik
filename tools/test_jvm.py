@@ -51,13 +51,10 @@ def acquire_jacoco_cli(destination, source=None, offline=False):
     return next(iter(acquire({"artifacts": [pin]}, destination, source, offline).values()))
 
 
-def acquire_abi_reader(destination, source=None, offline=False):
-    """Compile-only ABI reader dependencies; ordinary worker process classpaths stay unchanged."""
+def acquire_compiler_distribution(destination, source=None, offline=False):
+    """Use the runtime's full pinned compiler distribution, including scripting and ABI APIs."""
     lock = json.loads((ROOT / "bootstrap/jvm-artifacts.lock.json").read_text())
-    names = {"binary-compatibility-validator", "kotlin-metadata-jvm", "asm", "asm-tree"}
-    pins = [item for item in lock["compilerArtifacts"] if item["coordinate"].split(":")[1] in names]
-    assert len(pins) == 4
-    return list(acquire({"artifacts": pins}, destination, source, offline).values())
+    return acquire({"artifacts": lock["compilerArtifacts"]}, destination, source, offline)
 
 
 def main():
@@ -69,8 +66,7 @@ def main():
     args = parser.parse_args()
     output = ROOT / ".kvik/tests/jvm"
     output.mkdir(parents=True, exist_ok=True)
-    compiler_lock = json.loads((ROOT / "experiments/k01/artifacts.lock.json").read_text())
-    jars = acquire(compiler_lock, output / "compiler", args.compiler_artifacts, args.offline)
+    jars = acquire_compiler_distribution(output / "compiler", args.compiler_artifacts, args.offline)
     extra_lock = json.loads((ROOT / "compiler/jvm/test-artifacts.lock.json").read_text())
     extras = acquire(extra_lock, output / "artifacts", offline=args.offline)
     def jar(name, values=jars):
@@ -82,13 +78,12 @@ def main():
     plugin = jar("kotlin-serialization-compiler-plugin-embeddable", extras)
     serialization = [jar(name, extras) for name in ("kotlinx-serialization-core-jvm", "kotlinx-serialization-json-jvm")]
     jacoco_cli = acquire_jacoco_cli(output / "artifacts", args.compiler_artifacts, args.offline)
-    abi_reader = acquire_abi_reader(output / "artifacts", args.compiler_artifacts, args.offline)
     worker_classes = output / "worker"
     shutil.rmtree(worker_classes, ignore_errors=True)
     sources = sorted((ROOT / "core/src").rglob("*.kt")) + sorted((ROOT / "compiler/jvm/src").rglob("*.kt"))
     bootstrap_cp = os.pathsep.join(map(str, jars.values()))
     subprocess.run([java, "-cp", bootstrap_cp, "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler", "-no-stdlib", "-no-reflect", "-jvm-target", "21",
-                    "-classpath", os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli, *abi_reader])), "-d", worker_classes, *sources], check=True)
+                    "-classpath", os.pathsep.join(map(str, [*jars.values(), junit, jacoco_cli])), "-d", worker_classes, *sources], check=True)
     manifest = {"schemaVersion": 1, "version": "2.4.20", "artifacts": [
         {"path": path.name, "digest": digest(path)} for path in jars.values()], "serializationPlugin": digest(plugin)}
     manifest_file = output / "compiler-manifest.json"

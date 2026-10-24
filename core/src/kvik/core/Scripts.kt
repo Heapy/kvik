@@ -70,10 +70,18 @@ data class ScriptSpec(
     val mainClass: String? = null,
     val timeoutMillis: Long = DEFAULT_SCRIPT_TIMEOUT_MILLIS,
     val environment: Map<String, String> = emptyMap(),
+    val entryScript: LogicalPath? = null,
 ) {
     init {
         require(sources.isNotEmpty()) { "Script sources must be nonempty" }
-        require(sources.none { it.value.endsWith(".kts", ignoreCase = true) }) { "Script sources support .kt entrypoints, not .kts" }
+        if (entryScript == null) {
+            require(sources.none { it.value.endsWith(".kts", ignoreCase = true) }) { ".kts sources require entryScript" }
+        } else {
+            require(entryScript.value.endsWith(".kts") && entryScript.value.length <= 1024) { "entryScript must name a .kts file" }
+            require(mainClass == null) { "entryScript and mainClass are mutually exclusive" }
+            require(sources.any { it == entryScript || entryScript.value.startsWith(it.value + "/") }) { "entryScript must be covered by declared sources" }
+            require(sources.none { it.value.endsWith(".kt", ignoreCase = true) }) { ".kts helpers must be scripts; use a workspace module for .kt helpers" }
+        }
         require(sources.size <= SCRIPT_LIMIT && resources.size <= SCRIPT_LIMIT) { "Too many script source/resource roots" }
         validateScriptRoots(sources + resources)
         require(profiles.size <= 32 && profiles.distinct().size == profiles.size) { "Duplicate or too many script profiles" }
@@ -92,16 +100,18 @@ data class ScriptSpec(
         "profiles" to profiles.map { it.json() }.json(), "dependencies" to dependencies.map { it.toJson() }.json(),
         "compilerOptions" to compilerOptions.map { it.json() }.json(), "compilerPlugins" to compilerPlugins.map(::scriptPluginJson).json(),
         "timeoutMillis" to timeoutMillis.json(), "environment" to JsonValue.Object(environment.mapValues { it.value.json() }),
-    ) + (mainClass?.let { mapOf("mainClass" to it.json()) } ?: emptyMap()))
+    ) + (mainClass?.let { mapOf("mainClass" to it.json()) } ?: emptyMap()) +
+        (entryScript?.let { mapOf("entryScript" to it.value.json()) } ?: emptyMap()))
     companion object {
         fun fromJson(value: JsonValue): ScriptSpec {
-            val fields = value.fields(setOf("sources"), setOf("resources", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "mainClass", "timeoutMillis", "environment"))
+            val fields = value.fields(setOf("sources"), setOf("resources", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "mainClass", "timeoutMillis", "environment", "entryScript"))
             return ScriptSpec(fields.getValue("sources").arrayValue().map { LogicalPath(it.stringValue()) },
                 fields["resources"]?.arrayValue()?.map { LogicalPath(it.stringValue()) } ?: emptyList(),
                 fields["profiles"]?.arrayValue()?.map(JsonValue::stringValue) ?: emptyList(),
                 scriptDependencies(fields), scriptOptions(fields), scriptPlugins(fields), fields["mainClass"]?.stringValue(),
                 fields["timeoutMillis"]?.longValue() ?: DEFAULT_SCRIPT_TIMEOUT_MILLIS,
-                fields["environment"]?.objectValue()?.mapValues { it.value.stringValue() } ?: emptyMap())
+                fields["environment"]?.objectValue()?.mapValues { it.value.stringValue() } ?: emptyMap(),
+                fields["entryScript"]?.stringValue()?.let(::LogicalPath))
         }
     }
 }
@@ -129,7 +139,7 @@ fun expandScript(project: ProjectSpec, name: String): ExpandedScript {
         project.dependencyProfiles, project.modules, "/scripts/$name")
 }
 
-/** Same declarations, no implicit workspace lookup. The caller binds the selected .kt file and durable lock. */
+/** Same declarations, no implicit workspace lookup. The caller binds the selected file and durable lock. */
 data class StandaloneScriptConfiguration(
     val name: String,
     val repositories: List<Repository>,
@@ -142,7 +152,9 @@ data class StandaloneScriptConfiguration(
     fun expanded(): ExpandedScript = expandScriptValues(name, script, dependencyCatalog, dependencyProfiles, emptyList(), "/script")
     /** CLI must call this with the selected file relative to the companion directory, before effects. */
     fun requirePrimarySource(source: LogicalPath) {
-        require(source.value.endsWith(".kt") && source in script.sources) { "Standalone selected .kt file must be an explicit declared source" }
+        require(source in script.sources && if (script.entryScript == null) source.value.endsWith(".kt") else source == script.entryScript) {
+            "Standalone selected file must be an explicit source and match entryScript for .kts"
+        }
     }
 }
 

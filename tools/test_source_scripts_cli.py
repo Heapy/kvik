@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ARGUMENTS = ['--revision', 'literal revision', '--kode', 'literal kode', '', 'snowman ☃', '@literal.args']
 
 
-def script_text(marker):
-    return '''package fixture
+def script_text(marker, kts=False):
+    text = '''package fixture
 import java.util.Base64
 import java.util.UUID
 fun main(args: Array<String>) {
@@ -28,6 +28,11 @@ fun main(args: Array<String>) {
     println("EXECUTION=" + UUID.randomUUID().toString())
 }
 ''' % marker
+    if kts:
+        text = text.replace('package fixture\n', '@file:Import("Helper.kts")\n')
+        text = text.replace('fun main(args: Array<String>) {\n', '').removesuffix('}\n')
+        text = text.replace('println("SOURCE=%s")' % marker, 'println("SOURCE=" + sourceMarker("%s"))' % marker)
+    return text
 
 
 def main():
@@ -35,6 +40,7 @@ def main():
     for option in ('runtime', 'kode', 'tools', 'store'):
         parser.add_argument('--' + option, type=Path, required=True)
     parser.add_argument('--local-only', action='store_true', help='Run only the shared local-script regression')
+    parser.add_argument('--kts', action='store_true', help='Exercise genuine top-level scripts and captured @Import helpers')
     args = parser.parse_args()
     runtime = args.runtime.resolve(strict=True)
     original_kode = args.kode.resolve(strict=True)
@@ -106,18 +112,28 @@ def main():
     }
     config_paths = {'named': 'named/kvik.json', 'standalone': 'standalone/Main.kvik.json'}
     source_paths = {'named': 'named/scripts/Main.kt', 'standalone': 'standalone/Main.kt'}
+    if args.kts:
+        for kind, configuration in configurations.items():
+            declaration = configuration['scripts']['task'] if kind == 'named' else configuration['script']
+            primary = declaration['sources'][0] + 's'
+            declaration.update(sources=[primary, str(Path(primary).with_name('Helper.kts'))], entryScript=primary)
+            source_paths[kind] += 's'
+    helper = 'fun sourceMarker(value: String) = value\n'
     names = {'named': 'task', 'standalone': 'plain'}
     markers = {kind: kind + '-' + uuid.uuid4().hex for kind in configurations}
     kode_command('init', 'init')
     empty = kode_command('project', 'projects', 'add', 'fixture', '--intent', 'Create script fixture')['revision']
-    initial = tx('import', empty, [operation for kind, configuration in configurations.items() for operation in (
+    operations = [operation for kind, configuration in configurations.items() for operation in (
         dict(op='write', path=config_paths[kind], content=json.dumps(configuration)),
-        dict(op='write', path=source_paths[kind], content=script_text(markers[kind])))])
+        dict(op='write', path=source_paths[kind], content=script_text(markers[kind], args.kts)))]
+    if args.kts:
+        operations += [dict(op='write', path=str(Path(path).with_name('Helper.kts')), content=helper) for path in source_paths.values()]
+    initial = tx('import', empty, operations)
     # These files deliberately disagree with the captured revision. They must never supply source bytes.
     for kind in configurations:
         source = case / source_paths[kind]
         source.parent.mkdir(parents=True)
-        source.write_text(script_text('LOCAL-SOURCE-MUST-NOT-RUN'))
+        source.write_text(script_text('LOCAL-SOURCE-MUST-NOT-RUN', args.kts))
         (case / config_paths[kind]).write_text('invalid local configuration')
     (case / 'literal.args').write_text('ARGUMENT-FILE-MUST-NOT-EXPAND')
     executions = set()
@@ -202,14 +218,31 @@ def main():
         assert inspection['script'] == name
         assert inspection['inputSelection'] == (dict(kind='script', name=name) if kind == 'named' else dict(kind='standalone-script'))
         assert inspection['requestedChecks'] == [f'script:{name}:jvm:run']
+        if args.kts:
+            assert inspection['entrypoint']['status'] == 'declared-kotlin-script', inspection
         first_key = run('cold', locked, markers[kind], cached=False)
         assert run('warm', locked, markers[kind], cached=True) == first_key
         print('PASS', kind, 'explicit lock publication, inspection, captured bytes, literal arguments and fresh execution', flush=True)
 
         new_marker = markers[kind] + '-edited'
-        edited = tx(kind + '-edit-source', locked, [dict(op='write', path=source_paths[kind], content=script_text(new_marker))])
+        edited = tx(kind + '-edit-source', locked, [dict(op='write', path=source_paths[kind], content=script_text(new_marker, args.kts))])
         assert run('edited', edited, new_marker, cached=False) != first_key
         assert run('historical', locked, markers[kind], cached=True) == first_key
+        if args.kts:
+            helper_revision = tx(kind + '-edit-helper', edited, [dict(op='write',
+                path=str(Path(source_paths[kind]).with_name('Helper.kts')),
+                content='fun sourceMarker(value: String) = value + "-helper"\n')], publish=False)
+            assert run('helper-changed', helper_revision, new_marker + '-helper', cached=False) != first_key
+            bad_import = tx(kind + '-uncaptured-import', edited, [dict(op='write', path=source_paths[kind],
+                content=script_text(new_marker, True).replace('"Helper.kts"', '"Uncaptured.kts"'))], publish=False)
+            failure = invoke('uncaptured-import', 'run-script', bad_import, success=False)
+            failed_events = [json.loads(line) for line in failure.stdout.splitlines()]
+            failed_record = failed_events[-1]['payload']
+            assert failed_record['status'] == 'failed', failed_record
+            failed_actions = {item['actionId']: item for item in failed_record['actions']}
+            assert failed_actions[f'script:{name}:jvm:compile']['status'] == 'failed', failed_record
+            assert failed_actions[f'script:{name}:jvm:run']['status'] != 'executed', failed_record
+            print('PASS', kind, 'import edits invalidate compilation and uncaptured imports prevent execution', flush=True)
         # Captured immutable revisions remain usable with no provider store available.
         hidden = case / 'hidden-kode-home'
         home.rename(hidden)
@@ -237,7 +270,7 @@ def main():
         invoke('wrong-revision', 'run-script', 'f' * len(initial), success=False)
         assert head() == custom_revision
         assert (case / config_paths[kind]).read_text() == 'invalid local configuration'
-        assert (case / source_paths[kind]).read_text() == script_text('LOCAL-SOURCE-MUST-NOT-RUN')
+        assert (case / source_paths[kind]).read_text() == script_text('LOCAL-SOURCE-MUST-NOT-RUN', args.kts)
         assert not (case / root / default_lock).exists() and not (case / root / custom_lock).exists()
         print('PASS', kind, 'custom lock, missing input and wrong revision refusals without local fallback', flush=True)
 
@@ -249,9 +282,11 @@ def main():
         name = names[kind]
         marker = 'local-' + markers[kind]
         config = local / ('kvik.json' if kind == 'named' else 'Main.kvik.json')
-        source = local / ('scripts/Main.kt' if kind == 'named' else 'Main.kt')
+        source = local / (('scripts/Main.kt' if kind == 'named' else 'Main.kt') + ('s' if args.kts else ''))
         source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(script_text(marker))
+        source.write_text(script_text(marker, args.kts))
+        if args.kts:
+            source.with_name('Helper.kts').write_text(helper)
         config.write_text(json.dumps(configuration))
         selector = [name, '--project', config] if kind == 'named' else ['--file', source]
         lock = local / ('kvik.lock.json' if kind == 'named' else 'Main.kvik.lock.json')

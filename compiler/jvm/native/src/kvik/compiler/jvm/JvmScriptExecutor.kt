@@ -64,16 +64,20 @@ class JvmScriptExecutor(
 
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in started) { "Wrong run or repeated script action ID" }
-        require(action.implementation == "kvik-jvm-script-v1") { "Unsupported script implementation" }
+        require(action.implementation in setOf("kvik-jvm-script-v1", "kvik-kotlin-script-v1")) { "Unsupported script implementation" }
         // Reconstruct into independent collections before accepting an action or retaining its key.
-        val launch = JvmScriptLaunch.fromJson(parseJson(action.parameters.canonical()))
-        val expected = jvmScriptAction(launch, action.inputs, action.composition, action.toolchains,
+        val script = if (action.implementation == "kvik-kotlin-script-v1") KtsLaunch.fromJson(parseJson(action.parameters.canonical())) else null
+        val launch = script?.let { JvmScriptLaunch(it.name, it.bundle, it.classpath, arguments = it.arguments) }
+            ?: JvmScriptLaunch.fromJson(parseJson(action.parameters.canonical()))
+        val expected = if (script == null) jvmScriptAction(launch, action.inputs, action.composition, action.toolchains,
+            action.environment, action.timeoutMillis) else ktsScriptAction(script, action.inputs, action.composition, action.toolchains,
             action.environment, action.timeoutMillis)
         require(action == expected) { "Script action does not match its typed launch" }
         val key = expected.key(Sha256)
         started += actionId
         var phase = JvmScriptPhase.SETUP
         var directory: String? = null
+        var requestId: String? = null
         var mainClass: String? = null
         var stdlibJar: String? = null
         var arguments = emptyList<String>()
@@ -93,29 +97,44 @@ class JvmScriptExecutor(
                 require(layout.identities == expected.toolchains) { "Script provider returned different tool identities" }
                 require(access(layout.javaExecutable, X_OK) == 0) { "Verified Java executable is not executable" }
                 stdlibJar = layout.stdlibJar
-                val reserved = NativeRunDirectory(runDirectory).path
+                val reservation = NativeRunDirectory(runDirectory)
+                val reserved = reservation.path
+                requestId = reservation.runId
                 directory = reserved
                 NativeOutputTrees(content).materialize(expected.inputs, "$reserved/input")
                 mkdirJvm("$reserved/home")
                 mkdirJvm("$reserved/tmp")
-                phase = JvmScriptPhase.MAIN_DISCOVERY
-                val prefix = launch.scriptClasses.value + "/"
-                val classes = expected.inputs.files.filter { it.path.value.startsWith(prefix) && it.path.value.endsWith(".class") }
-                require(classes.size in 1..20_000 && classes.all { it.digest.sizeBytes <= 64L * 1024 * 1024 } &&
-                    classes.sumOf { it.digest.sizeBytes } <= 256L * 1024 * 1024) { "Script class inventory exceeds discovery bounds" }
-                mainClass = selectScriptMainClass(classes.associate { file ->
-                    // Read the exact verified materialization that Java will receive, not dependency classes.
-                    val bytes = NativeFiles.read("$reserved/input/${file.path.value}", 64 * 1024 * 1024)
-                    require(Sha256.digest(bytes) == file.digest) { "Script class changed during discovery" }
-                    file.path.value.removePrefix(prefix) to bytes
-                }, launch.mainClass)
+                val javaClasspath: List<String>
+                val invocation: List<String>
+                if (script == null) {
+                    phase = JvmScriptPhase.MAIN_DISCOVERY
+                    val prefix = launch.scriptClasses.value + "/"
+                    val classes = expected.inputs.files.filter { it.path.value.startsWith(prefix) && it.path.value.endsWith(".class") }
+                    require(classes.size in 1..20_000 && classes.all { it.digest.sizeBytes <= 64L * 1024 * 1024 } &&
+                        classes.sumOf { it.digest.sizeBytes } <= 256L * 1024 * 1024) { "Script class inventory exceeds discovery bounds" }
+                    mainClass = selectScriptMainClass(classes.associate { file ->
+                        val bytes = NativeFiles.read("$reserved/input/${file.path.value}", 64 * 1024 * 1024)
+                        require(Sha256.digest(bytes) == file.digest) { "Script class changed during discovery" }
+                        file.path.value.removePrefix(prefix) to bytes
+                    }, launch.mainClass)
+                    javaClasspath = launch.classpath.map { "$reserved/input/${it.value}" } + layout.stdlibJar
+                    invocation = listOf(checkNotNull(mainClass)) + launch.arguments
+                } else {
+                    // The evaluator reads a relocatable compiler descriptor, without discovering a synthetic main.
+                    mainClass = "kvik.jvm.KotlinScriptEvaluationWorker"
+                    val request = obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to checkNotNull(requestId).json(),
+                        "compiler" to expected.toolchains.getValue("jvm-compiler").toJson(),
+                        "bundle" to "input/${script.bundle.value}".json(),
+                        "classpath" to script.classpath.map { "input/${it.value}".json() }.json(),
+                        "arguments" to script.arguments.map { it.json() }.json())
+                    writeJvmFile("$reserved/evaluation.json", request.canonical().encodeToByteArray())
+                    javaClasspath = listOf(layout.workerClasses, layout.btaApiJar, layout.stdlibJar)
+                    invocation = listOf(checkNotNull(mainClass), reserved, "evaluation.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
+                }
                 phase = JvmScriptPhase.SETUP
                 // Java streams otherwise inherit the ASCII encoding of the fixed C locale.
                 arguments = listOf(layout.javaExecutable, "--disable-@files", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
-                    "-Djava.io.tmpdir=$reserved/tmp",
-                    "-Duser.home=$reserved/home", "-cp",
-                    (launch.classpath.map { "$reserved/input/${it.value}" } + layout.stdlibJar).joinToString(":"),
-                    checkNotNull(mainClass)) + launch.arguments
+                    "-Djava.io.tmpdir=$reserved/tmp", "-Duser.home=$reserved/home", "-cp", javaClasspath.joinToString(":")) + invocation
                 val environment = mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC",
                     "HOME" to "$reserved/home", "TMPDIR" to "$reserved/tmp") + expected.environment
                 writeJvmFile("$reserved/request.json", obj("actionId" to actionId.json(), "key" to key.toJson(),
@@ -156,12 +175,12 @@ class JvmScriptExecutor(
                     check(!closed) { "Script action already closed" }
                     val exit = process.poll() ?: return null // Protocol failure propagates; never invent a child exit.
                     close() // A terminal observation is published only after complete owned cleanup is proved.
-                    val status = when {
+                    var status = when {
                         cancelled || exit.cancelled -> ActionStatus.CANCELLED
                         exit.timedOut || exit.exitCode != 0 -> ActionStatus.FAILED
                         else -> ActionStatus.EXECUTED
                     }
-                    val diagnostics = when {
+                    var diagnostics = when {
                         status == ActionStatus.CANCELLED -> listOf(diagnostic("KVIK_SCRIPT_CANCELLED", DiagnosticCategory.CANCELLATION, "Script cancelled"))
                         exit.timedOut -> listOf(diagnostic("KVIK_SCRIPT_TIMEOUT", DiagnosticCategory.INFRASTRUCTURE, "Script exceeded its declared timeout"))
                         exit.setupFailure != null -> listOf(diagnostic("KVIK_SCRIPT_LAUNCH_FAILED", DiagnosticCategory.INFRASTRUCTURE,
@@ -169,13 +188,34 @@ class JvmScriptExecutor(
                         exit.exitCode != 0 -> listOf(diagnostic("KVIK_SCRIPT_EXIT", DiagnosticCategory.INFRASTRUCTURE, "Script process exited with ${exit.exitCode}"))
                         else -> emptyList()
                     }
+                    if (script != null && !cancelled && !exit.cancelled && !exit.timedOut && exit.setupFailure == null) {
+                        try {
+                            val worker = WorkerResult.fromJson(parseJson(readJvmFile("${checkNotNull(directory)}/result.json").decodeToString(throwOnInvalidSequence = true)))
+                            require(worker.requestId == requestId && worker.exitCode == exit.exitCode && worker.status != WorkerStatus.CANCELLED) {
+                                "Script evaluator result identity or exit mismatch"
+                            }
+                            diagnostics = worker.diagnostics.map { it.copy(actionId = actionId, target = "jvm", path = it.path?.removePrefix("input/")) }
+                            if (worker.status != WorkerStatus.SUCCESS) status = ActionStatus.FAILED
+                        } catch (failure: Exception) {
+                            status = ActionStatus.FAILED
+                            diagnostics = diagnostics + diagnostic("KVIK_SCRIPT_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
+                                failure.message ?: "Invalid script evaluator result")
+                        }
+                    }
                     return record(status, exit, cancelled, diagnostics).also { result = it }
                 }
             }
         }
         var continued = false
         val preparing = preparingAction(actionId, expected,
-            prepare = { checkpoint -> toolchains.verifiedExecution(expected.toolchains, checkpoint) },
+            prepare = { checkpoint ->
+                if (script == null) toolchains.verifiedExecution(expected.toolchains, checkpoint)
+                else toolchains.verified(expected.toolchains, checkpoint).also { layout ->
+                    require(Sha256.digest(parseJson(readJvmFile(layout.compilerManifest).decodeToString(throwOnInvalidSequence = true))) ==
+                        expected.toolchains.getValue("jvm-compiler")) { "Script compiler manifest identity mismatch" }
+                    checkpoint()
+                }
+            },
             start = { layout -> continued = true; startVerified(layout) })
         return object : RunningAction {
             private var result: ActionResult? = null

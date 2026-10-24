@@ -99,7 +99,16 @@ internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>,
 /** The private registrar forwards typed values directly, keeping the original loader alive through compilation. */
 internal fun <T> withTypedWorkspacePlugin(plugin: PreparedWorkspacePlugin, compilerLoader: ClassLoader,
     workspace: Workspace, operation: (Path) -> T): T =
-    URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader).use { pluginLoader ->
+    object : URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader) {
+        // The pinned compiler may publish its own providers (for example scripting).
+        // Only this application's validated classpath supplies workspace plugin services;
+        // classes still share the parent's compiler API identity.
+        override fun getResources(name: String): java.util.Enumeration<java.net.URL> = when (name) {
+            "META-INF/services/org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar",
+            "META-INF/services/org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor" -> findResources(name)
+            else -> super.getResources(name)
+        }
+    }.use { pluginLoader ->
         val registrarType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar")
         val processorType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor")
         val registrars = ServiceLoader.load(registrarType, pluginLoader).toList()
