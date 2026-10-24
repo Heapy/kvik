@@ -175,15 +175,8 @@ private class Observation(private val root: String, private val content: Content
             }
         }
         val tree = TreeManifest(entries.values.sortedBy { it.path.value })
-        val identity = obj("schemaVersion" to 1.json(), "implementation" to "kvik-project-input-snapshot-v1".json(),
-            "configurationPath" to configurationPath.value.json(), "configurationBytes" to Sha256.digest(configurationBytes).toJson(),
-            "lockBytes" to Sha256.digest(lockBytes).toJson(), "roots" to roots.map { it.value.json() }.json(),
-            "pluginInputs" to plugins.map { it.value.json() }.json(), "inputs" to tree.toJson(),
-            "directories" to JsonValue.Object(directories.toMap()))
-        val selectedIdentity = JsonValue.Object(identity.objectValue() +
-            (if (plan.scriptRoots.isEmpty()) emptyMap() else mapOf("scriptRoots" to plan.scriptRoots.map { it.value.json() }.json())) +
-            (if (selection == SnapshotSelection.Project) emptyMap() else mapOf("selection" to selection.toJson())))
-        return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree, Sha256.digest(selectedIdentity), configuration)
+        return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree,
+            projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, directories, selection), configuration)
     }
 
     private fun requireDeclared(path: LogicalPath) {
@@ -285,4 +278,17 @@ private class Observation(private val root: String, private val content: Content
         bytes[path] = data
         return data
     }
+}
+
+/** Shared by local observations and immutable providers; provenance is deliberately excluded. */
+internal fun projectSnapshotFingerprint(configurationPath: LogicalPath, configurationBytes: ByteArray, lockBytes: ByteArray,
+    plan: ProjectInputPlan, tree: TreeManifest, directories: Map<String, JsonValue>, selection: SnapshotSelection): Digest {
+    val identity = obj("schemaVersion" to 1.json(), "implementation" to "kvik-project-input-snapshot-v1".json(),
+        "configurationPath" to configurationPath.value.json(), "configurationBytes" to Sha256.digest(configurationBytes).toJson(),
+        "lockBytes" to Sha256.digest(lockBytes).toJson(), "roots" to plan.directories.map { it.value.json() }.json(),
+        "pluginInputs" to plan.files.map { it.value.json() }.json(), "inputs" to tree.toJson(),
+        "directories" to JsonValue.Object(directories.toMap()))
+    return Sha256.digest(JsonValue.Object(identity.objectValue() +
+        (if (plan.scriptRoots.isEmpty()) emptyMap() else mapOf("scriptRoots" to plan.scriptRoots.map { it.value.json() }.json())) +
+        (if (selection == SnapshotSelection.Project) emptyMap() else mapOf("selection" to selection.toJson()))))
 }
