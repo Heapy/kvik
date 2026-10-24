@@ -93,7 +93,7 @@ DEFS["applicationLaunch"]["allOf"] = [{
 }]
 DEFS["applicationLaunch"]["description"] = "Canonical UTF-8 metadata must additionally fit 256 KiB; paths must bind to the declared input tree."
 DEFS["target"] = object_({"name": enum(*PROJECT_TARGETS), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING), "nativeTestSettings": ref("nativeTestSettings"), "nativeTimeouts": ref("nativeTimeouts")}, optional=("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
-BENCHMARK_CLASSES = array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\s\S])"}, minItems=1, uniqueItems=True)
+BENCHMARK_CLASSES = array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True)
 DEFS["jvmBenchmarkSettings"] = object_({"classes": BENCHMARK_CLASSES,
     "warmups": {"type": "integer", "minimum": 1, "maximum": 1000}, "iterations": {"type": "integer", "minimum": 1, "maximum": 1000},
     "iterationMillis": {"type": "integer", "minimum": 1, "maximum": 3600000}, "forks": {"type": "integer", "minimum": 1, "maximum": 100},
@@ -103,6 +103,18 @@ DEFS["jvmBenchmarkSettings"] = object_({"classes": BENCHMARK_CLASSES,
 DEFS["target"]["properties"]["benchmarkSettings"] = ref("jvmBenchmarkSettings")
 DEFS["jvmBenchmarkHarness"] = object_({"module": ID, "classpath": array(PATH, minItems=1, uniqueItems=True), "classes": BENCHMARK_CLASSES})
 DEFS["jvmBenchmarkRun"] = object_({"module": ID, "classpath": array(PATH, minItems=1, uniqueItems=True), "profile": enum("smoke", "measurement"), "settings": ref("jvmBenchmarkSettings")})
+BENCHMARK_DECIMAL = {"type": "string", "minLength": 1, "maxLength": 128,
+    "pattern": r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$(?![\s\S])"}
+BENCHMARK_TEXT = {"type": "string", "not": {"pattern": r"[\u0000-\u001f\u007f-\u009f]"}}
+DEFS["jvmBenchmarkResult"] = object_({"benchmark": {"type": "string", "minLength": 1, "maxLength": 1024,
+    "pattern": r"^[A-Za-z_$][A-Za-z0-9_.$]*$(?![\s\S])"}, "mode": enum("avgt", "thrpt"),
+    "parameters": {**mapping({**BENCHMARK_TEXT, "maxLength": 4096}), "maxProperties": 100,
+        "propertyNames": {**BENCHMARK_TEXT, "minLength": 1, "maxLength": 256}},
+    "score": BENCHMARK_DECIMAL, "scoreError": nullable(BENCHMARK_DECIMAL),
+    "unit": {**BENCHMARK_TEXT, "minLength": 1, "maxLength": 64}, "samples": {"type": "integer", "minimum": 1}})
+DEFS["jvmBenchmarkReport"] = versioned({"module": ID, "profile": enum("smoke", "measurement"), "selectedClasses": BENCHMARK_CLASSES,
+    "results": array(ref("jvmBenchmarkResult"), minItems=1, maxItems=100000)})
+DEFS["jvmBenchmarkReport"]["description"] = "Semantic validation also requires finite floating point decimals, unique benchmark/mode/parameter identities, and result coverage of exactly the selected classes."
 DEFS["benchmarkReady"] = object_({"module": ID, "target": {"const": "jvm"}, "profile": enum("smoke", "measurement"),
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:benchmark-(smoke|measurement)$(?![\s\S])"},
     "directory": NONEMPTY, "summary": NONEMPTY, "results": NONEMPTY})

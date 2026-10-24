@@ -22,6 +22,16 @@ class JvmBenchmarkSchemaTest(unittest.TestCase):
         for name in ('macosArm64', 'js', 'wasmJs'):
             self.assertFalse(self.validator('target').is_valid(dict(target, name=name)))
 
+    def test_measurements_preserve_decimal_strings_and_require_samples(self):
+        result = dict(benchmark='example.Bench.work', mode='avgt', parameters={'size': '10'}, score='1.23E-4',
+                      scoreError=None, unit='ns/op', samples=1)
+        report = dict(schemaVersion=1, module='app', profile='smoke', selectedClasses=['example.Bench'], results=[result])
+        validator = self.validator('jvmBenchmarkReport')
+        validator.validate(report)
+        for changes in ({'score': 1.2}, {'score': 'NaN'}, {'scoreError': 'Infinity'}, {'score': '1.2\\n'}, {'samples': 0}, {'unit': ''}):
+            self.assertFalse(validator.is_valid(dict(report, results=[dict(result, **changes)])))
+        self.assertFalse(validator.is_valid(dict(report, results=[])))
+
     def test_profiles_have_jvm_only_checks_and_typed_event(self):
         for profile in ('smoke', 'measurement'):
             check = 'app:jvm:benchmark-' + profile

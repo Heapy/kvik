@@ -72,7 +72,7 @@ data class JvmBenchmarkRun(val module: String, val classpath: List<LogicalPath>,
 
 private fun requireBenchmarkModule(module: String) { require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid benchmark module" } }
 private fun requireBenchmarkClasses(classes: List<String>) {
-    require(classes.isNotEmpty() && classes.distinct().size == classes.size && classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*")) }) { "Benchmark classes must be nonempty unique JVM binary names" }
+    require(classes.size in 1..1_000 && classes.distinct().size == classes.size && classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*")) }) { "Benchmark classes must contain 1..1000 unique JVM binary names" }
 }
 private fun requireBenchmarkClasspath(classpath: List<LogicalPath>) {
     require(classpath.isNotEmpty() && classpath.distinct().size == classpath.size && classpath.none { ':' in it.value }) { "Invalid benchmark classpath" }
