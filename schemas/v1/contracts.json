@@ -10490,6 +10490,49 @@
           "type": "object",
           "properties": {
             "op": {
+              "const": "set-source-set"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "sourceSet": {
+              "$ref": "#/$defs/sourceSet"
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "sourceSet"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-source-set"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            },
+            "sourceSet": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+            }
+          },
+          "required": [
+            "op",
+            "module",
+            "sourceSet"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
               "const": "set-catalog-entry"
             },
             "alias": {

@@ -174,6 +174,36 @@ def main():
             assert apply(case, value)['status'] == 'recovered'
             invoke('check-lock', '--project', case / 'kvik.json')
 
+    case = fixture('source-sets')
+    source_file = case / 'app' / 'jsMain' / 'Main.kt'
+    source_file.parent.mkdir()
+    source_file.write_text('fun platformName() = "js"\n')
+    new_source = {'name': 'jsMain', 'directories': ['app/jsMain'], 'resources': [],
+                  'dependsOn': ['main'], 'dependencies': []}
+    new_target = {'name': 'js', 'main': 'jsMain', 'test': None, 'compilerOptions': []}
+    before = contents(case)
+    value = plan(case, [
+        {'op': 'set-target', 'module': 'app', 'target': new_target},
+        {'op': 'set-source-set', 'module': 'app', 'sourceSet': new_source},
+    ])
+    assert contents(case) == before
+    assert apply(case, value)['status'] == 'applied'
+    invoke('check-lock', '--project', case / 'kvik.json')
+    proposed = json.loads(value['configuration']['content'])['modules'][0]
+    assert proposed['sourceSets'][-1] == new_source and proposed['targets'][-1] == new_target
+    before = contents(case)
+    plan(case, [{'op': 'remove-source-set', 'module': 'app', 'sourceSet': 'jsMain'}], expected=2)
+    plan(case, [{'op': 'set-source-set', 'module': 'app',
+                 'sourceSet': {**new_source, 'directories': ['.kvik']}}], expected=2)
+    assert contents(case) == before
+    value = plan(case, [
+        {'op': 'remove-source-set', 'module': 'app', 'sourceSet': 'jsMain'},
+        {'op': 'remove-target', 'module': 'app', 'target': 'js'},
+    ])
+    assert apply(case, value)['status'] == 'applied'
+    invoke('check-lock', '--project', case / 'kvik.json')
+    assert source_file.read_text() == 'fun platformName() = "js"\n'
+
     case = fixture('reserved')
     coordination = case / '.kvik-configuration-publication.lock'
     coordination.write_bytes(b'')

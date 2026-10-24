@@ -29,23 +29,31 @@ fun editProjectConfiguration(configuration: ProjectConfiguration, edits: JsonVal
             "set-dependency-version" -> setOf("op", "module", "sourceSet", "package", "version")
             "remove-dependency" -> setOf("op", "module", "sourceSet", "selector")
             "set-target", "remove-target" -> setOf("op", "module", "target")
+            "set-source-set", "remove-source-set" -> setOf("op", "module", "sourceSet")
             else -> throw IllegalArgumentException("Unknown configuration edit operation: $name")
         })
         val moduleId = fields.getValue("module").stringValue()
         val modules = document.values.getValue("modules").arrayValue().toMutableList()
         val moduleIndex = editIndex(modules, "id", moduleId, "module")
         val module = modules[moduleIndex].objectValue()
-        val changedModule = if (name == "set-target" || name == "remove-target") {
-            val target = fields.getValue("target")
-            val targetName = if (name == "set-target") target.objectValue().getValue("name").stringValue() else target.stringValue()
-            val targets = module.getValue("targets").arrayValue().toMutableList()
-            val found = targets.indices.filter { targets[it].objectValue().getValue("name").stringValue() == targetName }
-            require(found.size <= 1) { "Ambiguous target $moduleId:$targetName" }
-            if (name == "remove-target") {
-                require(found.size == 1) { "Unknown target $moduleId:$targetName" }
-                targets.removeAt(found.single())
-            } else if (found.isEmpty()) targets += target else targets[found.single()] = target
-            JsonValue.Object(module + ("targets" to targets.json()))
+        val entryField = when (name) {
+            "set-target", "remove-target" -> "target"
+            "set-source-set", "remove-source-set" -> "sourceSet"
+            else -> null
+        }
+        val changedModule = if (entryField != null) {
+            val entry = fields.getValue(entryField)
+            val removing = name.startsWith("remove-")
+            val entryName = if (removing) entry.stringValue() else entry.objectValue().getValue("name").stringValue()
+            val collectionName = if (entryField == "target") "targets" else "sourceSets"
+            val entries = module.getValue(collectionName).arrayValue().toMutableList()
+            val found = entries.indices.filter { entries[it].objectValue().getValue("name").stringValue() == entryName }
+            require(found.size <= 1) { "Ambiguous $entryField $moduleId:$entryName" }
+            if (removing) {
+                require(found.size == 1) { "Unknown $entryField $moduleId:$entryName" }
+                entries.removeAt(found.single())
+            } else if (found.isEmpty()) entries += entry else entries[found.single()] = entry
+            JsonValue.Object(module + (collectionName to entries.json()))
         } else {
             val sourceName = fields.getValue("sourceSet").stringValue()
             val sourceSets = module.getValue("sourceSets").arrayValue().toMutableList()

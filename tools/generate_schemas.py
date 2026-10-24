@@ -792,6 +792,8 @@ DEFS["configurationEditOperation"] = {"oneOf": [
         "selector": {"oneOf": [object_({"package": NONEMPTY}), object_({"module": ID})]}}),
     object_({"op": {"const": "set-target"}, "module": ID, "target": ref("target")}),
     object_({"op": {"const": "remove-target"}, "module": ID, "target": enum(*PROJECT_TARGETS)}),
+    object_({"op": {"const": "set-source-set"}, "module": ID, "sourceSet": ref("sourceSet")}),
+    object_({"op": {"const": "remove-source-set"}, "module": ID, "sourceSet": ID}),
     object_({"op": {"const": "set-catalog-entry"}, "alias": SCRIPT_ID, "coordinate": SCRIPT_COORDINATE}),
     object_({"op": {"const": "set-catalog-version"}, "alias": SCRIPT_ID, "version": NONEMPTY}),
     object_({"op": {"const": "remove-catalog-entry"}, "alias": SCRIPT_ID}),

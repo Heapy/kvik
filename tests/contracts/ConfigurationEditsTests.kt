@@ -5,9 +5,9 @@ import kotlin.test.*
 class ConfigurationEditsTests {
     private fun target(name: String = "jvm", options: List<String> = emptyList()): JsonValue = obj(
         "name" to name.json(), "main" to "main".json(), "test" to "test".json(), "compilerOptions" to options.map { it.json() }.json())
-    private fun source(name: String, dependencies: List<JsonValue> = emptyList()): JsonValue = obj(
+    private fun source(name: String, dependencies: List<JsonValue> = emptyList(), dependsOn: List<String> = emptyList()): JsonValue = obj(
         "name" to name.json(), "directories" to listOf("src/$name".json()).json(),
-        "resources" to listOf("resources/$name".json()).json(), "dependsOn" to emptyList<JsonValue>().json(), "dependencies" to dependencies.json())
+        "resources" to listOf("resources/$name".json()).json(), "dependsOn" to dependsOn.map { it.json() }.json(), "dependencies" to dependencies.json())
     private fun module(id: String, dependencies: List<JsonValue> = emptyList(), targets: List<JsonValue> = listOf(target()), plugins: List<JsonValue> = emptyList()): JsonValue = obj(
         "id" to id.json(), "sourceSets" to listOf(source("main", dependencies), source("test")).json(),
         "targets" to targets.json(), "compilerPlugins" to plugins.json())
@@ -192,6 +192,71 @@ class ConfigurationEditsTests {
         assertTrue(result.project.modules.all { it.targets.single().name == "macosArm64" })
         assertFails { editProjectConfiguration(original, batch(*operations.take(2).toTypedArray())) }
         assertEquals("jvm", original.project.modules.first().targets.single().name)
+    }
+
+    @Test fun targetAndSourceSetsCanBeAddedAndRemovedTogetherInEitherOrder() {
+        val original = fixture()
+        val nativeMain = source("nativeMain", dependsOn = listOf("main"))
+        val nativeTest = source("nativeTest", dependsOn = listOf("test", "nativeMain"))
+        val native = JsonValue.Object(target("macosArm64").objectValue() + mapOf(
+            "main" to "nativeMain".json(), "test" to "nativeTest".json()))
+        val operations = listOf(
+            edit("set-target", "target" to native),
+            edit("set-source-set", "sourceSet" to nativeTest),
+            edit("set-source-set", "sourceSet" to nativeMain),
+        )
+        assertFails { editProjectConfiguration(original, batch(operations.first())) }
+        val changed = editProjectConfiguration(original, batch(*operations.toTypedArray()))
+        val module = changed.project.modules.first()
+        assertEquals(setOf("main", "test", "nativeMain", "nativeTest"), sourceSetClosure(module, listOf("nativeTest")).map { it.name }.toSet())
+        assertEquals(nativeMain, authoredModule(changed).getValue("sourceSets").arrayValue().last())
+        assertEquals(original.document.values - "modules", changed.document.values - "modules")
+        val restored = editProjectConfiguration(changed, batch(
+            edit("remove-source-set", "sourceSet" to "nativeMain".json()),
+            edit("remove-source-set", "sourceSet" to "nativeTest".json()),
+            edit("remove-target", "target" to "macosArm64".json()),
+        ))
+        assertEquals(original.document, restored.document)
+    }
+
+    @Test fun sourceSetReplacementKeepsPositionAndValidatesFinalGraphAndPayload() {
+        val original = fixture()
+        val replacement = source("test", listOf(obj("coordinate" to "example:test:2".json())), dependsOn = listOf("main"))
+        val changed = editProjectConfiguration(original, batch(edit("set-source-set", "sourceSet" to replacement)))
+        val sources = authoredModule(changed).getValue("sourceSets").arrayValue()
+        assertEquals(listOf(authoredModule(original).getValue("sourceSets").arrayValue().first(), replacement), sources)
+        assertEquals(authoredModule(original) - "sourceSets", authoredModule(changed) - "sourceSets")
+        val invalid = listOf(
+            edit("remove-source-set", "sourceSet" to "main".json()),
+            edit("remove-source-set", "sourceSet" to "missing".json()),
+            edit("set-source-set", "sourceSet" to source("main", dependsOn = listOf("main"))),
+            edit("set-source-set", "sourceSet" to source("test", dependsOn = listOf("missing"))),
+            edit("set-source-set", "sourceSet" to JsonValue.Object(replacement.objectValue() - "resources")),
+            edit("set-source-set", "sourceSet" to JsonValue.Object(replacement.objectValue() + ("extra" to true.json()))),
+            edit("set-source-set", "sourceSet" to JsonValue.Object(replacement.objectValue() + ("directories" to listOf("../outside".json()).json()))),
+        )
+        for (operation in invalid) assertFails { editProjectConfiguration(original, batch(operation)) }
+        assertFails { editProjectConfiguration(original, batch(
+            edit("set-source-set", "sourceSet" to source("main", dependsOn = listOf("test"))),
+            edit("set-source-set", "sourceSet" to replacement),
+        )) }
+        // An unselected source set still cannot retain a dangling dependsOn edge.
+        assertFails { editProjectConfiguration(original, batch(
+            edit("set-source-set", "sourceSet" to source("unused", dependsOn = listOf("test"))),
+            edit("set-target", "target" to JsonValue.Object(target().objectValue() + ("test" to JsonValue.Null))),
+            edit("remove-source-set", "sourceSet" to "test".json()),
+        )) }
+    }
+
+    @Test fun sourceSetEditsNeverGuessDuplicateNames() {
+        val original = fixture()
+        val app = authoredModule(original)
+        val sources = app.getValue("sourceSets").arrayValue()
+        val duplicateApp = JsonValue.Object(app + ("sourceSets" to (sources + sources.first()).json()))
+        val input = original.copy(document = JsonValue.Object(original.document.values +
+            ("modules" to (listOf(duplicateApp) + modules(original).drop(1)).json())))
+        assertFails { editProjectConfiguration(input, batch(edit("set-source-set", "sourceSet" to source("main")))) }
+        assertFails { editProjectConfiguration(input, batch(edit("remove-source-set", "sourceSet" to "main".json()))) }
     }
 
     @Test fun operationEnvelopeSelectorAndUnknownIdentityFailuresAreAtomic() {
