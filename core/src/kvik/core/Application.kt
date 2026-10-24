@@ -17,7 +17,7 @@ data class ApplicationSpec(
         require(toJson().canonical().encodeToByteArray().size <= 64 * 1024) { "Application settings exceed 64 KiB" }
     }
     fun requireTarget(target: String) {
-        require(target == "jvm" || NativeTarget.find(target) != null) { "Unsupported application target" }
+        require(target == "jvm" || NativeTarget.find(target)?.supportsHostExecution == true) { "Unsupported application execution target" }
         require(NativeTarget.find(target) == null || entryPoint.matches(Regex("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))) {
             "Native application entryPoint must be a qualified function name"
         }
