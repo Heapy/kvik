@@ -2,12 +2,14 @@
 """Light C/PTY tests for the actual invocation-owned terminal lease. No Native compile."""
 import argparse
 import atexit
+import errno
 import json
 import os
 from pathlib import Path
 import pty
 import queue
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,7 +72,8 @@ def main():
     if not args.skip_build:
         clang='/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang'
         sdk='/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
-        flags=[clang,'-isysroot',sdk,'-std=c11','-D_DARWIN_C_SOURCE','-Wall','-Wextra','-Werror']
+        flags=([clang,'-isysroot',sdk] if sys.platform=='darwin' else [shutil.which('clang') or 'cc'])
+        flags+=['-std=c11','-D_DARWIN_C_SOURCE','-D_GNU_SOURCE','-pthread','-Wall','-Wextra','-Werror']
         subprocess.run([*flags,ROOT/'execution/platform/guardian.c','-o',output/'guardian'],check=True)
         subprocess.run([*flags,'-I'+str(ROOT/'execution/platform'),ROOT/'execution/platform/process.c',ROOT/'tests/foreground-keys/TerminalProbe.c','-o',output/'probe'],check=True)
     evidence=Path(tempfile.mkdtemp(prefix='boundary-',dir=output));sessions=[];results=[]
@@ -154,10 +157,10 @@ def main():
     s=Session('invalid-lease-bindings');s.keys(b'v');s.wait('invalid-leases-rejected');s.keys(b'?');assert s.wait('key')=='key 63';s.finish()
     s=Session('exclusive-tty')
     for mode in ('keys','lines'):
-        s.command('compete-'+mode);assert s.wait('rejected')=='rejected 35';assert s.wait('competitor')=='competitor 20'
+        s.command('compete-'+mode);assert s.wait('rejected')==f'rejected {errno.EAGAIN}';assert s.wait('competitor')=='competitor 20'
     s.finish()
     first,second=Session('independent-a'),Session('independent-b');first.finish();second.keys(b't');assert second.wait('key')=='key 116';second.finish()
-    s=Session('noncanonical-rejected','unsupported');assert s.wait('rejected')=='rejected 45';s.finish(reason='already-exited',expected=20)
+    s=Session('noncanonical-rejected','unsupported');assert s.wait('rejected')==f'rejected {errno.ENOTSUP}';s.finish(reason='already-exited',expected=20)
     master,slave=pty.openpty()
     race=subprocess.Popen([sys.executable,'-c',RACE,os.ttyname(slave),str(output/'probe'),str(output/'guardian')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
     race_lines=[]
@@ -168,7 +171,7 @@ def main():
             line=race.stdout.readline().strip();race_lines.append(line)
             if line.startswith('ready '):ready=True;owned.extend(map(int,line.split()[1:]))
             if line.startswith('race '):owned.extend(map(int,line.split()[1:]))
-            if line.startswith('rejected '):assert line=='rejected 35';rejected=True
+            if line.startswith('rejected '):assert line==f'rejected {errno.EAGAIN}';rejected=True
         os.write(master,b'q');race.stdin.write('wait\n');race.stdin.flush()
         while True:
             line=race.stdout.readline().strip();race_lines.append(line)

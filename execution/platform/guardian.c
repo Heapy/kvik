@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define KVIK_TERMINAL_INTERNAL
 #include "process.h"
 /* Per-process foreground ownership guardian. No sockets, persistent state, or reuse.
@@ -16,8 +19,13 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#ifdef __APPLE__
 #include <sys/sysctl.h>
 #include <sys/proc.h>
+#else
+#include <dirent.h>
+#include <limits.h>
+#endif
 
 extern char **environ;
 static volatile sig_atomic_t interrupted;
@@ -149,6 +157,7 @@ static int terminal_main(int argc, char **argv) {
 static KvikBarrier upstream_barrier = {.fd = -1};
 /* Keep allocation bounded and never equate a query error with an empty group. */
 static int group_quiet(pid_t group) {
+#ifdef __APPLE__
     int query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, group};
     size_t size = 0;
     if (sysctl(query, 4, NULL, &size, NULL, 0)) return -1;
@@ -166,6 +175,36 @@ static int group_quiet(pid_t group) {
     for (size_t i = 0; i < size / sizeof(*members); ++i)
         if (members[i].kp_proc.p_stat != SZOMB) quiet = 0;
     free(members); return quiet;
+#else
+    DIR *processes = opendir("/proc");
+    if (!processes) return -1;
+    int quiet = 1, error = 0; size_t count = 0;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(processes);
+        if (!entry) { error = errno; break; }
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+        char *end; errno = 0; long pid = strtol(entry->d_name, &end, 10);
+        if (errno || *end || pid <= 0 || pid > INT_MAX) { error = EPROTO; break; }
+        if (++count > 131072) { error = EOVERFLOW; break; }
+        char path[64]; snprintf(path, sizeof(path), "%ld/stat", pid);
+        int fd = openat(dirfd(processes), path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) { if (errno == ENOENT || errno == ESRCH) continue; error = errno; break; }
+        char bytes[4096]; ssize_t size;
+        do { size = read(fd, bytes, sizeof(bytes) - 1); } while (size < 0 && errno == EINTR);
+        int read_error = errno; close(fd);
+        if (size < 0) { if (read_error == ENOENT || read_error == ESRCH) continue; error = read_error; break; }
+        if (!size || size == sizeof(bytes) - 1) { error = EOVERFLOW; break; }
+        bytes[size] = 0;
+        /* comm can contain spaces and ')'; all subsequent stat fields are numeric. */
+        char *fields = strrchr(bytes, ')'); char state; long parent, actual_group;
+        if (!fields || sscanf(fields + 1, " %c %ld %ld", &state, &parent, &actual_group) != 3) { error = EPROTO; break; }
+        if (actual_group == group && state != 'Z' && state != 'X') quiet = 0;
+    }
+    closedir(processes);
+    if (error) { errno = error; return -1; }
+    return quiet;
+#endif
 }
 static int process_main(int argc, char **argv) {
     if (argc < 6) return 125;

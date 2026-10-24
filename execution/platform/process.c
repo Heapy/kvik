@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define KVIK_TERMINAL_INTERNAL
 #include "process.h"
 #include <errno.h>
@@ -9,7 +12,31 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
+#include <sys/event.h>
+#else
+#include <sys/syscall.h>
+#include <sys/random.h>
+#endif
+
+/* Linux glibc closefrom actions run after dup actions: only declared capabilities
+ * survive, including when unrelated owner threads open descriptors during spawn. */
+static int spawn_close_undeclared(posix_spawn_file_actions_t *actions, int terminal, int upstream) {
+#ifdef __linux__
+    int error;
+    if (!terminal && (error = posix_spawn_file_actions_addclose(actions, 5))) return error;
+    if (!upstream && (error = posix_spawn_file_actions_addclose(actions, 6))) return error;
+    return posix_spawn_file_actions_addclosefrom_np(actions, 7);
+#else
+    (void)actions; (void)terminal; (void)upstream; return 0;
+#endif
+}
+#ifdef __APPLE__
+#define KVIK_SPAWN_CLOSE_DEFAULT POSIX_SPAWN_CLOEXEC_DEFAULT
+#else
+#define KVIK_SPAWN_CLOSE_DEFAULT 0
+#endif
 
 int kvik_process_ownership_version(void) { return 1; }
 
@@ -43,6 +70,7 @@ void kvik_interrupt_restore(void) {
 }
 
 char *kvik_executable_directory(void) {
+#ifdef __APPLE__
     uint32_t size = 0;
     (void)_NSGetExecutablePath(NULL, &size);
     if (!size) return NULL;
@@ -51,6 +79,14 @@ char *kvik_executable_directory(void) {
     if (_NSGetExecutablePath(buffer, &size)) { free(buffer); return NULL; }
     char *resolved = realpath(buffer, NULL);
     free(buffer);
+#else
+    char buffer[65536];
+    ssize_t size = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (size < 0) return NULL;
+    if ((size_t)size >= sizeof(buffer) - 1) { errno = ENAMETOOLONG; return NULL; }
+    buffer[size] = 0;
+    char *resolved = realpath(buffer, NULL);
+#endif
     if (!resolved) return NULL;
     char *separator = strrchr(resolved, '/');
     if (!separator || separator == resolved) { free(resolved); errno = EINVAL; return NULL; }
@@ -91,7 +127,7 @@ void *kvik_process_start(const char *helper, const char *cwd, const char *out, c
     for (int i = 0; i < 2; ++i) {
         if (fcntl(control[i], F_SETFD, FD_CLOEXEC) || fcntl(result[i], F_SETFD, FD_CLOEXEC)) { error = errno; goto fail; }
     }
-    if (fcntl(control[1], F_SETNOSIGPIPE, 1) || fcntl(result[0], F_SETFL, O_NONBLOCK)) { error = errno; goto fail; }
+    if (kvik_pipe_no_sigpipe(control[1]) || fcntl(result[0], F_SETFL, O_NONBLOCK)) { error = errno; goto fail; }
     input = fcntl(control[0], F_DUPFD_CLOEXEC, 10);
     output = fcntl(result[1], F_DUPFD_CLOEXEC, 10);
     if (inherited_barrier.fd >= 0) upstream = fcntl(inherited_barrier.fd, F_DUPFD_CLOEXEC, 10);
@@ -112,10 +148,11 @@ void *kvik_process_start(const char *helper, const char *cwd, const char *out, c
     if ((error = posix_spawn_file_actions_adddup2(&actions, input, 3)) ||
         (error = posix_spawn_file_actions_adddup2(&actions, output, 4)) ||
         (upstream >= 0 && (error = posix_spawn_file_actions_adddup2(&actions, upstream, KVIK_BARRIER_FD))) ||
+        (error = spawn_close_undeclared(&actions, 0, upstream >= 0)) ||
         (error = posix_spawnattr_setsigmask(&attributes, &empty)) ||
         (error = posix_spawnattr_setsigdefault(&attributes, &defaults)) ||
         (error = posix_spawnattr_setpgroup(&attributes, 0)) ||
-        (error = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP))) {
+        (error = posix_spawnattr_setflags(&attributes, KVIK_SPAWN_CLOSE_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP))) {
         /* No child exists on any setup failure. */
     } else error = posix_spawn(&p->guardian, helper, &actions, &attributes, args, environment);
     posix_spawnattr_destroy(&attributes); posix_spawn_file_actions_destroy(&actions);
@@ -183,7 +220,6 @@ int kvik_process_close(void *handle) {
 }
 
 #include <poll.h>
-#include <sys/event.h>
 #include <sys/stat.h>
 #include <limits.h>
 #include <sys/file.h>
@@ -220,12 +256,20 @@ static int foreground_stream(int fd, int output, int *owned) {
 static void *foreground_open(int lock_terminal) {
     Foreground *f = calloc(1, sizeof(*f));
     if (!f) return NULL;
-    f->parent = getppid(); f->queue = kqueue(); f->input = f->output = -1;
+    f->parent = getppid(); f->input = f->output = -1;
+#ifdef __APPLE__
+    f->queue = kqueue();
     if (f->queue < 0) { free(f); return NULL; }
     fcntl(f->queue, F_SETFD, FD_CLOEXEC);
     struct kevent change;
     EV_SET(&change, f->parent, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, NULL);
-    if (f->parent <= 1 || kevent(f->queue, &change, 1, NULL, 0, NULL) < 0 || getppid() != f->parent) {
+    int observed = kevent(f->queue, &change, 1, NULL, 0, NULL);
+#else
+    f->queue = (int)syscall(SYS_pidfd_open, f->parent, 0);
+    if (f->queue < 0) { free(f); return NULL; }
+    int observed = 0; /* pidfd is CLOEXEC and remains bound even after PID reuse. */
+#endif
+    if (f->parent <= 1 || observed < 0 || getppid() != f->parent) {
         close(f->queue); free(f); errno = ESRCH; return NULL;
     }
     f->input = foreground_stream(STDIN_FILENO, 0, &f->own_input);
@@ -258,7 +302,7 @@ static int terminal_receive(int fd, KvikTerminalReply *reply) {
 static int terminal_exchange(const KvikTerminalLease *lease, int operation, KvikTerminalReply *reply) {
     KvikTerminalRequest request; memset(&request, 0, sizeof(request));
     request.operation = operation; request.owner = getpid(); memcpy(request.cookie, lease->cookie, 16);
-    if (write(lease->control, &request, sizeof(request)) != sizeof(request) || terminal_receive(lease->reply, reply)) return -1;
+    if (kvik_pipe_write(lease->control, &request, sizeof(request)) != sizeof(request) || terminal_receive(lease->reply, reply)) return -1;
     if (reply->operation != operation || memcmp(reply->cookie, lease->cookie, 16)) { errno = EPROTO; return -1; }
     if (reply->error) { errno = reply->error; return -1; }
     return 0;
@@ -350,7 +394,17 @@ void *kvik_foreground_open_keys(const char *guardian) {
     lease->magic = KVIK_TERMINAL_MAGIC; lease->version = KVIK_TERMINAL_VERSION; lease->bytes = sizeof(*lease);
     lease->owner = getpid(); lease->control = control[1]; lease->reply = reply[0]; lease->terminal_fd = f->input;
     lease->tty_device = tty_status.st_rdev; lease->tty_inode = tty_status.st_ino;
+#ifdef __APPLE__
     arc4random_buf(lease->cookie, 16);
+#else
+    size_t random_bytes = 0;
+    while (random_bytes < sizeof(lease->cookie)) {
+        ssize_t count = getrandom(lease->cookie + random_bytes, sizeof(lease->cookie) - random_bytes, 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) { error = count < 0 ? errno : EIO; goto fail; }
+        random_bytes += (size_t)count;
+    }
+#endif
     char cookie[33], owner[32];
     for (int i = 0; i < 16; ++i) snprintf(cookie + i * 2, 3, "%02x", lease->cookie[i]);
     snprintf(owner, sizeof(owner), "%d", (int)getpid());
@@ -371,15 +425,16 @@ void *kvik_foreground_open_keys(const char *guardian) {
     sigset_t empty, defaults; sigemptyset(&empty); sigfillset(&defaults);
     posix_spawnattr_setsigmask(&attributes, &empty); posix_spawnattr_setsigdefault(&attributes, &defaults);
     posix_spawnattr_setpgroup(&attributes, 0);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP);
-    error = posix_spawn(&lease->helper, guardian, &actions, &attributes, arguments, owned_environment);
+    posix_spawnattr_setflags(&attributes, KVIK_SPAWN_CLOSE_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP);
+    error = spawn_close_undeclared(&actions, 1, upstream >= 0);
+    if (!error) error = posix_spawn(&lease->helper, guardian, &actions, &attributes, arguments, owned_environment);
     posix_spawnattr_destroy(&attributes); posix_spawn_file_actions_destroy(&actions);
     close(input); input = -1; close(output); output = -1; close(tty); tty = -1;
     close(control[0]); control[0] = -1; close(reply[1]); reply[1] = -1;
     if (upstream >= 0) { close(upstream); upstream = -1; }
     free(owned_environment); owned_environment = NULL;
     if (error) goto fail;
-    fcntl(lease->control, F_SETNOSIGPIPE, 1); fcntl(lease->reply, F_SETFL, O_NONBLOCK);
+    kvik_pipe_no_sigpipe(lease->control); fcntl(lease->reply, F_SETFL, O_NONBLOCK);
     struct stat cs, rs;
     if (fstat(lease->control, &cs) || fstat(lease->reply, &rs)) { error = errno; goto spawned_fail; }
     lease->control_device = cs.st_dev; lease->control_inode = cs.st_ino;
@@ -454,8 +509,13 @@ int kvik_foreground_terminal_healthy(void *handle) {
 int kvik_foreground_read(void *handle, char *buffer, int capacity) {
     Foreground *f = handle;
     if (!kvik_foreground_terminal_healthy(f)) return -4;
+#ifdef __APPLE__
     struct kevent event; struct timespec zero = {0, 0};
     int parent_event = kevent(f->queue, NULL, 0, &event, 1, &zero);
+#else
+    struct pollfd parent = {f->queue, POLLIN, 0};
+    int parent_event = poll(&parent, 1, 0);
+#endif
     if (getppid() != f->parent || parent_event > 0) return -3;
     if (parent_event < 0 && errno != EINTR) return -1;
     struct pollfd input = {f->input, POLLIN | POLLHUP, 0};
@@ -475,7 +535,7 @@ int kvik_foreground_write(void *handle, const char *buffer, int size) {
     if (!ready) return 0;
     /* POSIX pipe readiness guarantees an atomic write of PIPE_BUF with one writer. */
     if (size > _POSIX_PIPE_BUF) size = _POSIX_PIPE_BUF;
-    ssize_t count = write(f->output, buffer, (size_t)size);
+    ssize_t count = kvik_pipe_write(f->output, buffer, (size_t)size);
     if (count < 0) return errno == EAGAIN || errno == EINTR ? 0 : -1;
     return (int)count;
 }

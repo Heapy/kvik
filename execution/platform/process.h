@@ -59,6 +59,38 @@ int kvik_foreground_exec_terminal(const char *path, char *const *argv, char *con
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+/* Linux has no per-FD F_SETNOSIGPIPE. Block only this thread while writing and
+ * consume only a newly generated SIGPIPE; preserve caller masks and pending signals. */
+#include <signal.h>
+#include <pthread.h>
+#include <time.h>
+static inline int kvik_pipe_no_sigpipe(int fd) {
+#ifdef __APPLE__
+    return fcntl(fd, F_SETNOSIGPIPE, 1);
+#else
+    return fcntl(fd, F_GETFD) < 0 ? -1 : 0;
+#endif
+}
+static inline ssize_t kvik_pipe_write(int fd, const void *bytes, size_t size) {
+#ifdef __linux__
+    sigset_t blocked, previous, pending;
+    sigemptyset(&blocked); sigaddset(&blocked, SIGPIPE);
+    int error = pthread_sigmask(SIG_BLOCK, &blocked, &previous);
+    if (error) { errno = error; return -1; }
+    if (sigpending(&pending)) { error = errno; (void)pthread_sigmask(SIG_SETMASK, &previous, NULL); errno = error; return -1; }
+    ssize_t result = write(fd, bytes, size);
+    error = errno;
+    if (result < 0 && error == EPIPE && !sigismember(&pending, SIGPIPE)) {
+        struct timespec zero = {0, 0};
+        while (sigtimedwait(&blocked, NULL, &zero) < 0 && errno == EINTR) {}
+    }
+    int restored = pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (restored) { errno = restored; return -1; }
+    errno = error; return result;
+#else
+    return write(fd, bytes, size);
+#endif
+}
 #define KVIK_BARRIER_ENV "KVIK_PROCESS_BARRIER_V1"
 #define KVIK_BARRIER_FD 6
 #define KVIK_BARRIER_MARKER_BYTES 128
@@ -79,7 +111,7 @@ static inline int kvik_barrier_validate(const KvikBarrier *cap) {
 static inline void kvik_barrier_poison(const KvikBarrier *cap) {
     if (cap->fd < 0 || kvik_barrier_validate(cap)) return;
     char byte = '!'; ssize_t size;
-    do { size = write(cap->fd, &byte, 1); } while (size < 0 && errno == EINTR);
+    do { size = kvik_pipe_write(cap->fd, &byte, 1); } while (size < 0 && errno == EINTR);
 }
 static inline int kvik_barrier_capture(KvikBarrier *cap) {
     cap->fd = -1;
@@ -99,7 +131,7 @@ static inline int kvik_barrier_capture(KvikBarrier *cap) {
     snprintf(canonical, sizeof(canonical), "%d:%llu:%llu", fd, device, inode);
     if (strcmp(copy, canonical)) { errno = EPROTO; return -1; }
     cap->fd = fd; cap->device = device; cap->inode = inode;
-    if (kvik_barrier_validate(cap) || fcntl(fd, F_SETFD, FD_CLOEXEC) || fcntl(fd, F_SETNOSIGPIPE, 1)) { cap->fd = -1; errno = EPROTO; return -1; }
+    if (kvik_barrier_validate(cap) || fcntl(fd, F_SETFD, FD_CLOEXEC) || kvik_pipe_no_sigpipe(fd)) { cap->fd = -1; errno = EPROTO; return -1; }
     return 0;
 }
 /* Returned array borrows original strings and marker; caller frees only the array. */
@@ -127,7 +159,7 @@ static inline char **kvik_barrier_environment(char *const *env, const KvikBarrie
 #define KVIK_TERMINAL_CHECK 2
 #define KVIK_TERMINAL_CLOSE 3
 #define KVIK_TERMINAL_DEADLINE_MS 1000
-/* Invocation-local and macOS/ABI-bound. Zero initialize before capture/serialization. */
+/* Invocation-local and host/ABI-bound. Zero initialize before capture/serialization. */
 typedef struct {
     uint64_t magic;
     uint32_t version, bytes;
