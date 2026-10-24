@@ -227,6 +227,45 @@ class Tests {
         assert any(n['method'] == 'build/publishDiagnostics' and n['params']['textDocument']['uri'] == source_file.as_uri()
                    and n['params']['buildTarget'] == app and n['params']['reset'] and not n['params']['diagnostics']
                    for n in client.notifications[start:]), client.notifications[start:]
+
+        # An app build also compiles its dependency. Diagnostics belong to the source's
+        # owning target, even though only the app target was requested by the client.
+        base_file = root/'base/src/Base.kt'
+        base_text = base_file.read_text()
+        base_file.write_text('package fixture\nfun answer() = )\n')
+        start = len(client.notifications)
+        retained(client.request('buildTarget/compile', dict(targets=[app])), [app], status=2, test_count=0)
+        base_diagnostics = [n['params'] for n in client.notifications[start:]
+                            if n['method'] == 'build/publishDiagnostics'
+                            and n['params']['textDocument']['uri'] == base_file.as_uri() and n['params']['diagnostics']]
+        assert base_diagnostics, client.notifications[start:]
+        assert all(p['buildTarget'] == base for p in base_diagnostics), base_diagnostics
+        assert any(d['severity'] == 1 and d['range']['start']['line'] == 1
+                   for p in base_diagnostics for d in p['diagnostics']), base_diagnostics
+        base_file.write_text(base_text)
+        start = len(client.notifications)
+        retained(client.request('buildTarget/compile', dict(targets=[app])), [app], test_count=0)
+        assert any(n['method'] == 'build/publishDiagnostics' and n['params']['textDocument']['uri'] == base_file.as_uri()
+                   and n['params']['buildTarget'] == base and n['params']['reset'] and not n['params']['diagnostics']
+                   for n in client.notifications[start:]), client.notifications[start:]
+
+        # Ownership comes from declared source directories, including files created since import.
+        added_file = write('app/src/AddedAfterImport.kt', 'package fixture\nfun addedAfterImport() = missingNewFileSymbol\n')
+        start = len(client.notifications)
+        retained(client.request('buildTarget/compile', dict(targets=[app])), [app], status=2, test_count=0)
+        added_diagnostics = [n['params'] for n in client.notifications[start:]
+                             if n['method'] == 'build/publishDiagnostics'
+                             and n['params']['textDocument']['uri'] == added_file.as_uri() and n['params']['diagnostics']]
+        assert added_diagnostics, client.notifications[start:]
+        assert all(p['buildTarget'] == app for p in added_diagnostics), added_diagnostics
+        assert any(d['severity'] == 1 and d['range']['start']['line'] == 1
+                   for p in added_diagnostics for d in p['diagnostics']), added_diagnostics
+        added_file.write_text('package fixture\nfun addedAfterImport() = 7\n')
+        start = len(client.notifications)
+        retained(client.request('buildTarget/compile', dict(targets=[app])), [app], test_count=0)
+        assert any(n['method'] == 'build/publishDiagnostics' and n['params']['textDocument']['uri'] == added_file.as_uri()
+                   and n['params']['buildTarget'] == app and n['params']['reset'] and not n['params']['diagnostics']
+                   for n in client.notifications[start:]), client.notifications[start:]
         test_file.write_text(passing.replace('assertEquals(42, message())', 'assertEquals(43, message())'))
         failed_test = retained(client.request('buildTarget/test', dict(targets=[test])), [test], status=2, test_count=1)[0][1]
         assert failed_test['testCounts']['failed'] == 1
