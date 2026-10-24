@@ -23,8 +23,15 @@ def interop_options(roots):
         return []
     # System headers/libraries are explicitly inventoried by the Linux system component.
     root = roots['system']
-    return ['-compiler-option', f'-I{root}/include', '-compiler-option', f'-I{root}/include/x86_64-linux-gnu',
-            '-linker-option', f'-L{root}/lib/x86_64-linux-gnu']
+    return ['-compiler-option', f'-I{root}/include', '-compiler-option', f'-I{root}/include/x86_64-linux-gnu']
+
+
+def linker_options(roots):
+    # cinterop ignores linker-option. Apply the verified host library search path
+    # when linking the runtime; library names remain in their source-pinned .def files.
+    if native_target() == 'macos_arm64':
+        return []
+    return ['-linker-option', f'-L{roots["system"]}/lib/x86_64-linux-gnu']
 
 
 def select(root, names, relative):
@@ -51,8 +58,6 @@ def build(names, source_root, output, roots, environment, log, run_owned):
         if name == "resolution":
             include = roots['sdk'] / 'usr/include/libxml2' if native_target() == 'macos_arm64' else roots['system'] / 'include/libxml2'
             options += ["-compiler-option", f"-I{include}"]
-        if name == 'toolchains' and native_target() == 'linux_x64':
-            options += ['-linker-option', '-lcrypto']
         if name == "remote":
             clang, ar, flags = c_toolchain(roots)
             object_file = output / 'remote.o'

@@ -51,6 +51,7 @@ class LinuxBootstrapTest(unittest.TestCase):
             self.assertEqual(roots['xcodeToolchain'] / 'usr/bin/clang', clang)
             self.assertEqual(roots['xcodeToolchain'] / 'usr/bin/ar', ar)
             self.assertEqual(['-D_DARWIN_C_SOURCE', '-isysroot', roots['sdk']], flags)
+            self.assertEqual([], native_libraries.linker_options(roots))
             launcher.validate_options(['-target', 'macos_arm64', '-entry', 'kvik.cli.main'])
             with self.assertRaises(ValueError):
                 launcher.validate_options(['-target', 'linux_x64', '-entry', 'kvik.cli.main'])
@@ -61,6 +62,7 @@ class LinuxBootstrapTest(unittest.TestCase):
             roots = pin_tools.tool_roots('/jdk', '/native', '/konan')
             libraries = native_libraries.build(['files', 'resolution', 'toolchains', 'remote'], Path('/sources'), Path('/output'),
                 roots, {'LANG': 'C'}, None, lambda argv, env, log: commands.append(list(map(str, argv))))
+            self.assertEqual(['-linker-option', '-L/usr/lib/x86_64-linux-gnu'], native_libraries.linker_options(roots))
         self.assertEqual([Path('/output') / (name + '.klib') for name in ('files', 'resolution', 'toolchains', 'remote')], libraries)
         self.assertEqual(6, len(commands))
         interops = [c for c in commands if c[0] == '/native/bin/cinterop']
@@ -69,10 +71,9 @@ class LinuxBootstrapTest(unittest.TestCase):
             self.assertEqual('linux_x64', command[command.index('-target') + 1])
             self.assertIn('airplaneMode=true', command)
             self.assertIn('-I/usr/include/x86_64-linux-gnu', command)
-            self.assertIn('-L/usr/lib/x86_64-linux-gnu', command)
+            self.assertNotIn('-linker-option', command)
             self.assertNotIn('-isysroot', command)
         self.assertIn('-I/usr/include/libxml2', interops[1])
-        self.assertIn('-lcrypto', interops[2])
         self.assertEqual('/usr/bin/clang', commands[3][0])
         self.assertIn('-D_GNU_SOURCE', commands[3])
         self.assertEqual('/usr/bin/ar', commands[4][0])

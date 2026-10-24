@@ -426,7 +426,7 @@ def build(args, recipe, selected, lock, key, destination):
                 f'const val runtimeJvmWorkerHash: String = "{worker_digest["hash"]}"\n' +
                 f'const val runtimeJvmWorkerSize: Long = {worker_digest["sizeBytes"]}L\n' +
                 f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
-            run_build([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], "-Xoverride-konan-properties=airplaneMode=true",
+            run_build([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], *native_libraries.linker_options(roots), "-Xoverride-konan-properties=airplaneMode=true",
                 *[part for library in libraries for part in ("-library", library)], "-o", executable, *source_files, registry], environment, log)
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
