@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--runtime', required=True, type=Path)
     parser.add_argument('--tools', required=True, type=Path)
-    parser.add_argument('--native-target', choices=['macosArm64', 'linuxX64'], default='macosArm64')
+    parser.add_argument('--native-target', choices=['macosArm64', 'linuxX64', 'iosArm64', 'iosSimulatorArm64'], action='append')
     args = parser.parse_args()
     runtime = args.runtime.resolve(strict=True)
     tools = json.loads(args.tools.read_bytes())
@@ -24,7 +24,8 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     project = Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_bytes())
-    targets = ['jvm', args.native_target]
+    targets = ['jvm', *(args.native_target or ['macosArm64'])]
+    assert len(targets) == len(set(targets)), 'Duplicate target selection'
 
     def write(name, content):
         path = project / name
