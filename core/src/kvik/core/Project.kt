@@ -102,7 +102,6 @@ data class TargetSpec(
         require(nativeTestSettings == null || NativeTarget.find(name) != null && test != null) { "nativeTestSettings requires a supported Native target with a test source set" }
         require(nativeTimeouts == null || NativeTarget.find(name) != null) { "nativeTimeouts requires a supported Native target" }
         require(jsTestSettings == null || KotlinJsTarget.find(name) != null && test != null) { "jsTestSettings requires a JS/Wasm target with tests" }
-        require(abi == null || KotlinJsTarget.find(name) == null) { "JS/Wasm ABI checking is not yet supported" }
         require(benchmarkSettings == null || name == "jvm") { "benchmarkSettings requires a JVM target" }
         application?.requireTarget(name)
     }

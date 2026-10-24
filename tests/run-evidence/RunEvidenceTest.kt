@@ -101,7 +101,7 @@ class RunEvidenceTest {
     }
 
     @Test fun abiChecksRoundTripCachedSuccessAndPreserveComparisonFailure() {
-        for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64")) {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64", "js", "wasmJs")) {
             for (mode in listOf("abi-dump", "abi-check")) {
                 val check = "app:$target:$mode"
                 fun run(status: ActionStatus) = aggregate(checks = setOf(check), terminals = mapOf(check to "main"),

@@ -568,11 +568,6 @@
                   "required": [
                     "application"
                   ]
-                },
-                {
-                  "required": [
-                    "abi"
-                  ]
                 }
               ]
             }
@@ -3012,7 +3007,9 @@
                   "macosArm64",
                   "linuxX64",
                   "iosArm64",
-                  "iosSimulatorArm64"
+                  "iosSimulatorArm64",
+                  "js",
+                  "wasmJs"
                 ]
               },
               "minItems": 1,
@@ -5265,7 +5262,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -9479,7 +9476,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "artifact": {
@@ -9503,7 +9502,9 @@
                   "macosArm64",
                   "linuxX64",
                   "iosArm64",
-                  "iosSimulatorArm64"
+                  "iosSimulatorArm64",
+                  "js",
+                  "wasmJs"
                 ]
               }
             }
@@ -9566,7 +9567,7 @@
         "inputs"
       ],
       "additionalProperties": false,
-      "description": "Input paths must belong to the selected JVM directory, or contain exactly the selected Native KLIB; semantic validation binds these paths."
+      "description": "Input paths must belong to the selected JVM directory, or contain exactly the selected packed KLIB; semantic validation binds these paths."
     },
     "abiSnapshot": {
       "type": "object",
@@ -9584,7 +9585,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "inputs": {
@@ -9659,7 +9662,9 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "snapshot": {
@@ -9695,12 +9700,14 @@
             "macosArm64",
             "linuxX64",
             "iosArm64",
-            "iosSimulatorArm64"
+            "iosSimulatorArm64",
+            "js",
+            "wasmJs"
           ]
         },
         "actionId": {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):abi-dump$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):abi-dump$(?![\\s\\S])"
         },
         "directory": {
           "type": "string",

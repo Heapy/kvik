@@ -6,7 +6,7 @@ const val ABI_MAX_BYTES = 8 * 1024 * 1024
 
 private fun requireAbiScope(module: String, target: String) {
     require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid ABI module" }
-    require(target == "jvm" || NativeTarget.find(target) != null) { "Unsupported ABI target" }
+    require(target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) { "Unsupported ABI target" }
 }
 
 /** Baselines are reviewed source inputs. Dumping never edits them. */
@@ -18,11 +18,11 @@ data class AbiSettings(val baseline: LogicalPath) {
     }
 }
 
-/** Reads one public compilation artifact: a JVM class directory or a Native KLIB file. */
+/** Reads one public compilation artifact: a JVM class directory or a packed KLIB file. */
 data class AbiExtraction(val module: String, val target: String, val artifact: LogicalPath) {
     init {
         requireAbiScope(module, target)
-        require(target == "jvm" || artifact.value.endsWith(".klib")) { "Native ABI extraction requires a KLIB" }
+        require(target == "jvm" || artifact.value.endsWith(".klib")) { "Non-JVM ABI extraction requires a KLIB" }
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "target" to target.json(), "artifact" to artifact.value.json())
     companion object {

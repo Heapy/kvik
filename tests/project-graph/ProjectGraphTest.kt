@@ -259,7 +259,7 @@ class ProjectGraphTest {
     }
 
     @Test fun abiChecksConsumeOnlyOwnMainAndBaselineChangesOnlyComparison() {
-        for (target in listOf("jvm", "macosArm64", "iosArm64")) {
+        for (target in listOf("jvm", "macosArm64", "iosArm64", "js", "wasmJs")) {
             val baseline = LogicalPath("api/$target.api")
             val targetSpec = TargetSpec(target, if (target == "jvm") "jvmMain" else "nativeMain", null, emptyList(),
                 abi = AbiSettings(baseline), nativeFramework = if (target == "iosArm64") NativeFrameworkSpec("Sample", false) else null)
@@ -1714,7 +1714,7 @@ class JsProjectGraphTest {
     @Test fun unavailableJsIntegrationsAndMissingNodeIdentityAreExplicitErrors() {
         for (target in KotlinJsTarget.entries) {
             val config = fixture(target.projectName)
-            for (mode in listOf(ProjectMode.ABI_DUMP, ProjectMode.DOCUMENTATION))
+            for (mode in listOf(ProjectMode.DOCUMENTATION))
                 assertFails { graph(config, request = request(mode, target.projectName)) }
             val effective = effectiveConfiguration(config)
             assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition,

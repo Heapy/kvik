@@ -125,7 +125,10 @@ def main():
         assert all(action['status'] == 'executed' for action in first.values()), first
     assert all(not (project / f'api/{target}.api').exists() for target in TARGETS)
     missing = command('missing-baseline', ['abi-check', *build])
-    assert missing.returncode != 0 and b'Missing ABI baseline' in missing.stdout + missing.stderr, (missing.stdout, missing.stderr)
+    assert missing.returncode != 0, (missing.stdout, missing.stderr)
+    diagnostic = json.loads(missing.stdout)['diagnostic']
+    assert diagnostic['code'] == 'KVIK_INVALID_PROJECT' and diagnostic['category'] == 'configuration', diagnostic
+    assert 'Missing required input file:' in diagnostic['message'] and '/api/js.api' in diagnostic['message'], diagnostic
     assert not any(json.loads(line).get('type') == 'action-started' for line in missing.stdout.splitlines() if line.strip())
     assert all(not (project / f'api/{target}.api').exists() for target in TARGETS)
     for target, api in baselines.items():

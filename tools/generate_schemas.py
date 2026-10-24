@@ -138,7 +138,7 @@ DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"prop
 DEFS["target"]["allOf"].append({"if": {"required": ["benchmarkSettings"]}, "then": {"properties": {"name": {"const": "jvm"}}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["jsTestSettings"]}, "then": {"properties": {"name": enum(*JS_TARGETS), "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"properties": {"name": enum(*JS_TARGETS)}},
-    "then": {"not": {"anyOf": [{"required": [name]} for name in ("application", "abi")]}}})
+    "then": {"not": {"anyOf": [{"required": [name]} for name in ("application",)]}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["testResources"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["testCompilerOptions"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTestSettings"]}, "then": {"properties": {"name": enum("macosArm64", "linuxX64"), "test": ID}}})
@@ -295,7 +295,7 @@ DEFS["scriptResolutionDomain"]["allOf"] = [{"if": {"properties": {"purpose": {"c
 DEFS["resolutionDomain"] = {"oneOf": [ref("moduleResolutionDomain"), ref("scriptResolutionDomain")]}
 DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
     object_({"kind": {"const": "abi-check"}, "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
-        "targets": array(enum(*JVM_NATIVE_TARGETS), minItems=1, uniqueItems=True)}),
+        "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}),
     object_({"kind": {"const": "script"}, "name": SCRIPT_ID}), object_({"kind": {"const": "standalone-script"}})]}
 DEFS["snapshotSelection"]["oneOf"].append(object_({"kind": {"const": "documentation"},
     "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
@@ -425,7 +425,7 @@ DEFS["jvmClasspath"] = versioned({"module": ID, "compilation": enum("main", "tes
 DEFS["jvmClasspath"]["description"] = "Ordered compiler classpath; accompanying input tree must cover every JAR or directory and contain no unrelated files."
 DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|package))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
@@ -752,14 +752,14 @@ DEFS["actionCacheDecision"] = object_({"actionId": NONEMPTY, "key": ref("digest"
     "decision": enum("disabled-by-policy", "unsupported-action-kind", "local-hit", "local-miss", "local-error", "remote-hit", "remote-miss", "remote-error"), "detail": nullable(STRING)})
 DEFS["actionCacheDecision"]["allOf"] = [{"if": {"properties": {"decision": {"enum": ["local-error", "remote-error"]}}},
     "then": {"properties": {"detail": STRING}}, "else": {"properties": {"detail": {"type": "null"}}}}]
-ABI_SCOPE = {"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum(*JVM_NATIVE_TARGETS)}
+ABI_SCOPE = {"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum(*PROJECT_TARGETS)}
 DEFS["abiExtraction"] = object_({**ABI_SCOPE, "artifact": PATH})
-DEFS["abiExtraction"]["allOf"] = [{"if": {"properties": {"target": enum(*NATIVE_TARGETS)}},
+DEFS["abiExtraction"]["allOf"] = [{"if": {"properties": {"target": enum(*NATIVE_TARGETS, *JS_TARGETS)}},
     "then": {"properties": {"artifact": {"pattern": r"\.klib$(?![\s\S])"}}}}]
 DEFS["abiWorkerRequest"] = versioned({"requestId": {**NONEMPTY, "maxLength": 256}, "compiler": ref("digest"),
     "extraction": ref("abiExtraction"), "inputs": {"allOf": [ref("tree"), {"properties": {"files": {
         "minItems": 1, "maxItems": 100000, "items": {"properties": {"executable": {"const": False}}}}}}]}})
-DEFS["abiWorkerRequest"]["description"] = "Input paths must belong to the selected JVM directory, or contain exactly the selected Native KLIB; semantic validation binds these paths."
+DEFS["abiWorkerRequest"]["description"] = "Input paths must belong to the selected JVM directory, or contain exactly the selected packed KLIB; semantic validation binds these paths."
 DEFS["abiSnapshot"] = versioned({**ABI_SCOPE, "inputs": ref("digest"), "format": enum("bcv-jvm-v1", "bcv-klib-v1"),
     "readerVersion": {"const": "0.18.1"}, "compilerVersion": {"const": "2.4.20"},
     "api": {"type": "string", "maxLength": 8388608, "pattern": r"^(?:[^\r\u0000]*\n)?$(?![\s\S])"}})
@@ -770,7 +770,7 @@ DEFS["abiSnapshot"]["description"] = "Exact public API text with LF line endings
 DEFS["abiComparison"] = object_({**ABI_SCOPE, "snapshot": PATH, "baseline": PATH})
 DEFS["abiComparison"]["description"] = "Snapshot and baseline paths must be distinct."
 DEFS["abiReady"] = object_({**ABI_SCOPE,
-    "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):abi-dump$(?![\s\S])"},
+    "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):abi-dump$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "snapshot": ACTIVATION_PATH, "api": ACTIVATION_PATH})
 DEFS["abiReady"]["description"] = "A current candidate is available for review; the run may still fail its baseline comparison."
 DEFS["frameworkReady"] = object_({

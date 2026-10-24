@@ -6,7 +6,7 @@ import kvik.core.*
 internal data class AbiSelection(val module: String, val target: String) {
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")))
-        require(target == "jvm" || NativeTarget.find(target) != null)
+        require(target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null)
     }
     val actionId: String get() = "$module:$target:abi-dump"
     fun event(runDirectory: String): JsonValue.Object {

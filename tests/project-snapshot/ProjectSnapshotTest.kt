@@ -93,24 +93,26 @@ class ProjectSnapshotTest {
             "targets" to listOf("jvm".json(), "jvm".json()).json())) }
     }
 
-    @Test fun abiChecksCaptureBaselinesWhileDumpAndBuildCanCreateTheFirstCandidate() = fixture { f ->
-        write("${f.root}/kvik.json", document().replace("\"compilerOptions\":[]",
-            "\"compilerOptions\":[],\"abi\":{\"baseline\":\"api/library.jvm.api\"}"))
-        val build = f.capture()
-        assertFalse(build.inputs.files.any { it.path.value.startsWith("api/") })
-        val selection = SnapshotSelection.AbiCheck(setOf("library"), setOf("jvm"))
-        assertEquals(selection, SnapshotSelection.fromJson(selection.toJson()))
-        assertFails { f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection) }
-        NativeFiles.ensureDirectory("${f.root}/api")
-        write("${f.root}/api/library.jvm.api", "public class Library\n")
-        val checked = assertIs<SnapshotCapture.Captured>(f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection)).snapshot
-        assertTrue(checked.inputs.files.any { it.path.value == "api/library.jvm.api" })
-        write("${f.root}/api/library.jvm.api", "public class Changed\n")
-        assertEquals(Freshness.STALE, f.snapshotter.freshness(checked))
-        assertEquals(Freshness.CURRENT, f.snapshotter.freshness(build))
-        assertFails { SnapshotSelection.fromJson(obj("kind" to "project".json(), "modules" to listOf("library".json()).json())) }
-        assertFails { SnapshotSelection.fromJson(obj("kind" to "abi-check".json(),
-            "modules" to listOf("library".json(), "library".json()).json(), "targets" to listOf("jvm".json()).json())) }
+    @Test fun abiChecksCaptureBaselinesWhileDumpAndBuildCanCreateTheFirstCandidate() {
+        for (target in listOf("jvm", "js", "wasmJs")) fixture { f ->
+            write("${f.root}/kvik.json", document(plugin = null).replace("jvm", target).replace("\"compilerOptions\":[]",
+                "\"compilerOptions\":[],\"abi\":{\"baseline\":\"api/library.$target.api\"}"))
+            val build = f.capture()
+            assertFalse(build.inputs.files.any { it.path.value.startsWith("api/") })
+            val selection = SnapshotSelection.AbiCheck(setOf("library"), setOf(target))
+            assertEquals(selection, SnapshotSelection.fromJson(selection.toJson()))
+            assertFails { f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection) }
+            NativeFiles.ensureDirectory("${f.root}/api")
+            write("${f.root}/api/library.$target.api", "public class Library\n")
+            val checked = assertIs<SnapshotCapture.Captured>(f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection)).snapshot
+            assertTrue(checked.inputs.files.any { it.path.value == "api/library.$target.api" })
+            write("${f.root}/api/library.$target.api", "public class Changed\n")
+            assertEquals(Freshness.STALE, f.snapshotter.freshness(checked))
+            assertEquals(Freshness.CURRENT, f.snapshotter.freshness(build))
+            assertFails { SnapshotSelection.fromJson(obj("kind" to "project".json(), "modules" to listOf("library".json()).json())) }
+            assertFails { SnapshotSelection.fromJson(obj("kind" to "abi-check".json(),
+                "modules" to listOf("library".json(), "library".json()).json(), "targets" to listOf("jvm".json()).json())) }
+        }
     }
 
     @Test fun changedPreflightConfigurationNeverPublishesInputs() = fixture { f ->

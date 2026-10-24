@@ -6,7 +6,7 @@ from jsonschema import Draft202012Validator
 
 SCHEMA = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/contracts.json').read_bytes())
 DIGEST = dict(hash='0' * 64, sizeBytes=1)
-TARGETS = ['jvm', 'macosArm64', 'linuxX64', 'iosArm64', 'iosSimulatorArm64']
+TARGETS = ['jvm', 'macosArm64', 'linuxX64', 'iosArm64', 'iosSimulatorArm64', 'js', 'wasmJs']
 
 
 def valid(name, value):
@@ -21,7 +21,7 @@ class AbiSchemaTest(unittest.TestCase):
                          readerVersion='0.18.1', compilerVersion='2.4.20', api='public class Example\n')
             self.assertTrue(valid('abiSnapshot', value))
             self.assertTrue(valid('abiSnapshot', {**value, 'api': ''}))
-            for changes in [dict(target='js'), dict(module='library\n'), dict(readerVersion='0.18.0'),
+            for changes in [dict(target='unknown'), dict(module='library\n'), dict(readerVersion='0.18.0'),
                             dict(compilerVersion='2.3.0'), dict(format='unknown'), dict(extra=True),
                             dict(api='no final newline'), dict(api='bad\r\n'), dict(api='bad\0\n')]:
                 self.assertFalse(valid('abiSnapshot', {**value, **changes}), changes)
@@ -32,7 +32,7 @@ class AbiSchemaTest(unittest.TestCase):
         value = dict(kind='abi-check', modules=['library'], targets=TARGETS)
         self.assertTrue(valid('snapshotSelection', value))
         for changes in [dict(modules=[]), dict(targets=[]), dict(modules=['a', 'a']),
-                        dict(targets=['jvm', 'jvm']), dict(targets=['js']), dict(extra=True)]:
+                        dict(targets=['jvm', 'jvm']), dict(targets=['unknown']), dict(extra=True)]:
             self.assertFalse(valid('snapshotSelection', {**value, **changes}))
         for target in TARGETS:
             self.assertTrue(valid('target', dict(name=target, main='main', test=None,
@@ -44,7 +44,9 @@ class AbiSchemaTest(unittest.TestCase):
         tree = dict(schemaVersion=1, files=[dict(path='library.klib', digest=DIGEST, executable=False)])
         value = dict(schemaVersion=1, requestId='run', compiler=DIGEST, extraction=extraction, inputs=tree)
         self.assertTrue(valid('abiWorkerRequest', value))
-        self.assertFalse(valid('abiExtraction', {**extraction, 'artifact': 'library.jar'}))
+        for target in TARGETS[1:]:
+            self.assertTrue(valid('abiExtraction', {**extraction, 'target': target}))
+            self.assertFalse(valid('abiExtraction', {**extraction, 'target': target, 'artifact': 'library.jar'}))
         self.assertFalse(valid('abiWorkerRequest', {**value, 'inputs': dict(schemaVersion=1, files=[])}))
         executable = dict(schemaVersion=1, files=[{**tree['files'][0], 'executable': True}])
         self.assertFalse(valid('abiWorkerRequest', {**value, 'inputs': executable}))

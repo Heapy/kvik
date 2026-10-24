@@ -5,18 +5,18 @@ import kvik.core.*
 import kvik.cache.*
 
 class AbiMaterializationTest {
-    private fun fixture(body: (String, NativeContentStore, AbiSelection, VerificationRecord) -> Unit) {
+    private fun fixture(target: String = "jvm", body: (String, NativeContentStore, AbiSelection, VerificationRecord) -> Unit) {
         val root = NativeFiles.tempDirectory("/private/tmp")
         try {
             val content = NativeContentStore("$root/store")
             val run = "$root/run".also(NativeFiles::ensureDirectory)
-            val selection = AbiSelection("library", "jvm")
+            val selection = AbiSelection("library", target)
             val identity = Sha256.digest("identity".encodeToByteArray())
-            val snapshot = AbiSnapshot("library", "jvm", identity, "public class Example\n")
+            val snapshot = AbiSnapshot("library", target, identity, "public class Example\n")
             val files = listOf("abi.json" to snapshot.toJson().canonical(), "api.txt" to snapshot.api)
                 .map { (path, text) -> FileEntry(LogicalPath(path), content.put(text.encodeToByteArray())) }
             val dump = ActionResult(selection.actionId, identity, ActionStatus.LOCAL_HIT, TreeManifest(files), 0)
-            val check = "library:jvm:abi-check"
+            val check = "library:$target:abi-check"
             val record = VerificationRecord("run", setOf(check), emptySet(), identity, identity, identity, identity,
                 emptyMap(), listOf(dump, ActionResult(check, identity, ActionStatus.FAILED, exitCode = 1)),
                 emptyList(), TestCounts(0, 0, 0, 0, true), VerificationStatus.FAILED, Freshness.CURRENT, listOf("kvik", "abi-check"))
@@ -24,14 +24,16 @@ class AbiMaterializationTest {
         } finally { NativeFiles.removeTree(root) }
     }
 
-    @Test fun failedComparisonStillExposesExactCandidateAndLeavesRecordFailed() = fixture { run, content, selection, record ->
-        assertTrue(materializeAbiCandidates(record, listOf(selection), content, run) {
-            assertNull(NativeFiles.info("$run/abi"))
-            true
-        })
-        assertEquals("public class Example\n", NativeFiles.read("$run/abi/library/jvm/api.txt", 1024).decodeToString())
-        assertEquals(VerificationStatus.FAILED, record.status)
-        assertEquals("$run/abi/library/jvm/abi.json", selection.event(run).values.getValue("snapshot").stringValue())
+    @Test fun failedComparisonStillExposesExactCandidateAndLeavesRecordFailed() {
+        for (target in listOf("jvm", "js", "wasmJs")) fixture(target) { run, content, selection, record ->
+            assertTrue(materializeAbiCandidates(record, listOf(selection), content, run) {
+                assertNull(NativeFiles.info("$run/abi"))
+                true
+            })
+            assertEquals("public class Example\n", NativeFiles.read("$run/abi/library/$target/api.txt", 1024).decodeToString())
+            assertEquals(VerificationStatus.FAILED, record.status)
+            assertEquals("$run/abi/library/$target/abi.json", selection.event(run).values.getValue("snapshot").stringValue())
+        }
     }
 
     @Test fun freshnessOrCancellationVetoLeavesNoVisibleOrTemporaryCandidate() = fixture { run, content, selection, record ->

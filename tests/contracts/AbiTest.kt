@@ -6,14 +6,14 @@ class AbiTest {
     private val digest = Sha256.digest("artifact".encodeToByteArray())
 
     @Test fun snapshotsBindFormatCompilerAndExactInputTree() {
-        for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64")) {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64", "js", "wasmJs")) {
             val snapshot = AbiSnapshot("library", target, digest, "public class Sample\n")
             assertEquals(snapshot, AbiSnapshot.fromJson(snapshot.toJson()))
             for ((field, value) in listOf("readerVersion" to "0.18.0", "compilerVersion" to "2.3.0", "format" to "unknown")) {
                 assertFails { AbiSnapshot.fromJson(JsonValue.Object(snapshot.toJson().values + (field to value.json()))) }
             }
         }
-        assertFails { AbiSnapshot("library", "js", digest, "") }
+        assertFails { AbiSnapshot("library", "unknown", digest, "") }
         assertFails { AbiSnapshot("library", "jvm", digest, "public class Sample\r\n") }
         assertFails { AbiSnapshot("library", "jvm", digest, "unterminated") }
     }
@@ -28,6 +28,12 @@ class AbiTest {
         val native = request.copy(extraction = AbiExtraction("library", "iosArm64", LogicalPath("module.klib")),
             inputs = TreeManifest(listOf(FileEntry(LogicalPath("module.klib"), digest))))
         assertEquals(native, AbiWorkerRequest.fromJson(native.toJson()))
+        for (target in KotlinJsTarget.entries) {
+            val web = native.copy(extraction = native.extraction.copy(target = target.projectName))
+            assertEquals(web, AbiWorkerRequest.fromJson(web.toJson()))
+            assertFails { web.extraction.copy(artifact = LogicalPath("library.jar")) }
+            assertFails { web.copy(inputs = TreeManifest(web.inputs.files + FileEntry(LogicalPath("other.klib"), digest))) }
+        }
         assertFails { AbiSettings.fromJson(obj("baseline" to "../api.txt".json())) }
         assertFails { AbiSettings.fromJson(obj("baseline" to "api.txt".json(), "update" to true.json())) }
     }
