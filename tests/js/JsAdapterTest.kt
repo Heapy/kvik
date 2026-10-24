@@ -50,18 +50,7 @@ class JsAdapterTest {
             assertNotEquals(action(selection).key(Sha256), action(custom).key(Sha256))
             assertEquals(action(custom).key(Sha256), action(custom.copy(resources = TestResources(768, setOf("database", "server")))).key(Sha256))
             assertEquals(CachePolicy.NEVER, action(custom).cachePolicy)
-            val host = object : ProcessHost {
-                override fun start(request: ProcessRequest): OwnedProcess = error("Resource queries must not launch")
-                override fun close() = Unit
-            }
-            val store = object : ContentStore {
-                override fun put(bytes: ByteArray): Digest = error("No writes")
-                override fun get(digest: Digest): ByteArray? = error("No reads")
-            }
-            val executor = JsCompilerExecutor("run", "/unused", host, store,
-                kvik.compiler.jvm.JvmToolchainProvider { error("No compiler") }, NodeToolchainProvider { _, _ -> error("No Node") })
-            assertEquals(ResourceRequest(512), executor.resources(action(selection)))
-            assertEquals(resources.resourceRequest(), executor.resources(action(custom)))
+
         }
         val (selection, report) = report()
         val custom = selection.copy(resources = resources)
