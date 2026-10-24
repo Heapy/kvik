@@ -186,6 +186,14 @@ private fun declaredClasspath(paths: List<LogicalPath>, inputs: TreeManifest) {
     for (path in paths) require(inputs.files.any { it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/") }) { "Undeclared/unsupported classpath: ${path.value}" }
 }
 
+/** Package classpath bytes without invoking a compiler or inspecting the requested compilation's sources. */
+fun jvmClasspathAction(metadata: JvmClasspath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>): ActionSpec {
+    require(toolchains.keys == jvmIdentities)
+    metadata.requireInputs(inputs)
+    return ActionSpec("kvik-jvm-classpath-v1", composition, ActionKind.PACKAGE, hostPlatform, "jvm", toolchains.toMap(),
+        TreeManifest(inputs.files.toList()), listOf(LogicalPath("classpath")), emptyList(), emptyMap(), metadata.toJson(), cachePolicy = CachePolicy.LOCAL)
+}
+
 fun jvmCompileAction(compilation: JvmCompilation, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 120_000, cachePolicy: CachePolicy = CachePolicy.LOCAL): ActionSpec {
     require(cachePolicy == CachePolicy.LOCAL || cachePolicy == CachePolicy.REMOTE) { "Unsupported JVM compilation cache policy" }
     require(cachePolicy != CachePolicy.REMOTE || compilation.plugins.isEmpty() && compilation.pluginApplications.isEmpty()) {

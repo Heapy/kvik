@@ -1443,6 +1443,72 @@ class IosFrameworkGraphTest {
     }
 }
 
+class JvmClasspathGraphTest {
+    @Test fun queryClasspathOrderAndCapturedBytesExactlyMatchMainAndTestCompilers() {
+        val (original, files) = applicationFixture()
+        val plugin = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
+            setOf("jvm"), setOf("main", "test"), emptyList(), emptyList())
+        val config = configuration(*original.project.modules.map { if (it.id == "app") it.copy(compilerPlugins = listOf(plugin)) else it }.toTypedArray())
+        val compiled = resolved(graph(config, files, request(ProjectMode.TEST)))
+        for ((mode, scope, compilationId) in listOf(Triple(ProjectMode.CLASSPATH_MAIN, "main", "app:jvm:main"),
+            Triple(ProjectMode.CLASSPATH_TEST, "test", "app:jvm:test-compile"))) {
+            val selection = request(mode)
+            val plan = graph(config, files, selection)
+            val actions = resolved(plan)
+            val id = "app:jvm:classpath-$scope"
+            assertEquals(setOf(id), projectRequestedChecks(selection))
+            assertEquals(mapOf(id to id), plan.terminalActions)
+            val action = actions.getValue(id)
+            val metadata = JvmClasspath.fromJson(action.parameters)
+            val compile = compiled.getValue(compilationId)
+            val compiler = JvmCompilation.fromJson(compile.parameters)
+            assertEquals(compiler.classpath, metadata.classpath)
+            assertEquals(compile.inputs.files.filter { file -> metadata.classpath.any { file.path == it || file.path.value.startsWith(it.value + "/") } }, action.inputs.files)
+            assertEquals("kvik-jvm-classpath-v1", action.implementation)
+            assertEquals(ActionKind.PACKAGE, action.kind)
+            assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+            assertEquals(listOf(LogicalPath("classpath")), action.outputs)
+            assertEquals(action, jvmClasspathAction(metadata, action.inputs, composition, tools.getValue("jvm")))
+            assertFalse(compilationId in actions)
+            assertTrue(actions.keys.none { it.endsWith(":test") || it.startsWith("runtime:") })
+            assertTrue(action.inputs.files.none { it.path.value.startsWith("plugins/") || it.path.value.startsWith("runtime/") || it.path.value.startsWith("src/") })
+            assertEquals(setOf("jvm"), projectToolTargets(config.project, selection))
+            if (scope == "test") assertEquals(LogicalPath("modules/app/jvm/main"), metadata.classpath.first())
+        }
+    }
+
+    @Test fun queriesDoNotRequireRequestedCompilationSourcesOrItsCompilerPlugins() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main"), emptyList(), emptyList(), "example.plugin", "2.4.20")
+        val config = configuration(base, app.copy(compilerPlugins = listOf(plugin)), module("producer"))
+        // Neither the selected app nor its plugin producer has source inputs. A main compilation would fail.
+        val files = TreeManifest(snapshot().files.filter { it.path.value.startsWith("base/") })
+        val plan = graph(config, files, request(ProjectMode.CLASSPATH_MAIN))
+        assertEquals(setOf("base:jvm:main", "app:jvm:classpath-main"), plan.nodes.map { it.id }.toSet())
+        resolved(plan)
+        assertFails { graph(config, files) }
+        val emptyTests = TreeManifest(snapshot().files.filterNot { it.path.value.contains("Test/") } +
+            FileEntry(LogicalPath("app/jvmTest/Broken.java"), digest("invalid source")))
+        val testQuery = graph(files = emptyTests, request = request(ProjectMode.CLASSPATH_TEST))
+        assertTrue("app:jvm:main" in testQuery.nodes.map { it.id })
+        assertTrue(testQuery.nodes.none { it.id == "app:jvm:test-compile" || it.id == "app:jvm:test" })
+        resolved(testQuery)
+        assertFails { graph(files = emptyTests, request = request(ProjectMode.COMPILE_TESTS)) }
+    }
+
+    @Test fun emptyExternalClasspathIsValidButOnlyJvmAndDeclaredTestCompilationsAreAccepted() {
+        val config = configuration(module("app").copy(sourceSets = module("app").sourceSets.map { it.copy(dependencies = emptyList()) }))
+        val plan = graph(config, TreeManifest(emptyList()), request(ProjectMode.CLASSPATH_MAIN))
+        val action = plan.nodes.single().resolve(emptyMap())
+        assertTrue(JvmClasspath.fromJson(action.parameters).classpath.isEmpty())
+        assertTrue(action.inputs.files.isEmpty())
+        assertFails { graph(config, TreeManifest(emptyList()), request(ProjectMode.CLASSPATH_TEST)) }
+        assertFails { graph(request = request(ProjectMode.CLASSPATH_MAIN, "macosArm64")) }
+        assertFails { projectToolTargets(project.project, request(ProjectMode.CLASSPATH_TEST, "macosArm64")) }
+        val noTest = configuration(base, app.copy(targets = app.targets.map { it.copy(test = null) }))
+        assertFails { graph(noTest, request = request(ProjectMode.CLASSPATH_TEST)) }
+    }
+}
+
 class CompileTestsGraphTest {
     @Test fun compileOnlyReusesEveryCompilerAndLinkKeyWithoutAnyTestExecutionLeaf() {
         for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {

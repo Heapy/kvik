@@ -378,7 +378,10 @@ DEFS["testDetails"] = object_({"suite": nullable(TEST_TEXT), "name": nullable(TE
 DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, "status": enum("passed", "failed", "skipped"),
     "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
+DEFS["jvmClasspath"] = versioned({"module": ID, "compilation": enum("main", "test"), "classpath": array(PATH, uniqueItems=True)})
+DEFS["jvmClasspath"]["description"] = "Ordered compiler classpath; accompanying input tree must cover every JAR or directory and contain no unrelated files."
 DEFS["requestedCheck"] = {"oneOf": [
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests))$(?![\s\S])"},

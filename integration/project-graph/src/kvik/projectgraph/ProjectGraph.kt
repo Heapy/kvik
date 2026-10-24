@@ -11,7 +11,8 @@ import kvik.library.*
 import kvik.abi.*
 import kvik.documentation.*
 
-enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
+enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, CLASSPATH_MAIN, CLASSPATH_TEST, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
+private fun ProjectMode.isClasspath() = this in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)
 private fun ProjectMode.checkScope() = name.lowercase().replace('_', '-')
 data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
@@ -33,6 +34,10 @@ fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
 
 /** Host JVM producers may be prerequisites even when only a Native target was requested. */
 fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<String> {
+    if (request.mode.isClasspath()) {
+        require(request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
+        return setOf("jvm")
+    }
     val modules = project.modules.associateBy { it.id }
     val visited = mutableSetOf<List<String>>()
     val targets = request.targets.toMutableSet()
@@ -107,6 +112,7 @@ private class Builder(
         require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS)) {
             "JS/Wasm currently supports build, test and compile-tests; packaging, ABI, documentation and application modes require their own adapters"
         }
+        require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
         for (module in this.request.modules) for (target in this.request.targets) {
@@ -114,7 +120,7 @@ private class Builder(
             require(tools[target]?.keys == if (target == "jvm") setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
                 else if (KotlinJsTarget.find(target) != null) setOf("jdk", "jvm-compiler", "jvm-worker", "junit", "node")
                 else NativeTarget.require(target).toolIdentityNames) { "Missing/incompatible tool identities: $target" }
-            val scope = if (this.request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS)) "test" else "main"
+            val scope = if (this.request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.CLASSPATH_TEST)) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
             val runtime = scope == "test" && (this.request.mode == ProjectMode.TEST || target != "jvm") || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
@@ -134,12 +140,14 @@ private class Builder(
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
-            ensureMain(module, target)
+            if (!request.mode.isClasspath()) ensureMain(module, target)
             val check = "$module:$target:${request.mode.checkScope()}"
             terminals[check] = when (request.mode) {
                 ProjectMode.BUILD -> if (target(module, target).nativeFramework == null) mainId(module, target) else ensureFramework(module, target)
                 ProjectMode.TEST -> ensureTest(module, target)
                 ProjectMode.COMPILE_TESTS -> ensureTest(module, target, execute = false)
+                ProjectMode.CLASSPATH_MAIN -> ensureClasspath(module, "main")
+                ProjectMode.CLASSPATH_TEST -> ensureClasspath(module, "test")
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
                 ProjectMode.ABI_DUMP -> ensureAbiDump(module, target)
@@ -527,10 +535,38 @@ private class Builder(
         require(!it.multiplatform || sources.common.isNotEmpty()) { "Explicit multiplatform option requires common fragments" }
     }
 
+    private data class CompilationClasspath(val dependencies: List<String>, val modules: List<String>, val artifacts: List<FileEntry>)
+
+    /** Shared with the real compiler actions: resolution, order and captured bytes are identical. */
+    private fun compilationClasspath(module: String, target: String, scope: String): CompilationClasspath {
+        val dependencies = closure(module, target, scope).modules
+        val modules = if (target == "jvm" && scope == "test") listOf(module) + dependencies else dependencies
+        val artifacts = artifactEntries(external(module, target, scope, if (target == "jvm") "java-api" else "kotlin-api"), target)
+        return CompilationClasspath(dependencies, modules, artifacts)
+    }
+    private fun classpathPaths(classpath: CompilationClasspath, target: String): List<LogicalPath> =
+        classpath.modules.map { modulePath(it, target, "main") } + classpath.artifacts.map { it.path }
+    private fun classpathInputs(classpath: CompilationClasspath, target: String, results: Map<String, ActionResult>): TreeManifest =
+        merge(classpath.modules.flatMap { remap(results, it, target, "main") }, classpath.artifacts)
+
+    private fun ensureClasspath(module: String, scope: String): String {
+        val classpath = compilationClasspath(module, "jvm", scope)
+        classpath.modules.forEach { ensureMain(it, "jvm") }
+        val edges = classpath.modules.map { mainId(it, "jvm") }.toSet()
+        val id = "$module:jvm:classpath-$scope"
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            jvmClasspathAction(JvmClasspath(module, scope, classpathPaths(classpath, "jvm")),
+                classpathInputs(classpath, "jvm", results), composition, tools.getValue("jvm"))
+        }
+        return id
+    }
+
     private fun ensureMain(module: String, target: String) {
         val id = mainId(module, target)
         if (id in nodes) return
-        val dependencies = closure(module, target, "main").modules
+        val compilationClasspath = compilationClasspath(module, target, "main")
+        val dependencies = compilationClasspath.dependencies
         dependencies.forEach { ensureMain(it, target) }
         val pluginDependencies = pluginModules(module, target, "main")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
@@ -546,16 +582,16 @@ private class Builder(
             nativeMainNames[target to options.nativeModuleName] = module
         }
         val resource = resources(module, target, "main")
-        val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-api" else "kotlin-api"), target)
+        val artifacts = compilationClasspath.artifacts
         val plugin = plugins(module, target, "main")
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
         val edges = dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
-            val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
+            val compilerInputs = classpathInputs(compilationClasspath, target, results)
             val workspace = workspacePlugin(module, target, "main", results)
-            val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries)
-            val classpath = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path }
+            val inputs = merge(source.entries, resource, compilerInputs.files, plugin, workspace.entries)
+            val classpath = classpathPaths(compilationClasspath, target)
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
@@ -825,7 +861,8 @@ private class Builder(
 
     private fun ensureTest(module: String, target: String, execute: Boolean = true): String {
         if (KotlinJsTarget.find(target) != null) return ensureJsTest(module, KotlinJsTarget.require(target), execute)
-        val dependencies = closure(module, target, "test").modules
+        val compilationClasspath = compilationClasspath(module, target, "test")
+        val dependencies = compilationClasspath.dependencies
         val runtimeDependencies = if (execute || target != "jvm") closure(module, target, "test", true).modules else emptyList()
         (dependencies + runtimeDependencies).distinct().forEach { ensureMain(it, target) }
         val main = mainSources.getValue(module to target)
@@ -847,7 +884,7 @@ private class Builder(
                 val production = compilerOptions(compilerModuleName(module, target), target, target(module, target).compilerOptions)
                 require(options.optIns.containsAll(production.optIns)) { "Native tests recompile main sources: test opt-ins must include main opt-ins" }
             }
-            val artifacts = artifactEntries(external(module, target, "test", if (target == "jvm") "java-api" else "kotlin-api"), target)
+            val artifacts = compilationClasspath.artifacts
             if (kotest != null) {
                 require(options.nativeLanguageOptions == NativeLanguageOptions()) {
                     "Native return-value checker/destructuring settings are not yet represented by the KSP adapter"
@@ -877,14 +914,13 @@ private class Builder(
             require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
             nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
                 validateResults(results, compileEdges)
-                val linkedModules = if (target == "jvm") moduleIds else dependencies
-                val dependencyFiles = linkedModules.flatMap { remap(results, it, target, "main") }
+                val compilerInputs = classpathInputs(compilationClasspath, target, results)
                 val workspace = workspacePlugin(module, target, "test", results)
                 val generated = if (kotest == null) emptyList() else results.getValue(generationId(module, target)).outputs.files.also {
                     require(it.map { file -> file.path } == listOf(kotestGeneratedLauncher)) { "KSP prerequisite must contain exactly the raw pinned launcher" }
                 }
-                val inputs = merge(source.entries, resource, artifacts, plugin, dependencyFiles, workspace.entries, generated)
-                val classpath = linkedModules.map { modulePath(it, target, "main") } + artifacts.map { it.path }
+                val inputs = merge(source.entries, resource, compilerInputs.files, plugin, workspace.entries, generated)
+                val classpath = classpathPaths(compilationClasspath, target)
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, source.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, source.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,
                     explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
