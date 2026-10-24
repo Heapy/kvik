@@ -149,9 +149,30 @@ def main():
         assert hits['complete'] and not hits['truncated']
         limited = store('search', 'fixture', 'needle', '--rev', base, '--view', view, '--max', '1')
         assert len(limited['hits']) == 1 and limited['truncated']
+        search_page = store('search-page', 'fixture', 'needle', '--rev', base,
+                            '--view', view, '--fixed', '--limit', '1')
+        assert not search_page['complete'] and search_page['truncated']
+        search_cursor = search_page['nextCursor']
+        paged_hits = list(search_page['hits'])
+        search_page = store('search-page', 'fixture', 'needle', '--rev', base,
+                            '--view', view, '--fixed', '--limit', '2', '--cursor', search_cursor)
+        paged_hits.extend(search_page['hits'])
+        assert search_page['complete'] and search_page['nextCursor'] is None
+        assert search_page['searchMode'] == 'exact-scan' and search_page['scannedRevision'] == base
+        assert [h['path'] for h in paged_hits] == ['sub/common/Common.kt', 'sub/jvm/Main.kt']
+        blobs = {entry['path']: entry['blob'] for entry in tree['entries']}
+        for hit in paged_hits:
+            assert hit['blob'] == blobs[hit['path']] and hit['mode'] == '100644'
+            assert hit['line'] == 1
+            assert hit['column'] == files[hit['path']].encode().index(b'needle') + 1
+        test_view = save(tests, 'tests')
+        store('search-page', 'fixture', 'needle', '--rev', base, '--view', test_view,
+              '--fixed', '--cursor', search_cursor, expected=1)
         empty_view = save(export(base, 'production', '--tag', 'module:missing'), 'empty')
         assert store('tree', 'fixture', '--rev', base, '--view', empty_view)['entries'] == []
         assert store('search', 'fixture', 'needle', '--rev', base, '--view', empty_view)['hits'] == []
+        empty_search = store('search-page', 'fixture', 'needle', '--rev', base, '--view', empty_view)
+        assert empty_search['hits'] == [] and empty_search['complete'] and empty_search['nextCursor'] is None
 
         # Export needs the pinned inventory and configuration, without reading source bodies.
         before = cache_state()
@@ -169,6 +190,11 @@ def main():
         ours = tx(base, {'sub/jvm/Main.kt': 'fun main() = println("changed")\n'}, ref='main', view=view)
         assert store('read', 'fixture', 'sub/test/Test.kt', '--rev', ours)['content'] == files['sub/test/Test.kt']
         store('tree', 'fixture', '--rev', 'main', '--view', view, expected=1)
+        store('search-page', 'fixture', 'needle', '--rev', 'main', '--view', view,
+              '--fixed', '--cursor', search_cursor, expected=1)
+        resumed = store('search-page', 'fixture', 'needle', '--rev', base, '--view', view,
+                        '--fixed', '--cursor', search_cursor)
+        assert resumed['hits'] == paged_hits[1:] and resumed['complete']
         assert len(store('tree', 'fixture', '--rev', base, '--view', view)['entries']) == len(paths(production))
         theirs = tx(base, {'sub/test/Test.kt': '// hidden branch edit\n'}, view=view)
         current_view = save(export(ours, 'production'), 'current')
@@ -176,6 +202,19 @@ def main():
                        '--expect-head', ours, '--intent', 'Merge visible and hidden edits')['revision']
         assert store('read', 'fixture', 'sub/test/Test.kt', '--rev', merged)['content'] == '// hidden branch edit\n'
         assert store('read', 'fixture', 'sub/jvm/Main.kt', '--rev', merged)['content'] == 'fun main() = println("changed")\n'
+
+        history = []
+        cursor = None
+        while True:
+            page = store('log-page', 'fixture', '--rev', merged, '--claim-values-as-text',
+                         '--limit', '1', *(['--cursor', cursor] if cursor else []))
+            history.extend(entry['revision'] for entry in page['entries'])
+            cursor = page['nextCursor']
+            if cursor is None:
+                assert page['complete']
+                break
+        assert history[0] == merged and len(history) == len(set(history)) == 5
+        assert set(history) == {empty, base, ours, theirs, merged}
 
         merge_view = save(export(merged, 'production'), 'merged')
         first = tx(merged, {'sub/test/Test.kt': '// ours\n'}, ref='main', view=merge_view)

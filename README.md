@@ -194,6 +194,34 @@ reference or changed filter is rejected. Use the returned immutable revision to
 continue the original snapshot. Tree pages reduce returned data; the current
 implementation still scans the full tree internally.
 
+Search results and revision history also support bounded pages:
+
+```sh
+/absolute/bin/kode --home /absolute/kode-store search-page library needle \
+  --rev IMMUTABLE_REVISION --fixed --view production-view.json --limit 100
+/absolute/bin/kode --home /absolute/kode-store log-page library \
+  --rev IMMUTABLE_REVISION --claim-values-as-text --limit 20
+```
+
+Pass `nextCursor` back as `--cursor` with the same revision and query options.
+Search cursors bind the pattern, matching flags, literal `--path` prefixes and
+view; history cursors bind the claims encoding. Page size may change between
+requests. `complete` indicates the last page, whose `nextCursor` is null.
+
+`search-page` performs an exact scan of regular text blobs, with one hit per
+matching line. Hits include the path, blob identity, mode, line number and
+one-based UTF-8 byte column. Hidden matches do not consume a view's page limit.
+The default limit is 200 and the maximum is 1,000. Git output is streamed and
+stopped after detecting the next page; matching records above 8 MiB or responses
+above 16 MiB fail explicitly. The tree inventory is still scanned, and resuming
+within a file rescans that blob; this command does not use a search index.
+
+`log-page` traverses the pinned revision's complete ancestry in topological order,
+including merge parents. Its default limit is 20 and maximum is 1,000; each
+commit's captured log data is limited to 2 MiB and the response to 16 MiB.
+`--claim-values-as-text` preserves claim values as JSON text for consumers that
+cannot represent every JSON number exactly. History is not filtered by `--view`.
+
 Kode can propose a text-first identifier rename in `.kt` and `.kts` sources:
 
 ```sh
