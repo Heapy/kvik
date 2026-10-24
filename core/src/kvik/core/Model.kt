@@ -202,5 +202,5 @@ interface BuildPlugin {
     val id: String
     val apiVersion: Int
     val configurationSchema: JsonValue.Object
-    fun actions(project: JsonValue.Object): List<ActionNode>
+    fun actions(project: JsonValue.Object): List<ActionNode> = emptyList()
 }

@@ -1,14 +1,21 @@
 package kvik.plugins.kotlin
 
 import kvik.core.*
+import kvik.projectgraph.*
 
-/** Native source plugin; compiler actions are integrated after K03–K08. */
-class KotlinBuildPlugin : BuildPlugin {
+/** Source-distributed Kotlin provider for the project and script action graphs. */
+class KotlinBuildPlugin : ProjectBuildPlugin {
     override val id: String = "kvik.kotlin"
     override val apiVersion: Int = CONTRACT_VERSION
-    override val configurationSchema: JsonValue.Object = obj("type" to "object".json(),
-        "properties" to obj("targets" to obj("type" to "array".json(), "items" to obj("enum" to
-            (listOf("jvm") + NativeTarget.entries.map { it.projectName } + KotlinJsTarget.entries.map { it.projectName }).map { it.json() }.json()))),
-        "required" to listOf("targets".json()).json(), "additionalProperties" to false.json())
-    override fun actions(project: JsonValue.Object): List<ActionNode> = error("Compiler adapters have not been integrated")
+    override val configurationSchema: JsonValue.Object = obj(
+        "description" to "Kotlin consumes the core project or standalone script authoring document.".json(),
+        "oneOf" to listOf("project", "standaloneScript").map {
+            obj("\$ref" to "https://kvik.dev/schemas/v1/contracts.json#/\$defs/$it".json())
+        }.json())
+    override fun projectGraph(context: ProjectBuildContext, request: ProjectGraphRequest): ProjectActionGraph =
+        projectActionGraph(context.effective, context.lock, context.snapshot, context.composition, context.toolchains, request)
+
+    override fun scriptGraph(context: ProjectBuildContext, request: ScriptGraphRequest): ProjectActionGraph =
+        scriptActionGraph(context.effective, context.lock, context.snapshot, context.composition,
+            context.toolchains.getValue("jvm"), request)
 }
