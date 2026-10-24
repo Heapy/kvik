@@ -131,6 +131,12 @@ removes that module's generated mapping. Reload starts with declared sources onl
 Source queries do not run generators: compile the owning target or a target that
 needs it to populate them. This covers the pinned Native Kotest/KSP and SQLDelight
 adapters; additional generators need explicit source-output contracts.
+SQLDelight errors are published at their `.sq` source locations on the owning JVM
+main target, including when generation is a prerequisite of another target.
+Generator and compiler diagnostics are tracked separately: a failed generator
+retains diagnostics from the blocked compiler. Successful generation, including a
+cache hit or deletion of the last SQL input, clears previous SQL errors. Reload
+clears published diagnostics before importing the new model.
 The exposed launcher is the original KSP output. Diagnostics referring to the
 Native adapter's rewritten `prepared/kotest.kt` currently remain log messages.
 

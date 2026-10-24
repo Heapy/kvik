@@ -32,8 +32,8 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     }
     private var pending: Pending? = null
     private val messages = ArrayDeque<JsonValue.Object>()
-    private val compilerDiagnostics = mutableMapOf<String, Pair<Digest, List<Diagnostic>>>()
-    private val published = mutableMapOf<String, Set<String>>()
+    private val actionDiagnostics = mutableMapOf<String, Pair<Digest, List<Diagnostic>>>()
+    private val publishedDiagnostics = BspDiagnostics()
     override val activeId: JsonValue? get() = pending?.request?.id
 
     private fun notification(method: String, params: JsonValue.Object) {
@@ -47,22 +47,17 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             }.json()))
     }
 
-    private fun clearGeneratedDiagnostics(model: BspProjectModel, target: BspTarget, state: Pending? = null) {
-        val documents = published[target.uri].orEmpty()
-        if (documents.isEmpty()) return
+    private fun clearGeneratedDiagnostics(model: BspProjectModel, target: BspTarget, state: Pending) {
         val generated = model.sources(listOf(target.uri)).values.getValue("items").arrayValue().single().objectValue()
             .getValue("sources").arrayValue().map(JsonValue::objectValue)
             .filter { it.getValue("generated").booleanValue() }.map { it.getValue("uri").stringValue() }.toSet()
-        for (uri in documents.intersect(generated)) {
-            val params = obj("textDocument" to obj("uri" to uri.json()), "buildTarget" to obj("uri" to target.uri.json()),
-                "diagnostics" to emptyList<JsonValue>().json(), "reset" to true.json())
-            if (state == null) notification("build/publishDiagnostics", params) else notification(state, "build/publishDiagnostics", params)
+        for (params in publishedDiagnostics.clearDocuments(target, generated)) {
+            notification(state, "build/publishDiagnostics", params)
         }
-        published[target.uri] = documents - generated
     }
 
     override fun modelReloaded(previous: BspProjectModel, next: BspProjectModel) {
-        previous.allTargets().forEach { clearGeneratedDiagnostics(previous, it) }
+        publishedDiagnostics.clear().forEach { notification("build/publishDiagnostics", it) }
         val old = previous.allTargets().map { it.uri }.toSet()
         val current = next.allTargets().map { it.uri }.toSet()
         targetsChanged((old + current).sorted().map { uri -> uri to when {
@@ -139,14 +134,14 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         if (record.freshnessAtCompletion != Freshness.CURRENT) return values
         val replayed = mutableListOf<Diagnostic>()
         for (action in record.actions) {
-            if (!action.successful || state.model.actionTarget(action.actionId) == null) continue
+            if (!action.successful || state.model.diagnosticTarget(action.actionId) == null) continue
             val key = checkNotNull(action.key)
             if (action.status == ActionStatus.EXECUTED) {
-                compilerDiagnostics[action.actionId] = key to values.filter { it.actionId == action.actionId }
+                actionDiagnostics[action.actionId] = key to values.filter { it.actionId == action.actionId }
             } else {
-                // Cache hits reuse outputs without new compiler observations. Keep warnings
+                // Cache hits reuse outputs without new producer observations. Keep warnings
                 // observed for this exact key during this connection, including after a failed edit.
-                compilerDiagnostics[action.actionId]?.takeIf { it.first == key }?.second?.let(replayed::addAll)
+                actionDiagnostics[action.actionId]?.takeIf { it.first == key }?.second?.let(replayed::addAll)
             }
         }
         return values + replayed
@@ -156,26 +151,24 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
         val files = mutableMapOf<String, MutableMap<String, MutableList<JsonValue>>>()
         for (diagnostic in values) {
             val path = diagnostic.path
-            val target = diagnostic.actionId?.let(state.model::actionTarget)
-            val uri = if (path == null || target == null) null else state.model.sourceUri(target, path)
+            val actionId = diagnostic.actionId
+            val target = actionId?.let(state.model::diagnosticTarget)
+            val uri = if (path == null || actionId == null) null else state.model.diagnosticUri(actionId, path)
             if (!fresh || path == null || diagnostic.line == null || diagnostic.column == null || target == null ||
-                uri == null) { log(state, diagnostic.message); continue }
+                actionId == null || uri == null) { log(state, diagnostic.message); continue }
             val position = obj("line" to (diagnostic.line - 1).json(), "character" to (diagnostic.column - 1).json())
             val severity = if ("WARNING" in diagnostic.code) 2 else if ("INFO" in diagnostic.code) 3 else 1
-            files.getOrPut(target.uri) { mutableMapOf() }.getOrPut(uri) { mutableListOf() } += obj("range" to obj("start" to position, "end" to position),
+            files.getOrPut(actionId) { mutableMapOf() }.getOrPut(uri) { mutableListOf() } += obj("range" to obj("start" to position, "end" to position),
                 "severity" to severity.json(), "code" to diagnostic.code.json(), "source" to "kvik".json(), "message" to diagnostic.message.json())
         }
         if (!fresh) return
-        // Clear only compilations that completed, or actually returned compiler diagnostics.
-        // A blocked downstream target must retain its previous diagnostic set.
-        val completed = record.actions.filter { it.successful }.mapNotNull { state.model.actionTarget(it.actionId)?.uri }
-        for (target in (completed + files.keys).distinct()) {
-            val current = files[target].orEmpty()
-            for (uri in published[target].orEmpty() + current.keys) notification(state, "build/publishDiagnostics", obj(
-                "textDocument" to obj("uri" to uri.json()), "buildTarget" to obj("uri" to target.json()),
-                "diagnostics" to current[uri].orEmpty().json(), "reset" to true.json()))
-            published[target] = current.keys.toSet()
+        // A generator and its compiler can share a target. Completing one producer
+        // must not clear diagnostics for another producer blocked by this build.
+        val completed = record.actions.filter { it.successful && state.model.diagnosticTarget(it.actionId) != null }.map { it.actionId }
+        val updates = (completed + files.keys).distinct().associateWith { actionId ->
+            BspActionDiagnostics(checkNotNull(state.model.diagnosticTarget(actionId)), files[actionId].orEmpty())
         }
+        publishedDiagnostics.replace(updates).forEach { notification(state, "build/publishDiagnostics", it) }
     }
 
     private fun finished(state: Pending, child: Child, result: ProcessResult) {
