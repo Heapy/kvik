@@ -78,7 +78,7 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-documentation-native-stdlib-v1" -> listOf(FileEntry(LogicalPath("stdlib/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
-    "kvik-jvm-benchmark-harness-v1" -> listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "generated/Harness.class").map { FileEntry(LogicalPath("benchmark-harness/$it"), digest("$salt:$it")) }
+    "kvik-jvm-benchmark-harness-v1" -> listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "kvik-metadata.json", "generated/Harness.class").map { FileEntry(LogicalPath("benchmark-harness/$it"), digest("$salt:$it")) }
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
     "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).let { compilation ->
         listOf(FileEntry(compilation.output, digest(salt), true)) + if (compilation.target == NativeTarget.MACOS_ARM64)

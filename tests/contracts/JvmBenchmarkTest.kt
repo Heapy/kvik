@@ -39,6 +39,6 @@ class JvmBenchmarkTest {
         assertFails { JvmBenchmarkRun("app", classpath, BenchmarkProfile.MEASUREMENT, settings) }
         val run = JvmBenchmarkRun("app", listOf(LogicalPath("harness/app")) + classpath, BenchmarkProfile.MEASUREMENT, settings)
         assertFails { run.requireInputs(TreeManifest(inputs.files + FileEntry(LogicalPath("harness/app/Generated.class"), digest))) }
-        run.requireInputs(TreeManifest(inputs.files + listOf("META-INF/BenchmarkList", "META-INF/CompilerHints").map { FileEntry(LogicalPath("harness/app/$it"), digest) }))
+        run.requireInputs(TreeManifest(inputs.files + listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "kvik-metadata.json").map { FileEntry(LogicalPath("harness/app/$it"), digest) }))
     }
 }

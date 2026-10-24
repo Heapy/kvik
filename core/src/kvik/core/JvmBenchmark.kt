@@ -58,7 +58,7 @@ data class JvmBenchmarkRun(val module: String, val classpath: List<LogicalPath>,
     val effectiveSettings: JvmBenchmarkSettings get() = if (profile == BenchmarkProfile.SMOKE) settings.copy(warmups = 1, iterations = 1, iterationMillis = 50) else settings
     fun requireInputs(inputs: TreeManifest) {
         requireBenchmarkInputs(classpath, inputs)
-        for (name in listOf("META-INF/BenchmarkList", "META-INF/CompilerHints")) require(inputs.files.any { it.path == LogicalPath("harness/$module/$name") }) { "Missing generated JMH resource: $name" }
+        for (name in listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "kvik-metadata.json")) require(inputs.files.any { it.path == LogicalPath("harness/$module/$name") }) { "Missing generated JMH resource: $name" }
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "classpath" to classpath.map { it.value.json() }.json(), "profile" to profile.wireName.json(), "settings" to settings.toJson())
     companion object {
