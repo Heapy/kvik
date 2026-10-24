@@ -4,6 +4,7 @@ package kvik.cli
 import kvik.actioncache.LocalCachingActionExecutor
 import kvik.actioncache.RemoteCachingActionExecutor
 import kvik.abi.AbiActionExecutor
+import kvik.documentation.DocumentationActionExecutor
 import kvik.application.*
 import kvik.cache.*
 import kvik.cache.remote.*
@@ -68,6 +69,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.PACKAGE -> "package-library"
         ProjectMode.ABI_DUMP -> "abi-dump"
         ProjectMode.ABI_CHECK -> "abi-check"
+        ProjectMode.DOCUMENTATION -> "docs"
     }
     val project = if (scriptFile == null) {
         if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
@@ -75,8 +77,11 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val root = scriptFile?.root ?: checkNotNull(project).root
     val name = scriptFile?.name ?: checkNotNull(project).name
     val sourceBytes = scriptFile?.bytes ?: checkNotNull(project).bytes
-    val selection = scriptFile?.selection ?: if (mode == ProjectMode.ABI_CHECK)
-        SnapshotSelection.AbiCheck(options.modules, options.targets) else SnapshotSelection.Project
+    val selection = scriptFile?.selection ?: when (mode) {
+        ProjectMode.ABI_CHECK -> SnapshotSelection.AbiCheck(options.modules, options.targets)
+        ProjectMode.DOCUMENTATION -> SnapshotSelection.Documentation(options.modules, options.targets)
+        else -> SnapshotSelection.Project
+    }
     val storePath = projectPath(root, options.project.store)
     val lockPath = projectPath(root, options.project.lock)
     val toolsPath = projectPath(root, options.tools)
@@ -178,6 +183,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
                     val abi = AbiActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
+                    val documentation = DocumentationActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val nativeTargets = toolTargets.mapNotNull(NativeTarget::find)
                     val native = nativeTargets.associateWith { target ->
                         NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(target), tools.jvmProvider())
@@ -192,6 +198,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val delegate = object : ActionExecutor {
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
+                            "kvik-dokka-html-v1" -> documentation
                             "kvik-jvm-script-v1" -> scripts
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
@@ -259,6 +266,10 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                                 reports[id] = TestObservation(tests, report.counts, report.status)
                                 tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
                             }
+                        }
+                        for ((id, observation) in documentation.observations) if (seen.add(id)) {
+                            retain(id, observation.toJson())
+                            observation.diagnostics.forEach(journal::diagnostic)
                         }
                         for ((id, observation) in abi.observations) if (seen.add(id)) {
                             retain(id, obj("result" to observation.result.toJson(),
@@ -374,6 +385,28 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
                 journal.diagnostic(Diagnostic("KVIK_ABI_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
                     failure.message ?: "Cannot materialize ABI candidates"))
+            }
+        }
+        if (mode == ProjectMode.DOCUMENTATION && record.status == VerificationStatus.PASSED) {
+            val selections = options.modules.sorted().map { DocumentationSelection(it, options.targets) }
+            try {
+                var current = Freshness.INDETERMINATE
+                val exposed = materializeDocumentation(record, selections, content, run.path) {
+                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    cancelled = kvik_interrupt_requested() != 0
+                    !cancelled && current == Freshness.CURRENT
+                }
+                cancelled = cancelled || kvik_interrupt_requested() != 0
+                if (!exposed || cancelled) record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                    freshnessAtCompletion = current)
+                else selections.forEach { journal.emit("documentation-ready", it.event(run.path)) }
+            } catch (failure: Exception) {
+                failedSetup = true
+                failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_DOCUMENTATION_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize documentation"))
             }
         }
         if (mode == ProjectMode.BUILD && scriptFile == null && record.status == VerificationStatus.PASSED) {

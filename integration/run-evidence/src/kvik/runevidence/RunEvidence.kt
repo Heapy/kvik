@@ -9,7 +9,7 @@ data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatu
 internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|application|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(iosArm64|iosSimulatorArm64):(build|package)")) ||
-    check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:common:package")) ||
+    check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)")) ||
     check.matches(Regex("script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)"))
 internal fun scriptExecutionCheck(check: String): Boolean = check.startsWith("script:") && check.endsWith(":run") && validCheck(check)
 

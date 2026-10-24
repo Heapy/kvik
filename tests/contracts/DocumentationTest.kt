@@ -11,7 +11,7 @@ class DocumentationTest {
     private val jvm = DocumentationSourceSet("jvmMain", "jvm", LogicalPath("sources/jvm"), listOf(LogicalPath("dependencies/library.jar")), listOf("common"))
 
     @Test fun distributionBindsExactlyTheStandaloneCliAndHtmlPlugins() {
-        assertEquals(distribution, DocumentationDistribution.fromJson(distribution.toJson()))
+        assertEquals(distribution.toJson(), DocumentationDistribution.fromJson(distribution.toJson()).toJson())
         assertEquals(Sha256.digest(distribution.toJson()), distribution.identity)
         assertEquals(4, distribution.pluginPaths.size)
         assertFalse(distribution.cliPath in distribution.pluginPaths)

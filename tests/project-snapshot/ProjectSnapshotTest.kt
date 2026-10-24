@@ -58,6 +58,23 @@ private class Fixture {
 private inline fun fixture(block: (Fixture) -> Unit) { val f = Fixture(); try { block(f) } finally { f.close() } }
 
 class ProjectSnapshotTest {
+    @Test fun documentationIncludesAreScopedInputsAndInvalidateRetainedDocs() = fixture { f ->
+        write("${f.root}/kvik.json", document().replace("\"id\":\"library\"",
+            "\"id\":\"library\",\"documentation\":{\"includes\":[\"Module.md\"]}"))
+        val build = f.capture()
+        val selection = SnapshotSelection.Documentation(setOf("library"), setOf("jvm"))
+        assertEquals(selection, SnapshotSelection.fromJson(selection.toJson()))
+        assertFails { f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection) }
+        write("${f.root}/Module.md", "# Module library\nFirst version\n")
+        val docs = assertIs<SnapshotCapture.Captured>(f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, selection = selection)).snapshot
+        assertTrue(docs.inputs.files.any { it.path.value == "Module.md" })
+        write("${f.root}/Module.md", "# Module library\nSecond version\n")
+        assertEquals(Freshness.STALE, f.snapshotter.freshness(docs))
+        assertEquals(Freshness.CURRENT, f.snapshotter.freshness(build))
+        assertFails { SnapshotSelection.fromJson(obj("kind" to "documentation".json(), "modules" to listOf("library".json()).json(),
+            "targets" to listOf("jvm".json(), "jvm".json()).json())) }
+    }
+
     @Test fun abiChecksCaptureBaselinesWhileDumpAndBuildCanCreateTheFirstCandidate() = fixture { f ->
         write("${f.root}/kvik.json", document().replace("\"compilerOptions\":[]",
             "\"compilerOptions\":[],\"abi\":{\"baseline\":\"api/library.jvm.api\"}"))

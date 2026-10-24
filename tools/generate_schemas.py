@@ -127,8 +127,28 @@ DEFS["compilerPlugin"]["oneOf"] = [
      "properties": {"pathOptions": {"maxItems": 0}, "outputs": {"maxItems": 0}}}]
 DEFS["libraryPublication"] = object_({"coordinate": {"allOf": [COORDINATE,
     {"type": "string", "pattern": r"^[^\u0000-\u0020]*(?![\s\S])"}]}})
+DEFS["documentationSettings"] = object_({
+    "includes": array(PATH, maxItems=32, uniqueItems=True),
+    "documentedVisibilities": array(enum("public", "protected", "internal", "private", "package"), minItems=1, uniqueItems=True),
+    "reportUndocumented": BOOL, "failOnWarning": BOOL, "skipDeprecated": BOOL, "suppressInheritedMembers": BOOL,
+    "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000},
+}, optional=("includes", "documentedVisibilities", "reportUndocumented", "failOnWarning", "skipDeprecated", "suppressInheritedMembers", "timeoutMillis"))
+DEFS["documentationSourceSet"] = object_({"name": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
+    "platform": enum("common", "jvm", "native"), "sourceRoot": PATH,
+    "classpath": array(PATH, maxItems=1024, uniqueItems=True), "dependsOn": array(ID, uniqueItems=True)})
+DEFS["documentationSpec"] = versioned({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
+    "sourceSets": array(ref("documentationSourceSet"), minItems=1, maxItems=256), "settings": ref("documentationSettings")})
+DEFS["documentationSpec"]["description"] = "Source-set names and roots must be unique; roots cannot overlap; dependency edges must form a closed acyclic graph."
+DOKKA_JARS = ("dokka-cli-2.2.0.jar", "dokka-base-2.2.0.jar", "analysis-kotlin-symbols-2.2.0.jar", "kotlinx-html-jvm-0.8.0.jar", "freemarker-2.3.31.jar")
+DEFS["documentationDistribution"] = versioned({"version": {"const": "2.2.0"}, "artifacts": {"allOf": [ref("tree"),
+    {"properties": {"files": {"minItems": 5, "maxItems": 5, "items": {"properties": {
+        "path": enum(*DOKKA_JARS), "executable": {"const": False}, "digest": {"properties": {"sizeBytes": {"minimum": 1, "maximum": 134217728}}}}},
+        "allOf": [{"contains": {"properties": {"path": {"const": name}}}} for name in DOKKA_JARS]}}}]}})
+DEFS["documentationDistribution"]["description"] = "Semantic validation additionally limits total distribution size to 256 MiB."
 DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minItems=1), "targets": array(ref("target"), minItems=1),
     "compilerPlugins": array(ref("compilerPlugin")), "publication": ref("libraryPublication")}, optional=("publication",))
+DEFS["module"]["properties"]["documentation"] = ref("documentationSettings")
 DEFS["module"]["allOf"] = [{"if": {"required": ["publication"]},
     "then": {"properties": {"targets": {"items": {"not": {"required": ["application"]}}}}}}]
 DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate emitted root or derived target publication coordinates across modules."
@@ -219,6 +239,9 @@ DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
     object_({"kind": {"const": "abi-check"}, "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
         "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}),
     object_({"kind": {"const": "script"}, "name": SCRIPT_ID}), object_({"kind": {"const": "standalone-script"}})]}
+DEFS["snapshotSelection"]["oneOf"].append(object_({"kind": {"const": "documentation"},
+    "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True)}))
 DEFS["scopedSelection"] = object_({"domain": ref("resolutionDomain"), **DEFS["selection"]["properties"]})
 EXCLUSION_COORDINATE = {**COORDINATE, "maxLength": 1024, "pattern": COORDINATE["pattern"] + r"(?![\s\S])"}
 DEFS["metadataEdgeExclusion"] = object_({"parent": EXCLUSION_COORDINATE, "metadata": ref("digest"),
@@ -341,7 +364,7 @@ DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, 
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
 DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):(abi-dump|abi-check)$(?![\s\S])"},
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:package$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
@@ -693,11 +716,16 @@ DEFS["frameworkReady"] = object_({
     "dSYM": nullable({"type": "string", "pattern": "^/"}), "isStatic": BOOL})
 DEFS["frameworkReady"]["allOf"] = [{"if": {"properties": {"isStatic": {"const": True}}},
     "then": {"properties": {"dSYM": {"type": "null"}}}, "else": {"properties": {"dSYM": {"type": "string"}}}}]
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready"), "payload": ANY_OBJECT})
+DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"},
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
+    "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
+    "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest")}),
     "framework-ready": ref("frameworkReady"),
     "abi-ready": ref("abiReady"),
+    "documentation-ready": ref("documentationReady"),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-cache-decision": ref("actionCacheDecision"),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),

@@ -97,6 +97,16 @@ class RunEvidenceTest {
         }
     }
 
+    @Test fun documentationChecksRoundTripWithoutImplyingTestExecution() {
+        val check = "app:common:documentation"
+        val value = aggregate(checks = setOf(check), terminals = mapOf(check to "main"), dependencies = graph - "tests",
+            actions = listOf(result("base"), result("main", ActionStatus.LOCAL_HIT)), reports = emptyMap())
+        assertEquals(VerificationStatus.PASSED, value.record.status)
+        assertEquals(setOf(check), value.record.completedChecks)
+        assertEquals(value.record, verificationRecordFromJson(value.record.toJson()))
+        assertTrue(value.record.tests.isEmpty())
+    }
+
     @Test fun emptyOrPartialSetupNeverProvesChecks() {
         for (checks in listOf(setOf("app:jvm:test"), setOf("app:jvm:build"))) {
             val evidence = aggregate(checks, emptyMap(), emptyMap(), emptyList(), emptyMap())

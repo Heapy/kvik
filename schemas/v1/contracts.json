@@ -922,6 +922,251 @@
       "additionalProperties": false,
       "$comment": "Project validation rejects duplicate emitted root or derived target publication coordinates across modules."
     },
+    "documentationSettings": {
+      "type": "object",
+      "properties": {
+        "includes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "documentedVisibilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "public",
+              "protected",
+              "internal",
+              "private",
+              "package"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "reportUndocumented": {
+          "type": "boolean"
+        },
+        "failOnWarning": {
+          "type": "boolean"
+        },
+        "skipDeprecated": {
+          "type": "boolean"
+        },
+        "suppressInheritedMembers": {
+          "type": "boolean"
+        },
+        "timeoutMillis": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "documentationSourceSet": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "platform": {
+          "enum": [
+            "common",
+            "jvm",
+            "native"
+          ]
+        },
+        "sourceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "classpath": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "name",
+        "platform",
+        "sourceRoot",
+        "classpath",
+        "dependsOn"
+      ],
+      "additionalProperties": false
+    },
+    "documentationSpec": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "sourceSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/documentationSourceSet"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        },
+        "settings": {
+          "$ref": "#/$defs/documentationSettings"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "module",
+        "targets",
+        "sourceSets",
+        "settings"
+      ],
+      "additionalProperties": false,
+      "description": "Source-set names and roots must be unique; roots cannot overlap; dependency edges must form a closed acyclic graph."
+    },
+    "documentationDistribution": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "version": {
+          "const": "2.2.0"
+        },
+        "artifacts": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/tree"
+            },
+            {
+              "properties": {
+                "files": {
+                  "minItems": 5,
+                  "maxItems": 5,
+                  "items": {
+                    "properties": {
+                      "path": {
+                        "enum": [
+                          "dokka-cli-2.2.0.jar",
+                          "dokka-base-2.2.0.jar",
+                          "analysis-kotlin-symbols-2.2.0.jar",
+                          "kotlinx-html-jvm-0.8.0.jar",
+                          "freemarker-2.3.31.jar"
+                        ]
+                      },
+                      "executable": {
+                        "const": false
+                      },
+                      "digest": {
+                        "properties": {
+                          "sizeBytes": {
+                            "minimum": 1,
+                            "maximum": 134217728
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "contains": {
+                        "properties": {
+                          "path": {
+                            "const": "dokka-cli-2.2.0.jar"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "contains": {
+                        "properties": {
+                          "path": {
+                            "const": "dokka-base-2.2.0.jar"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "contains": {
+                        "properties": {
+                          "path": {
+                            "const": "analysis-kotlin-symbols-2.2.0.jar"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "contains": {
+                        "properties": {
+                          "path": {
+                            "const": "kotlinx-html-jvm-0.8.0.jar"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "contains": {
+                        "properties": {
+                          "path": {
+                            "const": "freemarker-2.3.31.jar"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "version",
+        "artifacts"
+      ],
+      "additionalProperties": false,
+      "description": "Semantic validation additionally limits total distribution size to 256 MiB."
+    },
     "module": {
       "type": "object",
       "properties": {
@@ -951,6 +1196,9 @@
         },
         "publication": {
           "$ref": "#/$defs/libraryPublication"
+        },
+        "documentation": {
+          "$ref": "#/$defs/documentationSettings"
         }
       },
       "required": [
@@ -2177,6 +2425,44 @@
           },
           "required": [
             "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "documentation"
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 1000,
+              "uniqueItems": true
+            },
+            "targets": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "jvm",
+                  "macosArm64",
+                  "linuxX64",
+                  "iosArm64",
+                  "iosSimulatorArm64"
+                ]
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "kind",
+            "modules",
+            "targets"
           ],
           "additionalProperties": false
         }
@@ -4279,7 +4565,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:common:package$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -8800,6 +9086,51 @@
         }
       ]
     },
+    "documentationReady": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "actionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\\s\\S])"
+        },
+        "directory": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        },
+        "index": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^/(?:(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+/)*(?!\\.{1,2}(?:/|$))[^/\\u0000-\\u001f]+$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "module",
+        "targets",
+        "actionId",
+        "directory",
+        "index"
+      ],
+      "additionalProperties": false
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -8827,7 +9158,8 @@
             "application-started",
             "application-finished",
             "framework-ready",
-            "abi-ready"
+            "abi-ready",
+            "documentation-ready"
           ]
         },
         "payload": {
@@ -8903,6 +9235,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/abiReady"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "documentation-ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/documentationReady"
               }
             }
           }

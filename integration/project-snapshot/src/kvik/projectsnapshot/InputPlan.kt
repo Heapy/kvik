@@ -15,11 +15,19 @@ sealed interface SnapshotSelection {
             require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null })
         }
     }
+    data class Documentation(val modules: Set<String>, val targets: Set<String>) : SnapshotSelection {
+        init {
+            require(modules.isNotEmpty() && modules.size <= 1000 && modules.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) })
+            require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null })
+        }
+    }
     fun toJson(): JsonValue = when (this) {
         Project -> obj("kind" to "project".json())
         is Script -> obj("kind" to "script".json(), "name" to name.json())
         StandaloneScript -> obj("kind" to "standalone-script".json())
         is AbiCheck -> obj("kind" to "abi-check".json(), "modules" to modules.sorted().map { it.json() }.json(),
+            "targets" to targets.sorted().map { it.json() }.json())
+        is Documentation -> obj("kind" to "documentation".json(), "modules" to modules.sorted().map { it.json() }.json(),
             "targets" to targets.sorted().map { it.json() }.json())
     }
     companion object {
@@ -36,6 +44,13 @@ sealed interface SnapshotSelection {
                     }.toSet()
                     AbiCheck(names("modules"), names("targets"))
                 }
+                "documentation" -> {
+                    value.fields(setOf("kind", "modules", "targets"))
+                    fun names(key: String) = fields.getValue(key).arrayValue().map(JsonValue::stringValue).also {
+                        require(it.distinct().size == it.size) { "Duplicate documentation snapshot selection" }
+                    }.toSet()
+                    Documentation(names("modules"), names("targets"))
+                }
                 else -> error("Unknown snapshot selection")
             }
         }
@@ -51,10 +66,11 @@ data class ProjectInputPlan(val directories: List<LogicalPath>, val files: List<
 fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSelection = SnapshotSelection.Project): ProjectInputPlan {
     val project = configuration.project
     val modules = project.modules.associateBy { it.id }
-    val wholeProject = selection == SnapshotSelection.Project || selection is SnapshotSelection.AbiCheck
+    val wholeProject = selection == SnapshotSelection.Project || selection is SnapshotSelection.AbiCheck || selection is SnapshotSelection.Documentation
     val scripts = when (selection) {
         SnapshotSelection.Project -> project.scripts.keys.map { expandScript(project, it) }
         is SnapshotSelection.AbiCheck -> project.scripts.keys.map { expandScript(project, it) }
+        is SnapshotSelection.Documentation -> project.scripts.keys.map { expandScript(project, it) }
         is SnapshotSelection.Script -> listOf(expandScript(project, selection.name))
         SnapshotSelection.StandaloneScript -> error("Standalone selection requires companion configuration")
     }
@@ -74,7 +90,12 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
             requireNotNull(spec.abi) { "Declare abi.baseline for $id:$target before checking its API" }.baseline
         }
     } else emptyList()
-    return plan(sources.flatMap { it.directories + it.resources }, plugins.flatMap { it.inputs } + baselines,
+    val documentation = if (selection is SnapshotSelection.Documentation) selection.modules.flatMap { id ->
+        val module = modules[id] ?: error("Unknown documentation module: $id")
+        require(selection.targets.all { target -> module.targets.any { it.name == target } }) { "Missing documentation target in $id" }
+        requireNotNull(module.documentation) { "Declare documentation settings for $id before generating documentation" }.includes
+    } else emptyList()
+    return plan(sources.flatMap { it.directories + it.resources }, plugins.flatMap { it.inputs } + baselines + documentation,
         scripts.flatMap { it.declaration.sources + it.declaration.resources })
 }
 
