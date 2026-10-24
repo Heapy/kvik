@@ -2,7 +2,7 @@ package kvik.kodesource
 
 /** Git object IDs stay provider-local; portable inputs always use Kvik SHA-256 of content alone. */
 internal fun gitObjectId(kind: String, bytes: ByteArray, width: Int, checkpoint: () -> Unit): String {
-    require(kind == "blob" || kind == "tree")
+    require(kind == "blob" || kind == "tree" || kind == "commit")
     require(width == 40 || width == 64)
     val header = "$kind ${bytes.size}\u0000".encodeToByteArray()
     val length = header.size.toLong() + bytes.size

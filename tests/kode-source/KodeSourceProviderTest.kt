@@ -10,22 +10,31 @@ private val SELECTOR = SourceSelector("fixture", "main")
 
 private class MemoryContent : ContentStore {
     val values = mutableMapOf<Digest, ByteArray>()
+    var readOnly = false
     override fun get(digest: Digest) = values[digest]?.copyOf()
-    override fun put(bytes: ByteArray) = Sha256.digest(bytes).also { values[it] = bytes.copyOf() }
+    override fun put(bytes: ByteArray): Digest {
+        check(!readOnly)
+        return Sha256.digest(bytes).also { values[it] = bytes.copyOf() }
+    }
 }
 private class MemoryCache : KodeSourceCache {
     var tree: SourceManifest? = null
+    var commit: ByteArray? = null
+    var readOnly = false
+    override fun revision(project: String, revision: String) = commit?.copyOf()
+    override fun storeRevision(project: String, revision: String, bytes: ByteArray) { check(!readOnly); commit = bytes.copyOf() }
     val hints = mutableMapOf<SourceBlob, Digest>()
     override fun manifest(project: String, tree: String) = this.tree
-    override fun storeManifest(project: String, tree: String, manifest: SourceManifest) { this.tree = manifest }
+    override fun storeManifest(project: String, tree: String, manifest: SourceManifest) { check(!readOnly); this.tree = manifest }
     override fun knownDigest(project: String, blob: SourceBlob) = hints[blob]
-    override fun storeDigest(project: String, blob: SourceBlob, digest: Digest) { hints[blob] = digest }
+    override fun storeDigest(project: String, blob: SourceBlob, digest: Digest) { check(!readOnly); hints[blob] = digest }
 }
-private class Fixture(val width: Int = 40) : KodeTransport {
-    val revision = "a".repeat(width)
+private class Fixture(val width: Int = 40, treeOverride: String? = null) : KodeTransport {
     // Independently generated Git tree vectors: executable mode, directory/file prefix ordering,
     // and BMP vs supplementary Unicode names (Git byte order differs from UTF-16 ordering).
-    val tree = if (width == 40) "1f3bd66de56d07affb9e88ec96e6652b9e6bc49f" else "89c335d6cff6fb8a19bf93af2dd8defa5d613a91ef03aeb450fa81f2a1a9ed6e"
+    val tree = treeOverride ?: if (width == 40) "1f3bd66de56d07affb9e88ec96e6652b9e6bc49f" else "89c335d6cff6fb8a19bf93af2dd8defa5d613a91ef03aeb450fa81f2a1a9ed6e"
+    val commit = "tree $tree\nauthor Fixture <fixture@example.test> 1 +0000\ncommitter Fixture <fixture@example.test> 1 +0000\n\n".encodeToByteArray() + byteArrayOf(0, -1, 13, 10)
+    val revision = gitObjectId("commit", commit, width) {}
     val contents = linkedMapOf("kvik.json" to CONFIGURATION.encodeToByteArray(), "kvik.lock.json" to "locked\n".encodeToByteArray(),
         "src/Main.kt" to "fun answer() = 42\n".encodeToByteArray(), "assets/binary.bin" to byteArrayOf(0, -1, 1),
         "unused.dat" to "unselected".encodeToByteArray(), "foo.bar" to "plain".encodeToByteArray(),
@@ -38,6 +47,11 @@ private class Fixture(val width: Int = 40) : KodeTransport {
     override fun execute(arguments: List<String>, maxOutputBytes: Int, checkpoint: () -> Unit): KodeResponse {
         checkpoint(); calls += arguments.toList(); bounds += maxOutputBytes
         responseOverride?.invoke(arguments, maxOutputBytes)?.let { return it }
+        if (arguments[0] == "revision-object") {
+            assertEquals(listOf("revision-object", "fixture", revision, "--raw"), arguments)
+            assertEquals(1024 * 1024, maxOutputBytes)
+            return KodeResponse(0, commit.copyOf(), byteArrayOf())
+        }
         val scope = mapOf("schemaVersion" to 1.json(), "operation" to arguments[0].json(), "project" to "fixture".json())
         val fields = when (arguments[0]) {
             "resolve" -> scope + mapOf("selector" to arguments[2].json(), "revision" to revision.json(), "tree" to tree.json()) +
@@ -60,9 +74,9 @@ private class Fixture(val width: Int = 40) : KodeTransport {
         return KodeResponse(0, rewrite(arguments, JsonValue.Object(fields)).canonical().encodeToByteArray(), byteArrayOf())
     }
 }
-private fun capture(fixture: KodeTransport, cache: KodeSourceCache? = null, content: ContentStore = MemoryContent(), checkpoint: () -> Unit = {}): ProviderSnapshot =
-    ProviderProjectSnapshotter(KodeSourceProvider(fixture, cache), content, SourcePathPolicy.CaseSensitive).capture(
-        SELECTOR, LogicalPath("kvik.json"), LogicalPath("kvik.lock.json"), expectedConfiguration = Sha256.digest(CONFIGURATION.encodeToByteArray()), checkpoint = checkpoint)
+private fun capture(fixture: KodeTransport, cache: KodeSourceCache? = null, content: ContentStore = MemoryContent(), offline: Boolean = false, selector: SourceSelector = SELECTOR, checkpoint: () -> Unit = {}): ProviderSnapshot =
+    ProviderProjectSnapshotter(KodeSourceProvider(fixture, cache, offline), content, SourcePathPolicy.CaseSensitive).capture(
+        selector, LogicalPath("kvik.json"), LogicalPath("kvik.lock.json"), expectedConfiguration = Sha256.digest(CONFIGURATION.encodeToByteArray()), checkpoint = checkpoint)
 private fun replace(json: JsonValue.Object, name: String, value: JsonValue) = JsonValue.Object(json.values + (name to value))
 
 class KodeSourceProviderTest {
@@ -83,9 +97,11 @@ class KodeSourceProviderTest {
     @Test fun sha1AndSha256InventoriesCaptureOnlySelectedBytes() {
         val snapshots = listOf(40, 64).map { width ->
             val fixture = Fixture(width); val content = MemoryContent()
+            assertEquals(if (width == 40) "fe22c6595288d51026f7ecfe74adc907aaffd157" else
+                "c0ee778bb5b496595acec95355e5821732cdde4a0f34c3fabdc2f389f3dcb4db", fixture.revision)
             val captured = capture(fixture, content = content)
             assertEquals(1, fixture.calls.count { it[0] == "resolve" })
-            assertEquals(listOf("resolve", "tree", "blob", "blob", "blob", "blob"), fixture.calls.map { it[0] })
+            assertEquals(listOf("resolve", "revision-object", "tree", "blob", "blob", "blob", "blob"), fixture.calls.map { it[0] })
             assertEquals(setOf("kvik.json", "kvik.lock.json", "src/Main.kt", "assets/binary.bin").map { fixture.ids.getValue(it) }.toSet(),
                 fixture.calls.filter { it[0] == "blob" }.map { it[2] }.toSet())
             assertEquals(listOf("assets/binary.bin", "src/Main.kt"), captured.snapshot.inputs.files.map { it.path.value })
@@ -131,18 +147,17 @@ class KodeSourceProviderTest {
         val omitted = Fixture()
         omitted.rewrite = { args, json -> if (args[0] == "tree") replace(json, "entries", json.values.getValue("entries").arrayValue().drop(1).json()) else json }
         assertFails { capture(omitted) }
-        assertEquals(listOf("resolve", "tree"), omitted.calls.map { it[0] })
+        assertEquals(listOf("resolve", "revision-object", "tree"), omitted.calls.map { it[0] })
     }
 
     @Test fun hiddenEmptyTreeCannotMasqueradeAsEmptyInventory() {
         // Git tree containing `empty/` pointing to the genuine empty tree; recursive ls-tree emits no files.
         val empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
         val tree = gitObjectId("tree", "40000 empty\u0000".encodeToByteArray() + ByteArray(20) { empty.substring(it * 2, it * 2 + 2).toInt(16).toByte() }, 40) {}
-        val fixture = Fixture()
-        fixture.rewrite = { args, json -> if (args[0] == "resolve") replace(json, "tree", tree.json()) else
-            replace(replace(json, "tree", tree.json()), "entries", emptyList<JsonValue>().json()) }
+        val fixture = Fixture(treeOverride = tree)
+        fixture.rewrite = { args, json -> if (args[0] == "tree") replace(json, "entries", emptyList<JsonValue>().json()) else json }
         assertFails { KodeSourceProvider(fixture).resolve(SELECTOR) {} }
-        assertEquals(listOf("resolve", "tree"), fixture.calls.map { it[0] })
+        assertEquals(listOf("resolve", "revision-object", "tree"), fixture.calls.map { it[0] })
     }
 
     @Test fun malformedEnvelopesScopesAndIdentitiesFailClosed() {
@@ -195,6 +210,98 @@ class KodeSourceProviderTest {
         assertFails { resolved.fetch(SourceBlob("b".repeat(40), 1), 1) {} }
     }
 
+    @Test fun offlineImmutableCaptureUsesOnlyAuthenticatedCacheWithoutWrites() {
+        for (width in listOf(40, 64)) {
+            val fixture = Fixture(width); val cache = MemoryCache(); val content = MemoryContent()
+            val online = capture(fixture, cache, content)
+            fixture.calls.clear(); cache.readOnly = true; content.readOnly = true
+            fixture.responseOverride = { _, _ -> error("Offline transport invoked") }
+            val offline = capture(fixture, cache, content, offline = true, selector = SourceSelector("fixture", fixture.revision))
+            assertEquals(online.provenance, offline.provenance)
+            assertEquals(online.manifestDigest, offline.manifestDigest)
+            assertEquals(online.snapshot.inputs, offline.snapshot.inputs)
+            assertEquals(online.snapshot.fingerprint, offline.snapshot.fingerprint)
+            assertTrue(fixture.calls.isEmpty())
+            assertFailsWith<IllegalArgumentException> { capture(fixture, cache, content, offline = true) }
+            assertTrue(fixture.calls.isEmpty())
+        }
+    }
+
+    @Test fun offlineMissingCommitTreeHintOrContentNeverFallsBack() {
+        for (missing in listOf("commit", "tree", "hint", "content")) {
+            val fixture = Fixture(); val cache = MemoryCache(); val content = MemoryContent()
+            capture(fixture, cache, content)
+            when (missing) {
+                "commit" -> cache.commit = null
+                "tree" -> cache.tree = null
+                "hint" -> cache.hints.clear()
+                "content" -> content.values.clear()
+            }
+            cache.readOnly = true; fixture.calls.clear()
+            assertFailsWith<SnapshotFailure>(missing) {
+                capture(fixture, cache, content, offline = true, selector = SourceSelector("fixture", fixture.revision))
+            }
+            assertTrue(fixture.calls.isEmpty(), missing)
+        }
+    }
+
+    @Test fun offlineCorruptCommitInventoryAndSelectedContentFailClosed() {
+        for (corruption in listOf("commit", "oversized", "tree", "mapping")) {
+            val fixture = Fixture(); val cache = MemoryCache(); val content = MemoryContent()
+            capture(fixture, cache, content)
+            when (corruption) {
+                "commit" -> cache.commit = cache.commit!!.also { it[it.lastIndex] = 120 }
+                "oversized" -> cache.commit = ByteArray(1024 * 1024 + 1)
+                "tree" -> cache.tree = SourceManifest(cache.tree!!.files.drop(1), cache.tree!!.directories)
+                "mapping" -> {
+                    val blob = cache.tree!!.files.single { it.path.value == "src/Main.kt" }.blob
+                    cache.hints[blob] = content.put(ByteArray(blob.sizeBytes.toInt()) { 120 })
+                }
+            }
+            cache.readOnly = true; fixture.calls.clear()
+            assertFails(corruption) { capture(fixture, cache, content, offline = true, selector = SourceSelector("fixture", fixture.revision)) }
+            assertTrue(fixture.calls.isEmpty(), corruption)
+        }
+    }
+
+    @Test fun commitAuthenticationPrecedesHeaderParsingAndBindsResolvedTree() {
+        for (width in listOf(40, 64)) {
+            val fixture = Fixture(width)
+            fixture.responseOverride = { args, _ -> if (args[0] == "revision-object")
+                KodeResponse(0, fixture.commit + byteArrayOf(1), byteArrayOf()) else null }
+            assertFailsWith<IllegalArgumentException> { capture(fixture) }
+            assertEquals(listOf("resolve", "revision-object"), fixture.calls.map { it[0] })
+            val mismatch = Fixture(width)
+            mismatch.rewrite = { args, json -> if (args[0] == "resolve") replace(json, "tree", "b".repeat(width).json()) else json }
+            assertFailsWith<IllegalArgumentException> { capture(mismatch) }
+            assertFalse(mismatch.calls.any { it[0] == "tree" })
+            for (header in listOf("parent ", "tree ", "tree ${"A".repeat(width)}\n", "tree ${"b".repeat(width)}\r\n")) {
+                val raw = header.encodeToByteArray()
+                val revision = gitObjectId("commit", raw, width) {}
+                val cache = MemoryCache().apply { commit = raw; readOnly = true }
+                assertFailsWith<IllegalArgumentException> {
+                    KodeSourceProvider(fixture, cache, offline = true).resolve(SourceSelector("fixture", revision)) {}
+                }
+            }
+        }
+    }
+
+    @Test fun offlineCancellationAndCacheErrorsPropagate() {
+        class Cancelled : Exception()
+        val stopped = Cancelled(); val fixture = Fixture(); val cache = MemoryCache(); val content = MemoryContent()
+        capture(fixture, cache, content); fixture.calls.clear(); cache.readOnly = true
+        assertSame(stopped, assertFailsWith<Cancelled> {
+            capture(fixture, cache, content, offline = true, selector = SourceSelector("fixture", fixture.revision)) { throw stopped }
+        })
+        val broken = object : KodeSourceCache by cache {
+            override fun revision(project: String, revision: String): ByteArray? = throw stopped
+        }
+        assertSame(stopped, assertFailsWith<Cancelled> {
+            capture(fixture, broken, content, offline = true, selector = SourceSelector("fixture", fixture.revision))
+        })
+        assertTrue(fixture.calls.isEmpty())
+    }
+
     @Test fun cancellationAndCacheFailuresPropagateWithoutFallback() {
         class Cancelled : Exception()
         val stopped = Cancelled(); val fixture = Fixture()
@@ -207,6 +314,6 @@ class KodeSourceProviderTest {
         }
         val clean = Fixture()
         assertSame(stopped, assertFailsWith<Cancelled> { capture(clean, cacheFailure) })
-        assertEquals(listOf("resolve"), clean.calls.map { it[0] })
+        assertEquals(listOf("resolve", "revision-object"), clean.calls.map { it[0] })
     }
 }

@@ -4,24 +4,39 @@ import kvik.core.*
 import kvik.projectsnapshot.*
 import kotlin.io.encoding.Base64
 
-/** Read-only kode v1 adapter. Resolving always contacts kode; cached inventory is keyed by verified tree,
- * never by a moving selector. This API does not claim offline revision resolution. */
-class KodeSourceProvider(private val transport: KodeTransport, private val cache: KodeSourceCache? = null) : SourceSnapshotProvider {
+/** Read-only kode v1 adapter. Offline capture requires an immutable revision and authenticated cached
+ * commit, inventory and selected content. Moving selectors are only resolved online. */
+class KodeSourceProvider(
+    private val transport: KodeTransport,
+    private val cache: KodeSourceCache? = null,
+    private val offline: Boolean = false,
+) : SourceSnapshotProvider {
     override fun resolve(selector: SourceSelector, checkpoint: () -> Unit): ResolvedSourceSnapshot {
         require(Regex("[a-z0-9][a-z0-9._-]{0,63}").matches(selector.project)) { "Invalid kode project" }
         require(validSelector(selector.selector)) { "Invalid kode selector" }
-        val resolved = response(listOf("resolve", selector.project, selector.selector), RESOLVE_LIMIT, "resolve", checkpoint)
-            .fields(setOf("schemaVersion", "operation", "project", "selector", "revision", "tree"), setOf("ref"))
-        require(resolved.getValue("project").stringValue() == selector.project && resolved.getValue("selector").stringValue() == selector.selector) { "Kode resolve scope mismatch" }
-        val revision = objectId(resolved.getValue("revision").stringValue())
-        val tree = objectId(resolved.getValue("tree").stringValue(), revision.length)
-        if (isObjectId(selector.selector)) {
-            require(revision == selector.selector && "ref" !in resolved) { "Kode immutable resolution mismatch" }
-        } else require(resolved["ref"]?.stringValue() == selector.selector) { "Kode reference resolution mismatch" }
+        checkpoint()
+        val revision: String
+        val tree: String
+        if (offline) {
+            require(isObjectId(selector.selector)) { "Offline kode capture requires a full immutable revision" }
+            revision = selector.selector
+            tree = revisionTree(selector.project, revision, checkpoint)
+        } else {
+            val resolved = response(listOf("resolve", selector.project, selector.selector), RESOLVE_LIMIT, "resolve", checkpoint)
+                .fields(setOf("schemaVersion", "operation", "project", "selector", "revision", "tree"), setOf("ref"))
+            require(resolved.getValue("project").stringValue() == selector.project && resolved.getValue("selector").stringValue() == selector.selector) { "Kode resolve scope mismatch" }
+            revision = objectId(resolved.getValue("revision").stringValue())
+            tree = objectId(resolved.getValue("tree").stringValue(), revision.length)
+            if (isObjectId(selector.selector)) {
+                require(revision == selector.selector && "ref" !in resolved) { "Kode immutable resolution mismatch" }
+            } else require(resolved["ref"]?.stringValue() == selector.selector) { "Kode reference resolution mismatch" }
+            require(revisionTree(selector.project, revision, checkpoint) == tree) { "Kode commit tree does not match resolution" }
+        }
         checkpoint()
         val cached = cache?.manifest(selector.project, tree)
         checkpoint()
         val manifest = if (cached != null) SourceManifest(cached.files, cached.directories, checkpoint) else {
+            if (offline) throw SnapshotFailure("Offline kode tree inventory is missing")
             val document = response(listOf("tree", selector.project, "--rev", revision), MANIFEST_LIMIT, "tree", checkpoint)
                 .fields(setOf("schemaVersion", "operation", "project", "revision", "tree", "entries"))
             require(document.getValue("project").stringValue() == selector.project && document.getValue("revision").stringValue() == revision &&
@@ -62,12 +77,13 @@ class KodeSourceProvider(private val transport: KodeTransport, private val cache
             declared(blob); checkpoint()
             require(bytes.size.toLong() == blob.sizeBytes) { "Kode blob size mismatch" }
             require(gitObjectId("blob", bytes, blob.identity.length, checkpoint) == blob.identity) { "Kode blob identity mismatch" }
-            cache?.storeDigest(project, blob, Sha256.digest(bytes))
+            if (!offline) cache?.storeDigest(project, blob, Sha256.digest(bytes))
             checkpoint()
         }
 
         override fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray {
-            declared(blob)
+            declared(blob); checkpoint()
+            if (offline) throw SnapshotFailure("Offline kode selected content is missing")
             require(maxBytes in 0..MAX_BLOB_BYTES && blob.sizeBytes <= maxBytes) { "Kode blob exceeds selected read bound" }
             // JSON control-character escaping can expand valid UTF-8 input by six times.
             val fields = response(listOf("blob", project, blob.identity), (blob.sizeBytes * 6 + 4096).toInt(), "blob", checkpoint)
@@ -90,13 +106,42 @@ class KodeSourceProvider(private val transport: KodeTransport, private val cache
         }
     }
 
-    private fun response(arguments: List<String>, limit: Int, operation: String, checkpoint: () -> Unit): JsonValue {
+    private fun revisionTree(project: String, revision: String, checkpoint: () -> Unit): String {
+        checkpoint()
+        val cached = cache?.revision(project, revision)
+        checkpoint()
+        val raw = if (cached != null) {
+            require(cached.size in 1..REVISION_LIMIT) { "Kode commit object exceeds read bound" }
+            cached.copyOf()
+        } else {
+            if (offline) throw SnapshotFailure("Offline kode commit object is missing")
+            rawResponse(listOf("revision-object", project, revision, "--raw"), REVISION_LIMIT, "revision-object", checkpoint)
+        }
+        require(raw.size in 1..REVISION_LIMIT) { "Kode commit object exceeds read bound" }
+        require(gitObjectId("commit", raw, revision.length, checkpoint) == revision) { "Kode commit identity mismatch" }
+        // Only the first header is structural here. Messages may contain arbitrary bytes.
+        val end = 5 + revision.length
+        require(raw.size > end && raw[end] == 10.toByte() &&
+            raw.copyOfRange(0, 5).contentEquals("tree ".encodeToByteArray())) { "Invalid kode commit tree header" }
+        val tree = objectId(raw.copyOfRange(5, end).decodeToString(throwOnInvalidSequence = true), revision.length)
+        checkpoint()
+        if (cached == null) { cache?.storeRevision(project, revision, raw.copyOf()); checkpoint() }
+        return tree
+    }
+
+    private fun rawResponse(arguments: List<String>, limit: Int, operation: String, checkpoint: () -> Unit): ByteArray {
+        check(!offline) { "Offline kode transport is unavailable" }
         checkpoint()
         val result = transport.execute(arguments, limit, checkpoint)
         checkpoint()
         require(result.stdout.size <= limit && result.stderr.size <= limit) { "Kode transport exceeded output bound" }
         if (result.exitCode != 0) throw SnapshotFailure("Kode $operation failed (exit ${result.exitCode})")
-        val value = parseJson(result.stdout.decodeToString(throwOnInvalidSequence = true), maxDepth = 16)
+        return result.stdout
+    }
+
+    private fun response(arguments: List<String>, limit: Int, operation: String, checkpoint: () -> Unit): JsonValue {
+        val bytes = rawResponse(arguments, limit, operation, checkpoint)
+        val value = parseJson(bytes.decodeToString(throwOnInvalidSequence = true), maxDepth = 16)
         val fields = value.objectValue()
         fields.requireVersion()
         require(fields["operation"]?.stringValue() == operation) { "Kode operation mismatch" }
@@ -104,6 +149,7 @@ class KodeSourceProvider(private val transport: KodeTransport, private val cache
     }
 
     companion object {
+        private const val REVISION_LIMIT = 1024 * 1024
         private const val RESOLVE_LIMIT = 16 * 1024
         private const val MANIFEST_LIMIT = 16 * 1024 * 1024
         private const val MAX_BLOB_BYTES = 64 * 1024 * 1024

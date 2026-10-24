@@ -15,6 +15,8 @@ data class KodeResponse(val exitCode: Int, val stdout: ByteArray, val stderr: By
 /** Hints only. Manifests and selected blob bytes are reverified against native Git identities on every use.
  * Implementations must bound stored-record reads and propagate I/O/cancellation failures. */
 interface KodeSourceCache {
+    fun revision(project: String, revision: String): ByteArray?
+    fun storeRevision(project: String, revision: String, bytes: ByteArray)
     fun manifest(project: String, tree: String): SourceManifest?
     fun storeManifest(project: String, tree: String, manifest: SourceManifest)
     fun knownDigest(project: String, blob: SourceBlob): Digest?
