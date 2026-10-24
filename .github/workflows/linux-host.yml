@@ -17,9 +17,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare Linux tools
         run: docker build --platform linux/amd64 --tag kvik-linux-host tools/linux
-      - name: Build runtime and run JVM fixture
+      - name: Build runtime and run JVM and Native fixtures
         run: |
-          docker run --rm --platform linux/amd64 \
+          docker run --rm --init --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/work/kvik" kvik-linux-host \
             sh -ec 'python3 tools/linux/provision_system.py --system-root /usr
                     python3 tools/linux/verify.py --pin-tools'
