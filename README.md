@@ -76,6 +76,25 @@ preserved when supplied. Each target gets an exact independent build scope. Comp
 diagnostics are cleared when that compilation succeeds. Test filtering and custom
 BSP arguments are not supported; configure test selection in the project.
 
+With tools configured, [`buildTarget/run`](https://build-server-protocol.github.io/docs/specification.html#buildtargetrun-request)
+launches an explicitly configured main application target on JVM or the current
+Native host. The server advertises `runProvider` and marks those targets `canRun`.
+A request containing only `target` uses the configured entry point, arguments and
+environment, with the project root as its working directory. Optional `arguments`
+replace the declared arguments (an empty list clears them); `environmentVariables`
+overlay the declared environment, and `workingDirectory` accepts a local file URI.
+These overrides apply only to that execution. Preparation can reuse cached outputs;
+each application invocation executes anew.
+
+Run requests remain active until the application exits. Project queries stay
+responsive; cancellation, connection closure and server shutdown stop the owned
+application and its descendants. A successful preparation followed by a failing
+application returns an error status. When `originId` is supplied, output streams
+arrive through `run/printStdout` and `run/printStderr`; otherwise output uses
+`build/logMessage`. Forwarding is bounded and the complete raw logs remain in the
+retained application run. Application stdin is closed. Alternate entry-point data
+extensions and interactive stdin forwarding are not supported.
+
 With tools configured, `buildTarget/jvmCompileClasspath` returns ordered absolute
 paths to dependency JARs and workspace class directories. It uses the same compile
 closure as normal JVM compilation, excluding runtime-only dependencies and compiler

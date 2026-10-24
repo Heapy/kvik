@@ -182,6 +182,7 @@ def main():
         assert len(observations()) == 1
         assert_observation(defaults)
         streamed(client, start, 'default')
+        imported_run_options = next((root/'.kvik/bsp').glob('*/*/run-options.json')).read_bytes()
         before = records()
         start = len(client.notifications)
         result(client.request('buildTarget/run', dict(target=app)))
@@ -234,9 +235,22 @@ def main():
         resolve()
         client.request('workspace/reload')
         imported = client.request('workspace/buildTargets')['targets']
+        # Reproduce the child side of a configuration change between BSP dispatch
+        # and preparation: old imported settings must never launch the new app.
+        stale_options = root/'.kvik/stale-run-options.json'
+        stale_options.write_bytes(imported_run_options)
+        stale_runs = root/'.kvik/stale-application-runs'
+        rejected = subprocess.run([str(runtime), 'run-application', '--run-options', str(stale_options),
+            '--project', str(project), '--tools', str(tools), '--store', str(store),
+            '--module', 'app', '--target', 'jvm', '--runs', str(stale_runs), '--offline'],
+            capture_output=True, timeout=600)
+        assert rejected.returncode != 0, (rejected.stdout, rejected.stderr)
+        assert b'Application preparation does not match the imported BSP configuration/composition' in rejected.stdout + rejected.stderr
+        assert len(observations()) == 5, 'Changed application ran using stale imported configuration'
+        assert not list(stale_runs.rglob('application-runs')), 'Stale configuration reached application execution'
         result(client.request('buildTarget/run', dict(target=app)))
         assert_observation(['after reload'])
-        print('PASS nonzero exit, compile failure and resolved configuration reload', flush=True)
+        print('PASS nonzero exit, compile failure, stale launch rejection and resolved configuration reload', flush=True)
 
         def running(c):
             count = len(observations())
