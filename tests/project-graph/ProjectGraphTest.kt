@@ -148,6 +148,23 @@ class ProjectGraphTest {
         assertTrue(DocumentationSpec.fromJson(ordinary.parameters).sourceSets.all { it.platform == "jvm" })
     }
 
+    @Test fun nativeTestFragmentsPreserveImplicitMainVisibilityInInheritedTests() {
+        val standaloneTests = app.copy(sourceSets = app.sourceSets.map { set ->
+            when (set.name) {
+                "commonTest" -> set.copy(dependsOn = emptyList())
+                "nativeTest" -> set.copy(dependsOn = listOf("commonTest"))
+                else -> set
+            }
+        })
+        val actions = resolved(graph(configuration(base, standaloneTests), snapshot(), request(ProjectMode.TEST, "macosArm64")))
+        val compilation = NativeCompilation.fromJson(actions.getValue("app:macosArm64:test-compile").parameters)
+        assertContains(compilation.sourceFragments.single { it.name == "commonTest" }.dependsOn, "nativeMain")
+        assertEquals(listOf("commonTest"), compilation.sourceFragments.single { it.name == "nativeTest" }.dependsOn)
+        assertEquals(compilation.sources.toSet(), compilation.sourceFragments.flatMap { it.sources }.toSet())
+        val link = NativeCompilation.fromJson(actions.getValue("app:macosArm64:test-link").parameters)
+        assertTrue(link.sourceFragments.isEmpty())
+    }
+
     @Test fun documentationSharedNativeUsesMetadataIntersectionAndExactSupportingTargets() {
         fun ios(module: ModuleSpec) = module.copy(targets = listOf(module.targets.first { it.name == "jvm" },
             TargetSpec("iosArm64", "nativeMain", null, emptyList()), TargetSpec("iosSimulatorArm64", "nativeMain", null, emptyList())))
@@ -156,6 +173,15 @@ class ProjectGraphTest {
         val built = graph(config, snapshot(), request)
         val actions = resolved(built)
         val spec = DocumentationSpec.fromJson(actions.getValue("app:common:documentation").parameters)
+        for (target in listOf("iosArm64", "iosSimulatorArm64")) {
+            val compilation = NativeCompilation.fromJson(actions.getValue("app:$target:main").parameters)
+            assertEquals(listOf("commonMain"), compilation.sourceFragments.single { it.name == "nativeMain" }.dependsOn)
+            val terminal = compilation.sourceFragments.last()
+            assertTrue(terminal.sources.isEmpty())
+            assertEquals(listOf("nativeMain"), terminal.dependsOn)
+            assertEquals(compilation.sources.toSet(), compilation.sourceFragments.flatMap { it.sources }.toSet())
+            assertTrue(compilation.arguments().none { it.startsWith("-Xcommon-sources=") })
+        }
         val native = spec.sourceSets.single { it.name == "nativeMain" }
         assertEquals("native", native.platform)
         assertEquals(setOf("iosArm64", "iosSimulatorArm64"), native.supportingTargets)

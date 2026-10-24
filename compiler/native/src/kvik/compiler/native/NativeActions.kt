@@ -13,6 +13,24 @@ fun linuxNativeDependenciesIdentity(llvm: Digest, libffi: Digest, nativeToolchai
     "schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-native-linux-dependencies-v1".json(),
     "llvm" to llvm.toJson(), "libffi" to libffi.toJson(), "nativeToolchain" to nativeToolchain.toJson()))
 
+/** One Kotlin source-set fragment; file ownership and refinement are explicit. */
+data class NativeSourceFragment(val name: String, val sources: List<LogicalPath>, val dependsOn: List<String> = emptyList()) {
+    init {
+        require(name.length in 1..128 && name.matches(Regex("[A-Za-z_][A-Za-z0-9_.-]*"))) { "Invalid Native fragment name" }
+        require(sources.distinct().size == sources.size && sources.all { it.value.endsWith(".kt") && ':' !in it.value && ',' !in it.value })
+        require(dependsOn.distinct().size == dependsOn.size)
+    }
+    fun toJson(): JsonValue.Object = obj("name" to name.json(), "sources" to sources.map { it.value.json() }.json(),
+        "dependsOn" to dependsOn.map { it.json() }.json())
+    companion object {
+        fun fromJson(value: JsonValue): NativeSourceFragment {
+            val fields = value.fields(setOf("name", "sources", "dependsOn"))
+            return NativeSourceFragment(fields.getValue("name").stringValue(), fields.getValue("sources").arrayValue().map { LogicalPath(it.stringValue()) },
+                fields.getValue("dependsOn").arrayValue().map(JsonValue::stringValue))
+        }
+    }
+}
+
 data class NativeCompilation(
     val module: String,
     val sources: List<LogicalPath>,
@@ -31,6 +49,7 @@ data class NativeCompilation(
     val pluginApplications: List<JvmPluginApplication> = emptyList(),
     val target: NativeTarget = NativeTarget.MACOS_ARM64,
     val isStaticFramework: Boolean = false,
+    val sourceFragments: List<NativeSourceFragment> = emptyList(),
 ) {
     init {
         require(!isStaticFramework || produce == NativeOutput.FRAMEWORK) { "Static framework requires FRAMEWORK output" }
@@ -57,6 +76,16 @@ data class NativeCompilation(
             require(sources.isEmpty() && produce != NativeOutput.LIBRARY && includedLibrary.value.endsWith(".klib") && includedLibrary !in libraries) { "Included klib requires a distinct source-free link input" }
             require(commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && optIns.isEmpty() && !explicitApi && kotestLauncher == null) { "Source compilation options are invalid for source-free linking" }
         }
+        if (sourceFragments.isNotEmpty()) {
+            require(includedLibrary == null && sourceFragments.size <= 1024 && sourceFragments.map { it.name }.distinct().size == sourceFragments.size)
+            validateGraph(sourceFragments.associate { it.name to it.dependsOn.toSet() })
+            val owned = sourceFragments.flatMap { it.sources }
+            require(owned.size == owned.distinct().size && owned.toSet() == sources.toSet()) { "Every Native source must belong to exactly one fragment" }
+            val parents = sourceFragments.flatMap { it.dependsOn }.toSet()
+            val terminal = sourceFragments.filter { it.name !in parents }.singleOrNull()
+                ?: error("Native compilation requires one terminal fragment")
+            require(kotestLauncher == null || kotestLauncher in terminal.sources) { "Kotest launcher must belong to the terminal Native fragment" }
+        }
         require(commonSources.distinct().size == commonSources.size && commonSources.all { it in sources })
         require(libraries.distinct().size == libraries.size && libraries.all { it.value.endsWith(".klib") })
         require(plugins.distinct().size == plugins.size && plugins.all { it.value.endsWith(".jar") })
@@ -74,7 +103,16 @@ data class NativeCompilation(
         entryPoint?.let { addAll(listOf("-entry", it)) }
         if (produce == NativeOutput.TEST) add("-generate-test-runner")
         if (produce == NativeOutput.KOTEST_TEST) addAll(listOf("-entry", "kvik.kotest.runtime.main"))
-        if (commonSources.isNotEmpty()) {
+        if (sourceFragments.isNotEmpty()) {
+            add("-Xmulti-platform")
+            val parents = sourceFragments.flatMap { it.dependsOn }.toSet()
+            sourceFragments.forEach { fragment ->
+                add("-Xfragments=${fragment.name}")
+                fragment.dependsOn.forEach { add("-Xfragment-refines=${fragment.name}:$it") }
+                fragment.sources.forEach { path -> add("-Xfragment-sources=${fragment.name}:" + if (path == kotestLauncher) "prepared/kotest.kt" else "input/${path.value}") }
+                if (kotestLauncher != null && fragment.name !in parents) add("-Xfragment-sources=${fragment.name}:prepared/KvikKotestRuntime.kt")
+            }
+        } else if (commonSources.isNotEmpty()) {
             add("-Xmulti-platform")
             add("-Xcommon-sources=" + commonSources.joinToString(",") { "input/${it.value}" })
         }
@@ -95,13 +133,13 @@ data class NativeCompilation(
         "commonSources" to commonSources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
         "plugins" to plugins.map { it.value.json() }.json(), "output" to output.value.json(), "produce" to produce.name.json(),
         "moduleName" to moduleName.json(), "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
-            JsonValue.Object(it.objectValue() + listOfNotNull(if (isStaticFramework) "isStaticFramework" to true.json() else null, kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, target.takeIf { it != NativeTarget.MACOS_ARM64 }?.let { "target" to it.projectName.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
+            JsonValue.Object(it.objectValue() + listOfNotNull(sourceFragments.takeIf { it.isNotEmpty() }?.let { "sourceFragments" to it.map(NativeSourceFragment::toJson).json() }, if (isStaticFramework) "isStaticFramework" to true.json() else null, kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, target.takeIf { it != NativeTarget.MACOS_ARM64 }?.let { "target" to it.projectName.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
         }
     companion object {
         fun fromJson(value: JsonValue): NativeCompilation {
-            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications", "target", "isStaticFramework"))
+            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications", "target", "isStaticFramework", "sourceFragments"))
             fun paths(name: String) = d.getValue(name).arrayValue().map { LogicalPath(it.stringValue()) }
-            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(), d["target"]?.stringValue()?.let(NativeTarget::require) ?: NativeTarget.MACOS_ARM64, d["isStaticFramework"]?.booleanValue() ?: false)
+            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(), d["target"]?.stringValue()?.let(NativeTarget::require) ?: NativeTarget.MACOS_ARM64, d["isStaticFramework"]?.booleanValue() ?: false, d["sourceFragments"]?.arrayValue()?.map(NativeSourceFragment::fromJson) ?: emptyList())
         }
     }
 }

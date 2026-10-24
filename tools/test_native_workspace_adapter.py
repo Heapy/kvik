@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.native_files_interop import files_interop_command, files_library_args
 from bootstrap.source_process import OwnedProcessRequest, OwnedProcessCancelled, run_owned
+from bootstrap import jvm_worker
 
 
 def digest(path):
@@ -32,7 +33,7 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--skip-build', type=Path)
     parser.add_argument('--units-only', action='store_true')
-    checks = ('literal-options', 'missing-runtime', 'wrong-api', 'compiler-error', 'multiline-options', 'required-option', 'unknown-option', 'duplicate-option', 'jvm-regression')
+    checks = ('literal-options', 'missing-runtime', 'wrong-api', 'compiler-error', 'multiline-options', 'required-option', 'unknown-option', 'duplicate-option', 'jvm-regression', 'hierarchical-fragments')
     parser.add_argument('--checks', nargs='+', choices=checks, default=checks)
     args = parser.parse_args()
     output = ROOT/'.kvik/tests/native-workspace-adapter'; output.mkdir(parents=True, exist_ok=True)
@@ -77,11 +78,17 @@ def main():
     api = args.artifacts/'kotlin-build-tools-api-2.4.20.jar'; stdlib = args.artifacts/'kotlin-stdlib-2.4.20.jar'
     junit = args.artifacts/'junit-platform-console-standalone-1.13.4.jar'
     worker = args.skip_build.resolve() if args.skip_build else case/'worker'
+    lock = jvm_worker.read_lock(ROOT)
+    artifacts = jvm_worker.acquire(lock, args.artifacts, True)
     if not args.skip_build:
-        sources = sorted((ROOT/'core/src').rglob('*.kt')) + sorted((ROOT/'compiler/jvm/src').rglob('*.kt'))
-        command('build-worker', [java, '-cp', os.pathsep.join(map(str,jars)), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
-            '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str,[*jars,junit])), '-d', worker, *sources])
-    manifest = dict(schemaVersion=1, version='2.4.20', artifacts=[dict(path=p.name,digest=digest(p)) for p in jars], serializationPlugin=None)
+        def compile_worker(argv, environment, log):
+            assert environment == env
+            command('build-worker', argv)
+        jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, env, None, compile_worker)
+        worker = case/'jvm/classes'
+    manifest = dict(schemaVersion=1, version=lock['kotlinVersion'],
+        artifacts=[dict(path=item['filename'], digest=jvm_worker.artifact_digest(item)) for item in lock['compilerArtifacts']],
+        serializationPlugin=jvm_worker.artifact_digest(lock['serializationPlugin']))
     manifest_path = case/'compiler-manifest.json'; manifest_path.write_bytes(canonical(manifest))
     original_cp = json.loads((fixture/'plugin-classpath.json').read_text())
     for label in args.checks:
@@ -115,6 +122,14 @@ def main():
         request = dict(schemaVersion=1, requestId=label, compiler=digest(manifest_path),
             arguments=['-target','macos_arm64','-produce','library','-o','output/main.klib','-module-name','probe','-Xoverride-konan-properties=airplaneMode=true','input/Native.kt'],
             libraries=[],pluginApplications=[plugin])
+        if label == 'hierarchical-fragments':
+            (work/'input/Common.kt').write_text('package fixture.nativeconsumer\nexpect fun platformName(): String\n')
+            (work/'input/Native.kt').write_text(source + '\nactual fun platformName(): String = "native"\n')
+            request['arguments'] += ['input/Common.kt', '-Xmulti-platform',
+                '-Xfragments=commonMain', '-Xfragments=emptyShared', '-Xfragments=nativeMain', '-Xfragments=emptyTerminal',
+                '-Xfragment-refines=emptyShared:commonMain', '-Xfragment-refines=nativeMain:emptyShared',
+                '-Xfragment-refines=emptyTerminal:nativeMain',
+                '-Xfragment-sources=commonMain:input/Common.kt', '-Xfragment-sources=nativeMain:input/Native.kt']
         if label == 'jvm-regression':
             (work/'input/Jvm.kt').write_text('fun main() { check("PLUGIN_MARKER" == "helper:v1:message:runtime") }\n')
             request = dict(schemaVersion=1,requestId=label,operation='jvm-compile',compiler=digest(manifest_path),sources=['input/Jvm.kt'],
@@ -127,7 +142,7 @@ def main():
         main = 'kvik.jvm.CompilerWorkerKt' if label == 'jvm-regression' else 'kvik.jvm.NativePluginWorker'
         result = command(label+'-process', [*bootstrap,main,work,'request.json','result.json',args.artifacts,manifest_path,*([] if label == 'jvm-regression' else [native])], work, expected=None)
         recorded = json.loads((work/'result.json').read_text()); assert recorded['requestId']==label and recorded['exitCode']==result.exit_code
-        if label in ('literal-options','multiline-options','jvm-regression'):
+        if label in ('literal-options','multiline-options','jvm-regression','hierarchical-fragments'):
             assert result.exit_code == 0 and recorded['status']=='success', recorded
             assert (work/('output/classes/JvmKt.class' if label=='jvm-regression' else 'output/main.klib')).is_file()
             report = (work/'output/plugins/fixture.rewrite/report/result.txt').read_text()

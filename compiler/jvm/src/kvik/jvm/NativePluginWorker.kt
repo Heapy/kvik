@@ -67,6 +67,17 @@ object NativePluginWorker {
                 "-generate-test-runner", "-Xmulti-platform", "-Xexplicit-api=strict", "-Werror", "-Xoverride-konan-properties=airplaneMode=true" -> Unit
                 else -> when {
                     argument.startsWith("-opt-in=") -> require(argument.substringAfter('=').matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")))
+                    argument.startsWith("-Xfragments=") -> require(argument.substringAfter('=').matches(Regex("[A-Za-z_][A-Za-z0-9_.-]{0,127}")))
+                    argument.startsWith("-Xfragment-refines=") -> require(argument.substringAfter('=').split(':').let { parts ->
+                        parts.size == 2 && parts.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_.-]{0,127}")) }
+                    })
+                    argument.startsWith("-Xfragment-sources=") -> {
+                        val parts = argument.substringAfter('=').split(':')
+                        require(parts.size == 2 && parts[0].matches(Regex("[A-Za-z_][A-Za-z0-9_.-]{0,127}")))
+                        val path = parts[1]
+                        require((path.startsWith("input/") || path.startsWith("prepared/")) && path.endsWith(".kt") && ',' !in path)
+                        workspace.path(path)
+                    }
                     argument.startsWith("-Xcommon-sources=") -> argument.substringAfter('=').split(',').forEach { require(it.startsWith("input/") && it.endsWith(".kt")); workspace.path(it) }
                     argument.endsWith(".kt") && (argument.startsWith("input/") || argument.startsWith("prepared/")) -> workspace.path(argument)
                     else -> reject("KVIK_NATIVE_ARGUMENT", "Unsupported Native worker argument: $argument")

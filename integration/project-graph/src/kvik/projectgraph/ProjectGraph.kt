@@ -352,6 +352,27 @@ private class Builder(
         val values = selected.values.sortedBy { it.first.path.value }
         return Sources(values.map { it.first }, values.map { it.first.path }, values.filter { it.second }.map { it.first.path })
     }
+    private fun nativeFragments(module: String, target: String, scope: String, generated: List<LogicalPath> = emptyList()): List<NativeSourceFragment> {
+        val selected = sourceSets(module, target, scope)
+        val mainRoot = target(module, target).main
+        val mainNames = sourceSetClosure(modules.getValue(module), listOf(mainRoot)).map { it.name }.toSet()
+        val testNames = if (scope == "test") selected.map { it.name }.toSet() - mainNames else emptySet()
+        val fragments = selected.map { set ->
+            // Test compilation implicitly sees its complete own main compilation, even when
+            // source-set declarations omit that edge. Attach it at test-only roots so inherited
+            // test sources see main too; main closure membership prevents refinement cycles.
+            val parents = if (set.name in testNames && set.dependsOn.none { it in testNames })
+                (set.dependsOn + mainRoot).distinct() else set.dependsOn
+            NativeSourceFragment(set.name, set.directories.flatMap { directory ->
+                files.filter { it.path.value.startsWith(directory.value + "/") }.map { LogicalPath("src/${it.path.value}") }
+            }.sortedBy { it.value }, parents)
+        }
+        var terminal = "kvik_${target}_$scope"
+        while (fragments.any { it.name == terminal }) terminal += "_"
+        val parents = fragments.flatMap { it.dependsOn }.toSet()
+        return fragments + NativeSourceFragment(terminal, generated, fragments.filter { it.name !in parents }.map { it.name })
+    }
+
     private fun resources(module: String, target: String, scope: String): List<FileEntry> {
         val main = sourceSets(module, target, "main").map { it.name }.toSet()
         val sets = sourceSets(module, target, scope).filter { scope == "main" || it.name !in main }
@@ -529,7 +550,7 @@ private class Builder(
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
-                pluginApplications = workspace.applications, target = NativeTarget.require(target)), inputs, composition, nativeTools(target, workspace.applications),
+                pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main")), inputs, composition, nativeTools(target, workspace.applications),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
     }
@@ -846,7 +867,8 @@ private class Builder(
                     explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
                 else nativeCompileAction(NativeCompilation(module, source.paths + generated.map { it.path }, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.klib"),
                     NativeOutput.LIBRARY, options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors,
-                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }, pluginApplications = workspace.applications, target = NativeTarget.require(target)), inputs, composition, nativeTools(target, workspace.applications),
+                    kotestLauncher = kotest?.let { kotestGeneratedLauncher }, pluginApplications = workspace.applications, target = NativeTarget.require(target),
+                    sourceFragments = nativeFragments(module, target, "test", generated.map { it.path })), inputs, composition, nativeTools(target, workspace.applications),
                     timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
             }
             if (NativeTarget.find(target) != null) {
