@@ -4,19 +4,22 @@ import kvik.cache.NativeFiles
 import kvik.compiler.native.NativeToolchainLayout
 import kvik.compiler.native.NativeToolchainProvider
 import kvik.compiler.native.nativeDependenciesIdentity
+import kvik.compiler.native.linuxNativeDependenciesIdentity
 import kvik.core.Digest
+import kvik.core.NativeTarget
 import kvik.toolchains.*
 
 /**
- * Supported installation: unmodified 2.4.20 macOS-arm64 properties, local Xcode, and already
+ * Supported installations: unmodified 2.4.20 macOS-arm64 or Linux-x64 properties and already
  * extracted dependencies. Caller keeps all roots AND data-directory metadata stable through use.
  * Use with NativeCompilerExecutor's exact environment/arguments, including offline/internal-server
- * switches. Every successful call rehashes all six inventories; there is no mtime cache.
+ * switches. Every successful call rehashes all host inventories; there is no mtime cache.
  */
 class InstalledNativeToolchainProvider(
     private val trustedToolLock: String,
     toolRoots: Map<ToolComponent, String>,
     private val konanDataRoot: String,
+    private val target: NativeTarget = NativeTarget.MACOS_ARM64,
 ) : NativeToolchainProvider {
     private val toolRoots = toolRoots.toMap()
 
@@ -25,17 +28,23 @@ class InstalledNativeToolchainProvider(
     override fun verified(identities: Map<String, Digest>, checkpoint: () -> Unit): NativeToolchainLayout {
         checkpoint()
         val requested = identities.toMap()
-        require(requested.keys == setOf("native", "jdk", "sdk", "native-dependencies")) { "Native tool identities require exactly native, jdk, sdk and native-dependencies" }
+        require(requested.keys == target.toolIdentityNames) { "${target.projectName} tool identities require exactly ${target.toolIdentityNames.sorted()}" }
         val installed = InstalledToolchainVerifier().verify(trustedToolLock, toolRoots, checkpoint)
-        require(installed.host.os == "Darwin" && installed.host.architecture == "arm64") { "macosArm64 compilation requires a Darwin arm64 host" }
+        val macos = target == NativeTarget.MACOS_ARM64
+        require(if (macos) installed.host.os == "Darwin" && installed.host.architecture == "arm64"
+            else installed.host.os == "Linux" && installed.host.architecture == "x86_64") {
+            "${target.projectName} compilation requires a matching ${if (macos) "Darwin arm64" else "Linux x86_64"} host"
+        }
         val native = installed[ToolComponent.KOTLIN_NATIVE]
         val jdk = installed[ToolComponent.JDK]
-        val sdk = installed[ToolComponent.SDK]
         val llvm = installed[ToolComponent.LLVM]
         val libffi = installed[ToolComponent.LIBFFI]
-        val xcode = installed[ToolComponent.XCODE_TOOLCHAIN]
-        require(requested == mapOf("native" to native.digest, "jdk" to jdk.digest, "sdk" to sdk.digest,
-            "native-dependencies" to nativeDependenciesIdentity(llvm.digest, libffi.digest, xcode.digest))) {
+        val platform = installed[if (macos) ToolComponent.SDK else ToolComponent.SYSTEM]
+        val hostToolchain = installed[if (macos) ToolComponent.XCODE_TOOLCHAIN else ToolComponent.NATIVE_TOOLCHAIN]
+        val dependenciesIdentity = if (macos) nativeDependenciesIdentity(llvm.digest, libffi.digest, hostToolchain.digest)
+            else linuxNativeDependenciesIdentity(llvm.digest, libffi.digest, hostToolchain.digest)
+        require(requested == mapOf("native" to native.digest, "jdk" to jdk.digest,
+            (if (macos) "sdk" else "system") to platform.digest, "native-dependencies" to dependenciesIdentity)) {
             "Requested Native identities differ from verified installations"
         }
         fun executable(path: String) {
@@ -46,22 +55,32 @@ class InstalledNativeToolchainProvider(
         }
         val compiler = "${native.root}/bin/konanc"
         executable(compiler); executable("${native.root}/bin/run_konan"); executable("${jdk.root}/bin/java")
-        // Deliberately support one reviewed properties file instead of partially interpreting Java
+        // Deliberately support one reviewed properties file per host instead of interpreting Java
         // properties, substitutions, dependency profiles and target overrides differently from konanc.
         NativeFiles.ensureDirectory("${native.root}/konan", create = false)
-        require(CompilerFiles.digest("${native.root}/konan/konan.properties", 36666, checkpoint) ==
-            Digest("f8a095afdc2b1fa052238c040562c254c36d7ce455a40a61cbf8065063ef4a4d", 36666)) {
-            "Unsupported Native compiler properties; reviewed 2.4.20 macOS-arm64 defaults required"
+        val properties = if (macos)
+            Digest("f8a095afdc2b1fa052238c040562c254c36d7ce455a40a61cbf8065063ef4a4d", 36666)
+        else Digest("a0bfd2162d8f9cad8cfc6493813b4a1aa42dd2912fe6683e60b94adcb08c9c7a", 36666)
+        require(CompilerFiles.digest("${native.root}/konan/konan.properties", properties.sizeBytes, checkpoint) == properties) {
+            "Unsupported Native compiler properties; reviewed 2.4.20 ${target.compilerName} defaults required"
         }
         require(NativeFiles.info("${native.root}/konan/platforms") == null) { "Native platform property overrides are unsupported" }
 
-        require(xcode.root.endsWith("/Toolchains/XcodeDefault.xctoolchain")) { "XcodeDefault.xctoolchain installation required" }
-        val developer = xcode.root.removeSuffix("/Toolchains/XcodeDefault.xctoolchain")
-        NativeFiles.ensureDirectory(developer, create = false)
-        require(physicalPath("$developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk") == sdk.root) {
-            "Verified SDK must be the selected Xcode installation's default macOS SDK"
+        val developer = if (macos) {
+            require(hostToolchain.root.endsWith("/Toolchains/XcodeDefault.xctoolchain")) { "XcodeDefault.xctoolchain installation required" }
+            val directory = hostToolchain.root.removeSuffix("/Toolchains/XcodeDefault.xctoolchain")
+            NativeFiles.ensureDirectory(directory, create = false)
+            require(physicalPath("$directory/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk") == platform.root) {
+                "Verified SDK must be the selected Xcode installation's default macOS SDK"
+            }
+            executable("${hostToolchain.root}/usr/bin/ld")
+            directory
+        } else {
+            val linker = physicalPath("${llvm.root}/bin/ld.lld")
+            require(linker.startsWith("${llvm.root}/")) { "Linux linker escapes the verified LLVM installation" }
+            executable(linker)
+            ""
         }
-        executable("${xcode.root}/usr/bin/ld")
 
         NativeFiles.ensureDirectory(konanDataRoot, create = false)
         val data = physicalPath(konanDataRoot)
@@ -71,7 +90,9 @@ class InstalledNativeToolchainProvider(
         }
         val dependencies = "$data/dependencies"
         NativeFiles.ensureDirectory(dependencies, create = false)
-        val required = mapOf("llvm-21-aarch64-macos-essentials-97" to llvm.root, "libffi-3.3-1-macos-arm64" to libffi.root)
+        val required = if (macos) mapOf("llvm-21-aarch64-macos-essentials-97" to llvm.root, "libffi-3.3-1-macos-arm64" to libffi.root)
+            else mapOf("llvm-21-x86_64-linux-essentials-116" to llvm.root, "libffi-3.2.1-2-linux-x86-64" to libffi.root,
+                "x86_64-unknown-linux-gnu-gcc-8.3.0-glibc-2.19-kernel-4.9-2" to hostToolchain.root)
         for ((name, root) in required) {
             checkpoint()
             NativeFiles.ensureDirectory("$dependencies/$name", create = false)
@@ -81,14 +102,14 @@ class InstalledNativeToolchainProvider(
         checkpoint()
         // The distribution also checks LLDB's presence, although these typed compile/test actions
         // never execute it. Marker + nonempty directory prevents the downloader touching it.
-        for (name in required.keys + "lldb-4-macos") {
+        for (name in required.keys + (if (macos) "lldb-4-macos" else "lldb-4-linux")) {
             val directory = "$dependencies/$name"
             NativeFiles.ensureDirectory(directory, create = false)
             require(name in markers && CompilerFiles.names(directory, checkpoint).isNotEmpty()) { "Dependency is not already extracted: $name" }
             require(NativeFiles.info("$directory/.unstable") == null) { "Unstable dependency would be replaced by compiler: $name" }
         }
         // Offline mode alone still extracts cached archives when a marker is absent. Refuse all
-        // archives rather than trusting archive bytes that are absent from the six inventories.
+        // archives rather than trusting archive bytes that are absent from the host inventories.
         val cache = "$dependencies/cache"
         if (NativeFiles.info(cache) != null) {
             NativeFiles.ensureDirectory(cache, create = false)
@@ -96,6 +117,6 @@ class InstalledNativeToolchainProvider(
             NativeFiles.info("$cache/.lock")?.let { require(NativeFiles.regular(it) && it.size == 0L) { "Dependency cache lock must be an empty regular file" } }
         }
         checkpoint()
-        return NativeToolchainLayout(compiler, jdk.root, sdk.root, data, developer, native.root)
+        return NativeToolchainLayout(compiler, jdk.root, if (macos) platform.root else "", data, developer, native.root, target)
     }
 }

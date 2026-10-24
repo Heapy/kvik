@@ -36,7 +36,7 @@ internal fun buildOptions(args: List<String>): BuildOptions {
     }
     require(modules.isNotEmpty() && targets.isNotEmpty()) { "Select --module and --target explicitly (repeatable)" }
     require(modules.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) }) { "Invalid module selection" }
-    require(targets.all { it in setOf("jvm", "macosArm64") }) { "Unsupported target selection" }
+    require(targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Unsupported target selection" }
     val jobs = values["--jobs"]?.toIntOrNull() ?: if ("--jobs" in values) error("Invalid --jobs") else 2
     val memory = values["--memory-mib"]?.toLongOrNull() ?: if ("--memory-mib" in values) error("Invalid --memory-mib") else 4096L
     return BuildOptions(projectOptions(project, lockOptions = true), modules, targets,

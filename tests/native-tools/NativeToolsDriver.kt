@@ -4,7 +4,7 @@ package kvik.compilertools.nativetests
 import kvik.compilertools.InstalledNativeToolchainProvider
 import kvik.compiler.native.*
 import kvik.core.*
-import kvik.toolchains.ToolComponent
+import kvik.toolchains.toolComponentsFor
 import kvik.execution.*
 import kvik.cache.*
 import kotlinx.cinterop.*
@@ -13,6 +13,7 @@ import kotlin.time.TimeSource
 
 fun main() {
     var provider: InstalledNativeToolchainProvider? = null
+    var target = NativeTarget.MACOS_ARM64
     while (true) {
         val line = readlnOrNull() ?: break
         val start = TimeSource.Monotonic.markNow()
@@ -21,8 +22,10 @@ fun main() {
             val value = when (request.getValue("op").stringValue()) {
                 "setup" -> {
                     val roots = request.getValue("roots").objectValue()
+                    target = request["target"]?.stringValue()?.let(NativeTarget::require) ?: NativeTarget.MACOS_ARM64
+                    val host = request.getValue("toolLock").objectValue().getValue("host").objectValue()
                     provider = InstalledNativeToolchainProvider(request.getValue("toolLock").canonical(),
-                        ToolComponent.entries.associateWith { roots.getValue(it.lockName).stringValue() }, request.getValue("data").stringValue())
+                        toolComponentsFor(host.getValue("os").stringValue(), host.getValue("architecture").stringValue()).associateWith { roots.getValue(it.lockName).stringValue() }, request.getValue("data").stringValue(), target)
                     "ready".json()
                 }
                 "verify" -> {
@@ -30,7 +33,7 @@ fun main() {
                     obj("compiler" to layout.compiler.json(), "javaHome" to layout.javaHome.json(), "sdk" to layout.sdk.json(),
                         "data" to layout.dependencies.json(), "developer" to layout.developerDirectory.json())
                 }
-                "compile" -> compile(checkNotNull(provider), request)
+                "compile" -> compile(checkNotNull(provider), request, target)
                 else -> error("Unknown operation")
             }
             obj("ok" to true.json(), "value" to value)
@@ -43,14 +46,14 @@ fun main() {
     }
 }
 
-private fun compile(provider: InstalledNativeToolchainProvider, request: Map<String, JsonValue>): JsonValue {
+private fun compile(provider: InstalledNativeToolchainProvider, request: Map<String, JsonValue>, target: NativeTarget): JsonValue {
     val workspace = request.getValue("workspace").stringValue()
     val store = NativeContentStore("$workspace/store")
     val directory = NativeRunDirectory(workspace)
     val source = store.put("fun answer(): Int = 42\n".encodeToByteArray())
     val input = TreeManifest(listOf(FileEntry(LogicalPath("Example.kt"), source)))
     val ids = request.getValue("identities").objectValue().mapValues { Digest.fromJson(it.value) }
-    val action = nativeCompileAction(NativeCompilation("provider", listOf(LogicalPath("Example.kt")), output = LogicalPath("provider.klib")),
+    val action = nativeCompileAction(NativeCompilation("provider", listOf(LogicalPath("Example.kt")), output = LogicalPath("provider.klib"), target = target),
         input, Sha256.digest("provider-fixture".encodeToByteArray()), ids)
     NativeProcessHost(request.getValue("guardian").stringValue()).use { host ->
         val executor = NativeCompilerExecutor(directory.runId, directory.path, host, store, provider)

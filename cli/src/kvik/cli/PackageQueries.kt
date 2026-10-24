@@ -85,7 +85,7 @@ internal fun packageCommand(args: List<String>): JsonValue.Object {
     else {
         val target = options.values["--target"] ?: error("Package dependencies requires --target")
         val usage = options.values["--usage"] ?: error("Package dependencies requires --usage")
-        require(target in setOf("jvm", "macosArm64")) { "Unsupported query target" }
+        require(target == "jvm" || NativeTarget.find(target) != null) { "Unsupported query target" }
         val variant = if (target == "jvm") {
             val jvm = options.values["--jvm-target"]?.let { value -> require(value in setOf("11", "17", "21", "25")); value.toInt() } ?: DEFAULT_JVM_TARGET
             jvmVariantRequest(usage, jvm)

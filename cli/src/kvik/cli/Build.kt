@@ -190,8 +190,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-kotest-native-tests-v1" -> kotest
                             else -> when (action.target) {
                                 "jvm" -> jvm
-                                "macosArm64" -> native
-                                else -> error("Unsupported action target ${action.target}")
+                                else -> if (NativeTarget.find(action.target) != null) native else error("Unsupported action target ${action.target}")
                             }
                         }
                         override fun resources(action: ActionSpec) = executor(action).resources(action)

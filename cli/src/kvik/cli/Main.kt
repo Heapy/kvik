@@ -34,7 +34,7 @@ private fun command(args: Array<String>) {
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline
-            Build/test: --module ID --target jvm|macosArm64 (repeatable) --tools PATH
+            Build/test: --module ID --target jvm|macosArm64|linuxX64 (repeatable) --tools PATH
             Execution: --runs PATH --jobs N --memory-mib N
             Remote compilation cache: --remote-cache PATH (transport JSON); --offline disables remote access
             Scripts: run-script NAME --project PATH --tools PATH -- ARGS; or run-script --file FILE.kt --tools PATH -- ARGS
@@ -47,7 +47,7 @@ private fun command(args: Array<String>) {
             Application mode requires one application module/target; r reloads, t runs fresh tests without changing app mode.
             Dev: dev [--mode library|application] [--control keys|jsonl|lines] (TTY defaults to immediate r/t/q/? keys) [--watch-ms 1000] [--initial build|test] plus build options
             Packages: packages versions GROUP:ARTIFACT --project PATH [--channel all|stable|prerelease] [--limit N] [--cursor TOKEN]
-            Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target jvm|macosArm64 --usage USAGE --project PATH
+            Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target jvm|macosArm64|linuxX64 --usage USAGE --project PATH
             Query cache: --query-cache PATH [--refresh|--offline] --json
             Project graph: dependencies --project PATH [--lock PATH] [--store PATH] [--module ID] [--script NAME] [--target TARGET] [--compilation main|test|script] [--usage USAGE] --json
             Evidence: verification --run PATH; explain --run PATH --action ACTION_ID (historical, read-only)

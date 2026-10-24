@@ -3,6 +3,7 @@ package kvik.cli
 import kvik.cache.NativeFiles
 import kvik.compilertools.*
 import kvik.compiler.native.nativeDependenciesIdentity
+import kvik.compiler.native.linuxNativeDependenciesIdentity
 import kvik.core.*
 import kvik.toolchains.*
 
@@ -36,18 +37,25 @@ internal class BuildTools(path: String) {
                 "jvm-worker" to worker.identity, "junit" to worker.junitIdentity)
             jvmProvider().verified(result.getValue("jvm"))
         }
-        if ("macosArm64" in targets) {
-            require(ToolComponent.SDK in roots && ToolComponent.XCODE_TOOLCHAIN in roots) { "macosArm64 compilation requires a Darwin arm64 host" }
-            result["macosArm64"] = mapOf("native" to identity(ToolComponent.KOTLIN_NATIVE),
-                "jdk" to identity(ToolComponent.JDK), "sdk" to identity(ToolComponent.SDK),
-                "native-dependencies" to nativeDependenciesIdentity(identity(ToolComponent.LLVM),
-                    identity(ToolComponent.LIBFFI), identity(ToolComponent.XCODE_TOOLCHAIN)))
-            nativeProvider().verified(result.getValue("macosArm64"))
+        for (target in targets.mapNotNull(NativeTarget::find)) {
+            val hostComponents = if (target == NativeTarget.MACOS_ARM64)
+                setOf(ToolComponent.SDK, ToolComponent.XCODE_TOOLCHAIN)
+            else setOf(ToolComponent.SYSTEM, ToolComponent.NATIVE_TOOLCHAIN)
+            require(roots.keys.containsAll(hostComponents)) { "${target.projectName} compilation requires its matching Native host" }
+            val hostIdentity = if (target == NativeTarget.MACOS_ARM64)
+                "sdk" to identity(ToolComponent.SDK) else "system" to identity(ToolComponent.SYSTEM)
+            val dependencies = if (target == NativeTarget.MACOS_ARM64)
+                nativeDependenciesIdentity(identity(ToolComponent.LLVM), identity(ToolComponent.LIBFFI), identity(ToolComponent.XCODE_TOOLCHAIN))
+            else linuxNativeDependenciesIdentity(identity(ToolComponent.LLVM), identity(ToolComponent.LIBFFI), identity(ToolComponent.NATIVE_TOOLCHAIN))
+            result[target.projectName] = mapOf("native" to identity(ToolComponent.KOTLIN_NATIVE),
+                "jdk" to identity(ToolComponent.JDK), hostIdentity, "native-dependencies" to dependencies)
+            nativeProvider(target).verified(result.getValue(target.projectName))
         }
         return result
     }
 
     fun jvmProvider() = InstalledJvmToolchainProvider(lock, roots, "${runtimeDirectory()}/jvm",
         Digest(runtimeJvmWorkerHash, runtimeJvmWorkerSize), artifacts)
-    fun nativeProvider() = InstalledNativeToolchainProvider(lock, roots, data)
+    fun nativeProvider(target: NativeTarget = if (ToolComponent.SYSTEM in roots) NativeTarget.LINUX_X64 else NativeTarget.MACOS_ARM64) =
+        InstalledNativeToolchainProvider(lock, roots, data, target)
 }

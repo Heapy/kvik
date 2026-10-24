@@ -53,10 +53,10 @@ internal fun checkRun(directory: String): CheckedRun {
             }
             else -> {
                 val targets = metadata.getValue("targets").arrayValue().map(JsonValue::stringValue).toSet()
-                require(targets.isNotEmpty() && targets.all { it in setOf("jvm", "macosArm64") }) { "Invalid retained target selection" }
+                require(targets.isNotEmpty() && targets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Invalid retained target selection" }
                 val tools = BuildTools(metadata.getValue("toolsPath").stringValue())
                 val toolTargets = metadata["toolTargets"]?.arrayValue()?.map(JsonValue::stringValue)?.toSet() ?: targets
-                require(toolTargets.containsAll(targets) && toolTargets.all { it in setOf("jvm", "macosArm64") }) { "Invalid retained tool target selection" }
+                require(toolTargets.containsAll(targets) && toolTargets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Invalid retained tool target selection" }
                 val verified = tools.verify(toolTargets)
                     .flatMap { (target, identities) -> identities.map { (name, digest) -> "$target:$name" to digest } }.toMap()
                 if (verified != record.toolchains) { current = Freshness.STALE; reason = "Verified tool identities changed" }
