@@ -28,7 +28,9 @@ def main():
             {'id': 'central', 'url': 'https://repo.maven.apache.org/maven2'}], 'modules': [
             {'id': 'library', 'sourceSets': [{'name': 'main', 'directories': ['src', 'missing'],
                 'resources': ['assets'], 'dependsOn': [], 'dependencies': []}],
-             'targets': [{'name': 'jvm', 'main': 'main', 'test': None, 'compilerOptions': []}], 'compilerPlugins': []}]}
+             'targets': [{'name': target, 'main': 'main', 'test': None, 'compilerOptions': []}
+                         for target in ('jvm', 'js', 'wasmJs')], 'compilerPlugins': []}],
+                  'fileTags': {'unrelated.txt': ['manual:notes']}}
         files = {'kvik.json': json.dumps(config), 'src/Main.kt': 'fun answer() = 42\n',
                  'assets/data.txt': 'resource', 'unrelated.txt': 'unselected',
                  'sub/kvik.json': json.dumps(config), 'sub/src/Nested.kt': 'fun nested() = 7\n',
@@ -72,7 +74,15 @@ def main():
         assert historical['sourceManifest'] != current['sourceManifest']
         provenance = ('source', 'sourceRoot', 'sourceManifest')
         assert {key: value for key, value in historical.items() if key not in provenance} == local_result
-        assert [entry['path'] for entry in historical['files']] == ['assets/data.txt', 'src/Main.kt']
+        assert [entry['path'] for entry in historical['files']] == ['assets/data.txt', 'src/Main.kt', 'unrelated.txt']
+        source_file = next(entry for entry in historical['files'] if entry['path'] == 'src/Main.kt')
+        assert source_file['targets'] == ['js', 'jvm', 'wasmJs']
+        assert source_file['modules'] == ['library'] and source_file['sourceSets'] == ['main']
+        tagged_file = next(entry for entry in historical['files'] if entry['path'] == 'unrelated.txt')
+        assert tagged_file['modules'] == [] and tagged_file['targets'] == []
+        assert 'manual:notes' in tagged_file['tags']
+        assert historical['origins']['target:library:wasmJs'] == {
+            'file': 'kvik.json', 'pointer': '/modules/0/targets/2'}
         nested = command(runtime, [*prefix, '--revision', revision, '--project', 'sub/kvik.json'])
         local_nested = command(runtime, ['inspect', '--project', 'sub/kvik.json'])
         validator.validate(nested)

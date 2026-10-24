@@ -50,7 +50,7 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
             require(NativeFiles.directory(status)) { "Source/resource root is not a real directory: ${directory.value}" }
         }
         if (missing) emptyList() else collect(directory.value)
-    }
+    }.toJson()
 }
 
 /** Inspection reads only the configuration blob; source ownership comes from the frozen inventory. */
@@ -76,17 +76,16 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
         }
         if (directory.value !in directories) emptyList() else files.filter { it.startsWith("${directory.value}/") }
     }
-    return JsonValue.Object(inspected.values + mapOf("source" to resolved.provenance.toJson(),
-        "sourceRoot" to root.json(), "sourceManifest" to manifest.digest.toJson()))
+    return inspected.copy(source = SourceReference(resolved.provenance, root, manifest.digest)).toJson()
 }
 
 private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: LogicalPath, policy: ResolverPolicy,
                                  existingFile: (LogicalPath) -> Boolean, checkpoint: () -> Unit = {},
-                                 filesBelow: (LogicalPath) -> List<String>): JsonValue.Object {
+                                 filesBelow: (LogicalPath) -> List<String>): ProjectInspection {
     val owners = linkedMapOf<String, MutableList<Owner>>()
-    val origins = linkedMapOf<String, JsonValue>()
+    val origins = linkedMapOf<String, ConfigurationOrigin>()
     fun origin(id: String, pointer: String) {
-        origins[id] = obj("file" to fileName.value.json(), "pointer" to pointer.json())
+        origins[id] = ConfigurationOrigin(fileName, pointer)
     }
     configuration.project.modules.forEachIndexed { moduleIndex, module ->
         origin("module:${module.id}", "/modules/$moduleIndex")
@@ -105,17 +104,15 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
         if (existingFile(path)) owners.getOrPut(path.value) { mutableListOf() }
     }
     val tags = tagProjectFiles(configuration, fileName, null, owners.keys.map(::LogicalPath), checkpoint).associateBy { it.path.value }
-    return obj(
-        "schemaVersion" to CONTRACT_VERSION.json(), "project" to configuration.document,
-        "configuration" to effectiveConfiguration(configuration, policy).digest.toJson(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
-        "files" to owners.keys.sorted().map { path ->
+    return ProjectInspection(
+        project = configuration,
+        configuration = effectiveConfiguration(configuration, policy).digest, composition = Digest(runtimeComposition, runtimeCompositionSize),
+        files = owners.keys.sorted().map { path ->
             val entries = owners.getValue(path)
-            obj(
-            "path" to path.json(), "modules" to entries.map { it.module }.distinct().sorted().map { it.json() }.json(),
-            "sourceSets" to entries.map { it.sourceSet }.distinct().sorted().map { it.json() }.json(),
-            "targets" to entries.flatMap { it.targets }.distinct().sorted().map { it.json() }.json(),
-            "tags" to tags.getValue(path).tags.sorted().map { it.json() }.json(),
-        ) }.json(), "origins" to JsonValue.Object(origins),
-        "capabilities" to listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "verification").map { it.json() }.json(),
+            FileInspection(LogicalPath(path), entries.map { it.module }.distinct().sorted(),
+                entries.map { it.sourceSet }.distinct().sorted(), entries.flatMap { it.targets }.distinct().sorted(),
+                tags.getValue(path).tags.sorted())
+        }, origins = origins,
+        capabilities = listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "verification"),
     )
 }

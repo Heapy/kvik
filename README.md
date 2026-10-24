@@ -19,6 +19,15 @@ With tools matching the explicitly provisioned host lock:
 
 `resolve` explicitly publishes `kvik.lock.json` and fills `.kvik/cache` relative to the project. `--store` selects a shared content store, `--lock` selects a lockfile, and repeated `--pin group:artifact:version` options declare resolver policy. Supply the same pins to inspection and lock checks. `check-lock` verifies the lock and cached artifacts without downloading or repairing anything. `resolve --offline` also performs only that check; the launcher's `--offline` propagates to dependency commands. Publication uses a persistent `.kvik-dependency-publication.lock` in the destination directory and rejects configuration/lock changes observed during resolution. See [CLI dependency evidence](docs/evidence/k09-dependency-cli.md).
 
+`inspect` exports the versioned project model for tools and editor integrations:
+configuration, file ownership by module/source set/target, tags, configuration
+origins and capabilities. Kotlin consumers can parse it with
+`ProjectInspection.fromJson(parseJson(output))` from
+[the core inspection model](core/src/kvik/core/ProjectInspection.kt). Provider-backed
+inspection also carries the source revision, project root and manifest identity as
+one source context. This model is the foundation for IDE integration; an IDE adapter
+and unsaved-buffer synchronization are still pending.
+
 ### Configuration changes
 
 `config validate` parses the configuration and validates the project graph and
