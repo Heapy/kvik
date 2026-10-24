@@ -22,13 +22,18 @@ internal fun LibraryPackage.pom(): ByteArray = buildString {
 
 internal fun LibraryPackage.moduleMetadata(artifact: Digest): ByteArray {
     val name = "${basename()}.${extension()}"
+    val jsTarget = KotlinJsTarget.find(target)
     fun variant(variantName: String, usage: String, selected: List<LibraryDependency>): JsonValue {
         val attributes = linkedMapOf<String, JsonValue>("org.gradle.category" to "library".json(),
-            "org.gradle.usage" to usage.json(), "org.jetbrains.kotlin.platform.type" to (if (target == "jvm") "jvm" else "native").json())
+            "org.gradle.usage" to usage.json(), "org.jetbrains.kotlin.platform.type" to (if (target == "jvm") "jvm" else jsTarget?.platformType ?: "native").json())
         if (target == "jvm") {
             attributes["org.gradle.libraryelements"] = "jar".json()
             attributes["org.gradle.dependency.bundling"] = "external".json()
             attributes[JVM_TARGET_VERSION_ATTRIBUTE] = checkNotNull(jvmTarget).json()
+        } else if (jsTarget != null) {
+            attributes["org.gradle.jvm.environment"] = "non-jvm".json()
+            attributes["org.jetbrains.kotlin.klib.packaging"] = "packed".json()
+            jsTarget.variantAttributes.forEach { (name, value) -> attributes[name] = value.json() }
         } else {
             attributes["org.jetbrains.kotlin.native.target"] = NativeTarget.require(target).compilerName.json()
             attributes["artifactType"] = "org.jetbrains.kotlin.klib".json()

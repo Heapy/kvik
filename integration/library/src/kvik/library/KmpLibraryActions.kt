@@ -31,7 +31,7 @@ data class KmpLibraryPackage(
     init {
         require(module.length <= 256 && module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")))
         require(coordinate.toString().length <= 1024)
-        require(targets.size in 1..(NativeTarget.entries.size + 1) && targets.map { it.target }.distinct().size == targets.size)
+        require(targets.size in 1..(NativeTarget.entries.size + KotlinJsTarget.entries.size + 1) && targets.map { it.target }.distinct().size == targets.size)
         require(targets.all { it.module == module }) { "Target publication belongs to a different module" }
         require(targets.all { it.rootCoordinate == coordinate }) { "Target publication must identify its root owner" }
         require((targets.map { it.coordinate } + coordinate).map { it.group to it.name }.distinct().size == targets.size + 1) {

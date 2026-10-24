@@ -21,17 +21,17 @@ private fun runPackage(executor: ActionExecutor, action: ActionSpec): ActionResu
     repeat(action.inputs.files.size + 10) { running.poll()?.let { return it } }
     error("Package did not complete")
 }
-private class KmpFixture(nativeTarget: String = "macosArm64") {
+private class KmpFixture(platformTarget: String = "macosArm64") {
     val store = KmpStore()
     val root = Coordinate("org.example", "root", "1.0")
     val dependency = Coordinate("org.example", "dependency", "2.0")
     val targets = listOf(LibraryPackage("root", "jvm", Coordinate("org.example", "root-jvm", "1.0"),
-        listOf(LibraryDependency(dependency, true)), 11, root), LibraryPackage("root", nativeTarget,
-        Coordinate("org.example", "root-${nativeTarget.lowercase()}", "1.0"), listOf(LibraryDependency(dependency, true)), rootCoordinate = root))
+        listOf(LibraryDependency(dependency, true)), 11, root), LibraryPackage("root", platformTarget,
+        Coordinate("org.example", "root-${platformTarget.lowercase()}", "1.0"), listOf(LibraryDependency(dependency, true)), rootCoordinate = root))
     val selection = KmpLibraryPackage("root", root, targets,
         listOf(KmpSourceSetMetadata("commonBase", emptyList(), listOf(dependency)),
             KmpSourceSetMetadata("sharedMain", listOf("commonBase"), listOf(dependency))),
-        mapOf("jvm" to listOf("sharedMain", "commonBase"), nativeTarget to listOf("commonBase", "sharedMain")))
+        mapOf("jvm" to listOf("sharedMain", "commonBase"), platformTarget to listOf("commonBase", "sharedMain")))
     // Opaque byte fixtures exercise packaging only, not compiler KLIB validity.
     val metadata = selection.sourceSets.flatMap { source -> listOf(
         store.file("metadata/${source.name}/default/manifest", "fixture=${source.name}\n".encodeToByteArray()),
@@ -69,6 +69,52 @@ private fun jarFiles(bytes: ByteArray): Map<String, ByteArray> {
 }
 
 class KmpLibraryPackageTest {
+    @Test fun jsAndWasmRootRedirectsIncludeApiRuntimeAndMatchingSharedSourceMappings() {
+        for (target in KotlinJsTarget.entries) {
+            val fixture = KmpFixture(target.projectName)
+            val result = runPackage(KmpLibraryPackageExecutor(fixture.store), fixture.action())
+            assertEquals(ActionStatus.EXECUTED, result.status)
+            val variants = parseJson(fixture.bytes(result, ".module").decodeToString()).objectValue().getValue("variants").arrayValue().map { it.objectValue() }
+            val expectedNames = listOf("${target.projectName}ApiElements", "${target.projectName}RuntimeElements")
+            val redirects = variants.filter { it.getValue("name").stringValue() in expectedNames }
+            assertEquals(expectedNames, redirects.map { it.getValue("name").stringValue() })
+            val selected = fixture.targets.single { it.target == target.projectName }
+            val targetFile = fixture.platformFiles.single { it.path.value.endsWith("/${selected.coordinate.name}-1.0.module") }
+            val published = parseJson(fixture.store.get(targetFile.digest)!!.decodeToString()).objectValue()
+            val targetVariants = published.getValue("variants").arrayValue().associateBy { it.objectValue().getValue("name").stringValue() }
+            assertEquals(obj("group" to "org.example".json(), "module" to "root".json(), "version" to "1.0".json(),
+                "url" to "../../root/1.0/root-1.0.module".json()), published.getValue("component"))
+            for (redirect in redirects) {
+                assertFalse("files" in redirect)
+                assertFalse("dependencies" in redirect)
+                assertEquals(targetVariants.getValue(redirect.getValue("name").stringValue()).objectValue().getValue("attributes"), redirect.getValue("attributes"))
+                assertEquals(obj("group" to "org.example".json(), "module" to selected.coordinate.name.json(), "version" to "1.0".json(),
+                    "url" to "../../${selected.coordinate.name}/1.0/${selected.coordinate.name}-1.0.module".json()), redirect.getValue("available-at"))
+            }
+            val psm = parseJson(jarFiles(fixture.bytes(result, ".jar")).getValue("META-INF/kotlin-project-structure-metadata.json").decodeToString())
+                .objectValue().getValue("projectStructure").objectValue().getValue("variants").arrayValue().associate { variant ->
+                    variant.objectValue().let { it.getValue("name").stringValue() to it.getValue("sourceSet").arrayValue().map(JsonValue::stringValue) }
+                }
+            assertEquals(setOf("jvmApiElements", "jvmRuntimeElements") + expectedNames, psm.keys)
+            expectedNames.forEach { assertEquals(listOf("commonBase", "sharedMain"), psm.getValue(it)) }
+            val changed = fixture.selection.copy(targets = fixture.targets.map { if (it.target == target.projectName) it.copy(dependencies = emptyList()) else it })
+            assertFails { fixture.action(changed) }
+            assertEquals(fixture.selection.toJson(), KmpLibraryPackage.fromJson(fixture.selection.toJson()).toJson())
+        }
+    }
+
+    @Test fun rootCanIncludeEverySupportedTargetAndKeepsMappingsExact() {
+        val fixture = KmpFixture()
+        val names = listOf("jvm") + NativeTarget.entries.map { it.projectName } + KotlinJsTarget.entries.map { it.projectName }
+        val targets = names.map { name -> LibraryPackage("root", name, Coordinate("org.example", "root-${name.lowercase()}", "1.0"),
+            emptyList(), if (name == "jvm") 11 else null, fixture.root) }
+        val selected = fixture.selection.copy(targets = targets, sourceSetsByTarget = names.associateWith { listOf("commonBase", "sharedMain") })
+        assertEquals(names.size, selected.targets.size)
+        assertEquals(selected.toJson(), KmpLibraryPackage.fromJson(selected.toJson()).toJson())
+        assertFails { selected.copy(targets = targets + targets.last()) }
+        assertFails { selected.copy(sourceSetsByTarget = selected.sourceSetsByTarget - "wasmJs") }
+    }
+
     @Test fun linuxRootRedirectAndProjectStructureUseActualTargetNames() {
         val fixture = KmpFixture("linuxX64")
         val result = runPackage(KmpLibraryPackageExecutor(fixture.store), fixture.action())

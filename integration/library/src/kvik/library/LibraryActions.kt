@@ -30,9 +30,9 @@ data class LibraryPackage(
 ) {
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && module.length <= 256)
-        require(target == "jvm" || NativeTarget.find(target) != null) { "Unsupported library target" }
+        require(target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) { "Unsupported library target" }
         if (target == "jvm") supportedJvmTarget(requireNotNull(jvmTarget) { "JVM library target is required" }.toString())
-        else require(jvmTarget == null) { "Native library cannot declare a JVM target" }
+        else require(jvmTarget == null) { "Non-JVM library cannot declare a JVM target" }
         require(dependencies.size <= 1000 && dependencies.map { it.coordinate.group to it.coordinate.name }.distinct().size == dependencies.size) {
             "Duplicate or conflicting library dependency"
         }
@@ -88,7 +88,7 @@ fun libraryPackageAction(selection: LibraryPackage, inputs: TreeManifest, compos
         storedZipSize(entries + FileEntry(LogicalPath("META-INF/MANIFEST.MF"), Sha256.digest(jarManifest)))
     } else {
         require(declared.files.size == 1 && declared.files.single().path.value == "module.klib" && !declared.files.single().executable) {
-            "Native library inputs must contain only nonexecutable module.klib"
+            "KLIB library inputs must contain only nonexecutable module.klib"
         }
     }
     require(selected.toJson().canonical().encodeToByteArray().size <= LIBRARY_METADATA_LIMIT) { "Library metadata exceeds 1 MiB" }

@@ -86,6 +86,52 @@ private fun readZip(bytes: ByteArray): List<ZipEntry> {
 }
 
 class LibraryPackageTest {
+    @Test fun jsAndWasmPublishPackedKlibsWithDistinctApiAndRuntimeDependencies() {
+        for (target in KotlinJsTarget.entries) {
+            val store = Store()
+            val bytes = byteArrayOf(9, 8, 7)
+            val input = store.file("module.klib", bytes)
+            val selected = selection(target.projectName)
+            assertEquals(selected.toJson(), LibraryPackage.fromJson(selected.toJson()).toJson())
+            val spec = action(store, listOf(input), selected)
+            val result = complete(store, spec)
+            assertEquals(ActionStatus.EXECUTED, result.status)
+            assertEquals(CachePolicy.LOCAL, spec.cachePolicy)
+            assertEquals(target.projectName, spec.target)
+            assertEquals(3, result.outputs.files.size)
+            assertTrue(result.outputs.files.all { !it.executable })
+            val artifact = result.outputs.files.single { it.path.value.endsWith(".klib") }
+            val artifactName = "library-${target.projectName}-1.0.klib"
+            assertEquals("library/org/example/library-${target.projectName}/1.0/$artifactName", artifact.path.value)
+            assertEquals(input.digest, artifact.digest)
+            assertContentEquals(bytes, store.bytes(result, ".klib"))
+            val pom = store.bytes(result, ".pom").decodeToString()
+            assertContains(pom, "<packaging>klib</packaging>")
+            assertContains(pom, "<artifactId>api</artifactId><version>1.0</version><scope>compile</scope>")
+            assertContains(pom, "<artifactId>runtime</artifactId><version>2.0</version><scope>runtime</scope>")
+            val variants = parseJson(store.bytes(result, ".module").decodeToString()).objectValue().getValue("variants").arrayValue().map { it.objectValue() }
+            assertEquals(listOf("${target.projectName}ApiElements", "${target.projectName}RuntimeElements"), variants.map { it.getValue("name").stringValue() })
+            val platform = if (target == KotlinJsTarget.JS) "js" else "wasm"
+            val discriminator = if (target == KotlinJsTarget.JS) "org.jetbrains.kotlin.js.compiler" to "ir".json() else "org.jetbrains.kotlin.wasm.target" to "js".json()
+            for ((index, variant) in variants.withIndex()) {
+                assertEquals(obj("org.gradle.category" to "library".json(), "org.gradle.jvm.environment" to "non-jvm".json(),
+                    "org.gradle.usage" to (if (index == 0) "kotlin-api" else "kotlin-runtime").json(),
+                    "org.jetbrains.kotlin.platform.type" to platform.json(), "org.jetbrains.kotlin.klib.packaging" to "packed".json(), discriminator), variant.getValue("attributes"))
+                assertEquals(if (index == 0) listOf("api") else listOf("api", "runtime"),
+                    variant.getValue("dependencies").arrayValue().map { it.objectValue().getValue("module").stringValue() })
+                assertEquals(obj("name" to artifactName.json(), "url" to artifactName.json(), "size" to input.digest.sizeBytes.json(), "sha256" to input.digest.hash.json()),
+                    variant.getValue("files").arrayValue().single())
+            }
+            assertEquals(result.outputs, complete(store, spec).outputs)
+            assertNotEquals(spec.key(Sha256), action(store, listOf(input), selected.copy(dependencies = selected.dependencies.map { it.copy(api = true) })).key(Sha256))
+            assertFails { selected.copy(jvmTarget = 11) }
+            for (invalid in listOf(emptyList(), listOf(input.copy(executable = true)), listOf(input.copy(path = LogicalPath("classes/Main.class"))),
+                listOf(input, store.file("other.klib", byteArrayOf(1))))) {
+                assertFails { action(store, invalid, selected) }
+            }
+        }
+    }
+
     @Test fun linuxKlibMetadataNamesActualPlatformAndApiRuntimeVariants() {
         val store = Store(); val input = store.file("module.klib", byteArrayOf(9, 8, 7))
         val result = complete(store, action(store, listOf(input), selection("linuxX64")))
