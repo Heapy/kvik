@@ -25,7 +25,9 @@ class NativeKodeTransport(
         // A 64 MiB selected file can expand sixfold when encoded as a JSON string.
         require(maxOutputBytes in 0..(64 * 1024 * 1024 * 6 + 4096)) { "Invalid kode output limit" }
         require(arguments.isNotEmpty() && arguments.size <= 32 && arguments.none { '\u0000' in it })
-        require(arguments.first() in setOf("resolve", "revision-object", "tree", "blob", "log")) { "Only read-only kode source operations are supported" }
+        require(arguments == listOf("projects", "list") || arguments.first() in setOf("resolve", "revision-object", "tree", "blob", "log")) {
+            "Only read-only kode source operations are supported"
+        }
         require(arguments.sumOf { it.encodeToByteArray().size.toLong() } <= 64 * 1024)
         require(arguments.none { it == "--home" || it.startsWith("--home=") }) { "Transport owns kode home selection" }
         checkpoint()

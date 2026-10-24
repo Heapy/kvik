@@ -85,11 +85,20 @@ class NativeKodeSourcesTest {
 
     @Test fun transportRejectsMutationAndHomeOverridesBeforeSpawning() = fixture { root, executable ->
         for (arguments in listOf(listOf("tx", "p"), listOf("resolve", "p", "main", "--home", root),
-            listOf("resolve", "p", "main", "--home=$root"))) {
+            listOf("resolve", "p", "main", "--home=$root"), listOf("projects", "add", "p"),
+            listOf("projects", "list", "--from", "repository"))) {
             val host = SourceProcessHost()
             assertFails { NativeKodeTransport(host, executable, root, "$root/work", executable).execute(arguments, 1) {} }
             assertNull(host.request)
         }
+    }
+
+    @Test fun transportAllowsOnlyExactRegistryDiscovery() = fixture { root, executable ->
+        val host = SourceProcessHost("{}".encodeToByteArray())
+        NativeKodeTransport(host, executable, root, "$root/work", executable)
+            .execute(listOf("projects", "list"), 1024) {}
+        assertEquals(listOf(executable, "--home", root, "projects", "list"), host.request!!.arguments)
+        assertTrue(host.closed)
     }
 
     @Test fun callerOptionTerminatorCannotHideOwnedHome() = fixture { root, executable ->

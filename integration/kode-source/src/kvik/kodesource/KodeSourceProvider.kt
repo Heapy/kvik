@@ -4,6 +4,15 @@ import kvik.core.*
 import kvik.projectsnapshot.*
 import kotlin.io.encoding.Base64
 
+/** Registry metadata observed by `projects list`; main is an observed head, not an atomic workspace snapshot. */
+data class KodeProjectEntry(
+    val name: String,
+    val source: String? = null,
+    val sourceRef: String? = null,
+    val description: String? = null,
+    val main: String? = null,
+)
+
 /** Read-only kode v1 adapter. Offline capture requires an immutable revision and authenticated cached
  * commit, inventory and selected content. Moving selectors are only resolved online. */
 class KodeSourceProvider(
@@ -11,6 +20,32 @@ class KodeSourceProvider(
     private val cache: KodeSourceCache? = null,
     private val offline: Boolean = false,
 ) : SourceSnapshotProvider {
+    /** Discover the live registry without resolving or following project heads. Discovery has no offline cache. */
+    fun projects(checkpoint: () -> Unit = {}): List<KodeProjectEntry> {
+        checkpoint()
+        if (offline) throw SnapshotFailure("Offline kode project discovery is unavailable")
+        val document = response(listOf("projects", "list"), PROJECTS_LIMIT, "projects.list", checkpoint)
+            .fields(setOf("schemaVersion", "operation", "home", "projects"))
+        fun boundedString(value: JsonValue): String = value.stringValue().also {
+            require(it.length <= 4096 && it.encodeToByteArray().size <= 4096) { "Kode registry string exceeds read bound" }
+        }
+        boundedString(document.getValue("home"))
+        val entries = document.getValue("projects").arrayValue()
+        require(entries.size <= 256) { "Kode project registry limit exceeded" }
+        val names = mutableSetOf<String>()
+        val projects = entries.map { entry ->
+            checkpoint()
+            val fields = entry.fields(setOf("name"), setOf("source", "sourceRef", "description", "main"))
+            val name = fields.getValue("name").stringValue()
+            require(Regex("[a-z0-9][a-z0-9._-]{0,63}").matches(name)) { "Invalid kode project" }
+            require(names.add(name)) { "Duplicate kode project" }
+            KodeProjectEntry(name, fields["source"]?.let(::boundedString), fields["sourceRef"]?.let(::boundedString),
+                fields["description"]?.let(::boundedString), fields["main"]?.let { objectId(it.stringValue()) })
+        }
+        checkpoint()
+        return projects.sortedBy { it.name }
+    }
+
     override fun resolve(selector: SourceSelector, checkpoint: () -> Unit): ResolvedSourceSnapshot {
         require(Regex("[a-z0-9][a-z0-9._-]{0,63}").matches(selector.project)) { "Invalid kode project" }
         require(validSelector(selector.selector)) { "Invalid kode selector" }
@@ -172,6 +207,7 @@ class KodeSourceProvider(
     }
 
     companion object {
+        private const val PROJECTS_LIMIT = 2 * 1024 * 1024
         private const val REVISION_LIMIT = 1024 * 1024
         private const val RESOLVE_LIMIT = 16 * 1024
         private const val MANIFEST_LIMIT = 16 * 1024 * 1024

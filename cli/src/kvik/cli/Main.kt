@@ -30,7 +30,7 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, inspect, view, resolve, check-lock, build, test, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, help
+            Commands: runtime-info, inspect, view, resolve, check-lock, build, test, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, packages, dependencies, workspace, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
@@ -58,6 +58,9 @@ private fun command(args: Array<String>) {
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target TARGET --usage USAGE --project PATH (same targets as build)
             Query cache: --query-cache PATH [--refresh|--offline] --json
             Project graph: dependencies --project PATH [--lock PATH] [--store PATH] [--module ID] [--script NAME] [--target TARGET] [--compilation main|test|script] [--usage USAGE] --json
+            Workspace graph: workspace dependencies --kode PATH --kode-home PATH --store PATH [--source-project NAME ...] [--at NAME=REV ...]
+              Defaults to registry main snapshots; --project/--lock choose common logical paths, --configuration NAME=PATH/--dependency-lock NAME=PATH override them.
+              Reads locked metadata from the existing store; no dependency downloads, builds or source updates.
             Evidence: verification --run PATH; explain --run PATH --action ACTION_ID (historical, read-only)
             Test reports: test-report --run PATH --output NEW_DIRECTORY [--format json|junit-xml] [--module ID] [--target TARGET] (no test execution)
             Coverage: test --coverage --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
@@ -80,6 +83,11 @@ private fun command(args: Array<String>) {
         }
         "packages" -> exitProcess(printPackageQuery(packageCommand(args.drop(1))).code)
         "dependencies" -> exitProcess(printPackageQuery(projectDependenciesCommand(args.drop(1))).code)
+        "workspace" -> {
+            val result = workspaceCommand(args.drop(1))
+            println(result.canonical())
+            exitProcess(if (result.values.getValue("status").stringValue() == "complete") ExitStatus.SUCCESS.code else ExitStatus.INCOMPLETE.code)
+        }
         "inspect" -> {
             println(inspectCommand(args.drop(1)).canonical())
         }

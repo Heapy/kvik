@@ -39,6 +39,46 @@ execute package code or change configuration/locks, and availability does not
 establish compatibility. See the [query contract](integration/package-queries/CONTRACT.md)
 and [composed CLI evidence](docs/evidence/k16-package-queries.md).
 
+`workspace dependencies` connects locked dependencies to projects registered in Kode:
+
+```sh
+./kvik --no-build -- workspace dependencies \
+  --kode /absolute/bin/kode --kode-home /absolute/kode-store \
+  --store /absolute/dependency-cache --json
+```
+
+It discovers registered projects, pins their observed `main` revisions, and reads
+`kvik.json` and `kvik.lock.json` from each snapshot. Dependency metadata and artifacts
+must already exist in the selected cache; the query replays each lock without
+downloads, builds or writes. Registry discovery is live, so the collection of
+project revisions is not an atomic workspace snapshot. The output records every
+successfully read project's source revision and configuration/lock digests.
+
+Repeat `--source-project NAME` to restrict the graph, or `--at NAME=REVISION` to pin
+a project explicitly. `--revision SELECTOR` applies a common selector to all
+selected projects. `--project PATH` and `--lock PATH` set common logical paths;
+`--configuration NAME=PATH` and `--dependency-lock NAME=PATH` override them per
+project. Configuration paths are relative to a source revision, and lock paths
+are relative to that configuration's directory. Supply resolution overrides as
+`--project-pin NAME=GROUP:ARTIFACT:VERSION`,
+`--project-scope-pin NAME=MODULE:TARGET:COMPILATION:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION`
+or `--project-exclude-metadata-edge NAME=JSON`; ordinary pin/correction flags apply
+to every selected project.
+
+Edges preserve module/script, target, compilation, usage and purpose from the
+consumer lock, including transitive and redirected packages. Matching uses the
+coordinates emitted by library packaging: target packages and multi-target roots.
+`match` distinguishes exact ownership, multiple publishers, another available
+version and packages outside the selected projects. Coordinate ownership leaves
+`sourceArtifactEquivalence` unchecked: current source may differ from published
+bytes. Missing inputs, invalid locks or ambiguous ownership return an incomplete
+graph and exit status 3. The command supports up to 256 projects, 16,384 publication
+coordinates, 65,536 edges and 16 MiB each of retained graph inputs and response JSON.
+Detailed per-project paths and artifact lists are discarded after lock replay.
+Discovery requires access to Kode;
+there is no offline registry fallback. The output follows the
+[workspace dependency schema](schemas/v1/workspace-dependencies.json).
+
 Named project scripts and standalone `.kt` files use explicit dependency locks:
 
 ```sh

@@ -29,8 +29,8 @@ internal fun printPackageQuery(value: JsonValue.Object): ExitStatus {
     return if (result.values.getValue("status").stringValue() == "complete") ExitStatus.SUCCESS else ExitStatus.INCOMPLETE
 }
 
-private data class QueryArguments(val values: Map<String, String>, val repeats: Map<String, List<String>>, val flags: Set<String>)
-private fun queryArguments(args: List<String>, values: Set<String>, repeats: Set<String> = emptySet(), flags: Set<String> = emptySet()): QueryArguments {
+internal data class QueryArguments(val values: Map<String, String>, val repeats: Map<String, List<String>>, val flags: Set<String>)
+internal fun queryArguments(args: List<String>, values: Set<String>, repeats: Set<String> = emptySet(), flags: Set<String> = emptySet()): QueryArguments {
     val selected = linkedMapOf<String, String>(); val repeated = linkedMapOf<String, MutableList<String>>(); val enabled = linkedSetOf<String>()
     var index = 0
     while (index < args.size) {

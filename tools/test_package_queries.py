@@ -37,6 +37,7 @@ def main():
     parser.add_argument('--online', action='store_true')
     parser.add_argument('--dependency-cli-source', type=Path, help='Temporary coordinated source input before integration')
     parser.add_argument('--skip-build', action='store_true')
+    parser.add_argument('--unit-only', action='store_true', help='Run native service tests without the standalone CLI probe')
     args = parser.parse_args()
     output = ROOT / '.kvik/tests/package-queries'
     output.mkdir(parents=True, exist_ok=True)
@@ -60,10 +61,14 @@ def main():
         base = [str(args.konan_home / 'bin/konanc'), *files_library_args(output), '-target', 'macos_arm64', '-library', str(output / 'resolution.klib')]
         run([*base, '-generate-test-runner', '-o', str(output / 'unit.kexe'), *sources,
              *map(str, sorted((ROOT / 'tests/package-queries/native').glob('*.kt')))], check=True)
-        run([*base, '-entry', 'kvik.cli.main', '-o', str(output / 'probe.kexe'), *sources,
-             *[str(args.dependency_cli_source if name == 'Dependencies.kt' and args.dependency_cli_source else ROOT / 'cli/src/kvik/cli' / name) for name in ['Projects.kt', 'Dependencies.kt', 'PackageQueries.kt']],
-             str(ROOT / 'tests/package-queries/probe/QueryProbe.kt')], check=True)
+        if not args.unit_only:
+            run([*base, '-entry', 'kvik.cli.main', '-o', str(output / 'probe.kexe'), *sources,
+                 *[str(args.dependency_cli_source if name == 'Dependencies.kt' and args.dependency_cli_source else ROOT / 'cli/src/kvik/cli' / name) for name in ['Projects.kt', 'Dependencies.kt', 'PackageQueries.kt']],
+                 str(ROOT / 'tests/package-queries/probe/QueryProbe.kt')], check=True)
     run([str(output / 'unit.kexe')], check=True)
+    if args.unit_only:
+        print(f'Native package query tests passed; fixture: {work / "project"}')
+        return
     schema = json.loads((ROOT / 'schemas/v1/packages.json').read_text())
     validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
     generated = []

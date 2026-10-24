@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvik.dev/schemas/v1/workspace-dependencies.json",
+  "$defs": {
+    "publication": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coordinate": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "module",
+        "target",
+        "coordinate"
+      ],
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "properties": {
+        "consumer": {
+          "type": "string"
+        },
+        "domain": {
+          "$ref": "https://kvik.dev/schemas/v1/packages.json#/$defs/domain"
+        },
+        "node": {
+          "type": "string"
+        },
+        "coordinate": {
+          "type": "string"
+        },
+        "match": {
+          "enum": [
+            "exact",
+            "ambiguous",
+            "version-mismatch",
+            "external"
+          ]
+        },
+        "producers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/publication"
+          },
+          "maxItems": 16384
+        },
+        "otherVersions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16384
+        },
+        "sourceArtifactEquivalence": {
+          "const": "unchecked"
+        }
+      },
+      "required": [
+        "consumer",
+        "domain",
+        "node",
+        "coordinate",
+        "match",
+        "producers",
+        "otherVersions",
+        "sourceArtifactEquivalence"
+      ],
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "https://kvik.dev/schemas/v1/contracts.json#/$defs/sourceReference"
+        },
+        "configuration": {
+          "$ref": "https://kvik.dev/schemas/v1/packages.json#/$defs/digest"
+        },
+        "dependencyLock": {
+          "anyOf": [
+            {
+              "$ref": "https://kvik.dev/schemas/v1/packages.json#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queryStatus": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "source",
+        "configuration",
+        "dependencyLock",
+        "queryStatus"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "domain": {
+          "$ref": "https://kvik.dev/schemas/v1/packages.json#/$defs/domain"
+        },
+        "node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "workspace-dependencies"
+    },
+    "query": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "projects"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "incomplete"
+      ]
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "freshness": {
+      "enum": [
+        "fresh",
+        "indeterminate"
+      ]
+    },
+    "freshnessBasis": {
+      "const": "locked-inputs"
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      },
+      "maxItems": 65536
+    },
+    "compatibility": {
+      "const": "not-assessed"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/project"
+      },
+      "maxItems": 256
+    },
+    "publications": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/publication"
+      },
+      "maxItems": 16384
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      },
+      "maxItems": 65536
+    },
+    "registry": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "const": "kode"
+        },
+        "home": {
+          "type": "string"
+        },
+        "consistency": {
+          "const": "live-discovery-pinned-projects"
+        },
+        "selectedProjects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "provider",
+        "home",
+        "consistency",
+        "selectedProjects"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "kind",
+    "query",
+    "status",
+    "observedAt",
+    "freshness",
+    "freshnessBasis",
+    "sources",
+    "diagnostics",
+    "compatibility",
+    "truncated",
+    "projects",
+    "publications",
+    "edges",
+    "registry"
+  ],
+  "additionalProperties": false
+}
