@@ -18,6 +18,7 @@ internal class PreparedSourceProject(
     val namespace: Digest,
     val claims: RevisionClaims,
     private val resolved: ResolvedSourceSnapshot,
+    val retention: KodeRetentionReference? = null,
 ) {
     val project: ProjectFile by lazy {
         ProjectFile(configuration.root, configuration.name, configuration.bytes,
@@ -105,11 +106,11 @@ internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: 
     val tools = projectPath(root, options.tools)
     for (output in listOf(store, runs)) for (input in listOf(source.home, source.executable, tools))
         require(!pathsPhysicallyOverlap(output, input)) { "Source build output overlaps provider or tool configuration: $input" }
-    return withPreparedSourceProject(source, options.project, loadClaims = true, block = block)
+    return withPreparedSourceProject(source, options.project, loadClaims = true, retainSource = true, block = block)
 }
 
 internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: ProjectOptions,
-                                          loadClaims: Boolean = false, validateConfiguration: Boolean = true,
+                                          loadClaims: Boolean = false, validateConfiguration: Boolean = true, retainSource: Boolean = false,
                                           block: (PreparedSourceProject) -> T): T {
     sourceCheckpoint()
     val configuration = LogicalPath(options.project)
@@ -121,9 +122,10 @@ internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: 
     val namespace = Sha256.digest(obj("provider" to "kode".json(), "executable" to source.executable.json(), "home" to source.home.json(),
         "git" to "/usr/bin/git".json()))
     val cache = NativeKodeSourceCache("$store/source-provider", namespace)
-    fun consume(resolved: ResolvedSourceSnapshot): T {
+    fun consume(resolved: ResolvedSourceSnapshot, retention: KodeRetentionReference? = null): T {
+        retention?.requireSource(resolved.provenance)
         val reference = SourceReference(resolved.provenance, configuration.value.substringBeforeLast('/', ""), resolved.manifest.digest)
-        try { return block(prepareResolvedSource(source, root, store, namespace, configuration, resolved, loadClaims, validateConfiguration)) }
+        try { return block(prepareResolvedSource(source, root, store, namespace, configuration, resolved, loadClaims, validateConfiguration, retention)) }
         catch (failure: RunStreamFailure) { throw failure }
         catch (failure: CliFailure) {
             throw CliFailure(failure.code, failure.category, failure.message ?: "Source build failed", failure.exitStatus,
@@ -142,15 +144,20 @@ internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: 
         return consume(resolved)
     }
     return withSourceWorkspace { workspace -> runtimeProcessHost().use { host ->
+        val retention = if (retainSource) {
+            val nonce = kotlin.random.Random.Default.nextBytes(24).joinToString("") { it.toUByte().toString(16).padStart(2, '0') }
+            NativeKodeRetention(host, source.executable, source.home, workspace)
+                .retainBuild(source.project, "kvik-$nonce", source.revision, ::sourceCheckpoint)
+        } else null
         val provider = KodeSourceProvider(NativeKodeTransport(host, source.executable, source.home, workspace), cache)
-        val resolved = provider.resolve(SourceSelector(source.project, source.revision), ::sourceCheckpoint)
-        consume(resolved)
+        val resolved = provider.resolve(SourceSelector(source.project, retention?.revision ?: source.revision), ::sourceCheckpoint)
+        consume(resolved, retention)
     } }
 }
 
 private fun prepareResolvedSource(source: KodeProjectOptions, root: String, store: String, namespace: Digest,
                                   configuration: LogicalPath, resolved: ResolvedSourceSnapshot,
-                                  loadClaims: Boolean, validateConfiguration: Boolean): PreparedSourceProject {
+                                  loadClaims: Boolean, validateConfiguration: Boolean, retention: KodeRetentionReference?): PreparedSourceProject {
     val directory = configuration.value.substringBeforeLast('/', "")
     val reference = SourceReference(resolved.provenance, directory, resolved.manifest.digest)
     try {
@@ -162,7 +169,7 @@ private fun prepareResolvedSource(source: KodeProjectOptions, root: String, stor
         resolved.verify(entry.blob, bytes, ::sourceCheckpoint)
         sourceCheckpoint()
         return PreparedSourceProject(CapturedSourceConfiguration(root, LogicalPath(configuration.value.substringAfterLast('/')), bytes),
-            source, reference, namespace, if (loadClaims) resolved.claims(::sourceCheckpoint) else RevisionClaims(emptyMap()), resolved).also {
+            source, reference, namespace, if (loadClaims) resolved.claims(::sourceCheckpoint) else RevisionClaims(emptyMap()), resolved, retention).also {
                 // Replacements may repair invalid configuration; its original bytes still carry the native blob guard.
                 if (validateConfiguration) it.project
             }

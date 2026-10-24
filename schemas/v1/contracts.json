@@ -9253,13 +9253,21 @@
                   },
                   "source": {
                     "$ref": "#/$defs/sourceReference"
+                  },
+                  "sourceRetention": {
+                    "$ref": "#/$defs/kodeRetentionReference"
                   }
                 },
                 "required": [
                   "requestedChecks",
                   "inputSnapshot"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "dependentRequired": {
+                  "sourceRetention": [
+                    "source"
+                  ]
+                }
               }
             }
           }
@@ -10280,6 +10288,44 @@
           "sourceRoot"
         ]
       }
+    },
+    "kodeRetentionReference": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(?![\\s\\S])"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(?![\\s\\S])"
+        },
+        "record": {
+          "type": "string",
+          "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\\s\\S])"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\\s\\S])"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "project",
+        "name",
+        "record",
+        "revision",
+        "tree"
+      ],
+      "additionalProperties": false,
+      "description": "Original source pin acquired for a run; not a live-retention or tool-availability claim. Object IDs must use the same width, and project/revision/tree must match the run source provenance."
     },
     "kodeWriteProposal": {
       "type": "object",

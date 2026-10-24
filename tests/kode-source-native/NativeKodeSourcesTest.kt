@@ -86,10 +86,56 @@ class NativeKodeSourcesTest {
     @Test fun transportRejectsMutationAndHomeOverridesBeforeSpawning() = fixture { root, executable ->
         for (arguments in listOf(listOf("tx", "p"), listOf("resolve", "p", "main", "--home", root),
             listOf("resolve", "p", "main", "--home=$root"), listOf("projects", "add", "p"),
-            listOf("projects", "list", "--from", "repository"))) {
+            listOf("projects", "list", "--from", "repository"), listOf("retention", "retain", "p", "pin"), listOf("gc", "--prune"))) {
             val host = SourceProcessHost()
             assertFails { NativeKodeTransport(host, executable, root, "$root/work", executable).execute(arguments, 1) {} }
             assertNull(host.request)
+        }
+    }
+
+    private fun retainedResponse(): JsonValue.Object = obj("schemaVersion" to 1.json(), "kind" to "retention".json(),
+        "project" to "project".json(), "name" to "kvik-run".json(), "record" to "a".repeat(40).json(),
+        "revision" to "b".repeat(40).json(), "tree" to "c".repeat(40).json(), "purpose" to "build".json(),
+        "intent" to obj("summary" to "Retain source inputs for a Kvik build and its recorded result".json(), "details" to JsonValue.Null),
+        "duplicate" to false.json())
+
+    @Test fun retentionIsASeparateBoundedOperationAndBindsReturnedSource() = fixture { root, executable ->
+        val host = SourceProcessHost(retainedResponse().canonical().encodeToByteArray())
+        val retained = NativeKodeRetention(host, executable, root, "$root/work", executable)
+            .retainBuild("project", "kvik-run", "main") {}
+        assertEquals(listOf(executable, "--home", root, "retention", "retain", "project", "kvik-run", "--rev=main", "--purpose=build",
+            "--intent=Retain source inputs for a Kvik build and its recorded result"), host.request!!.arguments)
+        retained.requireSource(SourceProvenance("kode", "project", "b".repeat(40), "c".repeat(40)))
+        assertEquals(retained, KodeRetentionReference.fromJson(retained.toJson()))
+        assertFails { retained.requireSource(SourceProvenance("kode", "other", "b".repeat(40), "c".repeat(40))) }
+        assertFails { retained.requireSource(SourceProvenance("kode", "project", "d".repeat(40), "c".repeat(40))) }
+        assertTrue(host.closed)
+        assertNull(NativeFiles.info(host.request!!.workingDirectory))
+    }
+
+    @Test fun retentionRejectsMismatchedMalformedAndUnsuccessfulResponses() = fixture { root, executable ->
+        for ((key, value) in listOf("schemaVersion" to 2.json(), "kind" to "resolve".json(), "project" to "other".json(),
+            "name" to "another".json(), "purpose" to "manual".json(), "record" to "0".repeat(40).json(),
+            "revision" to "b".repeat(64).json(), "duplicate" to "false".json(), "extra" to 1.json(),
+            "intent" to obj("summary" to "another intent".json(), "details" to JsonValue.Null))) {
+            val document = JsonValue.Object(retainedResponse().values + (key to value))
+            val host = SourceProcessHost(document.canonical().encodeToByteArray())
+            assertFails(key) { NativeKodeRetention(host, executable, root, "$root/work", executable)
+                .retainBuild("project", "kvik-run", "main") {} }
+            assertTrue(host.closed)
+        }
+        val host = SourceProcessHost(errors = "retention denied".encodeToByteArray(), result = ProcessResult(2))
+        assertFailsWith<SnapshotFailure> { NativeKodeRetention(host, executable, root, "$root/work", executable)
+            .retainBuild("project", "kvik-run", "main") {} }
+        val oversized = SourceProcessHost(ByteArray(65537))
+        assertFailsWith<SnapshotFailure> { NativeKodeRetention(oversized, executable, root, "$root/work", executable)
+            .retainBuild("project", "kvik-run", "main") {} }
+        assertTrue(oversized.cancelled && oversized.closed)
+        for (name in listOf("../pin", "--home", "", "a".repeat(65))) {
+            val unstarted = SourceProcessHost()
+            assertFails { NativeKodeRetention(unstarted, executable, root, "$root/work", executable)
+                .retainBuild("project", name, "main") {} }
+            assertNull(unstarted.request)
         }
     }
 

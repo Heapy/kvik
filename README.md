@@ -124,6 +124,38 @@ dependencies and installed tools. Missing or corrupt source content causes a
 failure. `verification --run PATH` checks the recorded revision using cached
 source content without starting Kode; unavailable content yields `indeterminate`.
 
+Online builds and tests acquire a Kode retention pin before fetching source
+inputs. The pin protects the selected revision and its reachable source objects
+through collection, and remains after completion so the recorded result can
+refer to those sources. `run.json` and the `run-started` event contain its
+`sourceRetention` identity. These operations require Kode retention support and
+permission to write retention metadata. Offline builds use only cached inputs;
+inspection, views and verification queries do not acquire pins.
+
+Pins have no automatic expiry. A failed or interrupted build can leave a pin,
+including failures before a run directory exists; find it with `retention list`.
+Release a pin explicitly when its inputs no longer need provider-side retention:
+
+```sh
+/absolute/bin/kode --home /absolute/kode-store retention list library
+/absolute/bin/kode --home /absolute/kode-store retention release library PIN_NAME \
+  --expect-record IMMUTABLE_RETENTION_RECORD --intent 'Release obsolete build inputs'
+/absolute/bin/kode --home /absolute/kode-store gc
+/absolute/bin/kode --home /absolute/kode-store gc --prune --intent 'Collect abandoned source attempts'
+```
+
+`gc` previews storage and reference-root counts. `gc --prune` expires reflogs and
+collects objects unreachable from all remaining refs; it does not delete source
+heads, task records, request receipts or retention pins. Detached attempts without
+one of those roots can be collected. Maintenance takes an exclusive workspace
+lock while ordinary Kode operations take shared locks. Use Kode maintenance for
+this coordination; direct Git commands do not participate.
+
+A recorded pin describes what was retained when the run started. It does not
+promise that somebody has kept the pin, local cache, dependency artifacts or
+compiler installations. Removing a pin does not remove an existing local run
+record, and cached input verification remains independent of provider retention.
+
 Kode revision claims appear in the result's `sourceClaims` with their original
 JSON declarations and `confirmed`, `refuted` or `unchecked` assessments. Kvik
 understands `{"kind":"check-passes","root":"sub","check":"library:jvm:test"}` and

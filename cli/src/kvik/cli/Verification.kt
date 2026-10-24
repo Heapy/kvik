@@ -30,7 +30,7 @@ internal fun checkRun(directory: String): CheckedRun {
     fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
     val record = verificationRecordFromJson(document("verification.json"))
     val metadata = document("run.json").fields(setOf("schemaVersion", "projectRoot", "configurationPath", "lockPath", "toolsPath", "targets"),
-        setOf("inputSelection", "toolTargets", "source", "sourceCache"))
+        setOf("inputSelection", "toolTargets", "source", "sourceCache", "sourceRetention"))
     metadata.requireVersion()
     require(record.runId == directory.substringAfterLast('/')) { "Verification run identity does not match directory" }
     var current = Freshness.INDETERMINATE
@@ -39,6 +39,9 @@ internal fun checkRun(directory: String): CheckedRun {
         committedRunEvents(record, document("completion.json"), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
         require((record.source != null) == ("source" in metadata) && (record.source != null) == ("sourceCache" in metadata)) {
             "Run source metadata is missing or differs from verification"
+        }
+        metadata["sourceRetention"]?.let {
+            kvik.kodesource.KodeRetentionReference.fromJson(it).requireSource(requireNotNull(record.source).provenance)
         }
         val store = object : ContentStore {
             override fun get(digest: Digest): ByteArray? = null

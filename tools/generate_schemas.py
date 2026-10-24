@@ -730,7 +730,9 @@ DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] 
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready"), "payload": ANY_OBJECT})
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
-    "run-started": object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest"), "source": ref("sourceReference")}, optional=("source",)),
+    "run-started": {**object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest"),
+        "source": ref("sourceReference"), "sourceRetention": ref("kodeRetentionReference")}, optional=("source", "sourceRetention")),
+        "dependentRequired": {"sourceRetention": ["source"]}},
     "framework-ready": ref("frameworkReady"),
     "abi-ready": ref("abiReady"),
     "documentation-ready": ref("documentationReady"),
@@ -786,6 +788,11 @@ DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref(
 DEFS["inspection"]["dependentRequired"] = {key: [other for other in ("source", "sourceRoot", "sourceManifest") if other != key]
     for key in ("source", "sourceRoot", "sourceManifest")}
 KODE_REVISION = {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}
+DEFS["kodeRetentionReference"] = versioned({
+    **{key: {"type": "string", "pattern": r"^[a-z0-9][a-z0-9._-]{0,63}(?![\s\S])"} for key in ("project", "name")},
+    **{key: {"type": "string", "pattern": r"^(?!0+$)(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])"} for key in ("record", "revision", "tree")},
+})
+DEFS["kodeRetentionReference"]["description"] = "Original source pin acquired for a run; not a live-retention or tool-availability claim. Object IDs must use the same width, and project/revision/tree must match the run source provenance."
 DEFS["kodeWriteProposal"] = object_({"op": {"const": "write"}, "path": PATH,
     "expectBlob": {"oneOf": [{"const": "none"}, KODE_REVISION]}, "executable": BOOL, "content": STRING})
 DEFS["kodeTransactionProposal"] = object_({"base": KODE_REVISION, "expectHead": KODE_REVISION, "intent": NONEMPTY,

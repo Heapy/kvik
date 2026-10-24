@@ -10,6 +10,7 @@ import shutil
 import shlex
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -147,8 +148,11 @@ class PassingTests {
 
     effects = set()
 
-    def built(label, operation, revision=None, offline=False, expected=0):
-        result = command(label, runtime, [*build_args(operation, revision), *(['--offline'] if offline else [])], expected)
+    def built(label, operation, revision=None, offline=False, expected=0, source_executable=None):
+        arguments = [*build_args(operation, revision), *(['--offline'] if offline else [])]
+        if source_executable is not None:
+            arguments[arguments.index('--kode')+1] = str(source_executable)
+        result = command(label, runtime, arguments, expected)
         events = objects(result)
         for event in events:
             validate(event, 'event')
@@ -161,6 +165,16 @@ class PassingTests {
         run = runs/record['runId']
         assert json.loads((run/'verification.json').read_text()) == record
         assert (run/'events.jsonl').read_bytes() == result.stdout
+        metadata = json.loads((run/'run.json').read_text())
+        if revision is not None and not offline:
+            pin = metadata['sourceRetention']
+            assert events[0]['payload']['sourceRetention'] == pin
+            assert pin['revision'] == record['source']['provenance']['revision']
+            assert pin['tree'] == record['source']['provenance']['tree']
+            retained = kode_command(label+'-retention', 'retention', 'show', 'fixture', pin['name'])
+            assert retained['record'] == pin['record'] and retained['revision'] == pin['revision']
+        else:
+            assert 'sourceRetention' not in metadata and 'sourceRetention' not in events[0]['payload']
         if operation == 'test' and expected == 0:
             assert record['testCounts']['executed'] == 1 and record['testCounts']['discoveryComplete'], record
             assert record['tests'][0]['status'] == 'passed', record
@@ -237,6 +251,32 @@ class PassingTests {
             assert provider[key] == local[key], key
     cached(provider_build)
     cached(provider_test, test=True)
+    # Collection between pin acquisition and provider reads must preserve a detached build revision.
+    detached = kode_command('detached-source', 'write', 'fixture', 'retained-only.txt', '--base', revision,
+                            '--content', 'detached source retained by build only', '--intent', 'Create detached build source')['revision']
+    collected = case/'collected-during-build'
+    collecting_provider = case/'collecting-provider'
+    collecting_provider.write_text('#!'+sys.executable+'\n'+
+        'import pathlib,subprocess,sys\n'+
+        f'actual={str(kode)!r}\nmarker=pathlib.Path({str(collected)!r})\n'+
+        "args=sys.argv[1:]\n"+
+        "if 'resolve' in args and not marker.exists():\n"+
+        f"    subprocess.run([actual,'--home',{str(kode_home)!r},'gc','--prune','--intent','Collect abandoned fixture attempts'],check=True,stdout=subprocess.DEVNULL)\n"+
+        "    marker.write_text('collected')\n"+
+        'sys.exit(subprocess.run([actual,*args]).returncode)\n')
+    collecting_provider.chmod(0o755)
+    detached_record, detached_run, _ = built('gc-during-source-build', 'build', detached, source_executable=collecting_provider)
+    assert collected.exists()
+    cached(detached_record)
+    pin = json.loads((detached_run/'run.json').read_text())['sourceRetention']
+    kode_command('gc-with-retained-build', 'gc', '--prune', '--intent', 'Collect with retained source')
+    assert kode_command('read-retained-source', 'read', 'fixture', 'retained-only.txt', '--rev', detached)['content'] == 'detached source retained by build only'
+    kode_command('release-build-source', 'retention', 'release', 'fixture', pin['name'], '--expect-record', pin['record'],
+                 '--intent', 'Release completed fixture source')
+    kode_command('gc-after-release', 'gc', '--prune', '--intent', 'Collect released fixture source')
+    command('released-source-missing', kode, ['--home', kode_home, 'resolve', 'fixture', detached], expected=3)
+    # The local captured inputs can still establish freshness; the old pin record does not promise live provider retention.
+    query('retained-local-inputs-after-provider-gc', detached_run)
     changed_config = copy.deepcopy(configuration)
     changed_config['name'] = 'advancedConfiguration'
     newer = transaction('advance-main', revision, [

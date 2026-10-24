@@ -9,25 +9,68 @@ import platform.posix.usleep
 
 /** One invocation owns the supplied host. Every request closes its child and private output directory. */
 class NativeKodeTransport(
+    host: ProcessHost,
+    executable: String,
+    home: String,
+    workParent: String,
+    gitExecutable: String = "/usr/bin/git",
+    timeoutMillis: Long = 30_000,
+) : KodeTransport {
+    private val process = NativeKodeProcess(host, executable, home, workParent, gitExecutable, timeoutMillis)
+    override fun execute(arguments: List<String>, maxOutputBytes: Int, checkpoint: () -> Unit): KodeResponse {
+        require(arguments == listOf("projects", "list") || arguments.firstOrNull() in setOf("resolve", "revision-object", "tree", "blob", "log")) {
+            "Only read-only kode source operations are supported"
+        }
+        return process.execute(arguments, maxOutputBytes, checkpoint)
+    }
+}
+
+/** Separate control-plane operation: retaining source inputs does not broaden the read-only provider transport. */
+class NativeKodeRetention(host: ProcessHost, executable: String, home: String, workParent: String,
+                          gitExecutable: String = "/usr/bin/git", timeoutMillis: Long = 30_000) {
+    private val process = NativeKodeProcess(host, executable, home, workParent, gitExecutable, timeoutMillis)
+
+    fun retainBuild(project: String, name: String, selector: String, checkpoint: () -> Unit): KodeRetentionReference {
+        require(project.matches(Regex("[a-z0-9][a-z0-9._-]{0,63}")) && name.matches(Regex("[a-z0-9][a-z0-9._-]{0,63}"))) {
+            "Invalid Kode retention project or name"
+        }
+        SourceSelector(project, selector)
+        val response = process.execute(listOf("retention", "retain", project, name, "--rev=$selector", "--purpose=build",
+            "--intent=Retain source inputs for a Kvik build and its recorded result"), 64 * 1024, checkpoint)
+        if (response.exitCode != 0) throw SnapshotFailure("Cannot retain Kode source inputs ($name): " +
+            response.stderr.decodeToString().take(4096))
+        val fields = parseJson(response.stdout.decodeToString(throwOnInvalidSequence = true)).fields(
+            setOf("schemaVersion", "kind", "project", "name", "record", "revision", "tree", "purpose", "intent", "duplicate"))
+        fields.requireVersion()
+        require(fields.getValue("kind").stringValue() == "retention") { "Expected Kode retention response" }
+        require(fields.getValue("project").stringValue() == project && fields.getValue("name").stringValue() == name &&
+            fields.getValue("purpose").stringValue() == "build") { "Kode retention belongs to another request" }
+        fields.getValue("duplicate").booleanValue()
+        val intent = fields.getValue("intent").fields(setOf("summary", "details"))
+        require(intent.getValue("summary").stringValue() == "Retain source inputs for a Kvik build and its recorded result" &&
+            intent.getValue("details") == JsonValue.Null) { "Kode retention intent differs from request" }
+        return KodeRetentionReference(project, name, fields.getValue("record").stringValue(),
+            fields.getValue("revision").stringValue(), fields.getValue("tree").stringValue())
+    }
+}
+
+private class NativeKodeProcess(
     private val host: ProcessHost,
     private val executable: String,
     private val home: String,
     private val workParent: String,
-    private val gitExecutable: String = "/usr/bin/git",
-    private val timeoutMillis: Long = 30_000,
-) : KodeTransport {
+    private val gitExecutable: String,
+    private val timeoutMillis: Long,
+) {
     init {
         listOf(executable, home, workParent, gitExecutable).forEach(NativeFiles::validateAbsolute)
         require(timeoutMillis in 1..300_000) { "Invalid kode request timeout" }
     }
 
-    override fun execute(arguments: List<String>, maxOutputBytes: Int, checkpoint: () -> Unit): KodeResponse {
+    fun execute(arguments: List<String>, maxOutputBytes: Int, checkpoint: () -> Unit): KodeResponse {
         // A 64 MiB selected file can expand sixfold when encoded as a JSON string.
         require(maxOutputBytes in 0..(64 * 1024 * 1024 * 6 + 4096)) { "Invalid kode output limit" }
         require(arguments.isNotEmpty() && arguments.size <= 32 && arguments.none { '\u0000' in it })
-        require(arguments == listOf("projects", "list") || arguments.first() in setOf("resolve", "revision-object", "tree", "blob", "log")) {
-            "Only read-only kode source operations are supported"
-        }
         require(arguments.sumOf { it.encodeToByteArray().size.toLong() } <= 64 * 1024)
         require(arguments.none { it == "--home" || it.startsWith("--home=") }) { "Transport owns kode home selection" }
         checkpoint()

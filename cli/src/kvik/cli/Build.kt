@@ -175,7 +175,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         "targets" to options.targets.sorted().map { it.json() }.json(),
         "toolTargets" to toolTargets.sorted().map { it.json() }.json())
     val sourceMetadata = if (sourceProject == null) runMetadata else JsonValue.Object(runMetadata.values + mapOf(
-        "source" to sourceProject.reference.toJson(), "sourceCache" to obj("store" to storePath.json(), "namespace" to sourceProject.namespace.toJson())))
+        "source" to sourceProject.reference.toJson(), "sourceCache" to obj("store" to storePath.json(), "namespace" to sourceProject.namespace.toJson())) +
+        sourceProject.retention?.let { mapOf("sourceRetention" to it.toJson()) }.orEmpty())
     val selectedMetadata = if (selection == SnapshotSelection.Project) sourceMetadata else JsonValue.Object(sourceMetadata.values + ("inputSelection" to selection.toJson()))
     NativeFiles.writeNew("${run.path}/run.json", selectedMetadata.canonical().encodeToByteArray())
     NativeFiles.writeNew("${run.path}/inputs.json", snapshot.inputs.toJson().canonical().encodeToByteArray())
@@ -198,7 +199,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     try {
         if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
         val started = obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson())
-        journal.emit("run-started", if (sourceProject == null) started else JsonValue.Object(started.values + ("source" to sourceProject.reference.toJson())))
+        journal.emit("run-started", if (sourceProject == null) started else JsonValue.Object(started.values +
+            ("source" to sourceProject.reference.toJson()) + sourceProject.retention?.let { mapOf("sourceRetention" to it.toJson()) }.orEmpty()))
         began = true
         try {
             toolIdentities = tools.desiredIdentities(toolTargets)
