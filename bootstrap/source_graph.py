@@ -191,7 +191,7 @@ def parse_source_lock(data: bytes) -> SourceGraph:
     _object(doc, 'schemaVersion implementation pluginApiVersion target kotlinVersion sources runtime plugins nativeArtifacts providedLibraries nativeLibraryOrder compilerOptions', 'source lock')
     if type(doc['schemaVersion']) is not int or doc['schemaVersion'] != 1 or type(doc['pluginApiVersion']) is not int or doc['pluginApiVersion'] != 1:
         _fail('Unsupported source lock/API version')
-    if (doc['implementation'], doc['target'], doc['kotlinVersion']) != ('kvik-source-graph-v1', 'macos_arm64', '2.4.20'):
+    if (doc['implementation'], doc['kotlinVersion']) != ('kvik-source-graph-v1', '2.4.20') or doc['target'] not in ('macos_arm64', 'linux_x64'):
         _fail('Unsupported source graph implementation/target/compiler')
     sources = doc['sources']
     if not isinstance(sources, list) or not 1 <= len(sources) <= 64:
@@ -327,7 +327,7 @@ def parse_source_lock(data: bytes) -> SourceGraph:
     if set(doc['nativeLibraryOrder']) != set(artifact_ids):
         _fail('Native library order must contain exact artifact closure')
     options = doc['compilerOptions']
-    required = {'-target': 'macos_arm64', '-entry': 'kvik.cli.main'}
+    required = {'-target': doc['target'], '-entry': 'kvik.cli.main'}
     if not isinstance(options, list) or not all(isinstance(o, str) for o in options):
         _fail('Invalid compiler options')
     seen, i = set(), 0

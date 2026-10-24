@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
-from bootstrap.pin_tools import host_identity, tool_roots
+from bootstrap.pin_tools import host_identity, tool_roots, native_target, component_names
 from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,8 +40,16 @@ def relative(root, value):
 
 def composition():
     recipe = read_json(ROOT / "bootstrap/composition.json")
-    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or set(recipe) != {"schemaVersion", "coreSources", "nativePlatform", "nativeLibraries", "jvmWorkerSources", "plugins", "compilerOptions"}:
+    required = {"schemaVersion", "coreSources", "nativePlatform", "nativeLibraries", "jvmWorkerSources", "plugins", "compilerOptions"}
+    if not isinstance(recipe, dict) or recipe.get("schemaVersion") != 1 or not required <= set(recipe) or set(recipe) - required - {"compilerOptionsByHost"}:
         raise ValueError("Unsupported composition schema")
+    overrides = recipe.get("compilerOptionsByHost", {})
+    if not isinstance(overrides, dict) or set(overrides) - {"linux_x64"}:
+        raise ValueError("Unsupported host compiler options")
+    validate_options(recipe['compilerOptions'], target='macos_arm64')
+    for target, options in overrides.items():
+        validate_options(options, target=target)
+    recipe["compilerOptions"] = overrides.get(native_target(), recipe["compilerOptions"])
     if not isinstance(recipe["coreSources"], list) or not recipe["coreSources"] or not isinstance(recipe["plugins"], list):
         raise ValueError("Invalid composition sources/options")
     validate_options(recipe["compilerOptions"])
@@ -95,6 +103,7 @@ def composition():
 
 
 def runtime_lock(pins, registry, arguments):
+    validate_options(arguments)
     bootstrap_files = [ROOT / "kvik", *sorted((ROOT / "bootstrap").glob("*.py")), ROOT / "bootstrap/composition.json", ROOT / "bootstrap/jvm-artifacts.lock.json"]
     bootstrap_identity = [{"path": str(p.relative_to(ROOT)), "digest": file_digest(p)} for p in bootstrap_files]
     tools = read_json(ROOT / "bootstrap/toolchains.lock.json")
@@ -102,7 +111,7 @@ def runtime_lock(pins, registry, arguments):
     if not isinstance(tools, dict) or tools.get("schemaVersion") != 1 or tools.get("kotlinVersion") != "2.4.20" or tools.get("host") != host:
         raise ValueError("Host/toolchain lock is incompatible; explicitly provision and pin supported tools")
     components = tools.get("components")
-    if not isinstance(components, dict) or set(components) != {"jdk", "kotlinNative", "libffi", "llvm", "sdk", "xcodeToolchain"}:
+    if not isinstance(components, dict) or set(components) != component_names():
         raise ValueError("Invalid toolchain component lock")
     for component in components.values():
         if (not isinstance(component, dict) or set(component) != {"hash", "sizeBytes"} or
@@ -112,12 +121,14 @@ def runtime_lock(pins, registry, arguments):
     return {"schemaVersion": 1, "sources": pins, "pluginApiVersion": 1, "registry": registry,
             "toolchains": tools["components"], "libraries": jvm_worker.libraries(jvm_worker.read_lock(ROOT)), "recipe": digest(canonical(bootstrap_identity)),
             "arguments": arguments, "environment": {"LANG": "C", "LC_ALL": "C", "TZ": "UTC", "nativeDependencies": "offline",
-                "DEVELOPER_DIR": "$TOOL:xcodeToolchain/../..", "SDKROOT": "$TOOL:sdk"}, "platform": host}
+                **({"DEVELOPER_DIR": "$TOOL:xcodeToolchain/../..", "SDKROOT": "$TOOL:sdk"} if native_target() == 'macos_arm64' else {})}, "platform": host}
 
 
 def graph_composition(lock_path):
     """Desired identity only: no acquisition, cache access or local source writes."""
     graph = source_graph.parse_source_lock(read_regular(lock_path, source_graph.LOCK_LIMIT))
+    if graph.document['target'] != native_target():
+        raise ValueError("Source graph target differs from bootstrap host")
     observed = source_graph.observe_graph(graph, lock_path.parent, lock_path=lock_path)
     document = observed.observed_document
     runtime = document["runtime"]
@@ -172,11 +183,11 @@ def validate_runtime_store(args, selected, lock):
         raise ValueError("Runtime store overlaps bootstrap inputs or another bootstrap cache")
 
 
-def validate_options(options):
+def validate_options(options, *, target=None):
     """No external files/libraries/plugins until their contents enter the lock."""
     if not isinstance(options, list) or not all(isinstance(value, str) for value in options):
         raise ValueError("Compiler options must be a list of strings")
-    expected = {"-target": "macos_arm64", "-entry": "kvik.cli.main"}
+    expected = {"-target": target or native_target(), "-entry": "kvik.cli.main"}
     seen = set()
     index = 0
     while index < len(options):
@@ -224,6 +235,8 @@ def validate_tools(args, expected):
     if not args.java_home or not args.konan_home:
         raise ValueError("Native rebuild requires --java-home and --konan-home (or JAVA_HOME and KONAN_HOME)")
     roots = tool_roots(args.java_home, args.konan_home, args.konan_data)
+    if set(roots) != component_names() or set(expected) != component_names():
+        raise ValueError("Tool component set differs from bootstrap host")
     for name, path in roots.items():
         actual = digest(canonical(inventory(path, allow_internal_symlinks=True)))
         if actual != expected.get(name):
@@ -373,20 +386,21 @@ def build(args, recipe, selected, lock, key, destination):
         executable = temporary / "kvik.kexe"
         environment = {name: os.environ[name] for name in ("HOME", "TMPDIR") if name in os.environ}
         environment.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "JAVA_HOME": str(roots["jdk"]), "KONAN_DATA_DIR": str(Path(args.konan_data).resolve()),
-            "DEVELOPER_DIR": str(roots["xcodeToolchain"].parents[1]), "SDKROOT": str(roots["sdk"]), "LANG": "C", "LC_ALL": "C", "TZ": "UTC"})
+            "LANG": "C", "LC_ALL": "C", "TZ": "UTC"})
+        if native_target() == 'macos_arm64':
+            environment.update({"DEVELOPER_DIR": str(roots["xcodeToolchain"].parents[1]), "SDKROOT": str(roots["sdk"])})
         native = source_root / recipe["nativePlatform"]
         bridge = temporary / "bridge"
         bridge.mkdir()
-        clang = roots["xcodeToolchain"] / "usr/bin/clang"
-        ar = roots["xcodeToolchain"] / "usr/bin/ar"
+        clang, ar, host_flags = native_libraries.c_toolchain(roots)
         guardian = temporary / "guardian"
-        c_options = ["-std=c11", "-D_DARWIN_C_SOURCE", "-Wall", "-Wextra", "-Werror", "-isysroot", roots["sdk"]]
+        c_options = ["-std=c11", "-Wall", "-Wextra", "-Werror", *host_flags]
         commands = [
             [clang, *c_options, native / "guardian.c", "-o", guardian],
             [clang, *c_options, "-c", native / "process.c", "-o", bridge / "process.o"],
             [ar, "rcs", bridge / "libkvik-process.a", bridge / "process.o"],
             [roots["kotlinNative"] / "bin/cinterop", "-def", native / "process.def", "-compiler-option", f"-I{native}",
-                "-libraryPath", bridge, "-target", "macos_arm64", "-Xoverride-konan-properties", "airplaneMode=true", "-o", bridge / "process"],
+                *native_libraries.interop_options(roots), "-libraryPath", bridge, "-target", native_target(), "-Xoverride-konan-properties", "airplaneMode=true", "-o", bridge / "process"],
         ]
         log_path = args.cache_dir / "logs" / (key["hash"] + ".log")
         log_path.parent.mkdir(exist_ok=True)

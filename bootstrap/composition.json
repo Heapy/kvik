@@ -2,10 +2,11 @@
   "schemaVersion": 1,
   "coreSources": ["core/src", "cache/src", "cache/remote/src", "execution/src", "resolution/src", "integration/resolution/src", "integration/package-queries/src", "integration/toolchains/src", "integration/compiler-tools/src", "integration/project-graph/src", "integration/project-snapshot/src", "integration/action-cache/src", "integration/application/src", "integration/library/src", "integration/run-evidence/src", "compiler/jvm/native/src", "compiler/native/src", "compiler/ksp/src", "cli/src", "integration/foreground/src"],
   "nativePlatform": "execution/platform",
-  "nativeLibraries": ["resolution", "toolchains", "remote"],
+  "nativeLibraries": ["files", "resolution", "toolchains", "remote"],
   "jvmWorkerSources": "compiler/jvm/src",
   "plugins": [
     {"id": "kvik.kotlin", "directory": "plugins/kotlin", "sourceDirectories": ["src"], "implementation": "kvik.plugins.kotlin.KotlinBuildPlugin"}
   ],
-  "compilerOptions": ["-target", "macos_arm64", "-entry", "kvik.cli.main"]
+  "compilerOptions": ["-target", "macos_arm64", "-entry", "kvik.cli.main"],
+  "compilerOptionsByHost": {"linux_x64": ["-target", "linux_x64", "-entry", "kvik.cli.main"]}
 }
