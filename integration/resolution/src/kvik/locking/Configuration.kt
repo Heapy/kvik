@@ -23,8 +23,9 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
         } else if (target == "common") {
             require(compilation == "main" && usage == "kotlin-metadata" && purpose == "dependencies") { "Common resolution requires main kotlin-metadata dependencies" }
         } else require((target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
-        require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")) { "Invalid resolution domain purpose" }
+        require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor", "sqldelight-compiler")) { "Invalid resolution domain purpose" }
         require(purpose !in setOf("ksp-runtime", "symbol-processor") || NativeTarget.find(target) != null && compilation == "test") { "KSP domains currently require supported Native tests" }
+        require(purpose != "sqldelight-compiler" || consumer is ResolutionConsumer.Module && target == "jvm" && compilation == "main") { "SQLDelight domains currently require JVM main modules" }
         require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else if (target == "common") setOf("kotlin-metadata") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
     }
     val isHostTool: Boolean get() = purpose != "dependencies"
@@ -195,6 +196,14 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         val api = if (target.name == "jvm") "java-api" else "kotlin-api"
         closure.modules.forEach { visit(ResolutionDomain(it, target.name, "main", api)) }
         if (domain.compilation == "test") visit(ResolutionDomain(module.id, target.name, "main", api))
+        if (target.name == "jvm" && domain.compilation == "main") module.sqlDelight?.let { settings ->
+            val compilerDomain = domain.copy(usage = "java-runtime", purpose = "sqldelight-compiler")
+            domains += compilerDomain
+            val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
+            sqlDelightCompilerCoordinates(settings.version).forEach {
+                requests += ResolutionRequest(it, host, compilerDomain)
+            }
+        }
         if (domain.compilation == "test") target.nativeTestSettings?.let { settings ->
             val runtimeDomain = domain.copy(usage = "java-runtime", purpose = "ksp-runtime")
             val processorDomain = domain.copy(usage = "java-runtime", purpose = "symbol-processor")

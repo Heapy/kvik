@@ -50,6 +50,55 @@ private fun component(coordinate: String, dependencies: List<String> = emptyList
 private val smallEntries get() = component("example:root:1.0", listOf("example:leaf:1.0")) + component("example:leaf:1.0")
 
 class DependencyLocksTest {
+    @Test fun sqlDelightCompilerUsesOneLockedHostDomainAndNeverPollutesConsumerVersions() {
+        val original = config(listOf("example:consumer:1.0"))
+        val document = original.document.objectValue()
+        val module = document.getValue("modules").arrayValue().single().objectValue()
+        val settings = SqlDelightSpec("main", LogicalPath("schema"), "example.db", "Database")
+        val project = parseProjectConfiguration(JsonValue.Object(document + ("modules" to
+            listOf(JsonValue.Object(module + ("sqlDelight" to settings.toJson()))).json())))
+        val configuration = effectiveConfiguration(project)
+        val host = ResolutionDomain("sample", "jvm", "main", "java-runtime", "sqldelight-compiler")
+        val tools = sqlDelightCompilerCoordinates(settings.version)
+        val requests = configuration.requests.filter { it.domain == host }
+        assertEquals(tools.toSet(), requests.map { it.coordinate }.toSet())
+        assertEquals(4, requests.size)
+        assertTrue(requests.all { it.variant == jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST) })
+        assertEquals(64 * 1024 * 1024, configuration.maxArtifactBytes)
+        assertEquals(host, ResolutionDomain.fromJson(host.toJson()))
+        assertFails { host.copy(target = "macosArm64") }
+        assertFails { host.copy(compilation = "test") }
+        assertFails { host.copy(usage = "java-api") }
+        assertFails { ResolutionDomain.script("sample", "java-runtime", "sqldelight-compiler") }
+        // Selecting only tests still resolves the generator needed by their main prerequisite.
+        assertEquals(tools.toSet(), effective(project, scopes = listOf(scope(name = "test"))).requests
+            .filter { it.domain == host }.map { it.coordinate }.toSet())
+        assertTrue(effective(project, scopes = emptyList()).requests.isEmpty())
+        val entries = tools.flatMap { component(it.toString(), listOf("example:annotations:13.0")).entries }.associate { it.toPair() } +
+            component("example:consumer:1.0", listOf("example:annotations:23.0")) +
+            component("example:annotations:13.0") + component("example:annotations:23.0")
+        val content = store()
+        val service = DependencyLocks(content, NativePomParser())
+        val transport = MemoryTransport(entries)
+        val lock = service.resolve(configuration, transport)
+        for (selection in lock.selections) {
+            assertEquals(setOf(if (selection.domain == host) "13.0" else "23.0"),
+                selection.artifacts.filter { it.coordinate.name == "annotations" }.map { it.coordinate.version }.toSet())
+            if (selection.domain != host) assertTrue(selection.artifacts.none { it.coordinate in tools })
+        }
+        val calls = transport.calls.toList()
+        assertEquals(lock, service.loadLocked(lock.bytes(), configuration))
+        assertEquals(calls, transport.calls)
+        assertFails { service.loadLocked(lock.bytes(), effectiveConfiguration(original)) }
+        val missingTools = lock.copy(selections = lock.selections.filter { it.domain != host })
+        assertFails { service.loadLocked(missingTools.bytes(), configuration) }
+        val altered = lock.copy(selections = lock.selections.map { selection ->
+            if (selection.domain != host) selection else selection.copy(selection = selection.selection.copy(
+                artifacts = selection.artifacts.filter { it.coordinate.name != "annotations" }))
+        })
+        assertFails { service.loadLocked(altered.bytes(), configuration) }
+    }
+
     @Test fun jsAndWasmDomainsPreserveUsageScopedPolicyAndJvmPluginHosts() {
         val original = config(listOf("example:root:1.0"), listOf("example:test:1.0"))
         val document = original.document.objectValue()

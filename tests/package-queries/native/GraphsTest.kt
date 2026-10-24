@@ -8,6 +8,41 @@ import kotlin.test.*
 
 class GraphsTest {
     private val variant = jvmVariantRequest("java-runtime", 11)
+    @Test fun sqlDelightCompilerDeclarationsAndLockedGraphRemainVisibleWithoutConsumerLeakage() {
+        val document = project(listOf("example:consumer:1.0")).document.objectValue()
+        val module = document.getValue("modules").arrayValue().single().objectValue()
+        val settings = SqlDelightSpec("main", LogicalPath("schema"), "example.db", "Database")
+        val configuration = parseProjectConfiguration(JsonValue.Object(document + ("modules" to
+            listOf(JsonValue.Object(module + ("sqlDelight" to settings.toJson()))).json())))
+        val effective = effectiveConfiguration(configuration)
+        val tools = sqlDelightCompilerCoordinates(settings.version)
+        val entries = effective.requests.flatMap { component(it.coordinate.toString()).entries }.associate { it.toPair() }
+        val content = MemoryContent()
+        val lock = DependencyLocks(content, NativePomParser()).resolve(effective, MemoryNetwork(entries))
+        val writes = content.writes
+        fun query(filter: ProjectQueryFilter = ProjectQueryFilter()) = queryProjectDependencies("/project/kvik.json",
+            "/project/kvik.lock.json", "/project/cache", configuration, effective, { lock.bytes() }, content, NativePomParser(), 1000, filter)
+        val result = query()
+        assertEquals("complete", result.values.getValue("status").stringValue())
+        val declarations = result.values.getValue("declarations").arrayValue().map { it.objectValue() }
+            .filter { it.getValue("kind").stringValue() == "sqldelight-compiler" }
+        assertEquals(tools.map { it.toString() }.toSet(), declarations.map { it.getValue("coordinate").stringValue() }.toSet())
+        assertTrue(declarations.all { it.getValue("sourceSet") == "main".json() && it.getValue("scope") == "runtime".json() &&
+            it.getValue("targets") == listOf("jvm".json()).json() && it.getValue("compilations") == listOf("main".json()).json() &&
+            !it.getValue("exported").booleanValue() })
+        val domains = result.values.getValue("domains").arrayValue().map { it.objectValue() }
+        val host = domains.single { it.getValue("domain").objectValue().getValue("purpose").stringValue() == "sqldelight-compiler" }
+        assertEquals(COMPILER_PLUGIN_JVM_HOST.toString(), host.getValue("graph").objectValue().getValue("variant")
+            .objectValue().getValue("attributes").objectValue().getValue(JVM_TARGET_VERSION_ATTRIBUTE).stringValue())
+        val api = query(ProjectQueryFilter(usage = "java-api"))
+        assertTrue(api.values.getValue("domains").arrayValue().all {
+            it.objectValue().getValue("domain").objectValue().getValue("purpose").stringValue() == "dependencies"
+        })
+        // Filtering hides display rows only: missing compiler artifacts invalidate the entire lock.
+        content.entries.remove(lock.selections.first { it.domain.purpose == "sqldelight-compiler" }.artifacts.single().digest)
+        assertEquals("incomplete", query(ProjectQueryFilter(usage = "java-api")).values.getValue("status").stringValue())
+        assertEquals(writes, content.writes)
+    }
     @Test fun iosPackageVariantsAndProjectFiltersReplayExactTargetArtifacts() {
         val root = Coordinate.parse("example:root:1.0")
         val base = "${repository.url}/example/root/1.0"

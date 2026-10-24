@@ -44,6 +44,10 @@ fun projectDeclarations(project: ProjectSpec): List<JsonValue> = buildList {
         }
         for (plugin in module.compilerPlugins) add(declaration(module.id, null, "compiler-plugin", plugin.coordinate, plugin.module,
             "compile", false, plugin.targets.sorted(), plugin.scopes.sorted()))
+        module.sqlDelight?.let { settings ->
+            for (coordinate in sqlDelightCompilerCoordinates(settings.version)) add(declaration(module.id, settings.sourceSet,
+                "sqldelight-compiler", coordinate, null, "runtime", false, listOf("jvm"), listOf("main")))
+        }
         for (target in module.targets) target.nativeTestSettings?.let { settings ->
             for (artifact in listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps")) {
                 add(declaration(module.id, null, "ksp-runtime", Coordinate("com.google.devtools.ksp", artifact, settings.kspVersion), null,

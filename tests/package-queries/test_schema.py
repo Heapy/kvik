@@ -60,4 +60,11 @@ class PackageSchemaTest(unittest.TestCase):
         bad=copy.deepcopy(edge);bad['requirement']='a:b:2'
         with self.assertRaises(jsonschema.ValidationError): self.validator('edge').validate(bad)
 
+    def test_sqldelight_host_domain_and_declaration(self):
+        self.validator('domain').validate(dict(module='library', target='jvm', compilation='main',
+                                               usage='java-runtime', purpose='sqldelight-compiler'))
+        self.validator('declaration').validate(dict(module='library', sourceSet='main', kind='sqldelight-compiler',
+            coordinate='app.cash.sqldelight:core:2.3.2', dependencyModule=None, scope='runtime', exported=False,
+            targets=['jvm'], compilations=['main']))
+
 if __name__ == '__main__': unittest.main()
