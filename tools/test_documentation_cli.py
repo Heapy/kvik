@@ -58,7 +58,10 @@ class Library(val token: Token)
 expect fun platformName(): String
 ''')
     write('library/jvm/Platform.kt', 'package sample\nactual fun platformName(): String = "JVM"\n')
-    write('library/native/Platform.kt', 'package sample\nactual fun platformName(): String = "Native"\n')
+    write('library/native/Platform.kt', '\n'.join(['package sample',
+        'actual fun platformName(): String = "Native"', '/** Native worker identity. */',
+        '@OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)',
+        'fun workerId(worker: kotlin.native.concurrent.Worker): Int = worker.id', '']))
     write('Module.md', '# Module library\nA curious library\n')
     write('tools.json', json.dumps(tools))
 
@@ -98,7 +101,7 @@ expect fun platformName(): String
 
     resolve()
     first, html = invoke('common-jvm-native-and-local-dependency')
-    assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName']), html[:1000]
+    assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName', 'workerId', 'Worker']), html[:1000]
     warm, _ = invoke('warm-documentation')
     assert all(action['status'] == 'local_hit' for action in warm['actions'])
     write('Module.md', '# Module library\nRevised module description\n')

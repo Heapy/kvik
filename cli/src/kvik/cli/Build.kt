@@ -183,8 +183,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
                     val abi = AbiActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
-                    val documentation = DocumentationActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val nativeTargets = toolTargets.mapNotNull(NativeTarget::find)
+                    val documentation = DocumentationActionExecutor(run.runId, run.path, host, content, tools.jvmProvider(),
+                        nativeTargets.associateWith { tools.nativeProvider(it) })
                     val native = nativeTargets.associateWith { target ->
                         NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(target), tools.jvmProvider())
                     }
@@ -198,7 +199,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val delegate = object : ActionExecutor {
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
-                            "kvik-dokka-html-v1" -> documentation
+                            "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
                             "kvik-jvm-script-v1" -> scripts
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
