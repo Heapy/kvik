@@ -21,6 +21,7 @@ def main():
     runtime, kode = args.runtime.resolve(strict=True), args.kode.resolve(strict=True)
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
     validator = jsonschema.Draft202012Validator({'$defs': schema['$defs'], '$ref': '#/$defs/sourceView'})
+    policy_validator = jsonschema.Draft202012Validator({'$defs': schema['$defs'], '$ref': '#/$defs/sourceRolePolicy'})
     with tempfile.TemporaryDirectory(prefix='kvik-kode-views-') as temporary:
         root = Path(temporary).resolve()
         home, cache = root / 'kode', root / 'cache'
@@ -59,7 +60,7 @@ def main():
             result = command(runtime, ['view', *source_options(revision), '--store', cache,
                                       '--lock', 'locks/deps.json', '--role', role, *extra], expected)
             if expected == 0:
-                validator.validate(result)
+                (policy_validator if result['kind'] == 'source-role-policy' else validator).validate(result)
             return result
 
         def save(document, name):
@@ -156,6 +157,44 @@ def main():
             bad_revision = tx(base, {'sub/kvik.json': json.dumps(invalid_config)})
             export(bad_revision, 'all', expected=2)
 
+        # A Kvik policy uses the same classification for future paths and pinned read views.
+        readonly_policy = save(export(base, 'tests', '--policy-name', 'reviewer'), 'readonly-policy')
+        test_policy_doc = export(base, 'tests', '--policy-name', 'test-author', '--edit-tag', 'scope:test',
+                                 '--allow', 'task-create')
+        test_policy = save(test_policy_doc, 'test-policy')
+        assert test_policy_doc['view'] == tests
+        assert test_policy_doc['editable'] == {'all': ['scope:test'], 'any': [], 'none': []}
+        assert test_policy_doc['capabilities'] == ['task-create']
+        assert {entry['path'] for entry in store('tree', 'fixture', '--rev', base, '--policy', test_policy)['entries']} == paths(tests)
+        assert store('read', 'fixture', 'sub/test/Test.kt', '--rev', base, '--policy', test_policy)['content'] == files['sub/test/Test.kt']
+        store('read', 'fixture', 'sub/common/Common.kt', '--rev', base, '--policy', test_policy, expected=1)
+        new_test = store('write', 'fixture', 'sub/test/New.kt', '--base', base, '--content', '// new test\n',
+                         '--intent', 'Add scoped test', '--policy', test_policy)['revision']
+        assert store('read', 'fixture', 'sub/test/New.kt', '--rev', new_test)['content'] == '// new test\n'
+        for path in ('sub/common/Forbidden.kt', 'outside.txt', 'sub/kvik.json'):
+            denied = store('write', 'fixture', path, '--base', base, '--content', 'denied',
+                           '--intent', 'Attempt forbidden edit', '--policy', test_policy, expected=1)
+            assert 'test-author' in denied.stderr.decode()
+        store('write', 'fixture', 'sub/test/New.kt', '--base', base, '--content', 'denied',
+              '--intent', 'Read-only attempt', '--policy', readonly_policy, expected=1)
+        selected_task = store('tasks', 'create', 'fixture', 'scoped-test', '--base', base, '--rev', new_test,
+                              '--intent', 'Review scoped test', '--policy', test_policy)
+        assert selected_task['revision'] == new_test
+        store('refs', 'create', 'fixture', 'scoped', '--at', new_test, '--policy', test_policy, expected=1)
+        store('projects', 'add', 'denied', '--intent', 'Try registry change', '--policy', test_policy, expected=1)
+        store('tree', 'fixture', '--rev', new_test, '--policy', test_policy, expected=1)
+        store('tree', 'fixture', '--rev', base, '--policy', test_policy, '--view', manual_view, expected=1)
+        # --allow grants only the named capability; reference publication still checks all changed paths.
+        publisher = save(export(base, 'all', '--policy-name', 'test-publisher', '--edit-tag', 'scope:test',
+                                '--allow', 'ref-create'), 'publisher-policy')
+        store('refs', 'create', 'fixture', 'scoped', '--at', new_test, '--policy', publisher)
+        store('refs', 'create', 'fixture', 'forbidden', '--at', candidate, '--policy', publisher, expected=1)
+        assert store('resolve', 'fixture', 'main')['revision'] == base
+        for extra in (('--edit-tag', 'scope:test'), ('--policy-name', 'x', '--exclude-edit-tag', 'scope:test'),
+                      ('--policy-name', 'x', '--allow', 'admin'),
+                      ('--policy-name', 'x', '--allow-all-edits', '--edit-tag', 'scope:test')):
+            export(base, 'all', *extra, expected=2)
+
         # Local inspection never follows manually declared symlinks, including ancestor links.
         local_notes = local / 'sub/notes.txt'
         local_notes.unlink()
@@ -231,6 +270,8 @@ def main():
         try:
             assert export(base, 'production', '--offline') == production
             assert export(base, 'all', '--tag', 'manual:architecture', '--offline') == architecture
+            assert export(base, 'tests', '--policy-name', 'test-author', '--edit-tag', 'scope:test',
+                          '--allow', 'task-create', '--offline') == test_policy_doc
             export('main', 'production', '--offline', expected=2)
             assert not home.exists()
             assert cache_state() == before
@@ -296,7 +337,7 @@ def main():
         invalid['modules'][0]['sourceSets'][0]['directories'] = ['notes.txt/missing']
         bad = tx(base, {'sub/kvik.json': json.dumps(invalid)})
         export(bad, 'production', expected=2)
-        print('PASS derived tags, pinned projections, bounded reads/pages, offline export, full-tree merges and hidden conflicts')
+        print('PASS file tags, role policies, pinned projections, bounded reads/pages, offline export, full-tree merges and hidden conflicts')
 
 
 if __name__ == '__main__':

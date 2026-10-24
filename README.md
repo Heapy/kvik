@@ -222,6 +222,40 @@ trees and reports every conflict, with `hiddenConflicts` identifying paths outsi
 the projection. View filters are not edit permissions. Offline view export needs
 a cached immutable inventory and configuration; it does not need source-file bytes.
 
+To restrict a CLI invocation's mutations, export a role policy using the same
+source options and pass it to Kode with `--policy`:
+
+```sh
+./kvik --no-build -- view --kode /absolute/bin/kode --kode-home /absolute/kode-store \
+  --source-project library --revision main --project sub/kvik.json \
+  --role tests --policy-name test-author --edit-tag scope:test \
+  --allow task-create > test-author.json
+/absolute/bin/kode --home /absolute/kode-store write library sub/test/NewTest.kt \
+  --base IMMUTABLE_REVISION --content '// new test' --intent 'Add test' \
+  --policy test-author.json
+```
+
+The policy combines a read view with independent edit rules and capabilities.
+`--edit-tag` requires every specified tag; `--edit-any-tag` requires at least one
+specified tag; `--exclude-edit-tag` rejects matching files. No edit selection
+means read-only. `--allow-all-edits` explicitly permits any file under the source
+root, subject to exclusions. New files use classification rules compiled from the
+pinned project configuration; renames must permit both paths. Changes to project
+configuration do not widen the current policy. Export a new policy for a new base.
+
+Capabilities are explicit: `task-create`, `task-update`, `ref-create`, `ref-update`,
+`ref-delete`, `project-add`, and `merge`. A merge also needs `ref-update`, and all
+resulting changed paths must pass the edit rules before reference publication.
+Transactions still apply to the full revision, including files outside the read
+view. Denials identify the policy and rejected rule. Unsupported commands with
+`--policy` fail explicitly; `--policy` and `--view` cannot be combined.
+
+The caller chooses and supplies this policy for each invocation. It is a guardrail
+for a trusted agent launcher, not an authentication mechanism or a filesystem
+sandbox. The file and CLI invocation must be controlled by that launcher for the
+restrictions to remain in force. Policies work offline from the same pinned
+inventory and configuration used by views.
+
 For several source windows in one call, pass a request file to Kode:
 
 ```json

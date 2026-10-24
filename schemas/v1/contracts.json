@@ -10033,6 +10033,119 @@
       "additionalProperties": false,
       "description": "Revision-pinned display projection, not an authorization policy. Files have unique revision-relative paths below source.root, satisfy predicate, and total canonical UTF-8 JSON is at most 16 MiB."
     },
+    "projectFileTagRules": {
+      "type": "object",
+      "properties": {
+        "exact": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taggedProjectFile"
+          },
+          "maxItems": 100000
+        },
+        "descendants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taggedProjectFile"
+          },
+          "maxItems": 100000
+        },
+        "manual": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^manual:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*(?![\\s\\S])"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "path",
+              "tags"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "exact",
+        "descendants",
+        "manual"
+      ],
+      "additionalProperties": false,
+      "description": "Configuration-relative paths, unique within each rule kind; at most 100000 entries combined. Union exact and strict-ancestor descendant tags, default to kind:unclassified if empty, then add manual tags."
+    },
+    "sourceRolePolicy": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "source-role-policy"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "view": {
+          "$ref": "#/$defs/sourceView"
+        },
+        "tagRules": {
+          "$ref": "#/$defs/projectFileTagRules"
+        },
+        "editable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/fileTagPredicate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "task-create",
+              "task-update",
+              "ref-create",
+              "ref-update",
+              "ref-delete",
+              "project-add",
+              "merge"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "name",
+        "view",
+        "tagRules",
+        "editable",
+        "capabilities"
+      ],
+      "additionalProperties": false,
+      "description": "Explicit trusted-caller invocation policy, not authentication or sandboxing. Pinned view tags must match rules. Null editable denies all edits; paths outside source.root are denied. Canonical UTF-8 JSON must fit 16 MiB."
+    },
     "inspection": {
       "type": "object",
       "properties": {

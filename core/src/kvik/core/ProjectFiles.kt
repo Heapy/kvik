@@ -41,18 +41,56 @@ data class TaggedProjectFile(val path: LogicalPath, val tags: Set<String>) {
     }
 }
 
-/** Classifies only the supplied existing inventory, relative to the configuration directory.
- * Directory topology is checked by the caller. No file visibility or generated status is inferred. */
-fun tagProjectFiles(
-    configuration: ProjectConfiguration,
-    configurationPath: LogicalPath,
-    lockPath: LogicalPath?,
-    files: List<LogicalPath>,
-    checkpoint: () -> Unit = {},
-): List<TaggedProjectFile> {
+/** Reusable classification rules for existing files and proposed new paths. */
+data class ProjectFileTagRules(
+    val exact: List<TaggedProjectFile>,
+    val descendants: List<TaggedProjectFile>,
+    val manual: List<TaggedProjectFile>,
+) {
+    init {
+        require(exact.size.toLong() + descendants.size + manual.size <= PROJECT_FILE_LIMIT) { "File tag rules exceed 100000 paths" }
+        for (entries in listOf(exact, descendants, manual))
+            require(entries.map { it.path }.toSet().size == entries.size) { "Duplicate file tag rule path" }
+        require(manual.all { file -> file.tags.all { it.startsWith("manual:") && it.length <= 128 } }) {
+            "Manual rules must use the manual: namespace and fit 128 characters"
+        }
+    }
+
+    private val exactByPath = exact.associate { it.path.value to it.tags }
+    private val descendantsByPath = descendants.associate { it.path.value to it.tags }
+    private val manualByPath = manual.associate { it.path.value to it.tags }
+
+    fun tags(path: LogicalPath): Set<String> {
+        val tags = exactByPath[path.value]?.toMutableSet() ?: mutableSetOf()
+        var slash = path.value.indexOf('/')
+        while (slash >= 0) {
+            descendantsByPath[path.value.substring(0, slash)]?.let(tags::addAll)
+            slash = path.value.indexOf('/', slash + 1)
+        }
+        if (tags.isEmpty()) tags += "kind:unclassified"
+        tags.addAll(manualByPath[path.value].orEmpty())
+        return tags
+    }
+
+    fun toJson(): JsonValue.Object = obj("exact" to exact.sortedBy { it.path.value }.map { it.toJson() }.json(),
+        "descendants" to descendants.sortedBy { it.path.value }.map { it.toJson() }.json(),
+        "manual" to manual.sortedBy { it.path.value }.map { it.toJson() }.json())
+
+    companion object {
+        fun fromJson(value: JsonValue): ProjectFileTagRules {
+            val fields = value.fields(setOf("exact", "descendants", "manual"))
+            val arrays = listOf("exact", "descendants", "manual").map { fields.getValue(it).arrayValue() }
+            require(arrays.sumOf { it.size.toLong() } <= PROJECT_FILE_LIMIT) { "File tag rules exceed 100000 paths" }
+            val entries = arrays.map { it.map(TaggedProjectFile::fromJson) }
+            return ProjectFileTagRules(entries[0], entries[1], entries[2])
+        }
+    }
+}
+
+/** Compile project declarations once; no filesystem reads or generated-status inference. */
+fun projectFileTagRules(configuration: ProjectConfiguration, configurationPath: LogicalPath, lockPath: LogicalPath?,
+                        checkpoint: () -> Unit = {}): ProjectFileTagRules {
     require(lockPath == null || configurationPath != lockPath) { "Configuration and lock paths must differ" }
-    require(files.size <= PROJECT_FILE_LIMIT) { "Project inventory exceeds 100000 files" }
-    require(files.toSet().size == files.size) { "Duplicate project file path" }
     val exact = mutableMapOf<String, MutableSet<String>>()
     val descendants = mutableMapOf<String, MutableSet<String>>()
     fun add(path: LogicalPath, tags: Set<String>, directory: Boolean = false, inclusive: Boolean = false) {
@@ -103,17 +141,29 @@ fun tagProjectFiles(
             add(it, tags + "kind:plugin-input", directory = true, inclusive = true)
         }
     }
+    fun entries(values: Map<String, Set<String>>) = values.entries.sortedBy { it.key }.map {
+        checkpoint()
+        TaggedProjectFile(LogicalPath(it.key), it.value)
+    }
+    return ProjectFileTagRules(entries(exact), entries(descendants),
+        entries(project.fileTags.mapKeys { it.key.value }))
+}
+
+/** Classifies only the supplied existing inventory, relative to the configuration directory.
+ * Directory topology is checked by the caller. No file visibility or generated status is inferred. */
+fun tagProjectFiles(
+    configuration: ProjectConfiguration,
+    configurationPath: LogicalPath,
+    lockPath: LogicalPath?,
+    files: List<LogicalPath>,
+    checkpoint: () -> Unit = {},
+): List<TaggedProjectFile> {
+    require(files.size <= PROJECT_FILE_LIMIT) { "Project inventory exceeds 100000 files" }
+    require(files.toSet().size == files.size) { "Duplicate project file path" }
+    val rules = projectFileTagRules(configuration, configurationPath, lockPath, checkpoint)
     return files.sortedBy { it.value }.map { path ->
         checkpoint()
-        val tags = exact[path.value]?.toMutableSet() ?: mutableSetOf()
-        var slash = path.value.indexOf('/')
-        while (slash >= 0) {
-            descendants[path.value.substring(0, slash)]?.let(tags::addAll)
-            slash = path.value.indexOf('/', slash + 1)
-        }
-        if (tags.isEmpty()) tags += "kind:unclassified"
-        tags.addAll(project.fileTags[path].orEmpty())
-        TaggedProjectFile(path, tags)
+        TaggedProjectFile(path, rules.tags(path))
     }
 }
 

@@ -39,6 +39,7 @@ private fun command(args: Array<String>) {
             Revision build/test: same source flags plus build options; --lock is relative to the configuration directory; --offline requires a cached immutable revision
             Revision locks: resolve/check-lock accept source flags; resolve returns a guarded Kode transaction; --replace-project FILE includes configuration changes
             Revision view: view with source flags and --role production|tests|all [--tag TAG] [--exclude-tag TAG]; emits a pinned view for kode --view FILE
+            Role policy: view also accepts --policy-name NAME [--edit-tag TAG] [--edit-any-tag TAG] [--exclude-edit-tag TAG] [--allow-all-edits] [--allow CAPABILITY]; emits a pinned policy for kode --policy FILE
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64 (repeatable) --tools PATH
             Test execution: jvm or the matching macosArm64/linuxX64 host; iOS supports library compilation and framework linking
             Execution: --runs PATH --jobs N --memory-mib N

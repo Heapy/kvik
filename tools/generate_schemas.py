@@ -767,6 +767,19 @@ DEFS["fileTagPredicate"] = object_({key: array(FILE_TAG, maxItems=64, uniqueItem
 DEFS["sourceView"] = versioned({"kind": {"const": "source-view"}, "name": enum("production", "tests", "all"),
     "source": ref("sourceReference"), "predicate": ref("fileTagPredicate"), "files": array(ref("taggedProjectFile"), maxItems=100000)})
 DEFS["sourceView"]["description"] = "Revision-pinned display projection, not an authorization policy. Files have unique revision-relative paths below source.root, satisfy predicate, and total canonical UTF-8 JSON is at most 16 MiB."
+DEFS["projectFileTagRules"] = object_({
+    "exact": array(ref("taggedProjectFile"), maxItems=100000),
+    "descendants": array(ref("taggedProjectFile"), maxItems=100000),
+    "manual": array(object_({"path": PATH, "tags": array(MANUAL_FILE_TAGS["additionalProperties"]["items"],
+        minItems=1, uniqueItems=True)}), maxItems=100000),
+})
+DEFS["projectFileTagRules"]["description"] = "Configuration-relative paths, unique within each rule kind; at most 100000 entries combined. Union exact and strict-ancestor descendant tags, default to kind:unclassified if empty, then add manual tags."
+DEFS["sourceRolePolicy"] = versioned({"kind": {"const": "source-role-policy"},
+    "name": {"type": "string", "maxLength": 128, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*(?![\s\S])"},
+    "view": ref("sourceView"), "tagRules": ref("projectFileTagRules"), "editable": nullable(ref("fileTagPredicate")),
+    "capabilities": array(enum("task-create", "task-update", "ref-create", "ref-update", "ref-delete", "project-add", "merge"), uniqueItems=True),
+})
+DEFS["sourceRolePolicy"]["description"] = "Explicit trusted-caller invocation policy, not authentication or sandboxing. Pinned view tags must match rules. Null editable denies all edits; paths outside source.root are denied. Canonical UTF-8 JSON must fit 16 MiB."
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING), "tags": array(FILE_TAG, minItems=1, uniqueItems=True)}, optional=("tags",))), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
     "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest")},
     optional=("source", "sourceRoot", "sourceManifest"))
