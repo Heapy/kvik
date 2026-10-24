@@ -41,6 +41,9 @@ class InstalledNativeToolchainProvider(
         val libffi = installed[ToolComponent.LIBFFI]
         val platform = installed[if (macos) ToolComponent.SDK else ToolComponent.SYSTEM]
         val hostToolchain = installed[if (macos) ToolComponent.XCODE_TOOLCHAIN else ToolComponent.NATIVE_TOOLCHAIN]
+        // Native tools use /usr/bin:/bin. A copied inventory elsewhere cannot attest
+        // the programs and host libraries reached through these fixed system paths.
+        if (!macos) validateLinuxSystemPaths(platform.root, physicalPath("/bin"))
         val dependenciesIdentity = if (macos) nativeDependenciesIdentity(llvm.digest, libffi.digest, hostToolchain.digest)
             else linuxNativeDependenciesIdentity(llvm.digest, libffi.digest, hostToolchain.digest)
         require(requested == mapOf("native" to native.digest, "jdk" to jdk.digest,
@@ -118,5 +121,11 @@ class InstalledNativeToolchainProvider(
         }
         checkpoint()
         return NativeToolchainLayout(compiler, jdk.root, if (macos) platform.root else "", data, developer, native.root, target)
+    }
+}
+
+internal fun validateLinuxSystemPaths(systemRoot: String, canonicalBin: String) {
+    require(systemRoot == "/usr" && canonicalBin == "/usr/bin") {
+        "Linux Native tools require the verified physical /usr installation and /bin -> /usr/bin (usrmerge)"
     }
 }

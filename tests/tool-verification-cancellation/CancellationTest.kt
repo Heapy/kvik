@@ -79,9 +79,10 @@ class CancellationTest {
             ToolComponent.LLVM -> "$root/data/dependencies/$llvm"
             ToolComponent.LIBFFI -> "$root/data/dependencies/$ffi"
             ToolComponent.NATIVE_TOOLCHAIN -> "$root/data/dependencies/$sysroot"
+            ToolComponent.SYSTEM -> physicalPath("/usr")
             else -> "$root/${component.lockName}"
         } }
-        for (path in roots.values) put("$path/tool", "tool".encodeToByteArray())
+        for ((component, path) in roots) if (component != ToolComponent.SYSTEM) put("$path/tool", "tool".encodeToByteArray())
         if (macos) put("${roots.getValue(ToolComponent.SDK)}/SDKSettings.json", "{\"Version\":\"fixture\"}".encodeToByteArray())
         for (path in listOf("${roots.getValue(ToolComponent.JDK)}/bin/java",
             "${roots.getValue(ToolComponent.KOTLIN_NATIVE)}/bin/konanc", "${roots.getValue(ToolComponent.KOTLIN_NATIVE)}/bin/run_konan",
@@ -123,6 +124,13 @@ class CancellationTest {
         return mapOf("native" to verified[ToolComponent.KOTLIN_NATIVE].digest, "jdk" to verified[ToolComponent.JDK].digest,
             (if (macos) "sdk" else "system") to verified[if (macos) ToolComponent.SDK else ToolComponent.SYSTEM].digest,
             "native-dependencies" to dependencies)
+    }
+
+    @Test fun linuxSystemIdentityMustDescribeTheExecutedUsrmergedInstallation() {
+        validateLinuxSystemPaths("/usr", "/usr/bin")
+        for ((root, bin) in listOf("/copied/usr" to "/usr/bin", "/usr" to "/bin", "/usr" to "/copied/usr/bin")) {
+            assertTrue(assertFails { validateLinuxSystemPaths(root, bin) }.message.orEmpty().contains("verified physical /usr"))
+        }
     }
 
     @Test fun nativeProviderRejectsOtherHostAndUntrustedDownloadState() = fixture { root ->
