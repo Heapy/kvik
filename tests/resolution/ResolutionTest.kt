@@ -55,6 +55,24 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun sqlDelightCompilerMetadataAcceptsItsDeclaredGroupAndModuleExclusions() {
+        val coordinate = Coordinate.parse("app.cash.sqldelight:compiler-env:2.3.2")
+        val document = parseJson(read("$root/tests/resolution/fixtures/app.cash.sqldelight__compiler-env__2.3.2.module")!!.decodeToString()).objectValue()
+        // This test exercises the published metadata, without downloading the 48 MiB compiler.
+        // Artifact verification is exercised separately, including excluded incoming paths.
+        val metadata = JsonValue.Object(document + ("variants" to document.getValue("variants").arrayValue().map {
+            JsonValue.Object(it.objectValue() - "files")
+        }.json())).canonical().encodeToByteArray()
+        val base = "${repo.url}/app/cash/sqldelight/compiler-env/2.3.2/compiler-env-2.3.2.module"
+        val stdlib = Coordinate.parse("org.jetbrains.kotlin:kotlin-stdlib:2.3.10")
+        val dependencies = ",\"dependencies\":[{\"group\":\"com.jetbrains.rd\",\"module\":\"excluded\",\"version\":{\"requires\":\"1\"}},{\"group\":\"com.github.jetbrains\",\"module\":\"jetCheck\",\"version\":{\"requires\":\"1\"}}]"
+        val entries = mapOf(base to metadata, "${repo.url}/org/jetbrains/kotlin/kotlin-stdlib/2.3.10/kotlin-stdlib-2.3.10.module" to module(stdlib, variant(dependencies)))
+        val graph = MavenResolver(MemoryTransport(entries), NativePomParser()).resolveGraph(listOf(coordinate), jvmVariantRequest("java-runtime", 25), listOf(repo))
+        assertEquals(setOf(coordinate, stdlib), graph.nodes.map { it.coordinate }.toSet())
+        assertEquals(2, graph.edges.count { it.semantics == "metadata-exclusion" })
+        assertEquals("runtimeElements", graph.nodes.single { it.coordinate == coordinate }.variant)
+    }
+
     @Test fun jsAndWasmSelectOnlyTheirExactIrPlatformAndUsage() {
         val bytes = "IR klib".encodeToByteArray(); val digest = Sha256.digest(bytes)
         fun selected(target: KotlinJsTarget, usage: String) = obj("name" to "${target.projectName}-$usage".json(),

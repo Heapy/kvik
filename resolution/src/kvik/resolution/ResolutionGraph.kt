@@ -10,6 +10,7 @@ data class ResolutionEdge(val source: String, val target: String?, val kind: Str
     init {
         if (exclusion != null) require(kind == "excluded" && target == null && selected == null && !transitive &&
             semantics == "explicit-exclusion" && requirement == exclusion.dependency)
+        else if (semantics == "metadata-exclusion") require(kind == "excluded" && target == null && selected == null && !transitive)
         else require(kind != "excluded" && semantics != "explicit-exclusion")
     }
 }

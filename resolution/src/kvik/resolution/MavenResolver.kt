@@ -105,11 +105,15 @@ class MavenResolver(
                 constraintEdges += Triple(source, c, semantics)
             }
         }
-        fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null, transitive: Boolean = true, preferred: Boolean = false): String {
+        fun visit(input: Coordinate, platform: Boolean = false, repository: Repository? = null, expectedOwner: Coordinate? = null,
+                  transitive: Boolean = true, preferred: Boolean = false, excludes: Set<ModuleExclusion> = emptySet()): String {
             val c = record(input, preferred)
             // Expansion belongs to an incoming edge, not a component-wide suppression flag.
             // Keep separate closure nodes; both still identify the same capability provider.
-            val key = "$c|$platform|$transitive"
+            require(excludes.size <= 64) { "Dependency exclusion rule bound exceeded" }
+            val exclusionKey = if (excludes.isEmpty()) "" else "|excludes=" + Sha256.digest(excludes.sortedBy { it.key }
+                .joinToString("\n") { it.key }.encodeToByteArray()).hash
+            val key = "$c|$platform|$transitive$exclusionKey"
             require(key !in active) { "Dependency/redirect cycle: $c" }
             if (key in visited) {
                 require(expectedOwner == null || graph.getValue(key).owner == expectedOwner) { "Conflicting redirect component ownership" }
@@ -117,6 +121,8 @@ class MavenResolver(
                 return key
             }
             active += key
+            require(active.size <= maxComponents) { "Dependency expansion depth bound exceeded" }
+            require(active.size + visited.size <= 8192) { "Dependency expansion state bound exceeded" }
             val found = (repository?.let { listOf(it) } ?: repositories).firstNotNullOfOrNull { repository ->
                 val base = repository.url.trimEnd('/') + "/" + c.path()
                 try { Source(repository, "$base.module", metadata("$base.module"), true) }
@@ -135,13 +141,22 @@ class MavenResolver(
             var provided = listOf(c)
             var provider = "$c|$platform"
             fun dependencyEdge(input: Coordinate, dependencyPlatform: Boolean = false, dependencyRepository: Repository? = null,
-                               owner: Coordinate? = null, expand: Boolean = true, kind: String = "dependency", semantics: String = "requires"): String {
-                val target = visit(input, dependencyPlatform, dependencyRepository, owner, expand, preferred = semantics == "prefers")
+                               owner: Coordinate? = null, expand: Boolean = true, kind: String = "dependency", semantics: String = "requires",
+                               edgeExcludes: Set<ModuleExclusion> = emptySet()): String {
+                val target = visit(input, dependencyPlatform, dependencyRepository, owner, expand, preferred = semantics == "prefers", excludes = excludes + edgeExcludes)
                 if (trace) {
                     require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
                     traceEdges += ResolutionEdge(key, target, kind, input, semantics, traceNodes.getValue(target).coordinate, expand)
                 }
                 return target
+            }
+            fun excluded(input: Coordinate): Boolean {
+                if (excludes.none { it.matches(input) }) return false
+                if (trace) {
+                    require(traceEdges.size + constraintEdges.size < 8192) { "Query graph edge bound exceeded" }
+                    traceEdges += ResolutionEdge(key, null, "excluded", input, "metadata-exclusion", null, false)
+                }
+                return true
             }
             if (found.module) {
                 val module = parseJson(found.bytes.decodeToString(throwOnInvalidSequence = true)).fields(setOf("formatVersion", "component", "variants"), setOf("createdBy"))
@@ -181,7 +196,7 @@ class MavenResolver(
                     require(variant.platform != "common" || platform || chosen.items("files").isNotEmpty()) { "Common metadata variant has no metadata artifact" }
                     if (transitive) chosen.items("dependencyConstraints").forEach {
                         val declared = dependency(it, constraint = true)
-                        constrain(key, declared.coordinate, if (declared.preferred) "prefers" else "constraint")
+                        if (!excluded(declared.coordinate)) constrain(key, declared.coordinate, if (declared.preferred) "prefers" else "constraint")
                     }
                     for (f in chosen.items("files")) {
                         val file = f.fields(setOf("name", "url", "size", "sha256"), setOf("sha512", "sha1", "md5"))
@@ -198,7 +213,9 @@ class MavenResolver(
                     if (transitive) declaredDependencies.forEach { declared ->
                         val d = declared.coordinate
                         val exclusion = rules.singleOrNull { it.dependency == d }
-                        if (exclusion == null) edges += dependencyEdge(d, declared.platform, semantics = if (declared.preferred) "prefers" else "requires")
+                        if (exclusion == null) {
+                            if (!excluded(d)) edges += dependencyEdge(d, declared.platform, semantics = if (declared.preferred) "prefers" else "requires", edgeExcludes = declared.excludes)
+                        }
                         else {
                             appliedExclusions += exclusion
                             if (trace) {
@@ -222,7 +239,7 @@ class MavenResolver(
                 val packaging = pom.packaging
                 selectedVariant = "maven-$packaging-${variant.usage}"
                 require(packaging == if (platform) "pom" else "jar") { "Unsupported POM packaging/platform: $packaging" }
-                if (platform && transitive) pom.managementCoordinates().forEach { constrain(key, it) }
+                if (platform && transitive) pom.managementCoordinates().forEach { if (!excluded(it)) constrain(key, it) }
                 if (!platform) {
                     // A POM has no producer bytecode version. The known consumer target policy is
                     // retained in the lock, but does not establish a bytecode guarantee for POM jars.
@@ -232,7 +249,9 @@ class MavenResolver(
                     require(bytes.size <= maxArtifactBytes) { "Artifact exceeds byte bound" }
                     artifacts += LockedArtifact(c, "maven-$packaging-${variant.usage}", found.repository.id, url, Sha256.digest(bytes))
                 }
-                if (transitive) pom.dependencyEdges(variant).forEach { edges += dependencyEdge(it.coordinate, expand = it.transitive, semantics = "pom-effective") }
+                if (transitive) pom.dependencyEdges(variant).forEach {
+                    if (!excluded(it.coordinate)) edges += dependencyEdge(it.coordinate, expand = it.transitive, semantics = "pom-effective")
+                }
             }
             // No capability conflict-resolution policy is implied by a version pin. Redirect
             // aliases share their terminal provider; independent providers must not coexist.
@@ -303,7 +322,11 @@ private fun atLeast(selected: String, required: String): Boolean {
     return true
 }
 
-private data class ModuleDependency(val coordinate: Coordinate, val platform: Boolean, val preferred: Boolean)
+private data class ModuleExclusion(val group: String, val module: String) {
+    val key: String get() = "$group:$module"
+    fun matches(coordinate: Coordinate): Boolean = (group == "*" || group == coordinate.group) && (module == "*" || module == coordinate.name)
+}
+private data class ModuleDependency(val coordinate: Coordinate, val platform: Boolean, val preferred: Boolean, val excludes: Set<ModuleExclusion>)
 
 private fun requireLiteralPreference(version: String) {
     require(version.matches(Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")) &&
@@ -311,7 +334,7 @@ private fun requireLiteralPreference(version: String) {
 }
 
 private fun dependency(value: JsonValue, constraint: Boolean = false): ModuleDependency {
-    val d = value.fields(setOf("group", "module", "version"), if (constraint) setOf("reason") else setOf("attributes", "endorseStrictVersions", "reason"))
+    val d = value.fields(setOf("group", "module", "version"), if (constraint) setOf("reason") else setOf("attributes", "endorseStrictVersions", "reason", "excludes"))
     val version = d.getValue("version").fields(emptySet(), setOf("requires", "prefers"))
     require(version.size == 1) { "Unsupported rich version combination: require exactly one literal requires or prefers" }
     val preferred = "prefers" in version
@@ -321,13 +344,23 @@ private fun dependency(value: JsonValue, constraint: Boolean = false): ModuleDep
     require(attributes.isEmpty() || attributes == mapOf("org.gradle.category" to "platform".json())) { "Unsupported dependency attributes" }
     val platform = attributes.isNotEmpty()
     require(d["endorseStrictVersions"] == null || platform && d.getValue("endorseStrictVersions").booleanValue()) { "Unsupported strict-version endorsement" }
-    return ModuleDependency(Coordinate(d.string("group"), d.string("module"), literal), platform, preferred)
+    val excludes = d.items("excludes").also { require(it.size <= 64) { "Dependency exclusion rule bound exceeded" } }.map {
+        val rule = it.fields(setOf("group", "module"))
+        val group = rule.string("group")
+        val module = rule.string("module")
+        require(listOf(group, module).all { it == "*" || it.length in 1..256 && it.matches(Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")) }) { "Unsupported dependency exclusion pattern" }
+        ModuleExclusion(group, module)
+    }.toSet()
+    return ModuleDependency(Coordinate(d.string("group"), d.string("module"), literal), platform, preferred, excludes)
 }
 
 private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform: Boolean): Boolean {
     val a = v["attributes"]?.objectValue() ?: error("Variant missing attributes")
     fun attribute(key: String) = a[key]?.stringValue()
     if (attribute("org.gradle.category") != if (platform) "platform" else "library") return false
+    // The consumer asks for an external dependency graph. Fat/shadow variants are
+    // alternate publications, not reasons to reject an available external variant.
+    if (attribute("org.gradle.dependency.bundling") in setOf("embedded", "shadowed")) return false
     val nativeTarget = NativeTarget.find(request.platform)
     val jsTarget = KotlinJsTarget.find(request.platform)
     val type = if (nativeTarget != null) "native" else jsTarget?.platformType ?: request.platform
