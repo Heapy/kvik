@@ -169,7 +169,7 @@ class BuildToolAdmissionTest {
             mapOf(jvmCheck to emptySet(), nativeCheck to emptySet()),
             listOf(ActionResult(jvmCheck, identity, ActionStatus.FAILED, exitCode = 1),
                 ActionResult(nativeCheck, identity, ActionStatus.FAILED, diagnostic = "Missing LLVM root")),
-            mapOf(jvmCheck to failed), identity, identity, identity, identity, emptyMap(), emptyList(), Freshness.CURRENT)
+            mapOf(jvmCheck to failed), identity, identity, identity, identity, emptyMap(), listOf("kvik", "test"), Freshness.CURRENT)
         assertEquals(VerificationStatus.FAILED, evidence.record.status)
         val final = buildCompletion(evidence.record.status, ExitStatus.INCOMPLETE, false)
         assertEquals(VerificationStatus.FAILED, final.status)
