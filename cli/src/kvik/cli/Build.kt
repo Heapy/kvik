@@ -19,6 +19,7 @@ import kvik.execution.*
 import kvik.execution.platform.*
 import kvik.locking.*
 import kvik.library.LibraryPackageExecutor
+import kvik.library.KmpLibraryPackageExecutor
 import kvik.projectgraph.*
 import kvik.projectsnapshot.*
 import kvik.runevidence.*
@@ -112,7 +113,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val graphRequest = ProjectGraphRequest(options.modules, options.targets, mode, selectedTests)
     val toolTargets = if (scriptFile == null) projectToolTargets(snapshot.configuration.project, graphRequest) else options.targets
     val requested = scriptFile?.let { setOf("script:${it.scriptName}:jvm:run") }
-        ?: options.modules.flatMap { module -> options.targets.map { target -> "$module:$target:${mode.name.lowercase()}" } }.toSet()
+        ?: projectRequestedChecks(graphRequest)
     val tools = try { BuildTools(toolsPath) } catch (failure: Exception) {
         throw CliFailure("KVIK_TOOLCHAIN_CONFIGURATION", DiagnosticCategory.TOOLCHAIN, failure.message ?: "Invalid tool installations", ExitStatus.INVALID_CONFIGURATION)
     }
@@ -177,11 +178,14 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
+                    val kmpLibrary = KmpLibraryPackageExecutor(content)
                     val delegate = object : ActionExecutor {
                         private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
                             "kvik-jvm-script-v1" -> scripts
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
+                            "kvik-kmp-library-package-v1" -> kmpLibrary
+                            "kvik-jvm-metadata-v1" -> jvm
                             "kvik-ksp-native-v1" -> ksp
                             "kvik-kotest-native-tests-v1" -> kotest
                             else -> when (action.target) {

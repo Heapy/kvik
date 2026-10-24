@@ -10,6 +10,85 @@ import platform.posix.usleep
 
 class BridgeUnitTest {
     private val digest = Sha256.digest(byteArrayOf())
+    @Test fun metadataContractIsSeparateFromJvmAndBindsDeclaredTargetsAndFlags() {
+        val source = LogicalPath("Common.kt")
+        val library = LogicalPath("common.klib")
+        val compilation = JvmMetadataCompilation("example:library", listOf(source), listOf(library), LogicalPath("commonMain"))
+        val inputs = TreeManifest(listOf(FileEntry(source, digest), FileEntry(library, digest)))
+        val tools = jvmIdentities.associateWith { digest }
+        val action = jvmMetadataCompileAction(compilation, inputs, digest, tools)
+        assertEquals(compilation, JvmMetadataCompilation.fromJson(compilation.toJson()))
+        assertEquals("common", action.target)
+        assertEquals(ActionKind.COMPILE, action.kind)
+        assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+        assertNotEquals(action.key(Sha256), jvmMetadataCompileAction(compilation.copy(explicitApi = true), inputs, digest, tools).key(Sha256))
+        assertNotEquals(action.key(Sha256), jvmMetadataCompileAction(compilation.copy(warningsAsErrors = true), inputs, digest, tools).key(Sha256))
+        assertFails { compilation.copy(targets = setOf("jvm")) }
+        assertFails { jvmMetadataCompileAction(compilation, TreeManifest(listOf(FileEntry(source, digest))), digest, tools) }
+        assertFails { jvmCompileAction(JvmCompilation("m", listOf(source), listOf(library), LogicalPath("classes")), inputs, digest, tools) }
+        val request = WorkerRequest("metadata", "metadata-compile", digest, listOf("Common.kt"), listOf("common.klib"), emptyList(), compilation.options(), "commonMain")
+        assertEquals(request, WorkerRequest.fromJson(request.toJson()))
+        assertEquals(request, WorkerRequest.fromJson(JsonValue.Object(request.toJson().objectValue() - "metadataTargets")))
+        assertFails { request.copy(pluginClasspath = listOf("plugin.jar")) }
+        assertFails { request.copy(metadataTargets = setOf("jvm")) }
+        val ordinary = WorkerRequest("jvm", "jvm-compile", digest, listOf("A.kt"), emptyList(), emptyList(), emptyList(), "classes")
+        assertFalse("metadataTargets" in ordinary.toJson().objectValue())
+    }
+
+    @Test fun metadataWorkerUsesOwnedCompileBoundaryAndCommonDiagnostics() {
+        val root = NativeRunDirectory("/private/tmp")
+        val store = NativeContentStore("${root.path}/store")
+        val manifest = obj("fixture" to true.json())
+        writeJvmFile("${root.path}/manifest.json", manifest.canonical().encodeToByteArray())
+        val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
+        val provider = JvmToolchainProvider { requested -> JvmToolchainLayout(requested, "/tool/java", "/tool/classes", "/tool/api.jar", "/tool/std.jar", "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json") }
+        val bytes = store.put("expect class A".encodeToByteArray())
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("A.kt"), bytes), FileEntry(LogicalPath("stdlib-all.jar"), bytes)))
+        val compilation = JvmMetadataCompilation("fixture:common", listOf(LogicalPath("A.kt")), listOf(LogicalPath("stdlib-all.jar")), LogicalPath("commonMain"))
+        val action = jvmMetadataCompileAction(compilation, inputs, digest, identities)
+        for (variant in listOf("success", "compiler-error", "extra-output", "cancel")) {
+            var closed = false
+            var launches = 0
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess {
+                    launches++
+                    assertEquals(action.timeoutMillis, request.timeoutMillis)
+                    val directory = request.workingDirectory
+                    val worker = WorkerRequest.fromJson(parseJson(readJvmFile("$directory/request.json").decodeToString()))
+                    assertEquals("metadata-compile", worker.operation)
+                    assertEquals(setOf("jvm", "macosArm64"), worker.metadataTargets)
+                    assertEquals(listOf("input/stdlib-all.jar"), worker.classpath)
+                    assertEquals(listOf("input/A.kt"), worker.sources)
+                    val failed = variant == "compiler-error"
+                    val diagnostics = if (failed) listOf(Diagnostic("KVIK_COMPILATION_ERROR", DiagnosticCategory.COMPILATION, "bad source", path = "input/A.kt")) else emptyList()
+                    writeJvmFile("$directory/result.json", WorkerResult(worker.requestId, if (failed) WorkerStatus.COMPILATION_ERROR else WorkerStatus.SUCCESS, if (failed) 1 else 0, diagnostics).toJson().canonical().encodeToByteArray())
+                    mkdirJvm("$directory/output/commonMain")
+                    writeJvmFile("$directory/output/commonMain/manifest", byteArrayOf(1))
+                    if (variant == "extra-output") writeJvmFile("$directory/output/extra", byteArrayOf(1))
+                    return object : OwnedProcess {
+                        override fun poll() = ProcessResult(if (failed) 1 else 0)
+                        override fun cancel() = Unit
+                        override fun close() { closed = true }
+                    }
+                }
+                override fun close() = Unit
+            }
+            val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
+            assertFails { executor.start(root.runId, "tampered-$variant", action.copy(arguments = action.arguments + "-d")) }
+            val result = executor.start(root.runId, variant, action).use { running ->
+                if (variant == "cancel") {
+                    repeat(10_000) { if (launches == 0) { assertNull(running.poll()); usleep(1000u) } }
+                    assertEquals(1, launches); running.cancel()
+                }
+                awaitBridgeResult(running)
+            }
+            assertTrue(closed)
+            assertEquals(if (variant == "success") ActionStatus.EXECUTED else if (variant == "cancel") ActionStatus.CANCELLED else ActionStatus.FAILED, result.status)
+            assertEquals(variant == "success", result.outputs.files.isNotEmpty())
+            assertTrue(executor.observations.getValue(variant).diagnostics.all { it.target == "common" })
+        }
+    }
+
     @Test fun optionalCoverageToolsBindIdentityAndRequireCompleteLayout() {
         val old = Sha256.digest(obj("schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
             "workerTree" to digest.toJson(), "api" to digest.toJson(), "stdlib" to digest.toJson(), "junit" to digest.toJson()))

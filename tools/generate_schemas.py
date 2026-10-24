@@ -116,7 +116,7 @@ DEFS["module"] = object_({"id": ID, "sourceSets": array(ref("sourceSet"), minIte
     "compilerPlugins": array(ref("compilerPlugin")), "publication": ref("libraryPublication")}, optional=("publication",))
 DEFS["module"]["allOf"] = [{"if": {"required": ["publication"]},
     "then": {"properties": {"targets": {"items": {"not": {"required": ["application"]}}}}}}]
-DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate derived target publication coordinates across modules."
+DEFS["libraryPublication"]["$comment"] = "Project validation rejects duplicate emitted root or derived target publication coordinates across modules."
 DEFS["repository"] = object_({"id": ID, "url": {"type": "string", "pattern": "^https://"}})
 # Script declarations are distinct from module compilation selections. Older nonempty profile
 # arrays were schema-only and rejected by Native; v1 now gives profiles an explicit object shape.
@@ -179,10 +179,16 @@ DEFS["artifact"] = object_({"coordinate": COORDINATE, "variant": NONEMPTY, "repo
 DEFS["metadata"] = object_({"url": STRING, "digest": ref("digest")})
 DEFS["variant"] = object_({"platform": enum("common", "jvm", "macosArm64"), "usage": STRING, "attributes": mapping(STRING)})
 DEFS["selection"] = object_({"requested": COORDINATE, "variant": ref("variant"), "artifacts": array(ref("artifact")), "metadata": array(ref("metadata"))})
-DEFS["resolutionDomain"] = object_({"module": ID, "target": enum("jvm", "macosArm64"), "compilation": enum("main", "test"), "usage": enum("java-api", "java-runtime", "kotlin-api", "kotlin-runtime"), "purpose": enum("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")})
+DEFS["resolutionDomain"] = object_({"module": ID, "target": enum("common", "jvm", "macosArm64"), "compilation": enum("main", "test"), "usage": enum("java-api", "java-runtime", "kotlin-api", "kotlin-runtime", "kotlin-metadata"), "purpose": enum("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")})
 DEFS["resolutionDomain"]["allOf"] = [
-    {"if": {"properties": {"purpose": enum("compiler-plugin", "ksp-runtime", "symbol-processor")}}, "then": {"properties": {"usage": {"const": "java-runtime"}}},
-     "else": {"if": {"properties": {"target": {"const": "jvm"}}}, "then": {"properties": {"usage": enum("java-api", "java-runtime")}}, "else": {"properties": {"usage": enum("kotlin-api", "kotlin-runtime")}}}}]
+    {"if": {"properties": {"purpose": enum("compiler-plugin", "ksp-runtime", "symbol-processor")}},
+     "then": {"properties": {"usage": {"const": "java-runtime"}}}},
+    *[{"if": {"properties": {"purpose": {"const": "dependencies"}, "target": {"const": target}}},
+       "then": {"properties": {"usage": enum(*usages)}}}
+      for target, usages in (("jvm", ("java-api", "java-runtime")), ("macosArm64", ("kotlin-api", "kotlin-runtime")), ("common", ("kotlin-metadata",)))],
+]
+DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"target": {"const": "common"}}},
+    "then": {"properties": {"compilation": {"const": "main"}, "purpose": {"const": "dependencies"}, "usage": {"const": "kotlin-metadata"}}}})
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"purpose": enum("ksp-runtime", "symbol-processor")}},
     "then": {"properties": {"target": {"const": "macosArm64"}, "compilation": {"const": "test"}}}})
 # Additive consumer union: legacy module wire bytes are unchanged.
@@ -302,6 +308,7 @@ DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, 
     "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
 DEFS["requestedCheck"] = {"oneOf": [
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:package$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application|package)$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
@@ -638,8 +645,12 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "application-finished": object_({"preparationRun": NONEMPTY, "exitCode": {"type": "integer", "minimum": 0, "maximum": 255},
         "cancelled": BOOL, "timedOut": BOOL, "stdout": NONEMPTY, "stderr": NONEMPTY}),
 }.items()]
-DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": {"const": "jvm-compile"}, "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1)}, optional=("pluginApplications",))
+DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum("jvm", "macosArm64"), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
 DEFS["workerRequest"]["allOf"] = [{"if": {"required": ["pluginApplications"], "properties": {"pluginApplications": {"minItems": 1}}}, "then": {"properties": {"pluginClasspath": {"maxItems": 0}}}}]
+DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-compile"}}},
+    "then": {"properties": {"pluginClasspath": {"maxItems": 0}, "pluginApplications": {"maxItems": 0}, "metadataTargets": {"minItems": 2, "maxItems": 2}}},
+    "else": {"properties": {"metadataTargets": {"maxItems": 0}}}})
+
 DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success", "compilation-error", "infrastructure-error", "cancelled"), "exitCode": {"type": "integer"}, "diagnostics": array(ref("diagnostic"))})
 DEFS["workerResult"]["allOf"] = [{"if": {"properties": {"status": {"const": "success"}}}, "then": {"properties": {"exitCode": {"const": 0}}}, "else": {"properties": {"exitCode": {"not": {"const": 0}}}}}]
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING)})

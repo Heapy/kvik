@@ -86,6 +86,53 @@ private fun readZip(bytes: ByteArray): List<ZipEntry> {
 }
 
 class LibraryPackageTest {
+    @Test fun rootDependencyUsesTargetCoordinateForPomConsumers() {
+        val store = Store()
+        val root = Coordinate("org.example", "base", "1.0")
+        val dependency = LibraryDependency(root, true, root.copy(name = "base-jvm"))
+        assertEquals(dependency, LibraryDependency.fromJson(dependency.toJson()))
+        val result = complete(store, action(store, value = selection(dependencies = listOf(dependency))))
+        val pom = store.bytes(result, ".pom").decodeToString()
+        assertTrue("<artifactId>base-jvm</artifactId>" in pom)
+        assertFalse("<artifactId>base</artifactId>" in pom)
+        val metadata = parseJson(store.bytes(result, ".module").decodeToString()).objectValue()
+        for (variant in metadata.getValue("variants").arrayValue()) {
+            assertEquals("base", variant.objectValue().getValue("dependencies").arrayValue().single()
+                .objectValue().getValue("module").stringValue())
+        }
+        assertNotEquals(action(store, value = selection(dependencies = listOf(dependency))).key(Sha256),
+            action(store, value = selection(dependencies = listOf(dependency.copy(pomCoordinate = null)))).key(Sha256))
+    }
+
+    @Test fun optionalRootOwnerKeepsLegacyJsonAndArtifactBytesButAddsMetadataBacklink() {
+        val store = Store()
+        val original = selection(dependencies = emptyList())
+        val legacy = """{"coordinate":"org.example:library-jvm:1.0","dependencies":[],"jvmTarget":11,"module":"library","schemaVersion":1,"target":"jvm"}"""
+        assertEquals(legacy, original.toJson().canonical())
+        assertEquals(original, LibraryPackage.fromJson(parseJson(legacy)))
+        val root = Coordinate("org.example", "library", "1.0")
+        val owned = original.copy(rootCoordinate = root)
+        assertEquals(owned, LibraryPackage.fromJson(owned.toJson()))
+        val files = listOf(store.file("classes/Example.class", byteArrayOf(1, 2)))
+        val standaloneAction = action(store, files, original)
+        val ownedAction = action(store, files, owned)
+        assertNotEquals(standaloneAction.key(Sha256), ownedAction.key(Sha256))
+        val standaloneResult = complete(store, standaloneAction)
+        val ownedResult = complete(store, ownedAction)
+        assertContentEquals(store.bytes(standaloneResult, ".jar"), store.bytes(ownedResult, ".jar"))
+        assertContentEquals(store.bytes(standaloneResult, ".pom"), store.bytes(ownedResult, ".pom"))
+        val standaloneMetadata = parseJson(store.bytes(standaloneResult, ".module").decodeToString()).objectValue()
+        val ownedMetadata = parseJson(store.bytes(ownedResult, ".module").decodeToString()).objectValue()
+        assertEquals(obj("group" to "org.example".json(), "module" to "library-jvm".json(), "version" to "1.0".json()),
+            standaloneMetadata.getValue("component"))
+        assertEquals(obj("group" to "org.example".json(), "module" to "library".json(), "version" to "1.0".json(),
+            "url" to "../../library/1.0/library-1.0.module".json()), ownedMetadata.getValue("component"))
+        assertEquals(standaloneMetadata.getValue("variants"), ownedMetadata.getValue("variants"))
+        for (invalid in listOf(root.copy(group = "other"), root.copy(version = "2.0"), original.coordinate)) {
+            assertFails { original.copy(rootCoordinate = invalid) }
+        }
+    }
+
     @Test fun storedJarHasCorrectCrcHeadersUtf8AndFixedManifest() {
         val store = Store()
         val files = listOf(store.file("classes/é/资源.txt", "123456789".encodeToByteArray(), true),
@@ -126,7 +173,8 @@ class LibraryPackageTest {
         val module = parseJson(metadata).objectValue()
         assertEquals("1.1", module.getValue("formatVersion").stringValue())
         val variants = module.getValue("variants").arrayValue().map { it.objectValue() }
-        assertEquals(listOf("java-api", "java-runtime"), variants.map { it.getValue("name").stringValue() })
+        assertEquals(listOf("jvmApiElements", "jvmRuntimeElements"), variants.map { it.getValue("name").stringValue() })
+        assertEquals(listOf("java-api", "java-runtime"), variants.map { it.getValue("attributes").objectValue().getValue("org.gradle.usage").stringValue() })
         assertEquals(listOf(1, 2), variants.map { it.getValue("dependencies").arrayValue().size })
         val artifact = result.outputs.files.single { it.path.value.endsWith(".jar") }
         for (variant in variants) {
@@ -150,13 +198,17 @@ class LibraryPackageTest {
         val metadata = store.bytes(result, ".module").decodeToString()
         assertTrue(metadata.startsWith("{\"formatVersion\":\"1.1\",\"component\":"))
         val variants = parseJson(metadata).objectValue().getValue("variants").arrayValue()
-        assertEquals(listOf("kotlin-api", "kotlin-runtime"), variants.map { it.objectValue().getValue("name").stringValue() })
+        assertEquals(listOf("macosArm64ApiElements", "macosArm64RuntimeElements"), variants.map { it.objectValue().getValue("name").stringValue() })
+        assertEquals(listOf("kotlin-api", "kotlin-runtime"), variants.map {
+            it.objectValue().getValue("attributes").objectValue().getValue("org.gradle.usage").stringValue()
+        })
         assertEquals(listOf(listOf("api"), listOf("api", "runtime")), variants.map { variant ->
             variant.objectValue().getValue("dependencies").arrayValue().map { it.objectValue().getValue("module").stringValue() }
         })
         for (variant in variants.map { it.objectValue() }) {
             val attrs = variant.getValue("attributes").objectValue()
             assertEquals("macos_arm64", attrs.getValue("org.jetbrains.kotlin.native.target").stringValue())
+            assertEquals("org.jetbrains.kotlin.klib", attrs.getValue("artifactType").stringValue())
             assertFalse(JVM_TARGET_VERSION_ATTRIBUTE in attrs)
         }
     }
@@ -183,6 +235,11 @@ class LibraryPackageTest {
         assertFails { value.copy(jvmTarget = null) }
         assertFails { value.copy(dependencies = listOf(publicDependency, publicDependency.copy(api = false))) }
         assertFails { value.copy(dependencies = listOf(LibraryDependency(value.coordinate, true))) }
+        val rootDependency = LibraryDependency(Coordinate("org.example", "base", "1.0"), true,
+            Coordinate("org.example", "base-jvm", "1.0"))
+        assertFails { value.copy(dependencies = listOf(rootDependency,
+            LibraryDependency(Coordinate("org.example", "base-jvm", "2.0"), false))) }
+        assertFails { value.copy(dependencies = listOf(rootDependency.copy(pomCoordinate = value.coordinate))) }
         assertFails { LibraryPackage.fromJson(JsonValue.Object(value.toJson().values + ("extra" to true.json()))) }
         val store = Store(); val spec = action(store)
         val executor = LibraryPackageExecutor(store)

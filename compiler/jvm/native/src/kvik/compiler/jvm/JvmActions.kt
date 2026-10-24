@@ -80,6 +80,58 @@ data class JvmCompilation(
     }
 }
 
+/** Genuine common metadata compilation; dependencies are explicit metadata KLIBs/directories. */
+data class JvmMetadataCompilation(
+    val module: String,
+    val sources: List<LogicalPath>,
+    val classpath: List<LogicalPath>,
+    val output: LogicalPath,
+    val optIns: List<String> = emptyList(),
+    val explicitApi: Boolean = false,
+    val warningsAsErrors: Boolean = false,
+    val targets: Set<String> = setOf("jvm", "macosArm64"),
+) {
+    init {
+        require(targets == setOf("jvm", "macosArm64")) { "Metadata compilation supports the JVM/Native shared intersection" }
+        require(module.matches(Regex("[A-Za-z0-9_.:-]+"))) { "Invalid metadata module name" }
+        require(sources.isNotEmpty() && sources.all { it.value.endsWith(".kt") })
+        for (paths in listOf(sources, classpath)) require(paths.distinct().size == paths.size && paths.none { ':' in it.value })
+        require(optIns.distinct().size == optIns.size && optIns.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")) })
+    }
+    fun options(prefix: String = ""): List<String> = buildList {
+        // Kept parallel to JvmCompilation.options(prefix); metadata has no path-valued flags.
+        require(prefix.none { it == '\u0000' })
+        addAll(listOf("-module-name", module, "-language-version", "2.4", "-api-version", "2.4", "-Xmulti-platform"))
+        optIns.forEach { add("-opt-in=$it") }
+        if (explicitApi) add("-Xexplicit-api=strict")
+        if (warningsAsErrors) add("-Werror")
+    }
+    fun toJson(): JsonValue.Object = obj("module" to module.json(), "sources" to sources.jsonPaths(),
+        "classpath" to classpath.jsonPaths(), "output" to output.value.json(), "optIns" to optIns.map { it.json() }.json(),
+        "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json(), "targets" to targets.sorted().map { it.json() }.json())
+    companion object {
+        fun fromJson(value: JsonValue): JvmMetadataCompilation {
+            val d = value.fields(setOf("module", "sources", "classpath", "output", "optIns", "explicitApi", "warningsAsErrors", "targets"))
+            return JvmMetadataCompilation(d.getValue("module").stringValue(), d.paths("sources"), d.paths("classpath"),
+                LogicalPath(d.getValue("output").stringValue()), d.getValue("optIns").arrayValue().map(JsonValue::stringValue),
+                d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(),
+                d.getValue("targets").arrayValue().map(JsonValue::stringValue).also { require(it.distinct().size == it.size) }.toSet())
+        }
+    }
+}
+
+fun jvmMetadataCompileAction(compilation: JvmMetadataCompilation, inputs: TreeManifest, composition: Digest,
+                            toolchains: Map<String, Digest>, timeoutMillis: Long = 120_000): ActionSpec {
+    require(toolchains.keys == jvmIdentities)
+    require(compilation.sources.all { source -> inputs.files.any { it.path == source } }) { "Undeclared metadata source" }
+    for (path in compilation.classpath) require(inputs.files.any {
+        it.path == path && (path.value.endsWith(".klib") || path.value.endsWith(".jar")) || it.path.value.startsWith(path.value + "/")
+    }) { "Undeclared metadata KLIB/directory: ${path.value}" }
+    return ActionSpec("kvik-jvm-metadata-v1", composition, ActionKind.COMPILE, hostPlatform, "common", toolchains.toMap(),
+        TreeManifest(inputs.files.toList()), listOf(compilation.output), listOf("kvik.jvm.CompilerWorkerKt") + compilation.options(),
+        workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
+}
+
 data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))

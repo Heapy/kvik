@@ -146,9 +146,12 @@ data class WorkerRequest(
     val options: List<String>,
     val outputDirectory: String,
     val pluginApplications: List<JvmPluginApplication> = emptyList(),
+    val metadataTargets: Set<String> = if (operation == "metadata-compile") setOf("jvm", "macosArm64") else emptySet(),
 ) {
     init {
-        require(requestId.isNotBlank() && operation == "jvm-compile" && sources.isNotEmpty())
+        require(metadataTargets == if (operation == "metadata-compile") setOf("jvm", "macosArm64") else emptySet()) { "Unsupported metadata target intersection" }
+        require(requestId.isNotBlank() && operation in setOf("jvm-compile", "metadata-compile") && sources.isNotEmpty())
+        require(operation != "metadata-compile" || pluginClasspath.isEmpty() && pluginApplications.isEmpty()) { "Common metadata compiler plugins are not supported" }
         require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || pluginClasspath.isEmpty())) { "Only one compiler plugin representation/application is supported" }
     }
     fun toJson(): JsonValue = obj(
@@ -157,13 +160,16 @@ data class WorkerRequest(
         "classpath" to classpath.map { it.json() }.json(), "pluginClasspath" to pluginClasspath.map { it.json() }.json(),
         "options" to options.map { it.json() }.json(), "outputDirectory" to outputDirectory.json(),
     ).let { if (pluginApplications.isEmpty()) it else JsonValue.Object(it.values + ("pluginApplications" to pluginApplications.map { it.toJson() }.json())) }
+        .let { if (metadataTargets.isEmpty()) it else JsonValue.Object(it.values + ("metadataTargets" to metadataTargets.sorted().map { target -> target.json() }.json())) }
     companion object {
-        fun fromJson(value: JsonValue): WorkerRequest = value.fields(setOf("schemaVersion", "requestId", "operation", "compiler", "sources", "classpath", "pluginClasspath", "options", "outputDirectory"), setOf("pluginApplications")).let {
+        fun fromJson(value: JsonValue): WorkerRequest = value.fields(setOf("schemaVersion", "requestId", "operation", "compiler", "sources", "classpath", "pluginClasspath", "options", "outputDirectory"), setOf("pluginApplications", "metadataTargets")).let {
             it.requireVersion()
             WorkerRequest(it.getValue("requestId").stringValue(), it.getValue("operation").stringValue(), Digest.fromJson(it.getValue("compiler")),
                 it.getValue("sources").arrayValue().map(JsonValue::stringValue), it.getValue("classpath").arrayValue().map(JsonValue::stringValue),
                 it.getValue("pluginClasspath").arrayValue().map(JsonValue::stringValue), it.getValue("options").arrayValue().map(JsonValue::stringValue), it.getValue("outputDirectory").stringValue(),
-                it["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
+                it["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(),
+                it["metadataTargets"]?.arrayValue()?.map(JsonValue::stringValue)?.also { targets -> require(targets.distinct().size == targets.size) }?.toSet()
+                    ?: if (it.getValue("operation").stringValue() == "metadata-compile") setOf("jvm", "macosArm64") else emptySet())
         }
     }
 }

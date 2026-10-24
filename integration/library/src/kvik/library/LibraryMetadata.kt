@@ -14,7 +14,7 @@ internal fun LibraryPackage.pom(): ByteArray = buildString {
     append("  <groupId>${coordinate.group}</groupId><artifactId>${coordinate.name}</artifactId><version>${coordinate.version}</version>\n")
     append("  <packaging>${extension()}</packaging>\n  <dependencies>\n")
     dependencies.sortedBy { it.coordinate.toString() }.forEach { dependency ->
-        val value = dependency.coordinate
+        val value = dependency.pomCoordinate ?: dependency.coordinate
         append("    <dependency><groupId>${value.group}</groupId><artifactId>${value.name}</artifactId><version>${value.version}</version><scope>${if (dependency.api) "compile" else "runtime"}</scope></dependency>\n")
     }
     append("  </dependencies>\n</project>\n")
@@ -22,7 +22,7 @@ internal fun LibraryPackage.pom(): ByteArray = buildString {
 
 internal fun LibraryPackage.moduleMetadata(artifact: Digest): ByteArray {
     val name = "${basename()}.${extension()}"
-    fun variant(usage: String, selected: List<LibraryDependency>): JsonValue {
+    fun variant(variantName: String, usage: String, selected: List<LibraryDependency>): JsonValue {
         val attributes = linkedMapOf<String, JsonValue>("org.gradle.category" to "library".json(),
             "org.gradle.usage" to usage.json(), "org.jetbrains.kotlin.platform.type" to (if (target == "jvm") "jvm" else "native").json())
         if (target == "jvm") {
@@ -31,18 +31,25 @@ internal fun LibraryPackage.moduleMetadata(artifact: Digest): ByteArray {
             attributes[JVM_TARGET_VERSION_ATTRIBUTE] = checkNotNull(jvmTarget).json()
         } else {
             attributes["org.jetbrains.kotlin.native.target"] = "macos_arm64".json()
-            attributes["artifactType"] = "klib".json()
+            attributes["artifactType"] = "org.jetbrains.kotlin.klib".json()
         }
-        return obj("name" to usage.json(), "attributes" to JsonValue.Object(attributes),
+        return obj("name" to variantName.json(), "attributes" to JsonValue.Object(attributes),
             "dependencies" to selected.sortedBy { it.coordinate.toString() }.map {
                 obj("group" to it.coordinate.group.json(), "module" to it.coordinate.name.json(),
                     "version" to obj("requires" to it.coordinate.version.json()))
             }.json(), "files" to listOf(obj("name" to name.json(), "url" to name.json(),
                 "size" to artifact.sizeBytes.json(), "sha256" to artifact.hash.json())).json())
     }
-    val variants = if (target == "jvm") listOf(variant("java-api", dependencies.filter { it.api }), variant("java-runtime", dependencies))
-        else listOf(variant("kotlin-api", dependencies.filter { it.api }), variant("kotlin-runtime", dependencies))
-    val component = obj("group" to coordinate.group.json(), "module" to coordinate.name.json(), "version" to coordinate.version.json())
+    // KGP/KTC associate resolved variant names with PSM source sets; usage strings are not variant names.
+    val variants = if (target == "jvm") listOf(variant("jvmApiElements", "java-api", dependencies.filter { it.api }),
+        variant("jvmRuntimeElements", "java-runtime", dependencies))
+        else listOf(variant("macosArm64ApiElements", "kotlin-api", dependencies.filter { it.api }),
+            variant("macosArm64RuntimeElements", "kotlin-runtime", dependencies))
+    val owner = rootCoordinate ?: coordinate
+    val component = obj("group" to owner.group.json(), "module" to owner.name.json(), "version" to owner.version.json()).let { value ->
+        if (rootCoordinate == null) value else JsonValue.Object(value.values +
+            ("url" to "../../${owner.name}/${owner.version}/${owner.name}-${owner.version}.module".json()))
+    }
     // Gradle's streaming reader requires formatVersion first; kvik-json's alphabetical root order is not this protocol.
     return ("{\"formatVersion\":\"1.1\",\"component\":" + component.canonical() + ",\"variants\":" + variants.json().canonical() + "}")
         .encodeToByteArray().also { require(it.size <= LIBRARY_METADATA_LIMIT) { "Library module metadata exceeds 1 MiB" } }

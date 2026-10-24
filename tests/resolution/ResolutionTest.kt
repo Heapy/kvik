@@ -55,6 +55,39 @@ private fun resolve(bytes: ByteArray, request: VariantRequest = jvm, extra: Map<
     MavenResolver(MemoryTransport(extra + ("${repo.url}/example/a/1.0/a-1.0.module" to bytes)), NativePomParser()).resolve(example, request, listOf(repo))
 
 class ResolutionTest {
+    @Test fun commonMetadataSelectsPinnedRootArtifactsAndVerifiesTheirBytes() {
+        val transport = FixtureTransport()
+        val standard = Coordinate.parse("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
+        val serialization = Coordinate.parse("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
+        val request = VariantRequest("common", "kotlin-metadata", emptyMap())
+        val selections = MavenResolver(transport, NativePomParser(), listOf(standard))
+            .resolveAll(listOf(standard, serialization), request, listOf(repo))
+        assertEquals(listOf(standard), selections.first().artifacts.map { it.coordinate })
+        assertTrue(selections.first().artifacts.single().url.endsWith("kotlin-stdlib-2.4.20-all.jar"))
+        assertEquals(setOf(standard, serialization), selections.last().artifacts.map { it.coordinate }.toSet())
+        assertTrue(selections.flatMap { it.artifacts }.all { it.variant == "metadataApiElements" && it.url.endsWith(".jar") })
+        assertEquals("74d9d7cf112bbf3d14612bb9fb867456a0ae36398d330df8178f0de42a61f476", selections.first().artifacts.single().digest.hash)
+        for (selection in selections) assertEquals(selection.artifacts.map { it.digest }, verifyLocked(selection) { transport.blobs[it] }.map(Sha256::digest))
+    }
+
+    @Test fun commonMetadataNeverFallsBackToPlatformArtifactsOrPom() {
+        val request = VariantRequest("common", "kotlin-metadata", emptyMap())
+        val bytes = "metadata".encodeToByteArray(); val digest = Sha256.digest(bytes)
+        val file = ""","files":[{"name":"a.jar","url":"a.jar","size":${bytes.size},"sha256":"${digest.hash}"}]"""
+        val common = """{"name":"metadata","attributes":{"org.gradle.category":"library","org.gradle.usage":"kotlin-metadata","org.jetbrains.kotlin.platform.type":"common","org.gradle.libraryelements":"jar"}$file}"""
+        val artifact = mapOf("${repo.url}/example/a/1.0/a.jar" to bytes)
+        assertEquals("metadata", resolve(module(example, common), request, artifact).artifacts.single().variant)
+        for (bad in listOf(common.replace("\"common\"", "\"jvm\""), common.replace("\"common\"", "\"native\""),
+            common.replace("kotlin-metadata", "java-api"), common.replace("a.jar", "a.klib"), common.replace(file, ""),
+            common.replace("\"jar\"", "\"klib\""), common.replace("\"jar\"", "\"jar\",\"org.jetbrains.kotlin.native.target\":\"macos_arm64\"")))
+            assertFails { resolve(module(example, bad), request, artifact) }
+        assertFails { resolve(module(example, "$common,$common"), request, artifact) }
+        assertFails { resolve(module(example, common), request.copy(usage = "kotlin-api"), artifact) }
+        val path = "${repo.url}/example/a/1.0/a-1.0"
+        val pom = """<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>a</artifactId><version>1.0</version></project>""".encodeToByteArray()
+        assertFails { MavenResolver(MemoryTransport(mapOf("$path.pom" to pom, "$path.jar" to bytes)), NativePomParser()).resolve(example, request, listOf(repo)) }
+    }
+
     @Test fun pinnedCompilerPomWildcardEdgesPreserveApiRuntimeAndLockedMetadata() {
         val transport = FixtureTransport()
         val coordinate = Coordinate.parse("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20")

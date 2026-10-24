@@ -18,6 +18,21 @@ def module():
 
 
 class LibraryPublicationSchemaTest(unittest.TestCase):
+    def test_common_metadata_domain_and_worker_remain_distinct(self):
+        domain = dict(module='library', target='common', compilation='main', usage='kotlin-metadata', purpose='dependencies')
+        validator('resolutionDomain').validate(domain)
+        for changes in (dict(compilation='test'), dict(usage='kotlin-api'), dict(purpose='compiler-plugin')):
+            self.assertFalse(validator('resolutionDomain').is_valid({**domain, **changes}))
+        request = json.loads((ROOT / 'schemas/examples/workerRequest.json').read_bytes())
+        request['operation'] = 'metadata-compile'
+        request['metadataTargets'] = ['jvm', 'macosArm64']
+        request['pluginClasspath'] = []
+        validator('workerRequest').validate(request)
+        for targets in ([], ['jvm'], ['jvm', 'jvm'], ['jvm', 'iosArm64']):
+            self.assertFalse(validator('workerRequest').is_valid({**request, 'metadataTargets': targets}))
+        self.assertFalse(validator('workerRequest').is_valid({**request, 'pluginClasspath': ['plugin.jar']}))
+        self.assertFalse(validator('workerRequest').is_valid({**request, 'operation': 'jvm-compile'}))
+
     def test_optional_strict_declaration_and_exact_coordinates(self):
         Draft202012Validator.check_schema(SCHEMA)
         validator('module').validate(module())
@@ -48,6 +63,10 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
         validator('verification').validate(value)
         value['requestedChecks'] = ['library:macosArm64:package']
         validator('verification').validate(value)
+        value['requestedChecks'] = ['library:common:package']
+        validator('verification').validate(value)
+        value['requestedChecks'] = ['library:common:build']
+        self.assertFalse(validator('verification').is_valid(value))
         value['requestedChecks'] = ['library:jvm:publish']
         self.assertFalse(validator('verification').is_valid(value))
 

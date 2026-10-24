@@ -67,15 +67,18 @@ class JvmActionExecutor(
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in startedActions)
         val compilation = if (action.implementation == "kvik-jvm-compiler-v1") JvmCompilation.fromJson(action.parameters) else null
+        val metadata = if (action.implementation == "kvik-jvm-metadata-v1") JvmMetadataCompilation.fromJson(action.parameters) else null
         val selection = if (action.implementation == "kvik-jvm-tests-v1") JvmTestSelection.fromJson(action.parameters) else null
         val expected = when {
             compilation != null -> jvmCompileAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis, action.cachePolicy)
+            metadata != null -> jvmMetadataCompileAction(metadata, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             selection != null -> jvmTestAction(selection, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             else -> error("Unsupported JVM action implementation")
         }
         require(action == expected) { "JVM action does not match its typed parameters" }
         val key = expected.key(Sha256)
-        val module = compilation?.module ?: selection!!.module
+        val module = compilation?.module ?: metadata?.module ?: selection!!.module
+        val compilerOutput = compilation?.output ?: metadata?.output
         startedActions += actionId
         fun startVerified(layout: JvmToolchainLayout): RunningAction {
             val reservation = NativeRunDirectory(runDirectory)
@@ -84,7 +87,7 @@ class JvmActionExecutor(
             val trees = NativeOutputTrees(content)
             trees.materialize(expected.inputs, "$directory/input")
             mkdirJvm("$directory/output"); mkdirJvm("$directory/home"); mkdirJvm("$directory/tmp")
-            compilation?.output?.value?.substringBeforeLast('/', "")?.takeIf { it.isNotEmpty() }?.let { parent ->
+            compilerOutput?.value?.substringBeforeLast('/', "")?.takeIf { it.isNotEmpty() }?.let { parent ->
                 var path = "$directory/output"
                 parent.split('/').forEach { path += "/$it"; mkdirJvm(path) }
             }
@@ -105,10 +108,12 @@ class JvmActionExecutor(
             val request = if (compilation != null) WorkerRequest(requestId, "jvm-compile", expected.toolchains.getValue("jvm-compiler"),
                 staged(compilation.sources), staged(compilation.classpath) + languageRuntime, staged(compilation.plugins), compilation.options("input/"), "output/${compilation.output.value}",
                 compilation.pluginApplications.map(::stagedPlugin)).toJson()
+            else if (metadata != null) WorkerRequest(requestId, "metadata-compile", expected.toolchains.getValue("jvm-compiler"),
+                staged(metadata.sources), staged(metadata.classpath), emptyList(), metadata.options("input/"), "output/${metadata.output.value}", metadataTargets = metadata.targets).toJson()
             else obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json(),
                 "classpath" to staged(selection!!.classpath).map { it.json() }.json(), "testClasses" to selection.classes.map { it.json() }.json(), "engines" to selection.engines.map { it.json() }.json())
             writeJvmFile("$directory/request.json", request.canonical().encodeToByteArray())
-            val classpath = if (compilation != null) listOf(layout.workerClasses, layout.btaApiJar, layout.stdlibJar)
+            val classpath = if (compilerOutput != null) listOf(layout.workerClasses, layout.btaApiJar, layout.stdlibJar)
                 else listOf(layout.workerClasses, layout.junitJar, layout.stdlibJar) + selection!!.classpath.map { "$directory/input/${it.value}" }
             val coverageArguments = selection?.coverage?.let { coverage ->
                 listOf("-javaagent:${layout.jacocoAgent}=destfile=output/coverage.exec,append=false,dumponexit=true,output=file,jmx=false," +
@@ -116,7 +121,7 @@ class JvmActionExecutor(
                     if (coverage.excludes.isEmpty()) "" else ",excludes=" + coverage.excludes.joinToString(":"))
             } ?: emptyList()
             val arguments = listOf(layout.javaExecutable) + coverageArguments + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
-                if (compilation != null) listOf("kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
+                if (compilerOutput != null) listOf("kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
                 else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json")
             val process = host.start(ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
                 "$directory/worker.stdout", "$directory/worker.stderr", expected.timeoutMillis))
@@ -153,7 +158,7 @@ class JvmActionExecutor(
                             }
                             else -> {
                                 val raw = parseJson(readJvmFile("$directory/result.json").decodeToString(throwOnInvalidSequence = true))
-                                if (compilation != null) {
+                                if (compilerOutput != null) {
                                     val worker = WorkerResult.fromJson(raw)
                                     require(worker.requestId == requestId && worker.exitCode == exit.exitCode) { "Compiler result/request identity or process exit mismatch" }
                                     require(worker.status != WorkerStatus.CANCELLED) { "Unrequested worker cancellation" }
@@ -161,7 +166,7 @@ class JvmActionExecutor(
                                     if (worker.status == WorkerStatus.SUCCESS) {
                                         require(diagnostics.none { it.code == "KVIK_COMPILATION_ERROR" }) { "Successful worker reported a compiler error" }
                                         outputs = trees.capture("$directory/output")
-                                        require(outputs.files.any { it.path.value.startsWith(compilation.output.value + "/") } &&
+                                        require(outputs.files.any { it.path.value.startsWith(compilerOutput.value + "/") } &&
                                             outputs.files.all { file -> expected.outputs.any { file.path.value.startsWith(it.value + "/") } }) { "Compiler output inventory does not match declared directories" }
                                         status = ActionStatus.EXECUTED
                                     }
@@ -206,7 +211,7 @@ class JvmActionExecutor(
                             if (status != ActionStatus.CANCELLED) status = ActionStatus.FAILED
                         }
                     }
-                    diagnostics = diagnostics.map { it.copy(actionId = actionId, module = module, target = "jvm", path = it.path?.removePrefix("input/")) }
+                    diagnostics = diagnostics.map { it.copy(actionId = actionId, module = module, target = expected.target, path = it.path?.removePrefix("input/")) }
                     if (tests != null) {
                         // Even negative/cancelled reports are retained; TEST actions can never enter caches.
                         try {

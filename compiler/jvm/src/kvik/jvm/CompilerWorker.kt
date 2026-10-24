@@ -1,4 +1,4 @@
-@file:OptIn(org.jetbrains.kotlin.buildtools.api.ExperimentalBuildToolsApi::class)
+@file:OptIn(org.jetbrains.kotlin.buildtools.api.ExperimentalBuildToolsApi::class, org.jetbrains.kotlin.buildtools.api.arguments.ExperimentalCompilerArgument::class)
 
 package kvik.jvm
 
@@ -11,6 +11,8 @@ import kotlin.system.exitProcess
 import org.jetbrains.kotlin.buildtools.api.*
 import org.jetbrains.kotlin.buildtools.api.arguments.*
 import org.jetbrains.kotlin.buildtools.api.jvm.JvmPlatformToolchain
+import org.jetbrains.kotlin.buildtools.api.metadata.KotlinMetadataPlatformToolchain
+import org.jetbrains.kotlin.buildtools.api.arguments.enums.MetadataTargetPlatform
 
 private const val SERIALIZATION_ID = "org.jetbrains.kotlinx.serialization"
 
@@ -36,12 +38,15 @@ internal fun distribution(root: Path, manifest: JsonValue, expected: Digest): Di
 
 /** Deliberately small option surface. Never forward arbitrary output/classpath/daemon/plugin flags. */
 private fun safeOptions(request: WorkerRequest, workspace: Workspace): List<String> {
+    val metadata = request.operation == "metadata-compile"
     val result = mutableListOf<String>()
     val seen = mutableSetOf<String>()
     var index = 0
     while (index < request.options.size) {
         val raw = request.options[index++]
         val name = raw.substringBefore('=')
+        if (metadata && name !in setOf("-module-name", "-language-version", "-api-version", "-opt-in", "-Xexplicit-api", "-Xmulti-platform", "-Werror"))
+            reject("KVIK_UNSUPPORTED_OPTION", "Unsupported metadata compiler option: $name")
         fun value(): String = if ('=' in raw) raw.substringAfter('=') else request.options.getOrNull(index++)
             ?: reject("KVIK_UNSUPPORTED_OPTION", "Missing value for $name")
         if (name != "-opt-in" && !seen.add(name)) reject("KVIK_UNSUPPORTED_OPTION", "Repeated compiler option: $name")
@@ -58,7 +63,7 @@ private fun safeOptions(request: WorkerRequest, workspace: Workspace): List<Stri
             }
             "-module-name" -> {
                 val module = value()
-                if (!module.matches(Regex("[A-Za-z0-9_.-]+"))) reject("KVIK_UNSUPPORTED_OPTION", "Invalid module name")
+                if (!module.matches(Regex(if (metadata) "[A-Za-z0-9_.:-]+" else "[A-Za-z0-9_.-]+"))) reject("KVIK_UNSUPPORTED_OPTION", "Invalid module name")
                 result += listOf(name, module)
             }
             "-language-version", "-api-version" -> {
@@ -88,12 +93,13 @@ private fun safeOptions(request: WorkerRequest, workspace: Workspace): List<Stri
             else -> reject("KVIK_UNSUPPORTED_OPTION", "Unsupported compiler option: $name")
         }
     }
-    try { jvmTargetSettings(result) }
+    try { if (!metadata) jvmTargetSettings(result) }
     catch (failure: Exception) { reject("KVIK_UNSUPPORTED_OPTION", failure.message ?: "Invalid JVM target/release settings") }
     return result
 }
 
 private fun compile(workspace: Workspace, request: WorkerRequest, distribution: Distribution): WorkerResult {
+    val metadata = request.operation == "metadata-compile"
     val options = safeOptions(request, workspace)
     val sources = request.sources.map { logical ->
         val path = workspace.path(logical)
@@ -101,8 +107,7 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
         path
     }
     if (sources.distinct().size != sources.size) reject("KVIK_INVALID_REQUEST", "Duplicate source input")
-    val classpath = request.classpath.map(workspace::classpath)
-    if (classpath.distinct().size != classpath.size) reject("KVIK_INVALID_REQUEST", "Duplicate classpath input")
+    if (request.classpath.distinct().size != request.classpath.size) reject("KVIK_INVALID_REQUEST", "Duplicate classpath input")
     val plugins = request.pluginClasspath.map(workspace::path)
     if (plugins.isNotEmpty() && (plugins.size != 1 || distribution.serialization == null || fileDigest(plugins.single()) != distribution.serialization))
         reject("KVIK_UNSUPPORTED_PLUGIN", "Only the manifest-pinned Kotlin serialization plugin is supported")
@@ -111,20 +116,33 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
     if (Files.exists(destination)) reject("KVIK_OUTPUT_EXISTS", "Output directory must be new")
     val staging = Files.createTempDirectory(destination.parent, ".kvik-compile-")
     val bundle = if (request.pluginApplications.isEmpty()) null else Files.createTempDirectory(workspace.root, ".kvik-plugin-outputs-")
+    val metadataScratch = if (metadata) Files.createTempDirectory(workspace.root, ".kvik-metadata-inputs-") else null
     val diagnostics = Collections.synchronizedList(mutableListOf<Diagnostic>())
     try {
+        val classpath = if (metadata) metadataClasspath(workspace, request.classpath, metadataScratch!!, request.metadataTargets)
+            else request.classpath.map(workspace::classpath)
         val outputRoots = if (bundle == null) emptyMap() else prepareOutputRoots(bundle,
             listOf(LogicalPath(request.outputDirectory)) + request.pluginApplications.flatMap { it.outputs })
         for (output in request.pluginApplications.flatMap { it.outputs }) if (Files.exists(workspace.path(output.value, false)))
             reject("KVIK_OUTPUT_EXISTS", "Plugin output already exists: ${output.value}")
         val toolchains = KotlinToolchains.loadImplementation(distribution.classpath)
         if (toolchains.getCompilerVersion() != "2.4.20") reject("KVIK_COMPILER_IDENTITY", "Loaded compiler version does not match manifest")
-        val jvm = toolchains.getToolchain(JvmPlatformToolchain::class.java)
-        val builder = jvm.jvmCompilationOperationBuilder(sources, staging)
-        builder.compilerArguments.applyArgumentStrings(options)
-        builder.compilerArguments[JvmCompilerArguments.NO_REFLECT] = true
-        builder.compilerArguments[JvmCompilerArguments.NO_STDLIB] = true
-        builder.compilerArguments[JvmCompilerArguments.CLASSPATH] = classpath
+        val builder: BaseCompilationOperation.Builder = if (metadata) {
+            val common = toolchains.getToolchain(KotlinMetadataPlatformToolchain::class.java)
+            common.metadataKlibCompilationOperationBuilder(sources, staging).also {
+                it.compilerArguments.applyArgumentStrings(options)
+                it.compilerArguments[MetadataArguments.CLASSPATH] = classpath
+                it.compilerArguments[MetadataArguments.X_TARGET_PLATFORM] = listOf(MetadataTargetPlatform.JVM, MetadataTargetPlatform.NATIVE)
+            }
+        } else {
+            val jvm = toolchains.getToolchain(JvmPlatformToolchain::class.java)
+            jvm.jvmCompilationOperationBuilder(sources, staging).also {
+                it.compilerArguments.applyArgumentStrings(options)
+                it.compilerArguments[JvmCompilerArguments.NO_REFLECT] = true
+                it.compilerArguments[JvmCompilerArguments.NO_STDLIB] = true
+                it.compilerArguments[JvmCompilerArguments.CLASSPATH] = classpath
+            }
+        }
         if (plugins.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
             listOf(CompilerPlugin(SERIALIZATION_ID, plugins, emptyList(), emptySet()))
         if (request.pluginApplications.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
@@ -174,7 +192,7 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
         val status = if (result == CompilationResult.COMPILATION_ERROR) WorkerStatus.COMPILATION_ERROR else WorkerStatus.INFRASTRUCTURE_ERROR
         if (diagnostics.isEmpty()) diagnostics += Diagnostic("KVIK_COMPILER_FAILURE", DiagnosticCategory.INFRASTRUCTURE, "BTA returned $result")
         return WorkerResult(request.requestId, status, 1, diagnostics.toList())
-    } finally { workspace.removeTree(staging); bundle?.let(workspace::removeTree) }
+    } finally { workspace.removeTree(staging); bundle?.let(workspace::removeTree); metadataScratch?.let(workspace::removeTree) }
 }
 
 /** One process, one request, one in-process BTA session. The native process host owns cancellation. */

@@ -96,6 +96,50 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun multiplatformPackagingCompilesSharedMetadataAndGatesTargetChecksOnTheRoot() {
+        val config = configuration(published(base, false), published(app, false))
+        val plan = graph(config, request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE))
+        assertEquals(setOf("app:jvm:package", "app:macosArm64:package", "app:common:package"), plan.requestedChecks)
+        assertEquals(plan.requestedChecks, plan.terminalActions.values.toSet())
+        assertEquals(plan.requestedChecks, projectRequestedChecks(ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE)))
+        val common = plan.nodes.single { it.id == "app:common:metadata" }
+        assertEquals(setOf("base:common:metadata"), common.dependencies)
+        val baseOutputs = TreeManifest(listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest("metadata"))))
+        val prerequisite = ActionResult("base:common:metadata", digest("base metadata action"), ActionStatus.EXECUTED, baseOutputs, 0)
+        val action = common.resolve(mapOf(prerequisite.actionId to prerequisite))
+        val compilation = JvmMetadataCompilation.fromJson(action.parameters)
+        assertEquals("fixture:app", compilation.module)
+        assertEquals(listOf(LogicalPath("src/app/common/Common.kt")), compilation.sources)
+        assertTrue(LogicalPath("modules/base/metadata") in compilation.classpath)
+        assertTrue(action.inputs.files.any { it.path.value == "modules/base/metadata/default/manifest" })
+        assertTrue(action.inputs.files.none { "/jvm/" in it.path.value || "/native/" in it.path.value || "/test" in it.path.value })
+        assertEquals("common", action.target)
+        assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+        assertEquals(setOf("app:common:metadata", "app:jvm:package", "app:macosArm64:package", "base:common:package"),
+            plan.nodes.single { it.id == "app:common:package" }.dependencies)
+        val packageNode = plan.nodes.single { it.id == "app:jvm:package" }
+        val packageInputs = packageNode.dependencies.associateWith { id -> ActionResult(id, digest(id), ActionStatus.EXECUTED,
+            TreeManifest(listOf(FileEntry(LogicalPath(if (id.endsWith(":main")) "classes/App.class" else "library/base.jar"), digest(id)))), 0) }
+        assertTrue(LibraryDependency(Coordinate("fixture", "base", "1"), false, Coordinate("fixture", "base-jvm", "1")) in
+            LibraryPackage.fromJson(packageNode.resolve(packageInputs).parameters).dependencies)
+        assertNotEquals(action.key(Sha256), common.resolve(mapOf(prerequisite.actionId to prerequisite.copy(outputs =
+            TreeManifest(listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest("changed"))))))).key(Sha256))
+        assertFailsWith<IllegalArgumentException> { common.resolve(mapOf(prerequisite.actionId to prerequisite.copy(status = ActionStatus.FAILED, exitCode = 1))) }
+    }
+
+    @Test fun platformOnlyWorkspaceDependenciesDoNotAdvertiseAnUnpublishedRoot() {
+        val base = published(module("base"), false)
+        val app = published(module("app"), false).let { spec -> spec.copy(sourceSets = spec.sourceSets.map {
+            if (it.name == "jvmMain") it.copy(dependencies = listOf(Dependency.Module("base"))) else it
+        }) }
+        val plan = graph(configuration(base, app), request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE))
+        assertTrue(plan.nodes.none { it.id == "base:common:package" })
+        val node = plan.nodes.single { it.id == "base:jvm:package" }
+        val dependency = ActionResult("base:jvm:main", digest("base"), ActionStatus.EXECUTED,
+            TreeManifest(listOf(FileEntry(LogicalPath("classes/Base.class"), digest("class")))), 0)
+        assertNull(LibraryPackage.fromJson(node.resolve(mapOf(dependency.actionId to dependency)).parameters).rootCoordinate)
+    }
+
     @Test fun libraryPackageHasOnlyOwnClassesResourcesAndDirectDependencyMetadata() {
         val runtime = published(module("runtime"))
         val library = published(module("app", listOf(Dependency.Module("base", exported = true),
@@ -158,7 +202,8 @@ class ProjectGraphTest {
     }
 
     @Test fun libraryPackageRefusesMissingPublicationFailedPrerequisitesAndResourceCollision() {
-        assertFailsWith<IllegalStateException> { graph(configuration(base, published(app)), request = request(ProjectMode.PACKAGE)) }
+        val missing = assertFailsWith<IllegalArgumentException> { graph(configuration(base, published(app)), request = request(ProjectMode.PACKAGE)) }
+        assertTrue(missing.message!!.contains("requires publication: base"))
         val plan = graph(configuration(published(base), published(app)), request = request(ProjectMode.PACKAGE))
         val node = plan.nodes.single { it.id == "app:jvm:package" }
         val prerequisites = node.dependencies.associateWith { id -> ActionResult(id, digest(id), ActionStatus.EXECUTED,

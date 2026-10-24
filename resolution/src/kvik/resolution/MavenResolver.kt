@@ -54,6 +54,7 @@ class MavenResolver(
         val appliedExclusions = mutableSetOf<MetadataEdgeExclusion>()
         require(roots.isNotEmpty() && roots.size <= maxComponents)
         require(variant.attributes.keys.all { variant.platform == "jvm" && it == JVM_TARGET_VERSION_ATTRIBUTE }) { "Unsupported consumer variant attributes" }
+        require(variant.platform != "common" || variant.usage == "kotlin-metadata") { "Common resolution requires kotlin-metadata usage" }
         variant.attributes[JVM_TARGET_VERSION_ATTRIBUTE]?.let(::supportedJvmTarget)
         require(repositories.size in 1..32 && repositories.map { it.id }.distinct().size == repositories.size)
         repositories.forEach { validateHttpsUrl(it.url.trimEnd('/') + "/") }
@@ -173,6 +174,7 @@ class MavenResolver(
                     edges += dependencyEdge(target, platform, found.repository, owner, transitive, "redirect", "redirect")
                     provider = graph.getValue(edges.single()).capabilityProvider
                 } else {
+                    require(variant.platform != "common" || platform || chosen.items("files").isNotEmpty()) { "Common metadata variant has no metadata artifact" }
                     if (transitive) chosen.items("dependencyConstraints").forEach {
                         val declared = dependency(it, constraint = true)
                         constrain(key, declared.coordinate, if (declared.preferred) "prefers" else "constraint")
@@ -181,6 +183,7 @@ class MavenResolver(
                         val file = f.fields(setOf("name", "url", "size", "sha256"), setOf("sha512", "sha1", "md5"))
                         val path = file.string("url")
                         require(path.matches(Regex("[A-Za-z0-9_.-]+")) && path !in setOf(".", "..")) { "Unsupported artifact URL" }
+                        require(variant.platform != "common" || path.endsWith(".jar")) { "Common metadata requires a metadata JAR" }
                         val url = found.url.substringBeforeLast('/') + "/" + path
                         val expected = Digest(file.string("sha256"), file.getValue("size").longValue())
                         require(expected.sizeBytes <= maxArtifactBytes) { "Artifact exceeds byte bound" }
@@ -218,7 +221,7 @@ class MavenResolver(
                 if (!platform) {
                     // A POM has no producer bytecode version. The known consumer target policy is
                     // retained in the lock, but does not establish a bytecode guarantee for POM jars.
-                    require(variant.platform == "jvm" && variant.usage in setOf("java-api", "java-runtime")) { "POM has no matching Kotlin Native variant" }
+                    require(variant.platform == "jvm" && variant.usage in setOf("java-api", "java-runtime")) { "POM has no matching Kotlin ${variant.platform} variant" }
                     val url = found.url.removeSuffix(".pom") + ".jar"
                     val bytes = fetch(url)
                     require(bytes.size <= maxArtifactBytes) { "Artifact exceeds byte bound" }
@@ -336,11 +339,11 @@ private fun matches(v: Map<String, JsonValue>, request: VariantRequest, platform
         if (type == "jvm") setOf(JVM_TARGET_VERSION_ATTRIBUTE) else emptySet()
     require(a.keys.all { it in supported }) { "Unsupported variant attributes: ${a.keys - supported}" }
     require(attribute("org.gradle.jvm.environment") in setOf(null, if (type == "jvm") "standard-jvm" else "non-jvm")) { "Unsupported JVM environment" }
-    require(attribute("org.gradle.libraryelements") in setOf(null, if (type == "jvm") "jar" else "klib")) { "Unsupported library elements" }
+    require(attribute("org.gradle.libraryelements") in setOf(null, if (type in setOf("jvm", "common")) "jar" else "klib")) { "Unsupported library elements" }
     require(attribute("org.jetbrains.kotlin.klib.packaging") in setOf(null, "packed")) { "Unsupported klib packaging" }
     require(attribute("artifactType") in setOf(null, if (type == "native") "org.jetbrains.kotlin.klib" else "jar")) { "Unsupported artifact type" }
     require(attribute("org.gradle.dependency.bundling") in setOf(null, "external")) { "Unsupported bundling" }
-    if (type == "jvm") require(attribute("org.jetbrains.kotlin.native.target") == null && attribute("org.jetbrains.kotlin.klib.packaging") == null) { "Native-only attributes on a JVM variant" }
+    if (type in setOf("jvm", "common")) require(attribute("org.jetbrains.kotlin.native.target") == null && attribute("org.jetbrains.kotlin.klib.packaging") == null) { "Native-only attributes on a $type variant" }
     a[JVM_TARGET_VERSION_ATTRIBUTE]?.let { value ->
         val producer = value.longValue()
         require(producer in 1..Int.MAX_VALUE.toLong()) { "Invalid producer JVM version" }

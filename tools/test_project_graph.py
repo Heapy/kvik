@@ -45,6 +45,7 @@ def main():
     sources += [ROOT / 'resolution/src/kvik/resolution/MavenResolver.kt', ROOT / 'resolution/src/kvik/resolution/PomModel.kt', ROOT / 'resolution/src/kvik/resolution/ResolutionGraph.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmActions.kt', ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmScriptActions.kt',
                 ROOT / 'compiler/native/src/kvik/compiler/native/NativeActions.kt', ROOT / 'compiler/ksp/src/kvik/compiler/ksp/KspActions.kt']
     sources += [args.application_actions.resolve(), ROOT / 'tests/native/NativeApplicationActionsTest.kt']
+    sources += [ROOT / 'tests/locking/CommonPublicationTest.kt']
     if args.include_contracts:
         sources += sorted((ROOT / 'tests/contracts').rglob('*.kt'))
     if args.include_evidence:

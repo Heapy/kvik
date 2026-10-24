@@ -20,10 +20,12 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
         if (consumer is ResolutionConsumer.Script) {
             require(consumer.name.length <= 128 && target == "jvm" && compilation == "script") { "Scripts require a named JVM script domain" }
             require(purpose in setOf("dependencies", "compiler-plugin")) { "Unsupported script resolution purpose" }
+        } else if (target == "common") {
+            require(compilation == "main" && usage == "kotlin-metadata" && purpose == "dependencies") { "Common resolution requires main kotlin-metadata dependencies" }
         } else require(target in setOf("jvm", "macosArm64") && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
         require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor")) { "Invalid resolution domain purpose" }
         require(purpose !in setOf("ksp-runtime", "symbol-processor") || target == "macosArm64" && compilation == "test") { "KSP domains currently require macosArm64 tests" }
-        require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
+        require(usage in if (isHostTool) setOf("java-runtime") else if (target == "jvm") setOf("java-api", "java-runtime") else if (target == "common") setOf("kotlin-metadata") else setOf("kotlin-api", "kotlin-runtime")) { "Invalid resolution domain usage" }
     }
     val isHostTool: Boolean get() = purpose != "dependencies"
     fun toJson(): JsonValue.Object = obj((if (consumer is ResolutionConsumer.Module) "module" else "script") to consumer.name.json(),
@@ -77,7 +79,7 @@ data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxCompo
     fun pinsFor(domain: ResolutionDomain): List<Coordinate> = (pins.associateBy { "${it.group}:${it.name}" } +
         scopedPins.filter { it.domain == domain }.associate { "${it.coordinate.group}:${it.coordinate.name}" to it.coordinate }).values.sortedBy(Coordinate::toString)
     fun exclusionsFor(domain: ResolutionDomain): List<MetadataEdgeExclusion> = canonicalExclusions(metadataExclusions).filter { it.domain == domain }.map { it.rule }
-    internal fun toJson(kspRuntime: Boolean = false): JsonValue = obj("implementation" to "kvik-maven-v3".json(),
+    internal fun toJson(kspRuntime: Boolean = false, commonMetadata: Boolean = false): JsonValue = obj("implementation" to "kvik-maven-v3".json(),
         "jvmCompatibility" to obj("defaultConsumerTarget" to DEFAULT_JVM_TARGET.json(), "compilerPluginHost" to COMPILER_PLUGIN_JVM_HOST.json(),
             "producerVersion" to "integer-lte-consumer-or-unspecified".json(), "ambiguity" to "reject".json()),
         "pins" to pins.sortedBy(Coordinate::toString).map { it.toString().json() }.json(),
@@ -86,6 +88,7 @@ data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxCompo
         "maxComponents" to maxComponents.json(), "maxRequests" to maxRequests.json(),
         "maxMetadataBytes" to (1024 * 1024).json(), "maxArtifactBytes" to (64 * 1024 * 1024).json(), "maxAggregateBytes" to (256 * 1024 * 1024).json()).let {
             val fields = it.objectValue() + (if (kspRuntime) mapOf("maxKspRuntimeArtifactBytes" to (128 * 1024 * 1024).json()) else emptyMap()) +
+                (if (commonMetadata) mapOf("commonMetadata" to obj("stdlib" to "org.jetbrains.kotlin:kotlin-stdlib:2.4.20".json())) else emptyMap()) +
                 (if (metadataExclusions.isEmpty()) emptyMap() else mapOf("metadataExclusions" to canonicalExclusions(metadataExclusions).map { rule -> rule.toJson() }.json()))
             JsonValue.Object(fields)
         }
@@ -121,7 +124,8 @@ fun defaultDependencyScopes(configuration: ProjectConfiguration): List<Dependenc
         (if (target.name == "jvm") listOf("java-api", "java-runtime") else listOf("kotlin-api", "kotlin-runtime")).map { usage ->
             DependencyScope(module.id, target.name, scope, usage)
         }
-    } }
+    } } + if (commonPublicationSourceSets(module).any { it.directories.isNotEmpty() })
+        listOf(DependencyScope(module.id, "common", "main", "kotlin-metadata")) else emptyList()
 }
 
 /** Each compilation owns its conflict domain. Prerequisite compiles have their own domains. */
@@ -157,6 +161,15 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
     fun visit(domain: ResolutionDomain) {
         if (!domains.add(domain)) return
         val module = modules[domain.module] ?: error("Unknown dependency scope module: ${domain.module}")
+        if (domain.target == "common") {
+            val closure = commonPublicationDependencyClosure(project, module.id)
+            val variant = VariantRequest("common", "kotlin-metadata", emptyMap())
+            (closure.external + Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct().forEach {
+                requests += ResolutionRequest(it, variant, domain)
+            }
+            closure.modules.forEach { visit(ResolutionDomain(it, "common", "main", "kotlin-metadata")) }
+            return
+        }
         val target = module.targets.singleOrNull { it.name == domain.target } ?: error("Unknown dependency scope target: $domain")
         require(domain.compilation == "main" || target.test != null) { "No test source set: $domain" }
         val consumer = if (domain.target == "jvm") jvmTargetFromOptions(target.optionsFor(domain.compilation)) else null
@@ -235,7 +248,7 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
     require(domains.size <= 8192 && requests.size <= 8192) { "Too many dependency domains/requests" }
     val orderedRequests = requests.sortedBy { it.domain.toJson().canonical() + it.variant.toLockJson().canonical() + ":" + it.coordinate }
     val base = obj("schemaVersion" to CONTRACT_VERSION.json(), authoring,
-        "resolver" to pinned.toJson(domains.any { it.purpose == "ksp-runtime" }), "scopes" to orderedScopes.map { it.toJson() }.json(),
+        "resolver" to pinned.toJson(domains.any { it.purpose == "ksp-runtime" }, domains.any { it.target == "common" }), "scopes" to orderedScopes.map { it.toJson() }.json(),
         "domains" to domains.sortedBy { it.toJson().canonical() }.map { it.toJson() }.json())
     val document = if (orderedScriptScopes.isEmpty()) base else JsonValue.Object(base.objectValue() +
         ("scriptScopes" to orderedScriptScopes.map { it.toJson() }.json()))

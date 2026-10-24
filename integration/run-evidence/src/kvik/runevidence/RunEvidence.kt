@@ -7,6 +7,7 @@ data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, 
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
 internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application|package)")) ||
+    check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:common:package")) ||
     check.matches(Regex("script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)"))
 internal fun scriptExecutionCheck(check: String): Boolean = check.startsWith("script:") && check.endsWith(":run") && validCheck(check)
 

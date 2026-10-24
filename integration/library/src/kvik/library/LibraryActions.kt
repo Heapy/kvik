@@ -2,20 +2,31 @@ package kvik.library
 
 import kvik.core.*
 
-/** [api] is emitted API visibility: Native compile dependencies are visible, runtime-only ones are not. */
-data class LibraryDependency(val coordinate: Coordinate, val api: Boolean) {
-    fun toJson(): JsonValue = obj("coordinate" to coordinate.toString().json(), "api" to api.json())
+/** [api] is emitted API visibility. [pomCoordinate] preserves target resolution for consumers without Gradle metadata. */
+data class LibraryDependency(val coordinate: Coordinate, val api: Boolean, val pomCoordinate: Coordinate? = null) {
+    init {
+        pomCoordinate?.let {
+            require(it.group == coordinate.group && it.version == coordinate.version && it.toString().length <= 1024) {
+                "POM dependency must name a target artifact of the same group/version"
+            }
+        }
+    }
+    fun toJson(): JsonValue = obj("coordinate" to coordinate.toString().json(), "api" to api.json()).let {
+        if (pomCoordinate == null) it else JsonValue.Object(it.values + ("pomCoordinate" to pomCoordinate.toString().json()))
+    }
     companion object {
-        fun fromJson(value: JsonValue): LibraryDependency = value.fields(setOf("coordinate", "api")).let {
-            LibraryDependency(Coordinate.parse(it.getValue("coordinate").stringValue()), it.getValue("api").booleanValue())
+        fun fromJson(value: JsonValue): LibraryDependency = value.fields(setOf("coordinate", "api"), setOf("pomCoordinate")).let {
+            LibraryDependency(Coordinate.parse(it.getValue("coordinate").stringValue()), it.getValue("api").booleanValue(),
+                it["pomCoordinate"]?.let { coordinate -> Coordinate.parse(coordinate.stringValue()) })
         }
     }
 }
 
-/** Coordinate is the final target coordinate, not a multiplatform root publication. */
+/** [coordinate] names the target artifact; optional [rootCoordinate] binds its KMP metadata owner. */
 data class LibraryPackage(
     val module: String, val target: String, val coordinate: Coordinate,
     val dependencies: List<LibraryDependency>, val jvmTarget: Int? = null,
+    val rootCoordinate: Coordinate? = null,
 ) {
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && module.length <= 256)
@@ -26,19 +37,32 @@ data class LibraryPackage(
             "Duplicate or conflicting library dependency"
         }
         require(dependencies.none { it.coordinate.group == coordinate.group && it.coordinate.name == coordinate.name }) { "Library cannot depend on itself" }
+        val pomDependencies = dependencies.map { it.pomCoordinate ?: it.coordinate }
+        require(pomDependencies.map { it.group to it.name }.distinct().size == pomDependencies.size) {
+            "Duplicate or conflicting POM dependency"
+        }
+        require(pomDependencies.none { it.group == coordinate.group && it.name == coordinate.name }) { "Library POM cannot depend on itself" }
         require((dependencies.map { it.coordinate } + coordinate).all { it.toString().length <= 1024 }) { "Library coordinate exceeds bound" }
+        rootCoordinate?.let { root ->
+            require(root.toString().length <= 1024 && root.group == coordinate.group && root.version == coordinate.version && root.name != coordinate.name) {
+                "Root publication must have the same group/version and a distinct artifact name"
+            }
+        }
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "module" to module.json(),
         "target" to target.json(), "coordinate" to coordinate.toString().json(),
         "dependencies" to dependencies.sortedBy { it.coordinate.toString() }.map { it.toJson() }.json(),
-        "jvmTarget" to (jvmTarget?.json() ?: JsonValue.Null))
+        "jvmTarget" to (jvmTarget?.json() ?: JsonValue.Null)).let { value ->
+            if (rootCoordinate == null) value else JsonValue.Object(value.values + ("rootCoordinate" to rootCoordinate.toString().json()))
+        }
     companion object {
-        fun fromJson(value: JsonValue): LibraryPackage = value.fields(setOf("schemaVersion", "module", "target", "coordinate", "dependencies", "jvmTarget")).let {
+        fun fromJson(value: JsonValue): LibraryPackage = value.fields(setOf("schemaVersion", "module", "target", "coordinate", "dependencies", "jvmTarget"), setOf("rootCoordinate")).let {
             it.requireVersion()
             val jvm = it.getValue("jvmTarget")
             LibraryPackage(it.getValue("module").stringValue(), it.getValue("target").stringValue(),
                 Coordinate.parse(it.getValue("coordinate").stringValue()), it.getValue("dependencies").arrayValue().map(LibraryDependency::fromJson),
-                if (jvm == JsonValue.Null) null else jvm.longValue().also { number -> require(number in 1..Int.MAX_VALUE) }.toInt())
+                if (jvm == JsonValue.Null) null else jvm.longValue().also { number -> require(number in 1..Int.MAX_VALUE) }.toInt(),
+                it["rootCoordinate"]?.let { root -> Coordinate.parse(root.stringValue()) })
         }
     }
 }
@@ -73,7 +97,7 @@ fun libraryPackageAction(selection: LibraryPackage, inputs: TreeManifest, compos
         listOf(LogicalPath("library")), emptyList(), emptyMap(), selected.toJson(), 120_000, CachePolicy.LOCAL)
 }
 
-private fun validateJarEntries(entries: List<FileEntry>) {
+internal fun validateJarEntries(entries: List<FileEntry>) {
     val all = entries + FileEntry(LogicalPath("META-INF/MANIFEST.MF"), Sha256.digest(jarManifest))
     TreeManifest(all) // Exact duplicates and file/directory collisions, including the reserved manifest.
     val spellings = mutableMapOf<String, String>()

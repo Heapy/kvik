@@ -3,21 +3,36 @@ package kvik.library
 import kvik.core.*
 
 /** ZIP32 stored entries: UTF-8 names, fixed DOS 1980-01-01 timestamps, no extras/comments/descriptors. */
-internal fun storedZipSize(entries: List<FileEntry>): Int {
+internal fun storedZipSize(entries: List<FileEntry>, includeDirectories: Boolean = false): Int = zipSize(zipEntries(entries, includeDirectories))
+
+private data class ZipEntry(val name: String, val size: Long, val mode: Int, val directory: Boolean = false)
+
+private fun zipEntries(files: List<FileEntry>, includeDirectories: Boolean): List<ZipEntry> {
+    val entries = files.map { ZipEntry(it.path.value, it.digest.sizeBytes, if (it.executable) 0x81ed else 0x81a4) }
+    if (!includeDirectories) return entries
+    require(files.map { it.path.value } == files.map { it.path.value }.sorted()) { "ZIP files must be sorted when including directories" }
+    val directories = files.flatMap { file ->
+        file.path.value.indices.filter { file.path.value[it] == '/' }.map { file.path.value.substring(0, it + 1) }
+    }.distinct().map { ZipEntry(it, 0, 0x41ed, true) }
+    return (entries + directories).sortedBy { it.name }
+}
+
+private fun zipSize(entries: List<ZipEntry>): Int {
     require(entries.size <= 10001)
     var size = 22L
     for (entry in entries) {
-        val length = entry.path.value.encodeToByteArray().size
+        val length = entry.name.encodeToByteArray().size
         require(length in 1..65535) { "ZIP filename exceeds 65535 UTF-8 bytes" }
-        require(entry.digest.sizeBytes <= LIBRARY_BYTE_LIMIT)
-        size += 76L + 2L * length + entry.digest.sizeBytes
+        require(entry.size <= LIBRARY_BYTE_LIMIT)
+        size += 76L + 2L * length + entry.size
         require(size <= LIBRARY_BYTE_LIMIT) { "Library archive exceeds 64 MiB" }
     }
     return size.toInt()
 }
 
-internal class StoredZip(private val entries: List<FileEntry>) {
-    private val bytes = ByteArray(storedZipSize(entries))
+internal class StoredZip(files: List<FileEntry>, includeDirectories: Boolean = false) {
+    private val entries = zipEntries(files, includeDirectories)
+    private val bytes = ByteArray(zipSize(entries))
     private var offset = 0
     private var cursor = 0
     private val checksums = IntArray(entries.size)
@@ -27,9 +42,18 @@ internal class StoredZip(private val entries: List<FileEntry>) {
     private fun data(value: ByteArray) { value.copyInto(bytes, offset); offset += value.size }
 
     fun append(value: ByteArray, checkpoint: () -> Unit) {
+        while (cursor < entries.size && entries[cursor].directory) {
+            checkpoint()
+            appendEntry(byteArrayOf(), checkpoint)
+        }
+        check(cursor < entries.size)
+        appendEntry(value, checkpoint)
+    }
+
+    private fun appendEntry(value: ByteArray, checkpoint: () -> Unit) {
         val entry = entries[cursor]
-        require(value.size.toLong() == entry.digest.sizeBytes)
-        val name = entry.path.value.encodeToByteArray()
+        require(value.size.toLong() == entry.size)
+        val name = entry.name.encodeToByteArray()
         val crc = crc32(value, checkpoint)
         positions[cursor] = offset; checksums[cursor] = crc
         integer(0x04034b50); short(20); short(0x800); short(0); short(0); short(33)
@@ -42,11 +66,11 @@ internal class StoredZip(private val entries: List<FileEntry>) {
         val central = offset
         entries.forEachIndexed { index, entry ->
             checkpoint()
-            val name = entry.path.value.encodeToByteArray()
+            val name = entry.name.encodeToByteArray()
             integer(0x02014b50); short(0x0314); short(20); short(0x800); short(0); short(0); short(33)
-            integer(checksums[index]); integer(entry.digest.sizeBytes.toInt()); integer(entry.digest.sizeBytes.toInt())
+            integer(checksums[index]); integer(entry.size.toInt()); integer(entry.size.toInt())
             short(name.size); short(0); short(0); short(0); short(0)
-            integer((if (entry.executable) 0x81ed else 0x81a4) shl 16); integer(positions[index]); data(name)
+            integer((entry.mode shl 16) or if (entry.directory) 0x10 else 0); integer(positions[index]); data(name)
         }
         val centralSize = offset - central
         integer(0x06054b50); short(0); short(0); short(entries.size); short(entries.size)

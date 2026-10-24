@@ -46,6 +46,10 @@ class LibraryPublicationTest {
         // Distinct target coordinates are allowed even when their base coordinates agree.
         parse(document(declaration), document(declaration, "other", "macosArm64"))
         parse(document(declaration), document("""{"coordinate":"org.example:library:2.0.0"}""", "other"))
+        val root = module(targets = listOf(target, target.copy(name = "macosArm64")), publication = LibraryPublicationSpec(base))
+        val collision = module("other", publication = LibraryPublicationSpec(Coordinate("org.example", "library-jvm", "1.0.0")),
+            targets = listOf(target, target.copy(name = "macosArm64")))
+        assertFails { ProjectSpec("sample", emptyList(), listOf(root, collision)) }
     }
 
     @Test fun applicationsCannotBePublishedAndPluginDeclarationsRemainAvailable() {

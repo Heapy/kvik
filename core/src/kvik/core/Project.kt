@@ -115,7 +115,7 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         } else require(id == null && compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions are not supported" }
     }
 }
-/** Base coordinate for explicit target packages; this does not declare a root KMP publication. */
+/** Base coordinate for a root KMP publication and its target packages. */
 data class LibraryPublicationSpec(val coordinate: Coordinate) {
     fun coordinateFor(target: String): Coordinate {
         val suffix = when (target) {
@@ -142,9 +142,11 @@ data class ProjectSpec(val name: String, val repositories: List<Repository>, val
                        val scripts: Map<String, ScriptSpec> = emptyMap()) {
     init {
         val coordinates = modules.flatMap { module ->
-            module.publication?.let { publication -> module.targets.map { publication.coordinateFor(it.name) } } ?: emptyList()
+            module.publication?.let { publication ->
+                (if (module.targets.size > 1) listOf(publication.coordinate) else emptyList()) + module.targets.map { publication.coordinateFor(it.name) }
+            } ?: emptyList()
         }
-        require(coordinates.distinct().size == coordinates.size) { "Duplicate target library publication coordinate" }
+        require(coordinates.distinct().size == coordinates.size) { "Duplicate root or target library publication coordinate" }
     }
 }
 

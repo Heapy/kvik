@@ -22,6 +22,11 @@ data class ProjectGraphRequest(
 )
 data class ProjectActionGraph(val nodes: List<ActionNode>, val requestedChecks: Set<String>, val terminalActions: Map<String, String>)
 
+fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
+    request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.name.lowercase()}" } +
+        if (request.mode == ProjectMode.PACKAGE && request.targets == setOf("jvm", "macosArm64")) listOf("$module:common:package") else emptyList()
+    }.toSet()
+
 /** Host JVM producers may be prerequisites even when only a Native target was requested. */
 fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<String> {
     val modules = project.modules.associateBy { it.id }
@@ -76,6 +81,15 @@ private class Builder(
     private val nodes = linkedMapOf<String, ActionNode>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
     private val nativeMainNames = mutableMapOf<String, String>()
+    private val rootPublicationModules: Set<String> = if (request.mode == ProjectMode.PACKAGE &&
+        request.targets == setOf("jvm", "macosArm64")) buildSet {
+        fun visit(module: String) {
+            if (!add(module)) return
+            commonPublicationSourceSets(modules.getValue(module)).flatMap { it.dependencies }
+                .filterIsInstance<Dependency.Module>().filter { it.scope == DependencyScopeKind.COMPILE }.forEach { visit(it.module) }
+        }
+        request.modules.forEach(::visit)
+    } else emptySet()
 
     init {
         require(lock.configuration == effective.digest) { "Stale dependency lock" }
@@ -107,6 +121,12 @@ private class Builder(
                 ProjectMode.TEST -> ensureTest(module, target)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
+            }
+        }
+        if (request.mode == ProjectMode.PACKAGE && request.targets == setOf("jvm", "macosArm64")) {
+            for (module in request.modules.sorted()) {
+                val root = ensureRootPackage(module)
+                terminals["$module:common:package"] = root
             }
         }
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
@@ -351,13 +371,19 @@ private class Builder(
             val coordinate = when (dependency) {
                 is Dependency.External -> dependency.coordinate
                 is Dependency.Module -> (modules.getValue(dependency.module).publication
-                    ?: error("Workspace library dependency requires publication: ${dependency.module}")).coordinateFor(target)
+                    ?: error("Workspace library dependency requires publication: ${dependency.module}")).let { publication ->
+                    if (dependency.module in rootPublicationModules) publication.coordinate else publication.coordinateFor(target)
+                }
             }
-            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (target == "macosArm64" || dependency.exported))
+            val pomCoordinate = if (dependency is Dependency.Module && dependency.module in rootPublicationModules)
+                modules.getValue(dependency.module).publication!!.coordinateFor(target) else null
+            LibraryDependency(coordinate, dependency.scope == DependencyScopeKind.COMPILE && (target == "macosArm64" || dependency.exported), pomCoordinate)
         }
         return dependencies.groupBy { it.coordinate.group to it.coordinate.name }.values.map { group ->
             require(group.map { it.coordinate.version }.distinct().size == 1) { "Library publication has conflicting direct dependency versions" }
-            LibraryDependency(group.first().coordinate, group.any { it.api })
+            val pomCoordinates = group.mapNotNull { it.pomCoordinate }.distinct()
+            require(pomCoordinates.size <= 1) { "Library publication has conflicting POM dependency coordinates" }
+            LibraryDependency(group.first().coordinate, group.any { it.api }, pomCoordinates.singleOrNull())
         }.sortedBy { it.coordinate.toString() }
     }
 
@@ -373,7 +399,8 @@ private class Builder(
         val packaged = directModules.map { ensurePackage(it, target) }.toSet()
         val edges = packaged + mainId(module, target)
         val selection = LibraryPackage(module, target, publication.coordinateFor(target), dependencies,
-            if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null)
+            if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null,
+            rootCoordinate = if (module in rootPublicationModules) publication.coordinate else null)
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val own = remap(results, module, target, "main")
@@ -384,6 +411,100 @@ private class Builder(
                 "Library resource collides with compiled output: $module"
             }
             libraryPackageAction(selection, merge(compiled, resources), composition)
+        }
+        return id
+    }
+
+    private fun commonMetadataId(module: String) = "$module:common:metadata"
+
+    private fun commonArtifacts(module: String): List<LockedArtifact> {
+        val domain = ResolutionDomain(module, "common", "main", "kotlin-metadata")
+        require(domain in authorized) { "Root publication requires a locked common metadata domain: $module; run resolve" }
+        require(policy.exclusionsFor(domain).isEmpty()) { "Common publication cannot encode metadata exclusions: $module" }
+        val roots = (commonPublicationDependencyClosure(project, module).external +
+            Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct()
+        val artifacts = roots.flatMap { coordinate ->
+            selections[ResolutionRequest(coordinate, VariantRequest("common", "kotlin-metadata", emptyMap()), domain)]?.artifacts
+                ?: error("Missing locked common metadata dependency: $coordinate:$module")
+        }.distinctBy { artifactPath(it, false) }
+        for (pin in policy.pinsFor(domain)) {
+            fun matches(value: Coordinate) = value.group == pin.group && value.name == pin.name
+            val declared = roots.filter(::matches)
+            val selected = artifacts.filter { matches(it.coordinate) }
+            if (declared.isEmpty() && selected.isEmpty()) continue
+            require(declared.isNotEmpty() && declared.all { it.version == pin.version } && selected.all { it.coordinate.version == pin.version }) {
+                "Common publication cannot encode a version override or transitive-only pin: $pin"
+            }
+        }
+        return artifacts
+    }
+
+    private fun commonOutputs(results: Map<String, ActionResult>, module: String, prefix: String): List<FileEntry> {
+        val outputs = results.getValue(commonMetadataId(module)).outputs.files
+        require(outputs.isNotEmpty() && outputs.all { it.path.value.startsWith("metadata/") && !it.executable }) {
+            "Invalid common metadata output: $module"
+        }
+        return outputs.map { it.copy(path = LogicalPath(prefix + "/" + it.path.value.removePrefix("metadata/"))) }
+    }
+
+    private fun ensureCommonMetadata(module: String): String {
+        val id = commonMetadataId(module)
+        if (id in nodes) return id
+        val spec = modules.getValue(module)
+        val publication = spec.publication ?: error("Common library dependency requires publication: $module")
+        require(spec.targets.map { it.name }.toSet() == setOf("jvm", "macosArm64")) { "Root publication requires JVM and macosArm64: $module" }
+        require(spec.compilerPlugins.none { "main" in it.scopes }) { "Common metadata compiler plugin support is not implemented: $module" }
+        val shared = commonPublicationSourceSets(spec)
+        require(shared.isNotEmpty()) { "Root publication requires shared main source sets: $module" }
+        val sources = shared.flatMap { set -> set.directories.flatMap { directory ->
+            require(files.none { it.path == directory }) { "Source directory is a file: ${directory.value}" }
+            files.filter { it.path.value.startsWith(directory.value + "/") }.map { file ->
+                require(file.path.value.endsWith(".kt")) { "Unsupported common source file: ${file.path.value}" }
+                file.copy(path = LogicalPath("src/${file.path.value}"))
+            }
+        } }.sortedBy { it.path.value }
+        require(sources.isNotEmpty() && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
+        val dependencies = commonPublicationDependencyClosure(project, module).modules
+        val edges = dependencies.map(::ensureCommonMetadata).toSet()
+        val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
+        val settings = spec.targets.map { compilerOptions(module, it.name, it.compilerOptions) }
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
+            jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", sources.map { it.path },
+                dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),
+                optIns = settings.flatMap { it.optIns }.distinct().sorted(), explicitApi = settings.any { it.explicitApi },
+                warningsAsErrors = settings.any { it.warningsAsErrors }), merge(sources, dependencyFiles, artifacts), composition, tools.getValue("jvm"))
+        }
+        return id
+    }
+
+    private fun ensureRootPackage(module: String): String {
+        val id = "$module:common:package"
+        if (id in nodes) return id
+        val spec = modules.getValue(module)
+        val publication = spec.publication ?: error("Library module requires publication: $module")
+        val metadata = ensureCommonMetadata(module)
+        val targets = spec.targets.sortedBy { it.name }
+        val packages = targets.map { ensurePackage(module, it.name) }.toSet()
+        val shared = commonPublicationSourceSets(spec)
+        val declared = shared.flatMap { it.dependencies }.filter { it.scope == DependencyScopeKind.COMPILE }
+        val rootDependencies = declared.filterIsInstance<Dependency.Module>().map { ensureRootPackage(it.module) }.toSet()
+        val coordinates = (declared.map { dependency -> when (dependency) {
+            is Dependency.External -> dependency.coordinate
+            is Dependency.Module -> modules.getValue(dependency.module).publication!!.coordinate
+        } } + Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct().sortedBy { it.toString() }
+        // Both supported targets share exactly this intersection. Flattening its source-set DAG
+        // produces one common compilation without exposing any platform-only declarations.
+        val selection = KmpLibraryPackage(module, publication.coordinate,
+            targets.map { LibraryPackage(module, it.name, publication.coordinateFor(it.name), publicationDependencies(module, it.name),
+                if (it.name == "jvm") jvmTargetFromOptions(it.compilerOptions) else null, rootCoordinate = publication.coordinate) },
+            listOf(KmpSourceSetMetadata("commonMain", emptyList(), coordinates)), targets.associate { it.name to listOf("commonMain") })
+        val edges = packages + rootDependencies + metadata
+        nodes[id] = ActionNode(id, edges) { results ->
+            validateResults(results, edges)
+            kmpLibraryPackageAction(selection, merge(commonOutputs(results, module, "metadata/commonMain"),
+                packages.flatMap { results.getValue(it).outputs.files }), composition)
         }
         return id
     }
