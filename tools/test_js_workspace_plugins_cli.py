@@ -89,12 +89,13 @@ def main():
         else:
             # Keep these sources unchanged during producer/input edits. Exact values are checked in Node logs below.
             body = '''assertTrue(message().startsWith("helper:"))
-        assertEquals(message(), "PLUGIN_MARKER")
+        assertEquals(message(), testMessage())
         println("MAIN:" + message())
-        println("TEST:" + "PLUGIN_MARKER")'''
+        println("TEST:" + testMessage())'''
         write(name + '/test/Tests.kt', '''package fixture.consumer
 import kotlin.test.*
 class Tests {
+    private fun testMessage() = "PLUGIN_MARKER"
     @Test fun transformed() {
         BODY
     }
