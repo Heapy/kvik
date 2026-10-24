@@ -89,6 +89,7 @@ data class TargetSpec(
     val abi: AbiSettings? = null,
     val jsTestSettings: JsTestSettings? = null,
     val benchmarkSettings: JvmBenchmarkSettings? = null,
+    val testResources: TestResources? = null,
 ) {
     init {
         require(NativeTarget.find(name)?.isIos != true || test == null) { "iOS test execution requires simulator/device support; only compilation and linking are supported" }
@@ -96,6 +97,7 @@ data class TargetSpec(
             "nativeFramework requires an iOS library target without application settings"
         }
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
+        require(testResources == null || test != null) { "testResources requires a test source set" }
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
         require(nativeTestSettings == null || NativeTarget.find(name) != null && test != null) { "nativeTestSettings requires a supported Native target with a test source set" }
         require(nativeTimeouts == null || NativeTarget.find(name) != null) { "nativeTimeouts requires a supported Native target" }

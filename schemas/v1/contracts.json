@@ -245,6 +245,29 @@
       "additionalProperties": false,
       "minProperties": 1
     },
+    "testResources": {
+      "type": "object",
+      "properties": {
+        "memoryMiB": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576,
+          "default": 512
+        },
+        "exclusiveResources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 64,
+          "uniqueItems": true,
+          "default": []
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
     "applicationSettings": {
       "type": "object",
       "properties": {
@@ -450,6 +473,9 @@
         "benchmarkSettings": {
           "$ref": "#/$defs/jvmBenchmarkSettings"
         },
+        "testResources": {
+          "$ref": "#/$defs/testResources"
+        },
         "abi": {
           "$ref": "#/$defs/abiSettings"
         },
@@ -549,6 +575,21 @@
                   ]
                 }
               ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "testResources"
+            ]
+          },
+          "then": {
+            "properties": {
+              "test": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              }
             }
           }
         },

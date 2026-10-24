@@ -65,6 +65,11 @@ DEFS["nativeTestSettings"] = object_({"engine": {"const": "kotest"}, "kspVersion
 DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maximum": 3600000}
     for name in ("compileMillis", "linkMillis")}, optional=("compileMillis", "linkMillis"))
 DEFS["nativeTimeouts"]["minProperties"] = 1
+DEFS["testResources"] = object_({
+    "memoryMiB": {"type": "integer", "minimum": 1, "maximum": 1048576, "default": 512},
+    "exclusiveResources": array({"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\s\S])"},
+        maxItems=64, uniqueItems=True, default=[]),
+}, optional=("memoryMiB", "exclusiveResources"))
 APPLICATION_ENTRY = {"type": "string", "minLength": 1, "maxLength": 1024,
     "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\s\S])"}
 NATIVE_APPLICATION_ENTRY = {"type": "string",
@@ -101,6 +106,7 @@ DEFS["jvmBenchmarkSettings"] = object_({"classes": BENCHMARK_CLASSES,
     "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 86400000}},
     optional=("warmups", "iterations", "iterationMillis", "forks", "threads", "mode", "outputTimeUnit", "timeoutMillis"))
 DEFS["target"]["properties"]["benchmarkSettings"] = ref("jvmBenchmarkSettings")
+DEFS["target"]["properties"]["testResources"] = ref("testResources")
 DEFS["jvmBenchmarkHarness"] = object_({"module": ID, "classpath": array(PATH, minItems=1, uniqueItems=True), "classes": BENCHMARK_CLASSES})
 DEFS["jvmBenchmarkRun"] = object_({"module": ID, "classpath": array(PATH, minItems=1, uniqueItems=True), "profile": enum("smoke", "measurement"), "settings": ref("jvmBenchmarkSettings")})
 BENCHMARK_DECIMAL = {"type": "string", "minLength": 1, "maxLength": 128,
@@ -133,6 +139,7 @@ DEFS["target"]["allOf"].append({"if": {"required": ["benchmarkSettings"]}, "then
 DEFS["target"]["allOf"].append({"if": {"required": ["jsTestSettings"]}, "then": {"properties": {"name": enum(*JS_TARGETS), "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"properties": {"name": enum(*JS_TARGETS)}},
     "then": {"not": {"anyOf": [{"required": [name]} for name in ("application", "abi")]}}})
+DEFS["target"]["allOf"].append({"if": {"required": ["testResources"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["testCompilerOptions"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTestSettings"]}, "then": {"properties": {"name": enum("macosArm64", "linuxX64"), "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTimeouts"]}, "then": {"properties": {"name": enum(*NATIVE_TARGETS)}}})
