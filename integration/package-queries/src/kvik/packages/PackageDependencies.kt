@@ -6,7 +6,7 @@ import kvik.resolution.*
 fun queryPackageDependencies(project: String, coordinate: Coordinate, variant: VariantRequest, repositories: List<Repository>,
                              pins: List<Coordinate>, transport: QueryTransport, parser: PomParser): JsonValue.Object {
     require(coordinate.toString().length <= 1024 && pins.size <= 256 && pins.all { it.toString().length <= 1024 }) { "Package query coordinate/pin bound exceeded" }
-    require(variant.platform in setOf("jvm", "macosArm64", "linuxX64")) { "Unsupported query target" }
+    require(variant.platform == "jvm" || NativeTarget.find(variant.platform) != null) { "Unsupported query target" }
     require(variant.usage in if (variant.platform == "jvm") setOf("java-api", "java-runtime") else setOf("kotlin-api")) { "Unsupported target/usage" }
     val query = obj("project" to project.json(), "coordinate" to coordinate.toString().json(),
         "repositories" to repositories.map { obj("id" to it.id.json(), "url" to it.url.json()) }.json(),

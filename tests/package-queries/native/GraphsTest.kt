@@ -8,6 +8,64 @@ import kotlin.test.*
 
 class GraphsTest {
     private val variant = jvmVariantRequest("java-runtime", 11)
+    @Test fun iosPackageVariantsAndProjectFiltersReplayExactTargetArtifacts() {
+        val root = Coordinate.parse("example:root:1.0")
+        val base = "${repository.url}/example/root/1.0"
+        val targets = listOf(NativeTarget.IOS_ARM64, NativeTarget.IOS_SIMULATOR_ARM64)
+        val blobs = targets.associate { "$base/${it.compilerName}.klib" to it.compilerName.encodeToByteArray() }
+        val variants = targets.map { target ->
+            val artifact = "${target.compilerName}.klib"
+            val digest = Sha256.digest(blobs.getValue("$base/$artifact"))
+            obj("name" to target.projectName.json(), "attributes" to obj("org.gradle.category" to "library".json(),
+                "org.gradle.usage" to "kotlin-api".json(), "org.jetbrains.kotlin.platform.type" to "native".json(),
+                "org.jetbrains.kotlin.native.target" to target.compilerName.json()),
+                "files" to listOf(obj("name" to artifact.json(), "url" to artifact.json(), "size" to digest.sizeBytes.json(), "sha256" to digest.hash.json())).json())
+        }
+        val entries = blobs + ("$base/root-1.0.module" to obj("formatVersion" to "1.1".json(),
+            "component" to obj("group" to root.group.json(), "module" to root.name.json(), "version" to root.version.json()),
+            "variants" to variants.json()).canonical().encodeToByteArray())
+        for (target in targets) {
+            val cache = MemoryCache()
+            val network = MemoryNetwork(entries)
+            val request = VariantRequest(target.projectName, "kotlin-api", emptyMap())
+            fun query(mode: QueryMode) = queryPackageDependencies("/project/kvik.json", root, request, listOf(repository), emptyList(),
+                QueryTransport(listOf(repository), cache, network, mode, 1000), NativePomParser())
+            val first = query(QueryMode.CACHE)
+            assertEquals("complete", first.values.getValue("status").stringValue())
+            val graph = first.values.getValue("graph").objectValue()
+            val artifact = graph.getValue("nodes").arrayValue().single().objectValue().getValue("artifacts").arrayValue().single().objectValue()
+            assertEquals("$base/${target.compilerName}.klib", artifact.getValue("url").stringValue())
+            val calls = network.calls.size; val writes = cache.writes
+            assertEquals(first.values.getValue("graph"), query(QueryMode.OFFLINE).values.getValue("graph"))
+            assertEquals(calls, network.calls.size); assertEquals(writes, cache.writes)
+        }
+        val original = project(listOf(root.toString())).document.objectValue()
+        val module = original.getValue("modules").arrayValue().single().objectValue()
+        val configured = JsonValue.Object(module + ("targets" to targets.map { target -> obj("name" to target.projectName.json(),
+            "main" to "main".json(), "test" to JsonValue.Null, "compilerOptions" to emptyList<JsonValue>().json()) }.json()))
+        val configuration = parseProjectConfiguration(JsonValue.Object(original + ("modules" to listOf(configured).json())))
+        val effective = effectiveConfiguration(configuration)
+        val content = MemoryContent()
+        val lock = DependencyLocks(content, NativePomParser()).resolve(effective, MemoryNetwork(entries))
+        val writes = content.writes
+        fun query(filter: ProjectQueryFilter) = queryProjectDependencies("/project/kvik.json", "/project/kvik.lock.json", "/project/cache",
+            configuration, effective, { lock.bytes() }, content, NativePomParser(), 1000, filter)
+        for (target in targets) {
+            val result = query(ProjectQueryFilter(targets = listOf(target.projectName), compilation = "main", usage = "kotlin-api"))
+            assertEquals("complete", result.values.getValue("status").stringValue())
+            val domain = result.values.getValue("domains").arrayValue().single().objectValue().getValue("domain")
+            assertEquals(ResolutionDomain("sample", target.projectName, "main", "kotlin-api"), ResolutionDomain.fromJson(domain))
+        }
+        assertEquals(4, query(ProjectQueryFilter(targets = targets.map { it.projectName })).values.getValue("domains").arrayValue().size)
+        val hidden = lock.selections.first { it.domain.target == "iosArm64" }.artifacts.single().digest
+        content.entries.remove(hidden)
+        assertEquals("incomplete", query(ProjectQueryFilter(targets = listOf("iosSimulatorArm64"))).values.getValue("status").stringValue())
+        assertEquals(writes, content.writes)
+        assertFails { ProjectQueryFilter(targets = listOf("iosX64")) }
+        assertFails { ProjectQueryFilter(targets = listOf("iosArm64", "iosArm64")) }
+        assertFails { query(ProjectQueryFilter(targets = listOf("linuxX64"))) }
+    }
+
     private fun resolver(entries: Map<String, ByteArray>, pins: List<Coordinate> = emptyList()) = MavenResolver(MemoryNetwork(entries), NativePomParser(), pins)
 
     @Test fun originalRequirementsAndPinSelectionsHaveDeterministicShortestPaths() {

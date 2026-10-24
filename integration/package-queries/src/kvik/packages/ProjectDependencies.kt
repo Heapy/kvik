@@ -9,7 +9,7 @@ data class ProjectQueryFilter(val modules: List<String> = emptyList(), val targe
                               val compilation: String? = null, val usage: String? = null, val scripts: List<String> = emptyList()) {
     init {
         require(modules.size <= 1024 && modules.all { it.length <= 4096 } && modules.distinct().size == modules.size && targets.distinct().size == targets.size)
-        require(targets.all { it in setOf("jvm", "macosArm64", "linuxX64") })
+        require(targets.all { it == "jvm" || NativeTarget.find(it) != null })
         require(scripts.size <= 256 && scripts.distinct().size == scripts.size && scripts.all { it.length in 1..128 && it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) })
         require(compilation == null || compilation in setOf("main", "test", "script"))
         require(usage == null || usage in setOf("java-api", "java-runtime", "kotlin-api", "kotlin-runtime"))
