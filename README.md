@@ -333,13 +333,54 @@ Search cursors bind the pattern, matching flags, literal `--path` prefixes and
 view; history cursors bind the claims encoding. Page size may change between
 requests. `complete` indicates the last page, whose `nextCursor` is null.
 
-`search-page` performs an exact scan of regular text blobs, with one hit per
+`search-page` searches regular text blobs, with one hit per
 matching line. Hits include the path, blob identity, mode, line number and
 one-based UTF-8 byte column. Hidden matches do not consume a view's page limit.
 The default limit is 200 and the maximum is 1,000. Git output is streamed and
 stopped after detecting the next page; matching records above 8 MiB or responses
-above 16 MiB fail explicitly. The tree inventory is still scanned, and resuming
-within a file rescans that blob; this command does not use a search index.
+above 16 MiB fail explicitly. The default `--index off` scans file contents
+directly. The tree inventory is still scanned, and resuming within a file
+rescans that blob.
+
+Build a reusable text index explicitly, then use it to skip blobs that cannot
+contain a fixed, case-sensitive pattern:
+
+```sh
+/absolute/bin/kode --home /absolute/kode-store index library --rev main
+/absolute/bin/kode --home /absolute/kode-store search-page library needle \
+  --rev IMMUTABLE_REVISION --fixed --index prefer --view production-view.json
+```
+
+`index` resolves the selector once and publishes an index for that immutable
+revision. Unchanged content reuses the same blob summaries across revisions,
+including renames and duplicate files; `builtBlobs` and `reusedBlobs` report the
+work performed. Summaries filter candidates; exact Git searches still establish
+the returned matches. Index construction runs in the foreground.
+
+Search responses expose `requestedRevision`, `indexedRevision`, `indexStatus`
+and `indexComplete`, separately from result pagination's `complete`.
+`indexComplete` means that index coverage was verified for the query's selected
+file scope, including its path and view filters.
+`--index prefer` falls back to exact scanning when the requested revision's
+index is missing or invalid, or the query is unsupported. `--index required`
+fails explicitly in those cases. Index filtering supports fixed, case-sensitive
+single-line patterns of at least three UTF-8 bytes. Regular expressions,
+case-insensitive searches and shorter or multiline patterns use exact scanning.
+An old revision's index never stands in for a newly advanced reference.
+
+`searchMode` is `indexed-exact` when filtering is active and `exact-scan`
+otherwise. `scannedBlobs` and `skippedBlobs` count selected file entries visited
+on that page; view and role-policy filters still govern search results. A
+complete, empty result means that the requested search found no matches, even
+when it used a fallback scan. Index construction covers the full project and
+rejects `--view` and `--policy`; indexed searches accept both in the same way as
+ordinary searches.
+
+Index files under the Kode home's `search-index/v1` directory are disposable
+derived data. Version, identity and checksum checks detect damaged or misplaced
+cache entries; they assume trusted local cache writers. These files do not
+retain source revisions or replace retention pins. They can be removed while
+Kode is stopped and rebuilt with `index`.
 
 `log-page` traverses the pinned revision's complete ancestry in topological order,
 including merge parents. Its default limit is 20 and maximum is 1,000; each

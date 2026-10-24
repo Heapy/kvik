@@ -263,6 +263,37 @@ def main():
         empty_search = store('search-page', 'fixture', 'needle', '--rev', base, '--view', empty_view)
         assert empty_search['hits'] == [] and empty_search['complete'] and empty_search['nextCursor'] is None
 
+        # The index is shared across views, but candidates, hits and cursors honor the pinned view.
+        fallback = store('search-page', 'fixture', 'needle', '--rev', base,
+                         '--view', view, '--fixed', '--index', 'prefer')
+        assert fallback['hits'] == paged_hits and fallback['complete']
+        assert fallback['indexedRevision'] is None and fallback['searchMode'] == 'exact-scan'
+        store('index', 'fixture', '--rev', base, '--policy', test_policy, expected=1)
+        indexed = store('index', 'fixture', '--rev', base)
+        assert indexed['revision'] == base and indexed['indexedRevision'] == base
+        indexed_page = store('search-page', 'fixture', 'needle', '--rev', base,
+                             '--view', view, '--fixed', '--index', 'required', '--limit', '1')
+        assert indexed_page['hits'] == paged_hits[:1] and not indexed_page['complete']
+        assert indexed_page['indexedRevision'] == base and indexed_page['indexComplete']
+        assert indexed_page['searchMode'] == 'indexed-exact' and indexed_page['indexStatus'] == 'ready'
+        assert indexed_page['skippedBlobs'] > 0
+        assert indexed_page['scannedBlobs'] + indexed_page['skippedBlobs'] <= len(paths(production))
+        indexed_tail = store('search-page', 'fixture', 'needle', '--rev', base,
+                             '--view', view, '--fixed', '--index', 'required',
+                             '--cursor', indexed_page['nextCursor'])
+        assert indexed_tail['hits'] == paged_hits[1:] and indexed_tail['complete']
+        indexed_tests = store('search-page', 'fixture', 'needle', '--rev', base,
+                              '--policy', test_policy, '--fixed', '--index', 'required')
+        exact_tests = store('search-page', 'fixture', 'needle', '--rev', base,
+                            '--policy', test_policy, '--fixed')
+        assert indexed_tests['hits'] == exact_tests['hits']
+        assert {hit['path'] for hit in indexed_tests['hits']} == {'sub/00-tests/CommonTest.kt', 'sub/test/Test.kt'}
+        indexed_empty = store('search-page', 'fixture', 'needle', '--rev', base,
+                              '--view', empty_view, '--fixed', '--index', 'required')
+        assert indexed_empty['hits'] == [] and indexed_empty['complete']
+        assert indexed_empty['indexComplete'] and indexed_empty['indexedRevision'] == base
+        assert indexed_empty['scannedBlobs'] == indexed_empty['skippedBlobs'] == 0
+
         # Export needs the pinned inventory and configuration, without reading source bodies.
         before = cache_state()
         hidden_home = root / 'unavailable-kode'
@@ -280,6 +311,15 @@ def main():
 
         # Writes retain hidden files. Views constrain presentation, not editing permissions.
         ours = tx(base, {'sub/jvm/Main.kt': 'fun main() = println("changed")\n'}, ref='main', view=view)
+        # Advancing main cannot make the old index authoritative for the new snapshot.
+        moved = store('search-page', 'fixture', 'needle', '--rev', 'main', '--fixed', '--index', 'prefer')
+        assert moved['revision'] == ours and moved['indexedRevision'] is None
+        assert moved['searchMode'] == 'exact-scan'
+        assert all(hit['path'] != 'sub/jvm/Main.kt' for hit in moved['hits'])
+        store('search-page', 'fixture', 'needle', '--rev', 'main', '--fixed', '--index', 'required', expected=1)
+        store('index', 'fixture', '--rev', 'main')
+        moved_indexed = store('search-page', 'fixture', 'needle', '--rev', 'main', '--fixed', '--index', 'required')
+        assert moved_indexed['indexedRevision'] == ours and moved_indexed['hits'] == moved['hits']
         assert store('read', 'fixture', 'sub/test/Test.kt', '--rev', ours)['content'] == files['sub/test/Test.kt']
         store('tree', 'fixture', '--rev', 'main', '--view', view, expected=1)
         store('search-page', 'fixture', 'needle', '--rev', 'main', '--view', view,
