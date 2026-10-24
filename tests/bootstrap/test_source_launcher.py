@@ -205,7 +205,7 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
             self.document[field] = []
         args = argparse.Namespace(source_lock=self.lock, source_cache=self.source_cache,
             cache_dir=self.cache, artifact_cache=self.artifacts, offline=True,
-            konan_data=self.directory / 'data')
+            konan_data=self.directory / 'data', bootstrap_command_timeout=1800)
         roots = {name: self.directory / name for name in ('jdk', 'kotlinNative', 'xcodeToolchain', 'sdk')}
         plugin = next((self.project / 'plugins/kotlin/src').rglob('*.kt'))
         original = plugin.read_bytes()
@@ -219,6 +219,7 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
                 native_inputs = []
                 worker_inputs = []
                 def compiler(command, environment, log, timeout=300):
+                    self.assertEqual(1800, timeout)
                     command = list(map(str, command))
                     if '-o' in command:
                         output = Path(command[command.index('-o') + 1])

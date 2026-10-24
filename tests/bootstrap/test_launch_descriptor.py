@@ -29,7 +29,8 @@ class LaunchDescriptorTest(unittest.TestCase):
         self.project.mkdir()
         recipe = json.loads((ROOT / "bootstrap/composition.json").read_text())
         directories = ["bootstrap", *recipe["coreSources"], recipe["jvmWorkerSources"], recipe["nativePlatform"],
-                       "resolution/native", "integration/toolchains/platform", *[p["directory"] for p in recipe["plugins"]]]
+                       *[launcher.native_libraries.RECIPES[name][0] for name in recipe["nativeLibraries"]],
+                       *[p["directory"] for p in recipe["plugins"]]]
         for name in directories:
             target = self.project / name
             if not target.exists():
@@ -134,6 +135,19 @@ class LaunchDescriptorTest(unittest.TestCase):
                                   cache_dir=self.cache, artifact_cache=self.artifacts, offline=True, no_build=True)
         with self.assertRaisesRegex(ValueError, "exceeds 32 KiB"):
             launcher.launch_descriptor(args, {"hash": "0" * 64, "sizeBytes": 1}, self.cache / "kvik.kexe")
+
+    def test_command_deadline_is_bounded_and_does_not_change_composition(self):
+        original = json.loads(self.invoke("--print-composition").stdout)
+        for timeout in ("1", "1800", "3600"):
+            self.assertEqual(original, json.loads(self.invoke("--bootstrap-command-timeout", timeout, "--print-composition").stdout))
+        for timeout in ("0", "3601", "-1", "1.5", "inf", "01", "1800\n"):
+            result = self.invoke("--bootstrap-command-timeout", timeout, "--print-composition", expected=2)
+            self.assertIn("1 to 3600", result.stderr)
+        self.assertFalse(self.cache.exists())
+        schema = json.loads((ROOT / "schemas/v1/bootstrap-launch.json").read_text())
+        items = schema["$defs"]["launch"]["properties"]["bootstrapArguments"]["items"]
+        validator = jsonschema.Draft202012Validator({"$defs": schema["$defs"], **items})
+        self.assertFalse(validator.is_valid("1800\n"))
 
 
 if __name__ == "__main__":

@@ -19,6 +19,12 @@ from bootstrap import jvm_worker, native_libraries, source_graph, process_barrie
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def command_timeout(value):
+    if not re.fullmatch(r"[1-9][0-9]{0,3}", str(value)) or not 1 <= int(value) <= 3600:
+        raise argparse.ArgumentTypeError("Bootstrap command timeout must be an integer from 1 to 3600 seconds")
+    return int(value)
+
+
 class BootstrapInterrupted(Exception):
     """Not an OSError: subprocess wait internals may catch/retry OSError."""
 
@@ -254,6 +260,9 @@ def launch_descriptor(args, key, executable):
                         ("--runtime-store", getattr(args, "runtime_store", None))):
         if value is not None:
             arguments.extend((flag, str(Path(value).absolute())))
+    timeout = command_timeout(getattr(args, "bootstrap_command_timeout", 300))
+    if timeout != 300:
+        arguments.extend(("--bootstrap-command-timeout", str(timeout)))
     for flag, enabled in (("--offline", args.offline), ("--no-build", args.no_build)):
         if enabled:
             arguments.append(flag)
@@ -404,7 +413,9 @@ def build(args, recipe, selected, lock, key, destination):
         ]
         log_path = args.cache_dir / "logs" / (key["hash"] + ".log")
         log_path.parent.mkdir(exist_ok=True)
-        def run_build(command, environment, log, timeout=300):
+        def run_build(command, environment, log, timeout=None):
+            if timeout is None:
+                timeout = command_timeout(getattr(args, "bootstrap_command_timeout", 300))
             if graph_mode:
                 # Physical paths are execution evidence, not composition identity.
                 with (temporary / "source-commands.jsonl").open("ab") as receipt:
@@ -520,6 +531,8 @@ def main():
     parser.add_argument("--source-lock", type=Path)
     parser.add_argument("--source-cache", type=Path)
     parser.add_argument("--runtime-store", type=Path)
+    parser.add_argument("--bootstrap-command-timeout", type=command_timeout, default=300,
+                        help="Per-command bootstrap deadline in seconds (1–3600; default: 300).")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--no-build", action="store_true")
     query = parser.add_mutually_exclusive_group()

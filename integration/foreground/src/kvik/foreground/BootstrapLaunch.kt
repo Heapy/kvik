@@ -15,7 +15,10 @@ class BootstrapLaunch private constructor(
     val composition: Digest,
     val runtime: String,
     val processOwnershipVersion: Int?,
+    val commandTimeoutSeconds: Int,
 ) {
+    /** Keep the default 15-minute rebuild budget; scale it for explicitly slower hosts. */
+    val rebuildTimeoutMillis: Long get() = maxOf(15 * 60_000L, commandTimeoutSeconds * 3_000L)
     /** Invoke this argv directly through the owned process host, never a shell. */
     fun command(query: BootstrapQuery): List<String> = listOf(python, launcher) + arguments + query.argument
 
@@ -40,6 +43,7 @@ class BootstrapLaunch private constructor(
     companion object {
         private val pathFlags = listOf("--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache", "--runtime-store")
         private val policyFlags = listOf("--offline", "--no-build")
+        private const val timeoutFlag = "--bootstrap-command-timeout"
 
         fun parse(bytes: ByteArray): BootstrapLaunch {
             require(bytes.size <= 32 * 1024) { "Bootstrap launch context exceeds 32 KiB" }
@@ -51,18 +55,26 @@ class BootstrapLaunch private constructor(
             val launcher = absolute(fields.getValue("launcher").stringValue())
             require(launcher == child(root, "kvik")) { "Bootstrap launcher must belong to its source root" }
             val arguments = fields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
-            require(arguments.size in 6..18) { "Invalid bootstrap argument count" }
+            require(arguments.size in 6..20) { "Invalid bootstrap argument count" }
             val paths = mutableMapOf<String, String>()
             var cursor = 0
             var previousFlag = -1
+            var commandTimeoutSeconds = 300
             while (cursor < arguments.size) {
                 val flag = arguments[cursor++]
-                val position = (pathFlags + policyFlags).indexOf(flag)
+                val position = (pathFlags + timeoutFlag + policyFlags).indexOf(flag)
                 require(position > previousFlag) { "Unknown, repeated or out-of-order bootstrap flag: $flag" }
                 previousFlag = position
                 if (flag in pathFlags) {
                     require(cursor < arguments.size) { "Missing bootstrap path for $flag" }
                     paths[flag] = absolute(arguments[cursor++])
+                } else if (flag == timeoutFlag) {
+                    require(cursor < arguments.size) { "Missing bootstrap command timeout" }
+                    val timeout = arguments[cursor++]
+                    require(timeout.matches(Regex("[1-9][0-9]{0,3}")) && timeout.toInt() in 1..3600) {
+                        "Bootstrap command timeout must be an integer from 1 to 3600 seconds"
+                    }
+                    commandTimeoutSeconds = timeout.toInt()
                 }
             }
             require(paths.keys.containsAll(listOf("--konan-data", "--cache-dir", "--artifact-cache"))) {
@@ -79,7 +91,7 @@ class BootstrapLaunch private constructor(
             val ownership = fields["processOwnershipVersion"]?.longValue()?.also {
                 require(it == 1L) { "Unsupported bootstrap process ownership version" }
             }?.toInt()
-            return BootstrapLaunch(root, python, launcher, arguments, composition, runtime, ownership)
+            return BootstrapLaunch(root, python, launcher, arguments, composition, runtime, ownership, commandTimeoutSeconds)
         }
 
         fun parseComposition(bytes: ByteArray): Digest {

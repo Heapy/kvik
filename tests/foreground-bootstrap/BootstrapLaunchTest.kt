@@ -142,4 +142,30 @@ class BootstrapLaunchTest {
         assertFails { BootstrapLaunch.parseComposition(byteArrayOf(-1)) }
         assertFails { BootstrapLaunch.parseComposition("{\"schemaVersion\":1,\"schemaVersion\":1,\"composition\":{}}".encodeToByteArray()) }
     }
+
+    @Test fun commandDeadlineSurvivesQueriesAndReplacement() {
+        val launch = BootstrapLaunch.parse(timeoutProducerDescriptor)
+        val fields = parseJson(timeoutProducerDescriptor.decodeToString()).objectValue()
+        val arguments = fields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
+        assertEquals(20, arguments.size)
+        assertEquals(1800, launch.commandTimeoutSeconds)
+        assertEquals(5_400_000L, launch.rebuildTimeoutMillis)
+        assertEquals(listOf("--bootstrap-command-timeout", "1800", "--offline", "--no-build", "--print-launch"),
+            launch.command(BootstrapQuery.LAUNCH).takeLast(5))
+        fun parse(values: List<String>) = BootstrapLaunch.parse(JsonValue.Object(fields +
+            ("bootstrapArguments" to values.map { it.json() }.json())).canonical().encodeToByteArray())
+        for (value in listOf("0", "3601", "-1", "1.5", "inf", "01", "1800\n", "999999999999999999")) {
+            assertFails { parse(arguments.toMutableList().also { it[17] = value }) }
+        }
+        assertFails { parse(arguments.take(17)) }
+        assertFails { parse(arguments + listOf("--bootstrap-command-timeout", "1800")) }
+        for (value in listOf("1", "3600")) {
+            val changed = parse(arguments.toMutableList().also { it[17] = value })
+            assertFails { changed.requireReplacement(launch, launch.composition) }
+        }
+        val default = parse(arguments.filterIndexed { index, _ -> index !in 16..17 })
+        assertEquals(300, default.commandTimeoutSeconds)
+        assertEquals(900_000L, default.rebuildTimeoutMillis)
+        assertFails { default.requireReplacement(launch, launch.composition) }
+    }
 }

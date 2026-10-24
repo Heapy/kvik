@@ -38,7 +38,7 @@ class Recomposition(
     fun cancel() { query?.process?.cancel(); build?.process?.cancel(); compatibility?.process?.cancel() }
 
     private fun start(kind: BootstrapQuery, composition: Digest?): Child = startCommand(launch.command(kind), composition,
-        if (kind == BootstrapQuery.COMPOSITION) 60_000 else 15 * 60_000)
+        if (kind == BootstrapQuery.COMPOSITION) 60_000 else launch.rebuildTimeoutMillis)
     private fun startCommand(command: List<String>, composition: Digest?, timeout: Long): Child {
         val path = NativeRunDirectory(directory).path
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())

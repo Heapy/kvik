@@ -16,9 +16,13 @@ def main():
     parser.add_argument('--java-home', type=Path, default=os.environ.get('JAVA_HOME'), required='JAVA_HOME' not in os.environ)
     parser.add_argument('--konan-home', type=Path, default=os.environ.get('KONAN_HOME'), required='KONAN_HOME' not in os.environ)
     parser.add_argument('--konan-data', type=Path, default=ROOT/'.kvik/linux-konan')
+    parser.add_argument('--bootstrap-command-timeout', type=int, default=300,
+                        help='Per-command bootstrap deadline in seconds (1–3600; default: 300).')
     parser.add_argument('--pin-tools', action='store_true',
                         help='Acquire Native dependencies and replace bootstrap/toolchains.lock.json in this disposable checkout.')
     args = parser.parse_args()
+    if not 1 <= args.bootstrap_command_timeout <= 3600:
+        parser.error('--bootstrap-command-timeout must be from 1 to 3600 seconds')
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
         parser.error('This entry point requires Linux x86_64')
     java = args.java_home.resolve(strict=True)
@@ -57,7 +61,8 @@ def main():
     run([sys.executable, ROOT/'tools/test_files_platform.py'])
     run([sys.executable, ROOT/'tools/test_foreground_keys_boundary.py'])
     run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/bootstrap', '-p', 'test_linux*.py'])
-    bootstrap = [ROOT/'kvik', '--java-home', java, '--konan-home', native, '--konan-data', data]
+    bootstrap = [ROOT/'kvik', '--java-home', java, '--konan-home', native, '--konan-data', data,
+                 '--bootstrap-command-timeout', str(args.bootstrap_command_timeout)]
     built = run([*bootstrap, '--print-runtime'], stdout=subprocess.PIPE, text=True)
     executable = Path(built.stdout.strip()).resolve(strict=True)
     cached = run([*bootstrap, '--offline', '--no-build', '--print-runtime'], stdout=subprocess.PIPE, text=True)
