@@ -89,8 +89,8 @@ data class TargetSpec(
 ) {
     init {
         require(NativeTarget.find(name)?.isIos != true || test == null) { "iOS test execution requires simulator/device support; only compilation and linking are supported" }
-        require(nativeFramework == null || NativeTarget.find(name)?.isApple == true && application == null) {
-            "nativeFramework requires an Apple Native library target without application settings"
+        require(nativeFramework == null || NativeTarget.find(name)?.isIos == true && application == null) {
+            "nativeFramework requires an iOS library target without application settings"
         }
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }

@@ -173,8 +173,13 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
-                    val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(), tools.jvmProvider())
-                    val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
+                    val nativeTargets = toolTargets.mapNotNull(NativeTarget::find)
+                    val native = nativeTargets.associateWith { target ->
+                        NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(target), tools.jvmProvider())
+                    }
+                    val ksp = nativeTargets.associateWith { target ->
+                        KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider(target))
+                    }
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content)
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
@@ -186,11 +191,11 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-library-package-v1" -> library
                             "kvik-kmp-library-package-v1" -> kmpLibrary
                             "kvik-jvm-metadata-v1" -> jvm
-                            "kvik-ksp-native-v1" -> ksp
+                            "kvik-ksp-native-v1" -> ksp.getValue(NativeTarget.require(action.target))
                             "kvik-kotest-native-tests-v1" -> kotest
                             else -> when (action.target) {
                                 "jvm" -> jvm
-                                else -> if (NativeTarget.find(action.target) != null) native else error("Unsupported action target ${action.target}")
+                                else -> native.getValue(NativeTarget.require(action.target))
                             }
                         }
                         override fun resources(action: ActionSpec) = executor(action).resources(action)
@@ -249,13 +254,13 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                                 tests.forEach { journal.emit("test-result", it.toJson() as JsonValue.Object) }
                             }
                         }
-                        for ((id, observation) in ksp.observations) if (seen.add(id)) {
+                        for ((id, observation) in ksp.values.flatMap { it.observations.entries }) if (seen.add(id)) {
                             retain(id, obj("result" to observation.result.toJson(), "diagnostics" to observation.diagnostics.map { it.toJson() }.json(),
                                 "directory" to observation.directory.json(), "logs" to listOf("ksp.stdout", "ksp.stderr")
                                     .map { "${observation.directory}/$it".json() }.json()))
                             observation.diagnostics.forEach(journal::diagnostic)
                         }
-                        for ((id, observation) in native.observations + kotest.observations) if (seen.add(id)) {
+                        for ((id, observation) in native.values.flatMap { it.observations.entries } + kotest.observations.entries) if (seen.add(id)) {
                             retain(id, obj("result" to observation.result.toJson(), "diagnostics" to observation.diagnostics.map { it.toJson() }.json(),
                                 "tests" to (observation.tests?.toJson() ?: JsonValue.Null), "directory" to observation.directory.json(),
                                 "logs" to NativeFiles.names(observation.directory).filter { it.endsWith(".stdout") || it.endsWith(".stderr") }
@@ -330,6 +335,33 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         var record = evidence.record.copy(status = buildCompletion(evidence.record.status,
             if (failedSetup) failureExit else null, cancelled).status)
         var prepared: PreparedRun? = null
+        if (mode == ProjectMode.BUILD && scriptFile == null && record.status == VerificationStatus.PASSED) {
+            val frameworks = snapshot.configuration.project.modules.filter { it.id in options.modules }.flatMap { module ->
+                module.targets.filter { it.name in options.targets }.mapNotNull { target ->
+                    target.nativeFramework?.let { FrameworkSelection(module.id, target.name, it) }
+                }
+            }
+            if (frameworks.isNotEmpty()) try {
+                var current = Freshness.INDETERMINATE
+                val exposed = materializeFrameworks(record, frameworks, content, run.path) {
+                    current = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }
+                    cancelled = kvik_interrupt_requested() != 0
+                    !cancelled && current == Freshness.CURRENT
+                }
+                cancelled = cancelled || kvik_interrupt_requested() != 0
+                if (!exposed || cancelled) record = record.copy(
+                    status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                    freshnessAtCompletion = current)
+                else frameworks.forEach { journal.emit("framework-ready", it.event(run.path)) }
+            } catch (failure: Exception) {
+                failedSetup = true
+                failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_FRAMEWORK_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize framework artifacts"))
+            }
+        }
         if (mode == ProjectMode.APPLICATION && record.status == VerificationStatus.PASSED) {
             try {
                 val descriptor = materializePreparedApplication(record, content, run.path)

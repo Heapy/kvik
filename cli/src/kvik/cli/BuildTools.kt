@@ -38,13 +38,13 @@ internal class BuildTools(path: String) {
                 "jvm-worker" to worker.identity, "junit" to worker.junitIdentity)
         }
         for (target in targets.mapNotNull(NativeTarget::find)) {
-            val hostComponents = if (target == NativeTarget.MACOS_ARM64)
-                setOf(ToolComponent.SDK, ToolComponent.XCODE_TOOLCHAIN)
+            val hostComponents = if (target.isApple)
+                setOf(appleSdkComponent(target), ToolComponent.XCODE_TOOLCHAIN)
             else setOf(ToolComponent.SYSTEM, ToolComponent.NATIVE_TOOLCHAIN)
             require(roots.keys.containsAll(hostComponents)) { "${target.projectName} compilation requires its matching Native host" }
-            val hostIdentity = if (target == NativeTarget.MACOS_ARM64)
-                "sdk" to identity(ToolComponent.SDK) else "system" to identity(ToolComponent.SYSTEM)
-            val dependencies = if (target == NativeTarget.MACOS_ARM64)
+            val hostIdentity = if (target.isApple)
+                "sdk" to identity(appleSdkComponent(target)) else "system" to identity(ToolComponent.SYSTEM)
+            val dependencies = if (target.isApple)
                 nativeDependenciesIdentity(identity(ToolComponent.LLVM), identity(ToolComponent.LIBFFI), identity(ToolComponent.XCODE_TOOLCHAIN))
             else linuxNativeDependenciesIdentity(identity(ToolComponent.LLVM), identity(ToolComponent.LIBFFI), identity(ToolComponent.NATIVE_TOOLCHAIN))
             result[target.projectName] = mapOf("native" to identity(ToolComponent.KOTLIN_NATIVE),
