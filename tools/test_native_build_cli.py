@@ -115,7 +115,11 @@ class AnswerTest {
     assert resolved.returncode == 0, resolved.stdout + resolved.stderr
     validate(json.loads(resolved.stdout), 'dependencyResolution')
     cold, _ = invoke('cold-test')
-    assert len(cold['actions']) == 4 and all(action['status'] == 'executed' for action in cold['actions'])
+    assert {action['actionId'] for action in cold['actions']} == {
+        f'library:{target}:main', f'consumer:{target}:main', f'consumer:{target}:test-compile',
+        f'consumer:{target}:test-link', f'consumer:{target}:test',
+    }
+    assert all(action['status'] == 'executed' for action in cold['actions'])
     repeated, run = invoke('repeated-test')
     assert {action['actionId']: action['key'] for action in cold['actions']} == {action['actionId']: action['key'] for action in repeated['actions']}
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':test') else 'local_hit') for action in repeated['actions'])
