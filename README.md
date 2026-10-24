@@ -163,6 +163,28 @@ trees and reports every conflict, with `hiddenConflicts` identifying paths outsi
 the projection. View filters are not edit permissions. Offline view export needs
 a cached immutable inventory and configuration; it does not need source-file bytes.
 
+Kode can propose a text-first identifier rename in `.kt` and `.kts` sources:
+
+```sh
+/absolute/bin/kode --home /absolute/kode-store rename-identifier library \
+  oldName newName --base IMMUTABLE_REVISION > rename.json
+```
+
+The response contains `transaction.base`, `transaction.expectHead`, an intent and
+`transaction.operations` in the same format accepted by `kode tx --ops FILE`.
+Save that operations object to a file and apply it with `tx --base` and `--intent`,
+omitting `--ref` to create a detached candidate. Run Kvik `test` with the candidate's
+immutable revision and merge it into the desired reference only after checking
+the result. The proposal itself never publishes changes; `transaction` is null
+when no identifiers match.
+
+Repeat `--path PREFIX` to restrict the proposal to selected files or directories.
+Renames preserve comments, quoted text and executable bits. Affected backtick
+identifiers and string interpolation require an explicit edit. This operation
+rewrites identifier tokens without resolving symbols: a new name can collide
+with another declaration, and limited path selection can leave references behind.
+Compilation and tests on the complete candidate are required to check it.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).
