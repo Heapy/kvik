@@ -25,40 +25,78 @@ data class SourceProvenance(val provider: String, val project: String, val revis
     }
 }
 
-/** Complete regular-file/directory inventory. Root is implicit; all other parents, including empty directories, are explicit. */
-class SourceManifest(files: TreeManifest, directories: List<LogicalPath>, checkpoint: () -> Unit = {}) {
+/** An opaque provider-native reference. Its bytes are authenticated by the resolved provider, not by its spelling. */
+data class SourceBlob(val identity: String, val sizeBytes: Long) {
     init {
-        require(files.files.size <= 100_000 && directories.size <= 100_000 && files.files.size + directories.size <= 200_000) { "Source manifest too large" }
+        opaqueSourceValue(identity)
+        require(identity.encodeToByteArray().size <= 4096) { "Source blob identity exceeds 4096 bytes" }
+        require(sizeBytes >= 0) { "Negative source blob size" }
+    }
+    fun toJson(): JsonValue.Object = obj("identity" to identity.json(), "sizeBytes" to sizeBytes.json())
+    companion object {
+        fun fromJson(value: JsonValue): SourceBlob = value.fields(setOf("identity", "sizeBytes")).let {
+            SourceBlob(it.getValue("identity").stringValue(), it.getValue("sizeBytes").longValue())
+        }
+    }
+}
+
+data class SourceFileEntry(val path: LogicalPath, val blob: SourceBlob, val executable: Boolean = false) {
+    fun toJson(): JsonValue.Object = obj("path" to path.value.json(), "blob" to blob.toJson(), "executable" to executable.json())
+    companion object {
+        fun fromJson(value: JsonValue): SourceFileEntry = value.fields(setOf("path", "blob", "executable")).let {
+            SourceFileEntry(LogicalPath(it.getValue("path").stringValue()), SourceBlob.fromJson(it.getValue("blob")),
+                it.getValue("executable").booleanValue())
+        }
+    }
+}
+
+/** Complete regular-file/directory inventory. Root is implicit; all other parents, including empty directories, are explicit.
+ * Optional Kvik cache hints belong to the resolved handle and never change this canonical provider inventory. */
+class SourceManifest(files: List<SourceFileEntry>, directories: List<LogicalPath>, checkpoint: () -> Unit = {}) {
+    constructor(files: TreeManifest, directories: List<LogicalPath>, checkpoint: () -> Unit = {}) : this(
+        files.files.map { checkpoint(); SourceFileEntry(it.path, SourceBlob("sha256:${it.digest.hash}", it.digest.sizeBytes), it.executable) },
+        directories, checkpoint)
+    init {
+        require(files.size <= 100_000 && directories.size <= 100_000 && files.size + directories.size <= 200_000) { "Source manifest too large" }
         checkpoint()
     }
-    private val entries = files.files.toList().sortedBy { it.path.value }
+    private val entries = files.toList().sortedBy { it.path.value }
     private val folders = directories.toList().sortedBy { it.value }
-    val files: TreeManifest get() = TreeManifest(entries.toList())
+    val files: List<SourceFileEntry> get() = entries.toList()
     val directories: List<LogicalPath> get() = folders.toList()
     init {
         require(folders.distinct().size == folders.size) { "Duplicate source directory" }
         val paths = entries.map { it.path } + folders
         require(paths.distinct().size == paths.size) { "Source file/directory collision" }
         val directorySet = folders.toSet()
-        var pathBytes = 0L
+        val identities = mutableMapOf<String, Long>()
+        var metadataBytes = 64L
+        for (entry in entries) {
+            checkpoint()
+            val previous = identities.put(entry.blob.identity, entry.blob.sizeBytes)
+            require(previous == null || previous == entry.blob.sizeBytes) { "Contradictory sizes for source blob identity" }
+            metadataBytes += entry.toJson().canonical().encodeToByteArray().size + 1L
+            require(metadataBytes <= 16L * 1024 * 1024) { "Source manifest metadata exceeds 16 MiB" }
+        }
+        for (folder in folders) {
+            checkpoint()
+            metadataBytes += folder.value.json().canonical().encodeToByteArray().size + 1L
+            require(metadataBytes <= 16L * 1024 * 1024) { "Source manifest metadata exceeds 16 MiB" }
+        }
         for (path in paths) {
             checkpoint()
-            val size = path.value.encodeToByteArray().size
-            // Include JSON escaping and a conservative fixed allowance for each file's digest/mode framing.
-            pathBytes += path.value.json().canonical().encodeToByteArray().size + 256L
-            require(pathBytes <= 16L * 1024 * 1024) { "Source manifest metadata exceeds 16 MiB" }
-            require(size <= 4096) { "Source path too long" }
+            require(path.value.encodeToByteArray().size <= 4096) { "Source path too long" }
             val parent = path.value.substringBeforeLast('/', "")
             require(parent.isEmpty() || LogicalPath(parent) in directorySet) { "Missing source parent directory: ${path.value}" }
         }
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(),
-        "files" to entries.map(FileEntry::toJson).json(), "directories" to folders.map { it.value.json() }.json())
+        "files" to entries.map(SourceFileEntry::toJson).json(), "directories" to folders.map { it.value.json() }.json())
     val digest: Digest by lazy { Sha256.digest(toJson()) }
     companion object {
         fun fromJson(value: JsonValue): SourceManifest {
             val fields = value.fields(setOf("schemaVersion", "files", "directories")); fields.requireVersion()
-            return SourceManifest(TreeManifest(fields.getValue("files").arrayValue().map(FileEntry::fromJson)),
+            return SourceManifest(fields.getValue("files").arrayValue().map(SourceFileEntry::fromJson),
                 fields.getValue("directories").arrayValue().map { LogicalPath(it.stringValue()) })
         }
     }
@@ -75,15 +113,19 @@ fun interface SourcePathPolicy {
 }
 
 interface SourceSnapshotProvider {
-    /** Resolve once. Implementations must validate provider-native revision/tree/blob identities separately. */
+    /** Resolve once. Implementations must authenticate provider-native revision/tree identities. */
     fun resolve(selector: SourceSelector, checkpoint: () -> Unit): ResolvedSourceSnapshot
 }
 
 interface ResolvedSourceSnapshot {
     val provenance: SourceProvenance
     val manifest: SourceManifest
-    /** Fetch exactly this Kvik digest from the resolved revision. Bound reads before allocation; never follow a selector. */
-    fun fetch(digest: Digest, maxBytes: Int, checkpoint: () -> Unit): ByteArray?
+    /** Fetch this immutable native blob. Bound reads before allocation; never follow a moving selector. */
+    fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray?
+    /** Optional acceleration only: capture checks both this SHA-256 and the native identity before using cached bytes. */
+    fun knownDigest(blob: SourceBlob): Digest? = null
+    /** Authenticate bytes against the provider-native identity, throwing on mismatch. Called even for CAS hits. */
+    fun verify(blob: SourceBlob, bytes: ByteArray, checkpoint: () -> Unit)
 }
 
 data class ProviderSnapshot(val provenance: SourceProvenance, val manifestDigest: Digest, val snapshot: ProjectInputSnapshot)
@@ -114,11 +156,12 @@ class ProviderProjectSnapshotter(private val provider: SourceSnapshotProvider, p
 private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, private val manifest: SourceManifest,
     private val content: ContentStore, private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits,
     private val checkpoint: () -> Unit) {
-    private val files = manifest.files.files.associateBy { it.path.value }
+    private val files = manifest.files.associateBy { it.path.value }
     private val folders = manifest.directories.map { it.value }.toSet()
     private val children = linkedMapOf<String, MutableList<Pair<String, Boolean>>>()
     private val data = mutableMapOf<String, ByteArray>()
-    private val blobs = mutableMapOf<Digest, ByteArray>()
+    private val blobs = mutableMapOf<SourceBlob, Pair<Digest, ByteArray>>()
+    private val digests = mutableMapOf<String, Digest>()
     private val inputs = linkedMapOf<LogicalPath, FileEntry>()
     private val observedDirectories = linkedMapOf<String, JsonValue>()
     private var totalBytes = 0L
@@ -130,9 +173,9 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
         validateManifest()
         require(configurationPath != lockPath) { "Configuration and lock paths must differ" }
         requestedPath(configurationPath.value); requestedPath(lockPath.value)
-        if (expectedConfiguration != null && files[configurationPath.value]?.digest != expectedConfiguration)
-            throw SnapshotFailure("Configuration differs from expected source snapshot")
         val configurationBytes = read(configurationPath.value, minOf(limits.maxFileBytes, 4 * 1024 * 1024))
+        if (expectedConfiguration != null && digests.getValue(configurationPath.value) != expectedConfiguration)
+            throw SnapshotFailure("Configuration differs from expected source snapshot")
         val lockBytes = read(lockPath.value, minOf(limits.maxFileBytes, 16 * 1024 * 1024))
         val configuration = if (selection == SnapshotSelection.StandaloneScript) null else
             parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
@@ -219,34 +262,42 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
         val file = files[path] ?: throw SnapshotFailure("Missing required input file: $path")
         if (file.path in inputs) return
         read(path, limits.maxFileBytes)
-        inputs[file.path] = file
+        inputs[file.path] = FileEntry(file.path, digests.getValue(path), file.executable)
     }
 
     private fun read(path: String, maxBytes: Int): ByteArray {
         checkpoint()
         val entry = files[path] ?: throw SnapshotFailure("Missing required input file: $path")
-        if (entry.digest.sizeBytes > maxBytes) throw SnapshotFailure("Input byte limit exceeded: $path")
+        if (entry.blob.sizeBytes > maxBytes) throw SnapshotFailure("Input byte limit exceeded: $path")
         data[path]?.let { return it }
-        if (data.size >= limits.maxFiles || totalBytes + entry.digest.sizeBytes > limits.maxTotalBytes)
+        if (data.size >= limits.maxFiles || entry.blob.sizeBytes > limits.maxTotalBytes - totalBytes)
             throw SnapshotFailure("Input count/byte limit exceeded: $path")
-        val bytes = blobs[entry.digest] ?: run {
-            val cached = content.get(entry.digest)
+        val (digest, bytes) = blobs[entry.blob] ?: run {
             checkpoint()
-            val raw = cached ?: resolved.fetch(entry.digest, entry.digest.sizeBytes.toInt(), checkpoint)
+            val hint = resolved.knownDigest(entry.blob)
+            checkpoint()
+            if (hint != null && hint.sizeBytes != entry.blob.sizeBytes) throw SnapshotFailure("Source digest hint size mismatch: $path")
+            val cached = hint?.let(content::get)
+            checkpoint()
+            val raw = cached ?: resolved.fetch(entry.blob, entry.blob.sizeBytes.toInt(), checkpoint)
                 ?: throw SnapshotFailure("Missing source blob: $path")
             checkpoint()
-            if (raw.size.toLong() != entry.digest.sizeBytes) throw SnapshotFailure("Source blob size mismatch: $path")
+            if (raw.size.toLong() != entry.blob.sizeBytes) throw SnapshotFailure("Source blob size mismatch: $path")
             val fetched = raw.copyOf()
-            if (Sha256.digest(fetched) != entry.digest) throw SnapshotFailure("Source blob digest/size mismatch: $path")
+            val digest = Sha256.digest(fetched)
+            if (hint != null && digest != hint) throw SnapshotFailure("Source blob digest hint mismatch: $path")
+            // A cache hint authenticates neither the provider's native identity nor its revision. Do both checks.
+            resolved.verify(entry.blob, fetched.copyOf(), checkpoint)
+            checkpoint()
             if (cached == null) {
-                if (content.put(fetched.copyOf()) != entry.digest) throw SnapshotFailure("ContentStore returned an incorrect input digest")
+                if (content.put(fetched.copyOf()) != digest) throw SnapshotFailure("ContentStore returned an incorrect input digest")
                 checkpoint()
             }
-            blobs[entry.digest] = fetched
-            fetched
+            (digest to fetched).also { blobs[entry.blob] = it }
         }
-        totalBytes += entry.digest.sizeBytes
+        totalBytes += entry.blob.sizeBytes
         data[path] = bytes
+        digests[path] = digest
         return bytes
     }
 }

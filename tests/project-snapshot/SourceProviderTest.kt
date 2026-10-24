@@ -19,16 +19,24 @@ private fun providerDocument(): ByteArray = """{
   "scripts":{"probe":{"sources":["script/Main.kt"],"resources":["script/empty"],"dependencies":[]}}
 }""".encodeToByteArray()
 
-private class MemoryRevision(val contents: Map<String, ByteArray>, val directoryNames: List<String>, val revision: String = "r1") : ResolvedSourceSnapshot {
+private class MemoryRevision(val contents: Map<String, ByteArray>, val directoryNames: List<String>, val revision: String = "r1",
+    nativeIds: Boolean = false, private val provideHints: Boolean = true) : ResolvedSourceSnapshot {
     override val provenance = SourceProvenance("memory", "project", revision, "tree-$revision")
-    override val manifest = SourceManifest(TreeManifest(contents.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) }), directoryNames.map(::LogicalPath))
-    val requested = mutableListOf<Digest>()
-    var fetcher: ((Digest) -> ByteArray?)? = null
-    override fun fetch(digest: Digest, maxBytes: Int, checkpoint: () -> Unit): ByteArray? {
-        checkpoint(); requested += digest
-        val bytes = fetcher?.invoke(digest) ?: contents.values.firstOrNull { Sha256.digest(it) == digest }
+    private val entries = contents.map { (path, bytes) -> SourceFileEntry(LogicalPath(path), SourceBlob(
+        if (nativeIds) "native-object:$path" else "sha256:${Sha256.digest(bytes).hash}", bytes.size.toLong())) }
+    private val blobBytes = entries.associate { it.blob to contents.getValue(it.path.value) }
+    override val manifest = SourceManifest(entries, directoryNames.map(::LogicalPath))
+    val requested = mutableListOf<SourceBlob>()
+    val verified = mutableListOf<SourceBlob>()
+    override fun knownDigest(blob: SourceBlob): Digest? = if (provideHints) blobBytes[blob]?.let(Sha256::digest) else null
+    override fun verify(blob: SourceBlob, bytes: ByteArray, checkpoint: () -> Unit) {
+        checkpoint(); verified += blob
+        if (blobBytes[blob]?.contentEquals(bytes) != true) throw SnapshotFailure("Native blob identity mismatch")
+    }
+    override fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray? {
+        checkpoint(); requested += blob
         // The capture layer must independently reject a misbehaving provider's oversized response.
-        return bytes?.copyOf()
+        return blobBytes[blob]?.copyOf()
     }
 }
 private class MemoryProvider(var head: ResolvedSourceSnapshot) : SourceSnapshotProvider {
@@ -125,15 +133,16 @@ class SourceProviderTest {
         val good = revision()
         val wanted = Sha256.digest(good.contents.getValue("src/Main.kt"))
         fun broken(bytes: ByteArray?) = object : ResolvedSourceSnapshot by good {
-            override fun fetch(digest: Digest, maxBytes: Int, checkpoint: () -> Unit): ByteArray? =
-                if (digest == wanted) bytes else good.fetch(digest, maxBytes, checkpoint)
+            override fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray? =
+                if (good.knownDigest(blob) == wanted) bytes else good.fetch(blob, maxBytes, checkpoint)
         }
         for (bad in listOf(null, ByteArray(wanted.sizeBytes.toInt()) { 7 }, ByteArray(wanted.sizeBytes.toInt() + 1))) {
             assertFailsWith<SnapshotFailure> { capture(MemoryProvider(broken(bad))) }
         }
+        good.requested.clear()
         val store = ProviderStore(); store.bytes[wanted] = byteArrayOf(1)
         assertFailsWith<SnapshotFailure> { capture(MemoryProvider(good), store) }
-        assertFalse(wanted in good.requested)
+        assertFalse(good.requested.any { good.knownDigest(it) == wanted })
         val dishonestStore = object : ContentStore {
             override fun get(digest: Digest): ByteArray? = null
             override fun put(bytes: ByteArray) = Sha256.digest(byteArrayOf(9))
@@ -145,7 +154,7 @@ class SourceProviderTest {
         val good = revision(); val store = ProviderStore()
         val initial = capture(MemoryProvider(good), store)
         val offline = object : ResolvedSourceSnapshot by good {
-            override fun fetch(digest: Digest, maxBytes: Int, checkpoint: () -> Unit): ByteArray? = error("offline provider")
+            override fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray? = error("offline provider")
         }
         assertEquals(initial.snapshot.fingerprint, capture(MemoryProvider(offline), store).snapshot.fingerprint)
         store.bytes.remove(initial.snapshot.inputs.files.first().digest)
@@ -197,7 +206,7 @@ class SourceProviderTest {
         val identity = manifest.digest
         files.clear(); dirs.clear()
         assertEquals(identity, manifest.digest)
-        assertEquals(listOf(entry), manifest.files.files)
+        assertEquals(listOf(SourceFileEntry(entry.path, SourceBlob("sha256:${entry.digest.hash}", entry.digest.sizeBytes))), manifest.files)
         assertEquals(manifest.toJson(), SourceManifest.fromJson(manifest.toJson()).toJson())
         assertEquals(revision().provenance, SourceProvenance.fromJson(revision().provenance.toJson()))
         assertFails { SourceManifest.fromJson(JsonValue.Object(manifest.toJson().values + ("unknown" to true.json()))) }
@@ -210,8 +219,8 @@ class SourceProviderTest {
         assertFailsWith<SnapshotFailure> { capture(MemoryProvider(good), limits = SnapshotLimits(maxTotalBytes = 1)) }
         assertTrue(good.requested.isEmpty())
         val oversized = object : ResolvedSourceSnapshot by good {
-            override val manifest = SourceManifest(TreeManifest(good.manifest.files.files.map { if (it.path.value == "src/Main.kt")
-                it.copy(digest = Digest(it.digest.hash, 65L * 1024 * 1024)) else it }), good.manifest.directories)
+            override val manifest = SourceManifest(good.manifest.files.map { if (it.path.value == "src/Main.kt")
+                it.copy(blob = it.blob.copy(sizeBytes = 65L * 1024 * 1024)) else it }, good.manifest.directories)
         }
         assertFailsWith<SnapshotFailure> { capture(MemoryProvider(oversized)) }
         assertTrue(good.requested.none { it.sizeBytes > 64L * 1024 * 1024 })
@@ -225,8 +234,90 @@ class SourceProviderTest {
         assertSame(failure, caught)
         assertTrue(good.requested.isEmpty())
         val fetching = object : ResolvedSourceSnapshot by good {
-            override fun fetch(digest: Digest, maxBytes: Int, checkpoint: () -> Unit): ByteArray? { throw failure }
+            override fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray? { throw failure }
         }
         assertSame(failure, assertFailsWith<Cancelled> { capture(MemoryProvider(fetching)) })
     }
+
+    @Test fun unknownNativeIdsFetchOnlySelectedBlobsAndProduceTheSamePortableSnapshot() {
+        val original = revision()
+        val native = MemoryRevision(original.contents, original.directoryNames, nativeIds = true, provideHints = false)
+        val store = ProviderStore()
+        val captured = capture(MemoryProvider(native), store, SnapshotSelection.Script("probe"))
+        val equivalent = capture(MemoryProvider(original), selection = SnapshotSelection.Script("probe"))
+        assertEquals(equivalent.snapshot.fingerprint, captured.snapshot.fingerprint)
+        assertEquals(equivalent.snapshot.inputs, captured.snapshot.inputs)
+        val paths = setOf("kvik.json", "kvik.lock.json", "script/Main.kt")
+        val selected = native.manifest.files.filter { it.path.value in paths }.map { it.blob }.toSet()
+        assertEquals(selected, native.requested.toSet())
+        assertEquals(selected, native.verified.toSet())
+        assertEquals(paths.size, store.bytes.size)
+        assertNotEquals(equivalent.manifestDigest, captured.manifestDigest)
+        val configDigest = Sha256.digest(original.contents.getValue("kvik.json"))
+        val snapshotter = ProviderProjectSnapshotter(MemoryProvider(native), store, SourcePathPolicy.CaseSensitive)
+        snapshotter.capture(SourceSelector("project", "main"), LogicalPath("kvik.json"), LogicalPath("kvik.lock.json"), configDigest)
+        assertFailsWith<SnapshotFailure> { snapshotter.capture(SourceSelector("project", "main"), LogicalPath("kvik.json"),
+            LogicalPath("kvik.lock.json"), Sha256.digest(byteArrayOf(1))) }
+    }
+
+    @Test fun forgedHintWithValidSameSizeCachedBytesStillRequiresNativeAuthentication() {
+        val original = revision()
+        val native = MemoryRevision(original.contents, original.directoryNames, nativeIds = true)
+        val wanted = native.manifest.files.single { it.path.value == "src/Main.kt" }.blob
+        val forgedBytes = ByteArray(wanted.sizeBytes.toInt()) { 7 }
+        val forgedDigest = Sha256.digest(forgedBytes)
+        val store = ProviderStore(); store.bytes[forgedDigest] = forgedBytes
+        val dishonest = object : ResolvedSourceSnapshot by native {
+            override fun knownDigest(blob: SourceBlob): Digest? = if (blob == wanted) forgedDigest else native.knownDigest(blob)
+        }
+        val failure = assertFailsWith<SnapshotFailure> { capture(MemoryProvider(dishonest), store) }
+        assertTrue(failure.message!!.contains("Native blob"))
+        assertTrue(wanted in native.verified)
+        assertFalse(wanted in native.requested)
+        assertFalse(Sha256.digest(original.contents.getValue("src/Main.kt")) in store.bytes)
+    }
+
+    @Test fun hintsDoNotChangeManifestAndCachedBytesAreVerifiedForEachNativeIdentity() {
+        val original = revision(mapOf("src/Copy.kt" to "fun answer() = 42\n".encodeToByteArray()))
+        val native = MemoryRevision(original.contents, original.directoryNames, nativeIds = true)
+        val withoutHints = object : ResolvedSourceSnapshot by native {
+            override fun knownDigest(blob: SourceBlob): Digest? = null
+        }
+        val store = ProviderStore()
+        val initial = capture(MemoryProvider(withoutHints), store)
+        native.requested.clear(); native.verified.clear()
+        val cached = capture(MemoryProvider(native), store)
+        assertEquals(initial.manifestDigest, cached.manifestDigest)
+        assertEquals(initial.snapshot.fingerprint, cached.snapshot.fingerprint)
+        assertTrue(native.requested.isEmpty())
+        val identities = native.manifest.files.filter { it.path.value == "src/Main.kt" || it.path.value == "src/Copy.kt" }.map { it.blob }
+        assertEquals(2, identities.size)
+        assertTrue(native.verified.containsAll(identities))
+    }
+
+    @Test fun nativeIdentityBoundsAndContradictorySizesAreRejectedBeforeFetch() {
+        assertFailsWith<IllegalArgumentException> { SourceBlob("id", -1) }
+        assertFailsWith<IllegalArgumentException> { SourceBlob("é".repeat(2049), 1) }
+        val first = SourceFileEntry(LogicalPath("first"), SourceBlob("native-id", 1))
+        assertFailsWith<IllegalArgumentException> { SourceManifest(listOf(first,
+            first.copy(path = LogicalPath("second"), blob = SourceBlob("native-id", 2))), emptyList()) }
+        val allowed = SourceManifest(listOf(first, first.copy(path = LogicalPath("second"))), emptyList())
+        assertEquals(allowed.toJson(), SourceManifest.fromJson(allowed.toJson()).toJson())
+        assertFailsWith<IllegalArgumentException> { SourceManifest(List(4200) { index ->
+            SourceFileEntry(LogicalPath("file$index"), SourceBlob("x".repeat(4000) + index, 0)) }, emptyList()) }
+    }
+
+    @Test fun nativeVerificationCancellationPropagatesBeforeCasInsertion() {
+        class Cancelled : Exception()
+        val failure = Cancelled()
+        val original = revision(); val store = ProviderStore()
+        val cancelling = object : ResolvedSourceSnapshot by original {
+            override fun verify(blob: SourceBlob, bytes: ByteArray, checkpoint: () -> Unit) { throw failure }
+        }
+        assertSame(failure, assertFailsWith<Cancelled> { capture(MemoryProvider(cancelling), store) })
+        assertTrue(store.bytes.isEmpty())
+        capture(MemoryProvider(original), store)
+        assertSame(failure, assertFailsWith<Cancelled> { capture(MemoryProvider(cancelling), store) })
+    }
+
 }
