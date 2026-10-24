@@ -84,6 +84,20 @@ dependencies and installed tools. Missing or corrupt source content causes a
 failure. `verification --run PATH` checks the recorded revision using cached
 source content without starting Kode; unavailable content yields `indeterminate`.
 
+Kode revision claims appear in the result's `sourceClaims` with their original
+JSON declarations and `confirmed`, `refuted` or `unchecked` assessments. Kvik
+understands `{"kind":"check-passes","root":"sub","check":"library:jvm:test"}` and
+`{"kind":"test-passes","root":"sub","module":"library","target":"jvm","test":"EXACT_TEST_ID"}`.
+`root` selects the configuration directory inside the revision; omitting it
+means the revision root. Claims for another project directory remain unchecked.
+Use a test ID from the structured test results. A failed attempt refutes the
+test claim, including a failed attempt followed by a successful retry. Skipped,
+missing, unrequested or incomplete checks remain unchecked. Unknown formats,
+including ABI and unaffected-module claims, are retained without interpretation.
+Assessments describe the recorded run and do not change its success or failure.
+This requires Kode's `log --claim-values-as-text` support; cached declarations
+are required for offline builds and queries of runs that include assessments.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).

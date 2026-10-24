@@ -106,6 +106,8 @@ interface SourceSnapshotProvider {
 interface ResolvedSourceSnapshot {
     val provenance: SourceProvenance
     val manifest: SourceManifest
+    /** Optional revision metadata. Retrieval must remain bound to this immutable revision. */
+    fun claims(checkpoint: () -> Unit): RevisionClaims { checkpoint(); return RevisionClaims(emptyMap()) }
     /** Fetch this immutable native blob. Bound reads before allocation; never follow a moving selector. */
     fun fetch(blob: SourceBlob, maxBytes: Int, checkpoint: () -> Unit): ByteArray?
     /** Optional acceleration only: capture checks both this SHA-256 and the native identity before using cached bytes. */

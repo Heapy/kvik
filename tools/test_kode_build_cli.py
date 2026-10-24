@@ -128,11 +128,12 @@ class PassingTests {
         result = command(label, kode, ['--home', kode_home, *arguments], timeout=30)
         return json.loads(result.stdout)
 
-    def transaction(label, base, operations):
+    def transaction(label, base, operations, claims=None):
         path = case/(label+'.operations.json')
         path.write_text(json.dumps(dict(schemaVersion=1, operations=operations)))
         return kode_command(label, 'tx', 'fixture', '--base', base, '--ref', 'main', '--expect-head', base,
-                            '--intent', label, '--ops', path)['revision']
+                            '--intent', label, '--ops', path,
+                            *([] if claims is None else ['--claims', json.dumps(claims)]))['revision']
 
     def source_args(revision):
         # Relative operational paths resolve against cwd, not the selected config parent.
@@ -207,14 +208,29 @@ class PassingTests {
     local_build, _, _ = built('local-build', 'build', offline=True)
     local_test, _, _ = built('local-test', 'test', offline=True)
     assert 'source' not in local_test
+    assert 'sourceClaims' not in local_test
+    claims = {'build': dict(kind='check-passes', root='sub', check='library:jvm:build'),
+              'tests': dict(kind='check-passes', root='sub', check='library:jvm:test'),
+              'regression': dict(kind='test-passes', root='sub', module='library', target='jvm', test=local_test['tests'][0]['id']),
+              'unknown-number': 0.125, 'api': dict(kind='abi-unchanged', module='library'),
+              'other-project': dict(kind='check-passes', root='different', check='library:jvm:test')}
+    unchecked_claims = {key: 'unchecked' for key in claims}
+
+    def assessments(record):
+        assert {item['id']: json.loads(item['declaration']) for item in record['sourceClaims']} == claims, record
+        return {item['id']: item['status'] for item in record['sourceClaims']}
+
     kode_command('kode-init', 'init')
     base = kode_command('kode-project', 'projects', 'add', 'fixture', '--intent', 'Create build fixture')['revision']
     revision = transaction('import-project', base, [dict(op='write', path='sub/'+name,
-        contentFile=str(project/name)) for name in initial_files] + [dict(op='write', path='unrelated.txt', content='not selected')])
+        contentFile=str(project/name)) for name in initial_files] + [dict(op='write', path='unrelated.txt', content='not selected')], claims)
     provider_build, _, _ = built('provider-build', 'build', 'main')
     provider_test, provider_run, _ = built('provider-test', 'test', revision)
     binding = source_binding(provider_build, revision)
     assert source_binding(provider_test, revision) == binding
+    assert assessments(provider_build) == {**unchecked_claims, 'build': 'confirmed'}
+    expected_test_claims = {**unchecked_claims, 'tests': 'confirmed', 'regression': 'confirmed'}
+    assert assessments(provider_test) == expected_test_claims
     for local, provider in ((local_build, provider_build), (local_test, provider_test)):
         assert action_keys(provider) == action_keys(local), (local['actions'], provider['actions'])
         for key in ('inputSnapshot', 'configuration', 'dependencyLock', 'composition', 'toolchains'):
@@ -225,7 +241,7 @@ class PassingTests {
     changed_config['name'] = 'advancedConfiguration'
     newer = transaction('advance-main', revision, [
         dict(op='write', path='sub/kvik.json', content=json.dumps(changed_config)),
-        dict(op='write', path='sub/src/Main.kt', content='package fixture\nfun answer(): Int = 99\n')])
+        dict(op='write', path='sub/src/Main.kt', content='package fixture\nfun answer(): Int = 99\n')], {'new-head-only': True})
     # Keep matching local files for the later no-fallback challenge, but first prove queries ignore local changes.
     (project/'src/Main.kt').write_text('this local working copy is intentionally invalid\n')
     (project/'kvik.json').write_text('{}')
@@ -244,6 +260,7 @@ class PassingTests {
         assert action_keys(offline_test) == action_keys(local_test)
         cached(offline_build)
         cached(offline_test, test=True)
+        assert assessments(offline_test) == expected_test_claims
         query('offline-query-without-provider', provider_run)
         source_digest = digest(initial_files['src/Main.kt'])
         blob = store/'blobs'/f"{source_digest['hash']}-{source_digest['sizeBytes']}"
@@ -264,6 +281,26 @@ class PassingTests {
             finally:
                 blob.write_bytes(saved)
         query('offline-query-restored', provider_run)
+        claim_paths = [path for path in (store/'source-provider').glob('*/*.json')
+                       if (key := json.loads(path.read_text())['key'])['kind'] == 'claims' and key['identity'] == revision]
+        assert len(claim_paths) == 1, claim_paths
+        claim_path = claim_paths[0]
+        saved_claims = claim_path.read_bytes()
+        for corruption in ('missing', 'corrupt'):
+            try:
+                if corruption == 'missing':
+                    claim_path.unlink()
+                else:
+                    altered = json.loads(saved_claims)
+                    altered['value']['claims']['entries']['unknown-number'] = '0.5'
+                    claim_path.write_text(json.dumps(altered))
+                query('offline-claims-'+corruption, provider_run, 'indeterminate')
+                refused = command('offline-build-claims-'+corruption, runtime,
+                    [*build_args('build', revision), '--offline'], expected=2)
+                assert not any(v.get('type') == 'action-started' for v in objects(refused))
+            finally:
+                claim_path.write_bytes(saved_claims)
+        query('offline-claims-restored', provider_run)
     finally:
         hidden_kode.rename(kode)
         hidden_home.rename(kode_home)
@@ -290,6 +327,15 @@ class PassingTests {
     diagnostic = rejected[0]['diagnostic']
     validate(diagnostic, 'diagnostic')
     assert diagnostic['source']['provenance']['revision'] == bad_lock and diagnostic['source']['root'] == 'sub', diagnostic
+    failing_test = transaction('refuted-test-revision', bad_lock, [
+        dict(op='write', path='sub/'+lock_name, content=initial_files[lock_name].decode()),
+        dict(op='write', path='sub/src/Main.kt', content='package fixture\nfun answer(): Int = 41\n')], claims)
+    refuted, refuted_run, _ = built('provider-refuted-test', 'test', failing_test, expected=1)
+    assert assessments(refuted) == {**unchecked_claims, 'tests': 'refuted', 'regression': 'refuted'}
+    retained = command('query-refuted-test', runtime, ['verification', '--run', refuted_run], expected=1)
+    retained_value = json.loads(retained.stdout)
+    validate(retained_value, 'verificationQuery')
+    assert retained_value['freshness'] == 'current' and retained_value['verification']['sourceClaims'] == refuted['sourceClaims']
     # Interruption during source acquisition must end the owned provider before returning.
     marker = case/'waiting-provider.pid'
     waiting_provider = case/'waiting-provider'

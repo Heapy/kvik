@@ -1,6 +1,7 @@
 package kvik.kodesource
 
 import kvik.core.Digest
+import kvik.core.RevisionClaims
 import kvik.projectsnapshot.SourceBlob
 import kvik.projectsnapshot.SourceManifest
 
@@ -15,6 +16,8 @@ data class KodeResponse(val exitCode: Int, val stdout: ByteArray, val stderr: By
 /** Hints only. Manifests and selected blob bytes are reverified against native Git identities on every use.
  * Implementations must bound stored-record reads and propagate I/O/cancellation failures. */
 interface KodeSourceCache {
+    fun claims(project: String, revision: String): RevisionClaims?
+    fun storeClaims(project: String, revision: String, claims: RevisionClaims)
     fun revision(project: String, revision: String): ByteArray?
     fun storeRevision(project: String, revision: String, bytes: ByteArray)
     fun manifest(project: String, tree: String): SourceManifest?

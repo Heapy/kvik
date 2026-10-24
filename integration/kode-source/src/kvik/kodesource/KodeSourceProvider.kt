@@ -66,6 +66,29 @@ class KodeSourceProvider(
         override val provenance = SourceProvenance("kode", project, revision, tree)
         private val declared = manifest.files.map { it.blob }.toSet()
 
+        override fun claims(checkpoint: () -> Unit): RevisionClaims {
+            checkpoint()
+            cache?.claims(project, provenance.revision)?.let { checkpoint(); return it }
+            if (offline) throw SnapshotFailure("Offline kode revision claims are unavailable")
+            val fields = response(listOf("log", project, "--rev", provenance.revision, "--max", "1", "--claim-values-as-text"),
+                CLAIMS_RESPONSE_LIMIT, "log", checkpoint)
+                .fields(setOf("schemaVersion", "operation", "project", "revision", "tree", "claimsEncoding", "entries"))
+            require(fields.getValue("project").stringValue() == project && fields.getValue("revision").stringValue() == provenance.revision &&
+                fields.getValue("tree").stringValue() == provenance.tree && fields.getValue("claimsEncoding").stringValue() == "json-values") {
+                "Kode revision claims scope or encoding mismatch"
+            }
+            val entries = fields.getValue("entries").arrayValue()
+            require(entries.size == 1) { "Kode revision claims require exactly one log entry" }
+            val entry = entries.single().fields(setOf("revision", "tree", "parents", "authoredAt", "intent"), setOf("kind", "base"))
+            require(entry.getValue("revision").stringValue() == provenance.revision && entry.getValue("tree").stringValue() == provenance.tree) {
+                "Kode claim entry belongs to a different revision"
+            }
+            val intent = entry.getValue("intent").fields(setOf("summary"), setOf("details", "task", "agent", "request", "claims"))
+            val claims = RevisionClaims(intent["claims"]?.objectValue()?.mapValues { it.value.stringValue() } ?: emptyMap())
+            checkpoint(); cache?.storeClaims(project, provenance.revision, claims); checkpoint()
+            return claims
+        }
+
         private fun declared(blob: SourceBlob) { require(blob in declared) { "Blob does not belong to the resolved kode inventory" } }
 
         override fun knownDigest(blob: SourceBlob): Digest? {
@@ -153,6 +176,7 @@ class KodeSourceProvider(
         private const val RESOLVE_LIMIT = 16 * 1024
         private const val MANIFEST_LIMIT = 16 * 1024 * 1024
         private const val MAX_BLOB_BYTES = 64 * 1024 * 1024
+        private const val CLAIMS_RESPONSE_LIMIT = 8 * 1024 * 1024
     }
 }
 

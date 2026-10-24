@@ -18,6 +18,9 @@ private class MemoryContent : ContentStore {
     }
 }
 private class MemoryCache : KodeSourceCache {
+    var claims: RevisionClaims? = null
+    override fun claims(project: String, revision: String) = claims
+    override fun storeClaims(project: String, revision: String, claims: RevisionClaims) { check(!readOnly); this.claims = claims }
     var tree: SourceManifest? = null
     var commit: ByteArray? = null
     var readOnly = false
@@ -44,6 +47,7 @@ private class Fixture(val width: Int = 40, treeOverride: String? = null) : KodeT
     val bounds = mutableListOf<Int>()
     var rewrite: (List<String>, JsonValue.Object) -> JsonValue.Object = { _, json -> json }
     var responseOverride: ((List<String>, Int) -> KodeResponse?)? = null
+    var claims = mapOf("known" to "{\"kind\":\"check-passes\",\"check\":\"library:jvm:build\"}", "unknown" to "1.25")
     override fun execute(arguments: List<String>, maxOutputBytes: Int, checkpoint: () -> Unit): KodeResponse {
         checkpoint(); calls += arguments.toList(); bounds += maxOutputBytes
         responseOverride?.invoke(arguments, maxOutputBytes)?.let { return it }
@@ -68,6 +72,13 @@ private class Fixture(val width: Int = 40, treeOverride: String? = null) : KodeT
                 val binary = path == "assets/binary.bin"
                 scope + mapOf("blob" to arguments[2].json(), "encoding" to (if (binary) "base64" else "utf-8").json(),
                     "content" to (if (binary) Base64.encode(contents.getValue(path)) else contents.getValue(path).decodeToString()).json())
+            }
+            "log" -> {
+                assertEquals(listOf("log", "fixture", "--rev", revision, "--max", "1", "--claim-values-as-text"), arguments)
+                scope + mapOf("revision" to revision.json(), "tree" to tree.json(), "claimsEncoding" to "json-values".json(),
+                    "entries" to listOf(obj("revision" to revision.json(), "tree" to tree.json(), "parents" to emptyList<JsonValue>().json(),
+                        "authoredAt" to "2000-01-01T00:00:00Z".json(), "intent" to obj("summary" to "Claims".json(),
+                            "claims" to JsonValue.Object(claims.mapValues { it.value.json() })))).json())
             }
             else -> error("Unexpected command")
         }
@@ -315,5 +326,42 @@ class KodeSourceProviderTest {
         val clean = Fixture()
         assertSame(stopped, assertFailsWith<Cancelled> { capture(clean, cacheFailure) })
         assertEquals(listOf("resolve", "revision-object"), clean.calls.map { it[0] })
+    }
+
+    @Test fun claimsUsePinnedLogAndRemainLosslessAndOfflineWithoutTransportOrWrites() {
+        val fixture = Fixture(); val cache = MemoryCache()
+        val resolved = KodeSourceProvider(fixture, cache).resolve(SELECTOR) {}
+        assertEquals(fixture.claims, resolved.claims {}.entries)
+        assertEquals("log", fixture.calls.last().first())
+        fixture.calls.clear(); cache.readOnly = true
+        val offline = KodeSourceProvider(fixture, cache, offline = true).resolve(SourceSelector("fixture", fixture.revision)) {}
+        assertEquals(fixture.claims, offline.claims {}.entries)
+        assertTrue(fixture.calls.isEmpty())
+        cache.claims = null
+        assertFailsWith<SnapshotFailure> { offline.claims {} }
+        assertTrue(fixture.calls.isEmpty())
+    }
+
+    @Test fun mismatchedClaimScopeEncodingAndEntryAreRejectedBeforeCaching() {
+        for (field in listOf("project", "revision", "tree", "claimsEncoding", "entries")) {
+            val fixture = Fixture(); val cache = MemoryCache()
+            val resolved = KodeSourceProvider(fixture, cache).resolve(SELECTOR) {}
+            fixture.rewrite = { args, value ->
+                if (args.first() != "log") value else JsonValue.Object(value.values + (field to
+                    if (field == "entries") emptyList<JsonValue>().json() else "wrong".json()))
+            }
+            assertFails { resolved.claims {} }
+            assertNull(cache.claims)
+        }
+        val fixture = Fixture(); val cache = MemoryCache()
+        val resolved = KodeSourceProvider(fixture, cache).resolve(SELECTOR) {}
+        fixture.rewrite = { args, value ->
+            if (args.first() != "log") value else {
+                val entry = value.values.getValue("entries").arrayValue().single().objectValue()
+                JsonValue.Object(value.values + ("entries" to listOf(JsonValue.Object(entry + ("revision" to "different".json()))).json()))
+            }
+        }
+        assertFails { resolved.claims {} }
+        assertNull(cache.claims)
     }
 }

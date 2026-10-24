@@ -26,6 +26,7 @@ fun ResolvedSourceSnapshot.scopedTo(root: String, checkpoint: () -> Unit = {}): 
     return object : ResolvedSourceSnapshot {
         override val provenance = provenance
         override val manifest = manifest
+        override fun claims(checkpoint: () -> Unit): RevisionClaims = source.claims(checkpoint)
 
         private fun requireDeclared(blob: SourceBlob) {
             require(blob in blobs) { "Blob does not belong to the scoped source inventory" }

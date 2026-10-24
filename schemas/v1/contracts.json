@@ -4676,6 +4676,13 @@
         },
         "source": {
           "$ref": "#/$defs/sourceReference"
+        },
+        "sourceClaims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/claimAssessment"
+          },
+          "maxItems": 1024
         }
       },
       "required": [
@@ -4695,7 +4702,12 @@
         "freshnessAtCompletion",
         "reproduction"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "sourceClaims": [
+          "source"
+        ]
+      }
     },
     "testAttemptCounts": {
       "type": "object",
@@ -9837,6 +9849,63 @@
         "provenance",
         "root",
         "manifest"
+      ],
+      "additionalProperties": false
+    },
+    "revisionClaims": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "entries": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 262144
+          },
+          "maxProperties": 1024,
+          "propertyNames": {
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "entries"
+      ],
+      "additionalProperties": false,
+      "description": "Claim values are retained JSON text, including unknown JSON types. Canonical UTF-8 metadata must also fit 1 MiB."
+    },
+    "claimAssessment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "declaration": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "status": {
+          "enum": [
+            "confirmed",
+            "refuted",
+            "unchecked"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "id",
+        "declaration",
+        "status",
+        "reason"
       ],
       "additionalProperties": false
     },

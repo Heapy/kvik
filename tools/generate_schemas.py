@@ -370,6 +370,8 @@ DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1), "source": ref("sourceReference")}, optional=("source",))
+DEFS["verification"]["properties"]["sourceClaims"] = array(ref("claimAssessment"), maxItems=1024)
+DEFS["verification"]["dependentRequired"] = {"sourceClaims": ["source"]}
 REPORT_STATUS = enum("passed", "failed", "incomplete", "cancelled")
 DEFS["testAttemptCounts"] = object_({name: INT for name in ("known", "passed", "failed", "skipped", "testsWithUnknownAttempts")})
 DEFS["testReportNotice"] = object_({"code": NONEMPTY, "message": STRING, "check": nullable(ref("requestedCheck"))})
@@ -748,6 +750,12 @@ DEFS["workerResult"]["allOf"] = [{"if": {"properties": {"status": {"const": "suc
 SOURCE_IDENTITY = {"type": "string", "minLength": 1, "maxLength": 4096, "not": {"pattern": r"[\u0000-\u001f\u007f]"}}
 DEFS["sourceProvenance"] = versioned({key: SOURCE_IDENTITY for key in ("provider", "project", "revision", "tree")})
 DEFS["sourceReference"] = versioned({"provenance": ref("sourceProvenance"), "root": {"anyOf": [{"const": ""}, PATH]}, "manifest": ref("digest")})
+DEFS["revisionClaims"] = versioned({"entries": {**mapping({"type": "string", "maxLength": 262144}),
+    "maxProperties": 1024, "propertyNames": {"maxLength": 4096}}})
+DEFS["revisionClaims"]["description"] = "Claim values are retained JSON text, including unknown JSON types. Canonical UTF-8 metadata must also fit 1 MiB."
+DEFS["claimAssessment"] = object_({"id": {"type": "string", "maxLength": 4096},
+    "declaration": {"type": "string", "maxLength": 262144}, "status": enum("confirmed", "refuted", "unchecked"),
+    "reason": {"type": "string", "minLength": 1, "maxLength": 4096}})
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
     "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest")},
     optional=("source", "sourceRoot", "sourceManifest"))

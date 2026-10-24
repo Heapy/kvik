@@ -510,6 +510,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     failure.message ?: "Cannot materialize library artifacts"))
             }
         }
+        if (sourceProject != null) record = record.copy(sourceClaims = assessSourceClaims(sourceProject.claims, record))
         NativeFiles.writeNew("${run.path}/verification.json", record.toJson().canonical().encodeToByteArray())
         NativeFiles.syncDirectory(run.path)
         val finished = journal.emit("run-finished", record.toJson() as JsonValue.Object, publishStdout = false)

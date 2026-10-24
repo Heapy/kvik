@@ -5,7 +5,7 @@ import kvik.core.*
 /** Strict v1 persisted-record parsing. Reuses core invariants; does not rerun execution proofs. */
 fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
     val fields = value.fields(setOf("schemaVersion", "runId", "requestedChecks", "completedChecks", "inputSnapshot", "configuration", "dependencyLock",
-        "composition", "toolchains", "actions", "tests", "testCounts", "status", "freshnessAtCompletion", "reproduction"), setOf("source"))
+        "composition", "toolchains", "actions", "tests", "testCounts", "status", "freshnessAtCompletion", "reproduction"), setOf("source", "sourceClaims"))
     fields.requireVersion()
     fun checks(name: String): Set<String> {
         val values = fields.getValue(name).arrayValue().map { it.stringValue() }
@@ -21,7 +21,13 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
             require(actions.map { it.actionId }.distinct().size == actions.size) { "Duplicate action result in verification record" }
         }, fields.getValue("tests").arrayValue().map(TestResult::fromJson), testCountsFromJson(fields.getValue("testCounts")),
         fields.getValue("status").enumValue(), fields.getValue("freshnessAtCompletion").enumValue(),
-        fields.getValue("reproduction").arrayValue().map { it.stringValue() }, fields["source"]?.let(SourceReference::fromJson)).also { record ->
+        fields.getValue("reproduction").arrayValue().map { it.stringValue() }, fields["source"]?.let(SourceReference::fromJson),
+        fields["sourceClaims"]?.arrayValue()?.map(ClaimAssessment::fromJson)).also { record ->
+        record.sourceClaims?.let { claims ->
+            require(assessSourceClaims(RevisionClaims(claims.associate { it.id to it.declaration }), record) == claims) {
+                "Claim assessments do not match the recorded checks"
+            }
+        }
         for (check in record.requestedChecks.filter(::scriptExecutionCheck)) {
             val terminal = record.actions.singleOrNull { it.actionId == check }
             require(terminal?.status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) { "Persisted script execution cannot be a cache hit: $check" }

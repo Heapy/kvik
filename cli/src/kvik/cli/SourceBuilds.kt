@@ -14,6 +14,7 @@ internal class PreparedSourceProject(
     val options: KodeProjectOptions,
     val reference: SourceReference,
     val namespace: Digest,
+    val claims: RevisionClaims,
     private val resolved: ResolvedSourceSnapshot,
 ) {
     fun capture(content: ContentStore, lockPath: LogicalPath, selection: SnapshotSelection, checkpoint: () -> Unit): ProjectInputSnapshot =
@@ -122,13 +123,14 @@ private fun prepareResolvedSource(source: KodeProjectOptions, root: String, stor
         val parsed = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
         sourceCheckpoint()
         return PreparedSourceProject(ProjectFile(root, LogicalPath(configuration.value.substringAfterLast('/')), bytes, parsed),
-            source, reference, namespace, resolved)
+            source, reference, namespace, resolved.claims(::sourceCheckpoint), resolved)
     } catch (failure: CliFailure) { throw failure }
     catch (failure: Exception) { throw CliFailure("KVIK_SOURCE_INPUT", DiagnosticCategory.CONFIGURATION,
         failure.message ?: "Cannot capture source revision", ExitStatus.INVALID_CONFIGURATION, reference) }
 }
 
-internal fun retainedSourceFingerprint(metadata: Map<String, JsonValue>, reference: SourceReference): Digest {
+internal fun retainedSourceFingerprint(metadata: Map<String, JsonValue>, reference: SourceReference,
+                                       claims: List<ClaimAssessment>?): Digest {
     require(metadata["source"]?.let(SourceReference::fromJson) == reference) { "Run source metadata differs from verification" }
     val location = metadata.getValue("sourceCache").fields(setOf("store", "namespace"))
     val store = location.getValue("store").stringValue()
@@ -136,6 +138,9 @@ internal fun retainedSourceFingerprint(metadata: Map<String, JsonValue>, referen
     val provider = KodeSourceProvider(KodeTransport { _, _, _ -> error("Verification cannot invoke a source provider") }, cache, offline = true)
     val resolved = provider.resolve(SourceSelector(reference.provenance.project, reference.provenance.revision)) {}
     require(resolved.provenance == reference.provenance && resolved.manifest.digest == reference.manifest) { "Retained source identity differs" }
+    if (claims != null) require(resolved.claims {}.entries == claims.associate { it.id to it.declaration }) {
+        "Retained revision claims differ from verification"
+    }
     return captureResolved(resolved, reference.root, LogicalPath(metadata.getValue("configurationPath").stringValue()),
         LogicalPath(metadata.getValue("lockPath").stringValue()), metadata["inputSelection"]?.let(SnapshotSelection::fromJson) ?: SnapshotSelection.Project,
         ReadOnlySourceContent(store)) {}.fingerprint

@@ -98,11 +98,23 @@ data class VerificationRecord(
     val freshnessAtCompletion: Freshness,
     val reproduction: List<String>,
     val source: SourceReference? = null,
+    val sourceClaims: List<ClaimAssessment>? = null,
 ) {
     init {
+        if (sourceClaims != null) {
+            require(source != null) { "Claim assessments require a source revision" }
+            require(sourceClaims.map { it.id }.distinct().size == sourceClaims.size) { "Duplicate claim assessment" }
+            RevisionClaims(sourceClaims.associate { it.id to it.declaration })
+        }
         require(runId.isNotBlank() && requestedChecks.isNotEmpty() && reproduction.isNotEmpty())
         require(completedChecks.all { it in requestedChecks })
         require(tests.map { Triple(it.module, it.target, it.id) }.distinct().size == tests.size) { "Duplicate test identity" }
+        for (check in completedChecks.filter { it.endsWith(":test") }) {
+            val observed = tests.filter { "${it.module}:${it.target}:test" == check }
+            require(observed.any { it.status == TestStatus.PASSED } && observed.none { it.hasFailedAttempt }) {
+                "Completed test check requires an observed pass and no failed attempts: $check"
+            }
+        }
         require(testCounts.executed == tests.count { it.status != TestStatus.SKIPPED } &&
             testCounts.failed == tests.count { it.status == TestStatus.FAILED } &&
             testCounts.skipped == tests.count { it.status == TestStatus.SKIPPED }) { "Test counts do not match recorded identities" }
@@ -127,6 +139,7 @@ data class VerificationRecord(
         "status" to status.name.lowercase().json(), "freshnessAtCompletion" to freshnessAtCompletion.name.lowercase().json(),
         "reproduction" to reproduction.map { it.json() }.json(),
     ).let { if (source == null) it else JsonValue.Object(it.values + ("source" to source.toJson())) }
+        .let { if (sourceClaims == null) it else JsonValue.Object(it.values + ("sourceClaims" to sourceClaims.map { claim -> claim.toJson() }.json())) }
 }
 
 /** Complete manifest includes source directory inventories, configuration and lockfiles. */

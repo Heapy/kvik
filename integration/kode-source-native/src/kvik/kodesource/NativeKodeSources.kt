@@ -25,7 +25,7 @@ class NativeKodeTransport(
         // A 64 MiB selected file can expand sixfold when encoded as a JSON string.
         require(maxOutputBytes in 0..(64 * 1024 * 1024 * 6 + 4096)) { "Invalid kode output limit" }
         require(arguments.isNotEmpty() && arguments.size <= 32 && arguments.none { '\u0000' in it })
-        require(arguments.first() in setOf("resolve", "revision-object", "tree", "blob")) { "Only read-only kode source operations are supported" }
+        require(arguments.first() in setOf("resolve", "revision-object", "tree", "blob", "log")) { "Only read-only kode source operations are supported" }
         require(arguments.sumOf { it.encodeToByteArray().size.toLong() } <= 64 * 1024)
         require(arguments.none { it == "--home" || it.startsWith("--home=") }) { "Transport owns kode home selection" }
         checkpoint()
@@ -84,6 +84,19 @@ class NativeKodeTransport(
  * A digest record is only a hint: KodeSourceProvider authenticates every selected blob against its Git identity. */
 class NativeKodeSourceCache(private val root: String, private val namespace: Digest) : KodeSourceCache {
     init { NativeFiles.validateAbsolute(root) }
+
+    override fun claims(project: String, revision: String): RevisionClaims? =
+        read(objectKey("claims", project, revision), CLAIMS_LIMIT)?.let { value ->
+            val fields = value.fields(setOf("claims", "digest"))
+            val claims = fields.getValue("claims")
+            require(Sha256.digest(claims) == Digest.fromJson(fields.getValue("digest"))) { "Corrupt cached revision claims" }
+            RevisionClaims.fromJson(claims)
+        }
+
+    override fun storeClaims(project: String, revision: String, claims: RevisionClaims) {
+        val value = claims.toJson()
+        write(objectKey("claims", project, revision), obj("claims" to value, "digest" to Sha256.digest(value).toJson()), CLAIMS_LIMIT)
+    }
 
     override fun revision(project: String, revision: String): ByteArray? =
         read(objectKey("revision", project, revision), REVISION_RECORD_LIMIT)?.let { value ->
@@ -155,5 +168,6 @@ class NativeKodeSourceCache(private val root: String, private val namespace: Dig
         private const val REVISION_RECORD_LIMIT = 1536 * 1024
         private const val MANIFEST_LIMIT = 17 * 1024 * 1024
         private const val DIGEST_LIMIT = 16 * 1024
+        private const val CLAIMS_LIMIT = 2 * 1024 * 1024
     }
 }
