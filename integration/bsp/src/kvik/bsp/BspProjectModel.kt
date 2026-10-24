@@ -2,6 +2,8 @@ package kvik.bsp
 
 import kvik.core.*
 
+data class BspTarget(val uri: String, val module: String, val target: String, val compilation: String)
+
 /** Encode an absolute POSIX path as a file URI, including UTF-8 bytes and URI delimiters. */
 fun bspFileUri(absolutePath: String): String {
     require(absolutePath.startsWith('/') && '\u0000' !in absolutePath) { "BSP file URI requires an absolute path" }
@@ -55,7 +57,21 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         requireNotNull(byUri[uri]) { "Unknown BSP target: $uri" }
     }
 
-    fun targets(): JsonValue.Object = obj("targets" to compilations.map { compilation ->
+    fun select(targetUris: List<String>): List<BspTarget> = selected(targetUris).map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
+
+    /** Compilation action identities are shared with the ordinary project graph. */
+    fun actionTarget(actionId: String): BspTarget? {
+        val parts = actionId.split(':')
+        if (parts.size != 3) return null
+        val scope = when (parts[2]) { "main" -> "main"; "test-compile", "test-link" -> "test"; else -> return null }
+        return byUri[targetUri(parts[0], parts[1], scope)]?.let { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
+    }
+
+    fun containsSource(target: BspTarget, path: String): Boolean = try {
+        belongs(LogicalPath(path), byUri.getValue(target.uri).directories)
+    } catch (_: IllegalArgumentException) { false }
+
+    fun targets(compileTargets: Set<String> = emptySet(), testTargets: Set<String> = emptySet()): JsonValue.Object = obj("targets" to compilations.map { compilation ->
         val (module, target, scope) = compilation
         val dependencies = compilation.sourceSets.flatMap { it.dependencies }.filterIsInstance<Dependency.Module>()
             .map { targetUri(it.module, target.name, "main") }.toMutableList()
@@ -69,7 +85,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
             "tags" to listOf((if (scope == "test") "test" else if (target.application != null) "application" else "library").json()).json(),
             "languageIds" to listOf("kotlin".json()).json(),
             "dependencies" to dependencies.distinct().map { obj("uri" to it.json()) }.json(),
-            "capabilities" to obj("canCompile" to false.json(), "canTest" to false.json(), "canRun" to false.json(), "canDebug" to false.json()),
+            "capabilities" to obj("canCompile" to (target.name in compileTargets).json(), "canTest" to (scope == "test" && target.name in testTargets).json(), "canRun" to false.json(), "canDebug" to false.json()),
             "dataKind" to "kvik-kotlin".json(),
             "data" to obj("schemaVersion" to CONTRACT_VERSION.json(), "module" to module.id.json(), "target" to target.name.json(),
                 "compilation" to scope.json(), "configurationUri" to configurationUri.json(),

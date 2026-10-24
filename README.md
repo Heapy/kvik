@@ -27,7 +27,7 @@ origins and capabilities. Kotlin consumers can parse it with
 inspection also carries the source revision, project root and manifest identity as
 one source context.
 
-### BSP project import
+### BSP project import and builds
 
 Register a project for a BSP client with:
 
@@ -51,12 +51,35 @@ model as `inspect`; target data with kind `kvik-kotlin` includes source sets, co
 options and configuration identities. Closing input, sending `build/exit`, or losing
 the parent process ends the connection.
 
-This adapter currently imports project structure and workspace dependency edges.
-External library classpaths, IDE-triggered build/test/debug operations, generated
-source synchronization and unsaved-buffer support remain pending. Those operations
-are not advertised as supported capabilities. Compatibility has been exercised
-through the framed protocol client in `tools/test_bsp_cli.py`; individual IDE clients
-still need integration testing.
+`buildTarget/dependencyModules` lists the selected external library versions from
+an existing validated lock and local content store. It does not resolve or download
+artifacts. Pass `--lock` and `--store` when using nondefault locations.
+
+Enable IDE compile/test operations by registering verified tools:
+
+```sh
+./kvik --no-build -- bsp-install --project /absolute/project/kvik.json --tools /absolute/tools.json
+```
+
+The connection accepts `buildTarget/compile` and `buildTarget/test` for supported
+host targets. Compiling a test target compiles its sources without executing tests
+(the equivalent CLI operation is `compile-tests`). Requests use the ordinary build
+graph, lock, cache and resource budgets; optional `--jobs`, `--memory-mib` and
+`--remote-cache` settings are retained in the connection. Each connection executes
+one build request at a time while continuing to answer project queries. Reload is
+rejected until the build finishes. `$/cancelRequest`, input closure, exit, signals
+and parent loss cancel invocation-owned children.
+
+Results include status, task notifications, file diagnostics and a `kvik-build-result`
+extension containing paths to the ordinary per-target run results. `originId` is
+preserved when supplied. Each target gets an exact independent build scope. Compiler
+diagnostics are cleared when that compilation succeeds. Test filtering and custom
+BSP arguments are not supported; configure test selection in the project.
+
+External library classpaths, debugging, generated source synchronization and
+unsaved-buffer support remain pending. Compatibility is exercised by the framed
+protocol clients in `tools/test_bsp*_cli.py`; individual IDE clients still need
+integration testing.
 
 ### Configuration changes
 

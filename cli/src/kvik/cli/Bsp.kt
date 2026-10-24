@@ -10,6 +10,34 @@ import kotlinx.cinterop.*
 import platform.posix.*
 import kotlin.time.TimeSource
 
+internal data class BspOptions(val project: ProjectOptions, val build: BuildOptions?, val arguments: List<String>)
+
+internal fun bspOptions(arguments: List<String>): BspOptions {
+    val projectArguments = mutableListOf<String>()
+    var cursor = 0
+    var hasBuildSettings = false
+    while (cursor < arguments.size) {
+        val flag = arguments[cursor++]
+        if (flag == "--offline") { projectArguments += flag; continue }
+        require(flag in setOf("--project", "--lock", "--store", "--pin", "--scope-pin", "--exclude-metadata-edge", "--tools", "--jobs", "--memory-mib", "--remote-cache")) { "Unsupported BSP option: $flag" }
+        val value = arguments.getOrNull(cursor++) ?: error("Missing value for $flag")
+        if (flag in setOf("--tools", "--jobs", "--memory-mib", "--remote-cache")) hasBuildSettings = true else projectArguments += listOf(flag, value)
+    }
+    val project = projectOptions(projectArguments, lockOptions = true)
+    val build = if (hasBuildSettings) buildOptions(arguments + listOf("--module", "bsp", "--target", "jvm")) else null
+    val file = readProject(project.project)
+    val forwarded = mutableListOf("--project", file.path)
+    cursor = 0
+    while (cursor < arguments.size) {
+        val flag = arguments[cursor++]
+        if (flag == "--offline") { forwarded += flag; continue }
+        val value = arguments[cursor++]
+        if (flag != "--project") forwarded += listOf(flag, value)
+    }
+    if (project.offline && "--offline" !in forwarded) forwarded += "--offline"
+    return BspOptions(project.copy(project = file.path), build, forwarded)
+}
+
 private fun bspModel(options: ProjectOptions): BspProjectModel {
     val project = readProject(options.project)
     return BspProjectModel(ProjectInspection.fromJson(inspectProject(project.path, options.resolverPolicy())), project.root, project.name)
@@ -19,14 +47,16 @@ private fun bspModel(options: ProjectOptions): BspProjectModel {
 internal fun bspCommand(arguments: List<String>): Int {
     var boundary: COpaquePointer? = null
     var interrupts = false
+    var operations: NativeBspOperations? = null
     val oldPipe = signal(SIGPIPE, SIG_IGN)
     try {
-        val options = projectOptions(arguments, lockOptions = false)
+        val options = bspOptions(arguments)
         check(kvik_interrupt_install() == 0) { "Cannot install BSP interrupt handler" }
         interrupts = true
         boundary = kvik_foreground_open()
         check(boundary != null) { "Cannot establish BSP stream ownership" }
-        val session = BspSession { bspModel(options) }
+        operations = options.build?.let { NativeBspOperations(options) }
+        val session = BspSession(operations, { model, targets -> bspDependencyModules(model, options.project, targets) }) { bspModel(options.project) }
         val decoder = BspFrames()
         val output = ArrayDeque<ByteArray>()
         var queuedBytes = 0
@@ -45,7 +75,7 @@ internal fun bspCommand(arguments: List<String>): Int {
             if (closing == null) memScoped {
                 val buffer = allocArray<ByteVar>(4096)
                 when (val count = kvik_foreground_read(boundary, buffer, 4096)) {
-                    -2 -> { closing = if (decoder.incomplete) 1 else 0; closingAt = TimeSource.Monotonic.markNow() }
+                    -2 -> { operations?.activeId?.let { operations?.cancel(it) }; closing = if (decoder.incomplete) 1 else 0; closingAt = TimeSource.Monotonic.markNow() }
                     -3, -4, -1 -> return 1
                     else -> if (count > 0) {
                         decoder.accept(ByteArray(count) { buffer[it] }) { body ->
@@ -55,6 +85,7 @@ internal fun bspCommand(arguments: List<String>): Int {
                     }
                 }
             }
+            operations?.poll()?.forEach(::enqueue)
             var allowance = 64 * 1024
             while (output.isNotEmpty() && allowance > 0) {
                 val bytes = output.first()
@@ -64,37 +95,31 @@ internal fun bspCommand(arguments: List<String>): Int {
                 outputOffset += count; queuedBytes -= count; allowance -= count
                 if (outputOffset == bytes.size) { output.removeFirst(); outputOffset = 0 }
             }
-            closing?.let { if (output.isEmpty()) return it }
-            if (closingAt?.elapsedNow()?.inWholeMilliseconds?.let { it >= 1000 } == true) return 1
+            closing?.let { if (output.isEmpty() && operations?.activeId == null) return it }
+            if (closingAt?.elapsedNow()?.inWholeMilliseconds?.let { it >= 10_000 } == true) return 1
             usleep(10_000u)
         }
     } catch (failure: Exception) {
         fputs("Kvik BSP: ${failure.message ?: "connection failed"}\n", stderr)
         return 2
     } finally {
+        var cleanupFailed = false
+        try { operations?.close() } catch (failure: Exception) { cleanupFailed = true; fputs("Kvik BSP cleanup failed: ${failure.message}\n", stderr) }
         if (boundary != null) kvik_foreground_close(boundary)
         if (interrupts) kvik_interrupt_restore()
         signal(SIGPIPE, oldPipe)
+        if (cleanupFailed) return 2
     }
 }
 
 /** Register an explicit source-launcher invocation, or pin the directly invoked native composition. */
 internal fun bspInstallCommand(arguments: List<String>): JsonValue.Object {
-    val options = projectOptions(arguments, lockOptions = false)
-    val project = readProject(options.project)
+    val options = bspOptions(arguments)
+    val project = readProject(options.project.project)
     val bootstrap = bootstrapContext()
     val command = if (bootstrap == null) listOf("${runtimeDirectory()}/kvik.kexe")
         else bootstrap.command(BootstrapQuery.LAUNCH).dropLast(1) + "--"
-    val forwarded = mutableListOf("bsp", "--project", project.path)
-    for (pin in options.pins) forwarded += listOf("--pin", pin.toString())
-    for (pin in options.scopedPins) forwarded += listOf("--scope-pin", pin.argument())
-    // Keep exact authored policy arguments, including metadata exclusions, in discovery.
-    var index = 0
-    while (index < arguments.size) {
-        val flag = arguments[index++]
-        val value = arguments[index++]
-        if (flag == "--exclude-metadata-edge") forwarded += listOf(flag, value)
-    }
+    val forwarded = listOf("bsp") + options.arguments
     val details = obj("name" to "kvik".json(), "version" to "0.1.0".json(), "bspVersion" to BSP_VERSION.json(),
         "languages" to listOf("kotlin".json()).json(), "argv" to (command + forwarded).map { it.json() }.json())
     val directory = "${project.root}/.bsp"

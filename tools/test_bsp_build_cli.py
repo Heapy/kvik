@@ -140,10 +140,9 @@ def main():
     stdlib = dict(coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.20', exported=True)
     config = dict(schemaVersion=1, name='bspBuild', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[
         dict(id='base', sourceSets=[source('main', 'base/src', [stdlib])],
-             targets=[dict(name='jvm', main='main', compilerOptions=[])], compilerPlugins=[]),
+             targets=[dict(name='jvm', main='main', test=None, compilerOptions=[])], compilerPlugins=[]),
         dict(id='app', sourceSets=[source('main', 'app/src', [dict(module='base')]),
-             source('test', 'app/test', [dict(coordinate=c) for c in ['junit:junit:4.13.2',
-                 'org.jetbrains.kotlin:kotlin-test-junit:2.4.20', 'org.junit.jupiter:junit-jupiter-api:5.13.4']])],
+             source('test', 'app/test', [dict(coordinate='org.junit.jupiter:junit-jupiter-api:5.13.4')])],
              targets=[dict(name='jvm', main='main', test='test', compilerOptions=[],
                            testSettings=dict(classes=['fixture.Tests']))], compilerPlugins=[])])
     project = write('kvik.json', json.dumps(config))
@@ -152,7 +151,7 @@ def main():
     source_file = write('app/src/App.kt', source_text)
     test_prefix = '''package fixture
 import org.junit.jupiter.api.Test
-import kotlin.test.assertEquals
+import org.junit.jupiter.api.Assertions.assertEquals
 import java.nio.file.Files
 import java.nio.file.Path
 class Tests {
@@ -211,7 +210,7 @@ class Tests {
         assert len(list(tested[0].rglob('bsp-test-effect.txt'))) == 1
         multi = retained(client.request('buildTarget/compile', dict(targets=[base, app])), [base, app], test_count=0)
         assert len({directory for directory, _ in multi}) == 2
-        print('PASS main/test compilation, cache reuse, fresh tests, multi-target evidence and notifications', flush=True)
+        print('PASS main/test compilation, cache reuse, fresh tests, multi-target results and notifications', flush=True)
 
         source_file.write_text('package fixture\nfun message() = missingBspSymbol\n')
         start = len(client.notifications)
@@ -266,6 +265,48 @@ class Tests {
         assert any(n['method'] == 'build/publishDiagnostics' and n['params']['textDocument']['uri'] == added_file.as_uri()
                    and n['params']['buildTarget'] == app and n['params']['reset'] and not n['params']['diagnostics']
                    for n in client.notifications[start:]), client.notifications[start:]
+
+        # Retain the effective diagnostic state as an IDE does. A cache hit may leave the
+        # current warnings untouched or republish them, but must not replace them with []:
+        # successful compilation does not imply the source is free of warnings.
+        warning_text = ('package fixture\n'
+                        f'@Deprecated("BSP warning fixture {root.name}")\n'
+                        'fun oldWarningApi() = 1\n'
+                        'fun usesWarningApi() = oldWarningApi()\n')
+        warning_file = write('app/src/WarningAfterImport.kt', warning_text)
+        warning_state = []
+        def update_warning_state(notifications):
+            nonlocal warning_state
+            for notification in notifications:
+                if notification['method'] != 'build/publishDiagnostics':
+                    continue
+                params = notification['params']
+                if params['textDocument']['uri'] == warning_file.as_uri() and params['buildTarget'] == app:
+                    if params['reset']:
+                        warning_state = list(params['diagnostics'])
+                    else:
+                        warning_state.extend(params['diagnostics'])
+        start = len(client.notifications)
+        warning_cold = retained(client.request('buildTarget/compile', dict(targets=[app])), [app], test_count=0)[0][1]
+        assert any(a['actionId'] == 'app:jvm:main' and a['status'] == 'executed' for a in warning_cold['actions']), warning_cold
+        update_warning_state(client.notifications[start:])
+        assert any(d['severity'] == 2 for d in warning_state), client.notifications[start:]
+        start = len(client.notifications)
+        warning_cached = retained(client.request('buildTarget/compile', dict(targets=[app])), [app], test_count=0)[0][1]
+        assert all(a['status'] == 'local_hit' for a in warning_cached['actions']), warning_cached
+        update_warning_state(client.notifications[start:])
+        assert any(d['severity'] == 2 for d in warning_state), client.notifications[start:]
+        warning_file.write_text('package fixture\nfun usesWarningApi() = )\n')
+        start = len(client.notifications)
+        retained(client.request('buildTarget/compile', dict(targets=[app])), [app], status=2, test_count=0)
+        update_warning_state(client.notifications[start:])
+        assert any(d['severity'] == 1 for d in warning_state), client.notifications[start:]
+        warning_file.write_text(warning_text)
+        start = len(client.notifications)
+        warning_restored = retained(client.request('buildTarget/compile', dict(targets=[app])), [app], test_count=0)[0][1]
+        assert all(a['status'] == 'local_hit' for a in warning_restored['actions']), warning_restored
+        update_warning_state(client.notifications[start:])
+        assert any(d['severity'] == 2 for d in warning_state) and not any(d['severity'] == 1 for d in warning_state), warning_state
         test_file.write_text(passing.replace('assertEquals(42, message())', 'assertEquals(43, message())'))
         failed_test = retained(client.request('buildTarget/test', dict(targets=[test])), [test], status=2, test_count=1)[0][1]
         assert failed_test['testCounts']['failed'] == 1

@@ -1,0 +1,192 @@
+package kvik.cli
+
+import kvik.bsp.*
+import kvik.cache.NativeFiles
+import kvik.core.*
+import kvik.execution.NativeRunDirectory
+import kvik.foreground.terminalLeasePlatform
+import kvik.locking.effectiveConfiguration
+import kvik.runevidence.*
+
+/** One connection owns at most one build request. Each selected compilation gets an exact CLI scope. */
+internal class NativeBspOperations(private val options: BspOptions) : BspOperations, AutoCloseable {
+    private val hostTarget = if (terminalLeasePlatform() == "macos-arm64") "macosArm64" else "linuxX64"
+    override val compileTargets = setOf("jvm", "js", "wasmJs", hostTarget) + if (hostTarget == "macosArm64") setOf("iosArm64", "iosSimulatorArm64") else emptySet()
+    override val testTargets = setOf("jvm", "js", "wasmJs", hostTarget)
+    private var host: ProcessHost? = null
+    private data class Child(val target: BspTarget, val directory: String, val task: String, val process: OwnedProcess)
+    private class Pending(val request: BspBuildRequest, val model: BspProjectModel, val directory: String) {
+        val waiting = ArrayDeque(request.targets)
+        val runs = mutableListOf<JsonValue>()
+        val snapshots = mutableSetOf<Digest>()
+        var child: Child? = null
+        var status = 1
+        var cancelled = false
+        var sequence = 0
+    }
+    private var pending: Pending? = null
+    private val messages = ArrayDeque<JsonValue.Object>()
+    private val compilerDiagnostics = mutableMapOf<String, Pair<Digest, List<Diagnostic>>>()
+    private val published = mutableMapOf<String, Set<String>>()
+    override val activeId: JsonValue? get() = pending?.request?.id
+
+    override fun start(request: BspBuildRequest, model: BspProjectModel) {
+        check(pending == null)
+        val parent = "${model.root}/.kvik/bsp"
+        NativeFiles.ensureDirectory(parent)
+        val state = Pending(request, model, NativeRunDirectory(parent).path)
+        pending = state
+    }
+
+    override fun cancel(id: JsonValue) {
+        val state = pending?.takeIf { it.request.id == id } ?: return
+        state.cancelled = true; state.status = 3; state.waiting.clear(); state.child?.process?.cancel()
+    }
+
+    private fun notification(state: Pending, method: String, params: JsonValue.Object) {
+        messages += obj("jsonrpc" to "2.0".json(), "method" to method.json(), "params" to
+            JsonValue.Object(params.values + (state.request.originId?.let { mapOf("originId" to it.json()) } ?: emptyMap())))
+    }
+
+    private fun log(state: Pending, message: String, type: Int = 1) = notification(state, "build/logMessage", obj("type" to type.json(),
+        "message" to message.take(2048).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }.json()))
+
+    private fun launch(state: Pending) {
+        val target = state.waiting.removeFirst()
+        val project = readProject(options.project.project)
+        require(effectiveConfiguration(project.configuration, options.project.resolverPolicy()).digest == state.model.inspection.configuration) {
+            "Project configuration changed during BSP build; reload before retrying"
+        }
+        val build = checkNotNull(options.build)
+        requireDisjointStore(project, projectPath(project.root, options.project.store), projectPath(project.root, options.project.lock), projectPath(project.root, build.tools))
+        val directory = NativeRunDirectory(state.directory).path
+        val operation = if (state.request.method == "buildTarget/test") "test" else if (target.compilation == "test") "compile-tests" else "build"
+        val arguments = options.arguments + listOf("--module", target.module, "--target", target.target, "--runs", "$directory/runs")
+        val command = listOf("${runtimeDirectory()}/kvik.kexe", operation) + arguments
+        NativeFiles.writeNew("$directory/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
+        val processHost = host ?: runtimeProcessHost().also { host = it }
+        val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC") + remoteOperationEnvironment(project.root, command)
+        val process = processHost.start(ProcessRequest(command, project.root, environment, "$directory/stdout.jsonl", "$directory/stderr.log", 30 * 60_000))
+        val task = "${state.directory.substringAfterLast('/')}-${++state.sequence}"
+        state.child = Child(target, directory, task, process)
+        log(state, "$operation ${target.module}:${target.target}", type = 3)
+        notification(state, "build/taskStart", obj("taskId" to obj("id" to task.json()),
+            "dataKind" to (if (operation == "test") "test-task" else "compile-task").json(),
+            "data" to obj("target" to obj("uri" to target.uri.json()))))
+    }
+
+    private fun replayDiagnostics(state: Pending, record: VerificationRecord, values: List<Diagnostic>): List<Diagnostic> {
+        if (record.freshnessAtCompletion != Freshness.CURRENT) return values
+        val replayed = mutableListOf<Diagnostic>()
+        for (action in record.actions) {
+            if (!action.successful || state.model.actionTarget(action.actionId) == null) continue
+            val key = checkNotNull(action.key)
+            if (action.status == ActionStatus.EXECUTED) {
+                compilerDiagnostics[action.actionId] = key to values.filter { it.actionId == action.actionId }
+            } else {
+                // Cache hits reuse outputs without new compiler observations. Keep warnings
+                // observed for this exact key during this connection, including after a failed edit.
+                compilerDiagnostics[action.actionId]?.takeIf { it.first == key }?.second?.let(replayed::addAll)
+            }
+        }
+        return values + replayed
+    }
+
+    private fun diagnostics(state: Pending, record: VerificationRecord, values: List<Diagnostic>, fresh: Boolean) {
+        val files = mutableMapOf<String, MutableMap<String, MutableList<JsonValue>>>()
+        for (diagnostic in values) {
+            val path = diagnostic.path
+            val target = diagnostic.actionId?.let(state.model::actionTarget)
+            if (!fresh || path == null || diagnostic.line == null || diagnostic.column == null || target == null ||
+                !state.model.containsSource(target, path)) { log(state, diagnostic.message); continue }
+            val position = obj("line" to (diagnostic.line - 1).json(), "character" to (diagnostic.column - 1).json())
+            val uri = bspFileUri("${state.model.root}/$path")
+            val severity = if ("WARNING" in diagnostic.code) 2 else if ("INFO" in diagnostic.code) 3 else 1
+            files.getOrPut(target.uri) { mutableMapOf() }.getOrPut(uri) { mutableListOf() } += obj("range" to obj("start" to position, "end" to position),
+                "severity" to severity.json(), "code" to diagnostic.code.json(), "source" to "kvik".json(), "message" to diagnostic.message.json())
+        }
+        if (!fresh) return
+        // Clear only compilations that completed, or actually returned compiler diagnostics.
+        // A blocked downstream target must retain its previous diagnostic set.
+        val completed = record.actions.filter { it.successful }.mapNotNull { state.model.actionTarget(it.actionId)?.uri }
+        for (target in (completed + files.keys).distinct()) {
+            val current = files[target].orEmpty()
+            for (uri in published[target].orEmpty() + current.keys) notification(state, "build/publishDiagnostics", obj(
+                "textDocument" to obj("uri" to uri.json()), "buildTarget" to obj("uri" to target.json()),
+                "diagnostics" to current[uri].orEmpty().json(), "reset" to true.json()))
+            published[target] = current.keys.toSet()
+        }
+    }
+
+    private fun finished(state: Pending, child: Child, result: ProcessResult) {
+        var status = if (state.cancelled || result.cancelled) 3 else 2
+        var record: VerificationRecord? = null
+        var observedDiagnostics = emptyList<Diagnostic>()
+        try {
+            val runs = "${child.directory}/runs"
+            val directory = "$runs/${NativeFiles.names(runs).single()}"
+            record = verificationRecordFromJson(parseJson(NativeFiles.read("$directory/verification.json", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
+            val events = committedRunEvents(record, parseJson(NativeFiles.read("$directory/completion.json", 8192).decodeToString()), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
+            val check = "${child.target.module}:${child.target.target}:" + if (state.request.method == "buildTarget/test") "test" else if (child.target.compilation == "test") "compile-tests" else "build"
+            require(record.requestedChecks == setOf(check) && record.configuration == state.model.inspection.configuration && record.composition == state.model.inspection.composition) {
+                "Build result does not match the imported BSP target/configuration"
+            }
+            observedDiagnostics = replayDiagnostics(state, record, events.filter { it.type == "diagnostic" }.map { Diagnostic.fromJson(it.payload) })
+            val fresh = record.freshnessAtCompletion == Freshness.CURRENT
+            diagnostics(state, record, observedDiagnostics, fresh)
+            state.snapshots += record.inputSnapshot
+            if (!state.cancelled && !result.cancelled && result.exitCode == 0 && record.status == VerificationStatus.PASSED && fresh && state.snapshots.size == 1) status = 1
+            if (state.snapshots.size > 1) log(state, "Project inputs changed between BSP target builds; retry the request")
+            state.runs += obj("target" to obj("uri" to child.target.uri.json()), "directory" to directory.json(),
+                "inputSnapshot" to record.inputSnapshot.toJson(), "configuration" to record.configuration.toJson(),
+                "dependencyLock" to record.dependencyLock.toJson(), "status" to record.status.name.lowercase().json())
+        } catch (failure: Exception) {
+            record = null; observedDiagnostics = emptyList()
+            log(state, "Build did not produce a matching completed result: ${failure.message}")
+            try {
+                NativeFiles.read("${child.directory}/stdout.jsonl", 64 * 1024).decodeToString().lineSequence().filter { it.isNotBlank() }.forEach { line ->
+                    val value = parseJson(line).objectValue()["diagnostic"]
+                    if (value != null) log(state, Diagnostic.fromJson(value).message)
+                }
+            } catch (_: Exception) { /* The operation's retained logs remain available. */ }
+        }
+        if (state.status != 3 && status != 1) state.status = status
+        val testing = state.request.method == "buildTarget/test"
+        val report = if (testing) obj("target" to obj("uri" to child.target.uri.json()),
+            "passed" to (record?.tests?.count { it.status == TestStatus.PASSED } ?: 0).json(),
+            "failed" to (record?.tests?.count { it.status == TestStatus.FAILED } ?: 0).json(),
+            "ignored" to (record?.tests?.count { it.status == TestStatus.SKIPPED } ?: 0).json(), "cancelled" to 0.json(), "skipped" to 0.json())
+        else obj("target" to obj("uri" to child.target.uri.json()), "errors" to observedDiagnostics.count { "WARNING" !in it.code && "INFO" !in it.code }.json(),
+            "warnings" to observedDiagnostics.count { "WARNING" in it.code }.json())
+        notification(state, "build/taskFinish", obj("taskId" to obj("id" to child.task.json()), "status" to status.json(),
+            "dataKind" to (if (testing) "test-report" else "compile-report").json(), "data" to report))
+    }
+
+    fun poll(): List<JsonValue.Object> {
+        pending?.let { state ->
+            state.child?.let { child ->
+                child.process.poll()?.let { result ->
+                    child.process.close()
+                    finished(state, child, result)
+                    state.child = null
+                }
+            }
+            if (state.child == null && !state.cancelled && state.waiting.isNotEmpty()) try { launch(state) }
+            catch (failure: Exception) { state.status = 2; state.waiting.clear(); log(state, failure.message ?: "Cannot launch BSP build") }
+            if (state.child == null && (state.cancelled || state.waiting.isEmpty())) {
+                val result = obj("statusCode" to state.status.json(), "dataKind" to "kvik-build-result".json(),
+                    "data" to obj("schemaVersion" to CONTRACT_VERSION.json(), "runs" to state.runs.json()))
+                messages += obj("jsonrpc" to "2.0".json(), "id" to state.request.id, "result" to JsonValue.Object(result.values +
+                    (state.request.originId?.let { mapOf("originId" to it.json()) } ?: emptyMap())))
+                pending = null
+            }
+        }
+        return messages.toList().also { messages.clear() }
+    }
+
+    override fun close() {
+        pending?.child?.process?.cancel()
+        host?.close()
+        host = null; pending = null
+    }
+}

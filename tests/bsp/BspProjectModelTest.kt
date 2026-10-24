@@ -115,6 +115,18 @@ class BspProjectModelTest {
         }
     }
 
+    @Test fun actionTargetsAttributeDiagnosticsAndAcceptNewSourcesWithinDeclaredRoots() {
+        val main = assertNotNull(model.actionTarget("lib:jvm:main"))
+        assertEquals(target("lib"), main.uri)
+        assertEquals(target("app", scope = "test"), model.actionTarget("app:jvm:test-compile")?.uri)
+        assertEquals(target("app", "macosArm64", "test"), model.actionTarget("app:macosArm64:test-link")?.uri)
+        assertTrue(model.containsSource(main, "lib/main/New.kt"))
+        assertFalse(model.containsSource(main, "app/main/New.kt"))
+        assertFalse(model.containsSource(main, "lib/main/../outside.kt"))
+        for (id in listOf("missing:jvm:main", "app:missing:main", "app:jvm:test", "app:jvm:ksp-test", "app:jvm:main:extra"))
+            assertNull(model.actionTarget(id), id)
+    }
+
     @Test fun requestsRejectUnknownTargetsAndReturnOnlyRequestedTargets() {
         assertFails { model.sources(listOf(target("app"), "unknown")) }
         assertFails { model.resources(listOf("unknown")) }

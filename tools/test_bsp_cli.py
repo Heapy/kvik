@@ -124,7 +124,7 @@ def main():
             assert c.response()['error']['code'] == -32700
             result = initialize(c)
             assert result['bspVersion'] == '2.2.0'
-            assert result['capabilities'] == dict(inverseSourcesProvider=True, resourcesProvider=True, canReload=True)
+            assert result['capabilities'] == dict(inverseSourcesProvider=True, resourcesProvider=True, canReload=True, dependencyModulesProvider=True)
             c.request('workspace/buildTargets', error=-32002)
             c.notify('build/initialized')
             targets = c.request('workspace/buildTargets', request_id='импорт')['targets']
@@ -219,6 +219,13 @@ def main():
             before = path.read_bytes()
             assert subprocess.run([str(runtime), 'bsp-install', '--project', str(project)], capture_output=True, timeout=15).returncode == 0
             assert path.read_bytes() == before
+            offline_project = root/'offline-install'/'kvik.json'
+            offline_project.parent.mkdir()
+            offline_project.write_text(json.dumps(config))
+            offline_install = subprocess.run([str(runtime), 'bsp-install', '--project', str(offline_project)],
+                env=dict(os.environ, KVIK_BOOTSTRAP_OFFLINE='1'), capture_output=True, timeout=15)
+            assert offline_install.returncode == 0, offline_install.stdout + offline_install.stderr
+            assert json.loads(offline_install.stdout)['connection']['argv'][-1] == '--offline'
             large_project = root/'large-policy'/'kvik.json'
             large_project.parent.mkdir()
             large_project.write_text(json.dumps(config))

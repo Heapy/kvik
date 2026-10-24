@@ -112,7 +112,19 @@ fun bspError(id: JsonValue, code: Int, message: String): JsonValue.Object = obj(
     "error" to obj("code" to code.json(), "message" to message.json()))
 
 /** One explicit connection; failed reloads preserve the last successfully imported model. */
-class BspSession(private val load: () -> BspProjectModel) {
+data class BspBuildRequest(val id: JsonValue, val method: String, val targets: List<BspTarget>, val originId: String?)
+
+interface BspOperations {
+    val activeId: JsonValue?
+    val compileTargets: Set<String>
+    val testTargets: Set<String>
+    fun start(request: BspBuildRequest, model: BspProjectModel)
+    fun cancel(id: JsonValue)
+}
+
+class BspSession(private val operations: BspOperations? = null,
+                 private val dependencies: ((BspProjectModel, List<BspTarget>) -> JsonValue.Object)? = null,
+                 private val load: () -> BspProjectModel) {
     private var model: BspProjectModel? = null
     private var initialized = false
     private var shutdown = false
@@ -135,13 +147,19 @@ class BspSession(private val load: () -> BspProjectModel) {
         val method = (fields["method"] as? RpcValue.Text)?.value
         if ((fields["jsonrpc"] as? RpcValue.Text)?.value != "2.0" || method == null)
             return bspError(id, -32600, "Invalid JSON-RPC request")
-        if (method == "build/exit" && !hasId) { exitCode = if (shutdown) 0 else 1; return null }
+        if (method == "build/exit" && !hasId) { operations?.activeId?.let { operations.cancel(it) }; exitCode = if (shutdown) 0 else 1; return null }
         if (!hasId) {
             if (method == "build/initialized" && model != null && !shutdown) initialized = true
+            if (method == "$/cancelRequest") try {
+                val value = fields.getValue("params").fields().getValue("id")
+                val cancelled = when (value) { is RpcValue.Text -> value.value.json(); is RpcValue.Number -> value.literal.toLongOrNull()?.json(); else -> null }
+                cancelled?.let { operations?.cancel(it) }
+            } catch (_: Exception) { /* Invalid notifications never receive responses. */ }
             return null
         }
         fun success(result: JsonValue) = obj("jsonrpc" to "2.0".json(), "id" to id, "result" to result)
         if (shutdown) return bspError(id, -32600, "Build server has shut down")
+        if (operations?.activeId == id) return bspError(id, -32600, "Request id is already active")
         if (method == "build/initialize") {
             if (model != null) return bspError(id, -32600, "Build server already initialized")
             return try {
@@ -153,13 +171,22 @@ class BspSession(private val load: () -> BspProjectModel) {
                 require(next.matchesRoot(params.getValue("rootUri").string())) { "Workspace root does not match --project" }
                 model = next; kotlinClient = "kotlin" in languages
                 success(obj("displayName" to "Kvik".json(), "version" to "0.1.0".json(), "bspVersion" to BSP_VERSION.json(),
-                    "capabilities" to obj("inverseSourcesProvider" to true.json(), "resourcesProvider" to true.json(), "canReload" to true.json())))
+                    "capabilities" to JsonValue.Object(buildMap {
+                        put("inverseSourcesProvider", true.json()); put("resourcesProvider", true.json()); put("canReload", true.json())
+                        if (dependencies != null) put("dependencyModulesProvider", true.json())
+                        if (operations != null) {
+                            put("compileProvider", obj("languageIds" to listOf("kotlin".json()).json()))
+                            put("testProvider", obj("languageIds" to listOf("kotlin".json()).json()))
+                        }
+                    })))
             } catch (failure: Exception) { bspError(id, -32602, failure.message ?: "Cannot initialize project") }
         }
         val current = model ?: return bspError(id, -32002, "Build server is not initialized")
-        if (method == "build/shutdown") { shutdown = true; return success(JsonValue.Null) }
+        if (method == "build/shutdown") { operations?.activeId?.let { operations.cancel(it) }; shutdown = true; return success(JsonValue.Null) }
         if (!initialized) return bspError(id, -32002, "Send build/initialized before workspace requests")
-        val methods = setOf("workspace/buildTargets", "workspace/reload", "buildTarget/sources", "buildTarget/resources", "buildTarget/inverseSources", "kvik/projectModel")
+        val methods = setOf("workspace/buildTargets", "workspace/reload", "buildTarget/sources", "buildTarget/resources", "buildTarget/inverseSources", "kvik/projectModel") +
+            (if (dependencies != null) setOf("buildTarget/dependencyModules") else emptySet()) +
+            (if (operations != null) setOf("buildTarget/compile", "buildTarget/test") else emptySet())
         if (method !in methods) return bspError(id, -32601, "Unsupported method: $method")
         return try {
             fun targets(): List<String> {
@@ -168,10 +195,27 @@ class BspSession(private val load: () -> BspProjectModel) {
                 return targets
             }
             val result = when (method) {
-                "workspace/buildTargets" -> if (kotlinClient) current.targets() else obj("targets" to emptyList<JsonValue>().json())
-                "workspace/reload" -> { val next = load(); require(next.rootUri == current.rootUri); model = next; JsonValue.Null }
+                "workspace/buildTargets" -> if (kotlinClient) current.targets(operations?.compileTargets.orEmpty(), operations?.testTargets.orEmpty()) else obj("targets" to emptyList<JsonValue>().json())
+                "workspace/reload" -> { check(operations?.activeId == null) { "Cannot reload during an active build" }; val next = load(); require(next.rootUri == current.rootUri); model = next; JsonValue.Null }
                 "buildTarget/sources" -> current.sources(targets())
                 "buildTarget/resources" -> current.resources(targets())
+                "buildTarget/dependencyModules" -> {
+                    val selected = current.select(targets())
+                    try { checkNotNull(dependencies)(current, selected) }
+                    catch (failure: Exception) { return bspError(id, -32603, failure.message ?: "Cannot read locked dependencies") }
+                }
+                "buildTarget/compile", "buildTarget/test" -> {
+                    val service = checkNotNull(operations)
+                    check(service.activeId == null) { "Another build request is active" }
+                    val params = fields.getValue("params").fields()
+                    require(params["arguments"]?.array().orEmpty().isEmpty()) { "BSP arguments must be declared in project configuration" }
+                    require("data" !in params && "dataKind" !in params) { "BSP test selection extensions are not supported" }
+                    val selected = current.select(targets())
+                    require(selected.size in 1..128) { "Select 1..128 targets" }
+                    require(selected.all { if (method == "buildTarget/test") it.compilation == "test" && it.target in service.testTargets else it.target in service.compileTargets }) { "Selected targets do not support this operation on the current host" }
+                    service.start(BspBuildRequest(id, method, selected, params["originId"]?.string()), current)
+                    return null
+                }
                 "buildTarget/inverseSources" -> {
                     val uri = fields.getValue("params").fields().getValue("textDocument").fields().getValue("uri").string()
                     if (kotlinClient) current.inverseSources(uri) else obj("targets" to emptyList<JsonValue>().json())
