@@ -13,10 +13,10 @@ class PluginSchemaTest(unittest.TestCase):
         workspace = dict(module='producer', id='example.plugin', compilerVersion='2.4.20', targets=['jvm'], scopes=['main', 'test'], options=['message=a=b'], inputs=[])
         validator.validate(workspace)
         validator.validate(dict(coordinate='org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20', targets=['jvm'], scopes=['main'], options=[], inputs=[]))
-        for targets in [['macosArm64'], ['jvm', 'macosArm64']]:
+        for targets in [['macosArm64'], ['linuxX64'], ['jvm', 'macosArm64', 'linuxX64']]:
             for scopes in [['main'], ['test'], ['main', 'test']]:
                 validator.validate({**workspace, 'targets': targets, 'scopes': scopes})
-        for change in [dict(id=None), dict(compilerVersion='2.4.10'), dict(targets=['linuxX64']), dict(targets=['jvm', 'jvm']), dict(targets=[]), dict(scopes=['script']), dict(options=['missing']), dict(extra=True)]:
+        for change in [dict(id=None), dict(compilerVersion='2.4.10'), dict(targets=['linuxArm64']), dict(targets=['jvm', 'jvm']), dict(targets=[]), dict(scopes=['script']), dict(options=['missing']), dict(extra=True)]:
             self.assertFalse(validator.is_valid({**workspace, **change}))
         for name in ['id', 'compilerVersion']:
             self.assertFalse(validator.is_valid({k: v for k, v in workspace.items() if k != name}))
@@ -26,7 +26,7 @@ class PluginSchemaTest(unittest.TestCase):
         for reference in [dict(module='producer', id='example.plugin', compilerVersion='2.4.20'), dict(coordinate='g:plugin:1')]:
             plugin = dict(**reference, targets=['jvm'], scopes=['script'], options=[], inputs=[])
             validator.validate(plugin)
-            for targets in [['macosArm64'], ['jvm', 'macosArm64']]:
+            for targets in [['macosArm64'], ['linuxX64'], ['jvm', 'macosArm64', 'linuxX64']]:
                 self.assertFalse(validator.is_valid({**plugin, 'targets': targets}))
 
     def test_worker_rejects_mixed_plugin_representations(self):

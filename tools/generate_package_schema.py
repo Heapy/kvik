@@ -19,8 +19,8 @@ defs={
  'repository':obj(id=text,url=text),
  'metadata':obj(url=text,digest=ref('digest')),
  'artifact':obj(coordinate=coordinate,variant=text,repository=text,url=text,digest=ref('digest')),
- 'variant':obj(platform=enum('jvm','macosArm64','common'),usage=text,attributes={'type':'object','additionalProperties':text}),
- 'domain':obj(module=text,target=enum('jvm','macosArm64'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor')),
+ 'variant':obj(platform=enum('jvm','macosArm64','linuxX64','common'),usage=text,attributes={'type':'object','additionalProperties':text}),
+ 'domain':obj(module=text,target=enum('jvm','macosArm64','linuxX64'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor')),
  'diagnostic':obj(code=text,message=text,source=nullable(text)),
  'source':obj(repository=text,url=text,kind=enum('metadata','artifact'),digest=nullable(ref('digest')),observedAt=nullable(time),cache=enum('network','cache','locked','none'),status=enum('found','not-found','missing','corrupt','error'),freshness=freshness,latest=nullable(text),release=nullable(text),lastUpdated=nullable(text)),
  'requirement':obj(coordinate=coordinate,semantics=enum('requires','prefers','pom-effective','redirect','constraint','explicit-exclusion')),
@@ -34,7 +34,7 @@ defs={
  'scopedGraph':obj(domain=ref('domain'),graph=ref('graph')),
  'versionQuery':obj(project=text,coordinate=package,repositories=arr(ref('repository'),32),channel=enum('all','stable','prerelease'),limit={'type':'integer','minimum':1,'maximum':200},cursor=nullable(text),mode=mode),
  'packageQuery':obj(project=text,coordinate=coordinate,repositories=arr(ref('repository'),32),variant=ref('variant'),pins=arr(coordinate,256),mode=mode),
- 'projectQuery':obj(project=text,lock=text,store=text,modules=arr(text,1024),targets=arr(enum('jvm','macosArm64'),2),compilation=nullable(enum('main','test')),usage=nullable(enum('java-api','java-runtime','kotlin-api','kotlin-runtime'))),
+ 'projectQuery':obj(project=text,lock=text,store=text,modules=arr(text,1024),targets=arr(enum('jvm','macosArm64','linuxX64'),3),compilation=nullable(enum('main','test')),usage=nullable(enum('java-api','java-runtime','kotlin-api','kotlin-runtime'))),
 }
 script_id={'type':'string','maxLength':128,'pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END}
 defs['moduleDomain']=defs['domain']

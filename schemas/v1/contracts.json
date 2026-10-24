@@ -300,7 +300,8 @@
         "target": {
           "enum": [
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64"
           ]
         },
         "application": {
@@ -402,7 +403,8 @@
         "name": {
           "enum": [
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64"
           ]
         },
         "main": {
@@ -495,7 +497,10 @@
           "then": {
             "properties": {
               "name": {
-                "const": "macosArm64"
+                "enum": [
+                  "macosArm64",
+                  "linuxX64"
+                ]
               },
               "test": {
                 "type": "string",
@@ -513,7 +518,10 @@
           "then": {
             "properties": {
               "name": {
-                "const": "macosArm64"
+                "enum": [
+                  "macosArm64",
+                  "linuxX64"
+                ]
               }
             }
           }
@@ -522,7 +530,10 @@
           "if": {
             "properties": {
               "name": {
-                "const": "macosArm64"
+                "enum": [
+                  "macosArm64",
+                  "linuxX64"
+                ]
               }
             },
             "required": [
@@ -651,7 +662,8 @@
           "items": {
             "enum": [
               "jvm",
-              "macosArm64"
+              "macosArm64",
+              "linuxX64"
             ]
           },
           "minItems": 1,
@@ -732,7 +744,8 @@
               "items": {
                 "enum": [
                   "jvm",
-                  "macosArm64"
+                  "macosArm64",
+                  "linuxX64"
                 ]
               },
               "minItems": 1,
@@ -1596,7 +1609,8 @@
           "enum": [
             "common",
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64"
           ]
         },
         "usage": {
@@ -1668,7 +1682,8 @@
           "enum": [
             "common",
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64"
           ]
         },
         "compilation": {
@@ -1775,6 +1790,28 @@
                 "const": "dependencies"
               },
               "target": {
+                "const": "linuxX64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "enum": [
+                  "kotlin-api",
+                  "kotlin-runtime"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "dependencies"
+              },
+              "target": {
                 "const": "common"
               }
             }
@@ -1825,7 +1862,10 @@
           "then": {
             "properties": {
               "target": {
-                "const": "macosArm64"
+                "enum": [
+                  "macosArm64",
+                  "linuxX64"
+                ]
               },
               "compilation": {
                 "const": "test"
@@ -3945,7 +3985,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):(build|test|application|package)$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|application|package)$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -4464,7 +4504,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):test(?![\\s\\S])"
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
           },
           "minItems": 1,
           "maxItems": 1000,
@@ -4520,7 +4560,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):test(?![\\s\\S])"
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
           },
           "maxItems": 1000,
           "uniqueItems": true
@@ -4529,7 +4569,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):test(?![\\s\\S])"
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
           },
           "maxItems": 1000,
           "uniqueItems": true
@@ -4569,7 +4609,7 @@
                     "properties": {
                       "check": {
                         "type": "string",
-                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):test(?![\\s\\S])"
+                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test(?![\\s\\S])"
                       }
                     }
                   }
@@ -7925,7 +7965,7 @@
         },
         "actionId": {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):application$(?![\\s\\S])"
         },
         "verification": {
           "$ref": "#/$defs/digest"
@@ -7988,7 +8028,8 @@
         "target": {
           "enum": [
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64"
           ]
         }
       },
@@ -8369,7 +8410,7 @@
                   },
                   "actionId": {
                     "type": "string",
-                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application$(?![\\s\\S])"
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):application$(?![\\s\\S])"
                   }
                 },
                 "required": [
@@ -8409,7 +8450,8 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64"
                     ]
                   },
                   "stdout": {
@@ -8544,7 +8586,8 @@
           "items": {
             "enum": [
               "jvm",
-              "macosArm64"
+              "macosArm64",
+              "linuxX64"
             ]
           },
           "uniqueItems": true
@@ -8594,7 +8637,7 @@
             "properties": {
               "metadataTargets": {
                 "minItems": 2,
-                "maxItems": 2
+                "maxItems": 3
               }
             }
           },

@@ -28,6 +28,8 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
         request['metadataTargets'] = ['jvm', 'macosArm64']
         request['pluginClasspath'] = []
         validator('workerRequest').validate(request)
+        for targets in (['jvm', 'linuxX64'], ['macosArm64', 'linuxX64'], ['jvm', 'macosArm64', 'linuxX64']):
+            validator('workerRequest').validate({**request, 'metadataTargets': targets})
         for targets in ([], ['jvm'], ['jvm', 'jvm'], ['jvm', 'iosArm64']):
             self.assertFalse(validator('workerRequest').is_valid({**request, 'metadataTargets': targets}))
         validator('workerRequest').validate({**request, 'pluginClasspath': ['plugin.jar']})
@@ -46,7 +48,7 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
 
     def test_library_application_conflict_and_existing_plugins(self):
         value = {**module(), 'publication': dict(coordinate='org.example:library:1')}
-        for target in ('jvm', 'macosArm64'):
+        for target in ('jvm', 'macosArm64', 'linuxX64'):
             value['targets'][0]['name'] = target
             validator('module').validate(value)
             value['targets'][0]['application'] = dict(entryPoint='sample.main')

@@ -4,6 +4,17 @@ import kvik.core.*
 import kotlin.test.*
 
 class TestAggregateTest {
+    @Test fun sameTestOnJvmAndLinuxRemainsTwoIndependentExecutions() {
+        val jvm = report("jvm-run", listOf(test()))
+        val linux = report("linux-run", listOf(test(target = "linuxX64")))
+        val combined = aggregate(jvm, linux)
+        assertEquals(VerificationStatus.PASSED, combined.status)
+        assertTrue(combined.complete)
+        assertEquals(2, combined.uniqueCounts.executed)
+        val missing = aggregate(jvm, expected = setOf("a:jvm:test", "a:linuxX64:test"))
+        assertFalse(missing.complete)
+        assertEquals(listOf("a:linuxX64:test"), missing.missingChecks)
+    }
     private val baseline = Sha256.digest("baseline".encodeToByteArray())
     private fun test(module: String = "a", target: String = "jvm", id: String = "same", status: TestStatus = TestStatus.PASSED) = TestResult(id, module, target, status)
     private fun report(run: String, tests: List<TestResult>, expected: Set<String> = tests.map { "${it.module}:${it.target}:test" }.toSet(),

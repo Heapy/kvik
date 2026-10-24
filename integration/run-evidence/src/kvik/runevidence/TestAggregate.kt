@@ -9,7 +9,7 @@ data class TestAggregationScope(
 ) {
     init {
         require(expectedChecks.size in 1..1000)
-        require(expectedChecks.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):test")) }) { "Invalid expected test check" }
+        require(expectedChecks.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test")) }) { "Invalid expected test check" }
     }
     fun toJson(): JsonValue.Object = obj("inputSnapshot" to inputSnapshot.toJson(), "configuration" to configuration.toJson(),
         "dependencyLock" to dependencyLock.toJson(), "composition" to composition.toJson(), "expectedChecks" to expectedChecks.sorted().map { it.json() }.json())

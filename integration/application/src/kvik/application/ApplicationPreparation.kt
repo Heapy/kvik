@@ -19,7 +19,7 @@ data class PreparedApplicationDescriptor(
 ) {
     init {
         require(runId.isNotBlank() && runId.none { it.code < 32 }) { "Invalid prepared run identity" }
-        require(actionId.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64):application"))) { "Invalid application action identity" }
+        require(actionId.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):application"))) { "Invalid application action identity" }
         require(toJson().canonical().encodeToByteArray().size <= DESCRIPTOR_LIMIT) { "Prepared descriptor exceeds 8 KiB" }
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to 1.json(), "runId" to runId.json(),

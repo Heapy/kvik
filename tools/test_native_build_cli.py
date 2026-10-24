@@ -9,6 +9,7 @@ import time
 
 import jsonschema
 from check_run_journal import check_run_journal
+from tool_installation_roots import host_native_target, installation_roots
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,9 +20,14 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--konan-data', type=Path, default=Path.home()/'.konan')
     parser.add_argument('--developer-directory', type=Path, default=Path('/Applications/Xcode.app/Contents/Developer'))
+    parser.add_argument('--runtime', type=Path, help='Use this composed Native executable directly.')
+    parser.add_argument('--artifact-cache', type=Path, default=ROOT/'.kvik/tool-artifacts')
     args = parser.parse_args()
-    executable = Path(subprocess.run([ROOT/'kvik', '--offline', '--no-build', '--print-runtime'],
-                                    check=True, capture_output=True, text=True).stdout.strip())
+    executable = args.runtime.resolve(strict=True) if args.runtime else Path(subprocess.run(
+        [ROOT/'kvik', '--java-home', args.java_home, '--konan-home', args.konan_home,
+         '--konan-data', args.konan_data, '--artifact-cache', args.artifact_cache,
+         '--offline', '--no-build', '--print-runtime'], check=True, capture_output=True, text=True).stdout.strip())
+    target = host_native_target()
     output = ROOT/'.kvik/tests/native-build-cli'
     output.mkdir(parents=True, exist_ok=True)
     project = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
@@ -56,20 +62,16 @@ class AnswerTest {
     document = dict(schemaVersion=1, name='nativeCliFixture', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[
         dict(id='library', sourceSets=[source('commonMain', 'library/common'),
              source('nativeMain', 'library/native', parents=['commonMain'])],
-             targets=[dict(name='macosArm64', main='nativeMain', test=None, compilerOptions=[])], compilerPlugins=[]),
+             targets=[dict(name=target, main='nativeMain', test=None, compilerOptions=[])], compilerPlugins=[]),
         dict(id='consumer', sourceSets=[source('main', 'consumer/main', [{'module': 'library'}]),
              source('tests', 'consumer/test', parents=['main'])],
-             targets=[dict(name='macosArm64', main='main', test='tests', compilerOptions=[])], compilerPlugins=[]),
+             targets=[dict(name=target, main='main', test='tests', compilerOptions=[])], compilerPlugins=[]),
     ])
     write('kvik.json', json.dumps(document))
-    developer = args.developer_directory.resolve()
     data = args.konan_data.resolve()
     installations = dict(schemaVersion=1, toolLock=json.loads((ROOT/'bootstrap/toolchains.lock.json').read_text()),
-        roots=dict(jdk=str(args.java_home.resolve()), kotlinNative=str(args.konan_home.resolve()),
-                   llvm=str(data/'dependencies/llvm-21-aarch64-macos-essentials-97'), libffi=str(data/'dependencies/libffi-3.3-1-macos-arm64'),
-                   sdk=str((developer/'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk').resolve()),
-                   xcodeToolchain=str(developer/'Toolchains/XcodeDefault.xctoolchain')),
-        konanData=str(data), compilerArtifacts=str(ROOT/'.kvik/tool-artifacts'))
+        roots=installation_roots(args.java_home, args.konan_home, data, args.developer_directory),
+        konanData=str(data), compilerArtifacts=str(args.artifact_cache.resolve()))
     validate(installations, 'toolInstallation')
     write('tools.json', json.dumps(installations))
     summaries = []
@@ -77,7 +79,7 @@ class AnswerTest {
     def invoke(label, expected=0, status='passed', executed=1):
         started = time.monotonic()
         result = subprocess.run([str(executable), 'test', '--project', str(project/'kvik.json'),
-            '--tools', str(project/'tools.json'), '--module', 'consumer', '--target', 'macosArm64', '--offline'],
+            '--tools', str(project/'tools.json'), '--module', 'consumer', '--target', target, '--offline'],
             capture_output=True, text=True, timeout=600)
         write(label+'.stdout.jsonl', result.stdout)
         write(label+'.stderr.log', result.stderr)
@@ -91,14 +93,14 @@ class AnswerTest {
         validate(record, 'verification')
         assert record['status'] == status and record['freshnessAtCompletion'] == 'current', record
         assert record['testCounts']['executed'] == executed and record['testCounts']['discoveryComplete'], record
-        assert record['completedChecks'] == (['consumer:macosArm64:test'] if status == 'passed' else []), record
+        assert record['completedChecks'] == ([f'consumer:{target}:test'] if status == 'passed' else []), record
         run = project/'.kvik/runs'/record['runId']
         assert json.loads((run/'verification.json').read_text()) == record
         assert (run/'events.jsonl').read_text() == result.stdout
         traces = [json.loads(path.read_text()) for path in (run/'actions').glob('*.json')]
         assert {trace['actionId']: trace['key'] for trace in traces} == {action['actionId']: action['key'] for action in record['actions']}
         observations = [json.loads(path.read_text()) for path in (run/'observations').glob('*.json')]
-        tests = next(value['observation'] for value in observations if value['actionId'] == 'consumer:macosArm64:test')
+        tests = next(value['observation'] for value in observations if value['actionId'] == f'consumer:{target}:test')
         if executed:
             assert any('KVIK_NATIVE_TEST_EFFECT' in Path(log).read_text() for log in tests['logs'])
             assert [test['id'] for test in record['tests']] == ['fixture.AnswerTest.dependencyAndInternalDeclaration']

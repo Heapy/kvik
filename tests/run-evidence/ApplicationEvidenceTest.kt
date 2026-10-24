@@ -15,8 +15,8 @@ class ApplicationEvidenceTest {
     ) = aggregateRunEvidence("prepare", setOf("app:$target:application"), terminals, graph, actions, emptyMap(),
         identity, identity, identity, identity, mapOf("compiler" to identity), listOf("kvik", "prepare-application"), freshness, cancelled)
 
-    @Test fun bothTargetsAcceptExecutedOrCachedPreparationWithoutClaimingApplicationExecution() {
-        for (target in listOf("jvm", "macosArm64")) for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT)) {
+    @Test fun supportedTargetsAcceptExecutedOrCachedPreparationWithoutClaimingApplicationExecution() {
+        for (target in listOf("jvm", "macosArm64", "linuxX64")) for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT)) {
             val evidence = aggregate(target, graph.keys.map { result(it, status) })
             assertEquals(ExitStatus.SUCCESS, evidence.exitStatus)
             assertEquals(setOf("app:$target:application"), evidence.record.completedChecks)
@@ -29,7 +29,7 @@ class ApplicationEvidenceTest {
     }
 
     @Test fun everyPreparationPrerequisiteMustSucceedAndCancellationWins() {
-        for (target in listOf("jvm", "macosArm64")) for (id in graph.keys) {
+        for (target in listOf("jvm", "macosArm64", "linuxX64")) for (id in graph.keys) {
             val missing = aggregate(target, graph.keys.filter { it != id }.map(::result))
             assertEquals(ExitStatus.INCOMPLETE, missing.exitStatus)
             assertTrue(missing.record.completedChecks.isEmpty())

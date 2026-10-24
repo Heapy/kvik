@@ -95,6 +95,7 @@
           "enum": [
             "jvm",
             "macosArm64",
+            "linuxX64",
             "common"
           ]
         },
@@ -785,10 +786,11 @@
           "items": {
             "enum": [
               "jvm",
-              "macosArm64"
+              "macosArm64",
+              "linuxX64"
             ]
           },
-          "maxItems": 2
+          "maxItems": 3
         },
         "compilation": {
           "anyOf": [
@@ -850,7 +852,8 @@
         "target": {
           "enum": [
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64"
           ]
         },
         "compilation": {
