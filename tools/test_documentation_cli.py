@@ -51,6 +51,10 @@ def main():
     document = dict(schemaVersion=1, name='documentationFixture',
         repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[module('base'), module('library', True)])
     write('base/common/Token.kt', 'package dependency\n/** A dependency type. */\nclass Token\n')
+    write('base/native/NativeToken.kt', '\n'.join(['package dependency',
+        '/** A shared Native dependency type. */',
+        '@OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)',
+        'class NativeToken(val worker: kotlin.native.concurrent.Worker)', '']))
     write('library/common/Library.kt', '''package sample
 import dependency.Token
 /** Public API using a dependency type. */
@@ -62,7 +66,10 @@ expect fun platformName(): String
     write('library/native/Platform.kt', '\n'.join(['package sample',
         'actual fun platformName(): String = "Native"', '/** Native worker identity. */',
         '@OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)',
-        'fun workerId(worker: kotlin.native.concurrent.Worker): Int = worker.id', '']))
+        'fun workerId(worker: kotlin.native.concurrent.Worker): Int = worker.id',
+        '/** Uses a dependency declared in shared Native code. */',
+        '@OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)',
+        'fun nativeTokenId(token: dependency.NativeToken): Int = token.worker.id', '']))
     write('Module.md', '# Module library\nA curious library\n')
     write('tools.json', json.dumps(tools))
 
@@ -103,12 +110,13 @@ expect fun platformName(): String
 
     resolve()
     first, html = invoke('common-jvm-native-and-local-dependency')
-    assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName', 'workerId', 'Worker']), html[:1000]
+    assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName', 'workerId', 'Worker', 'nativeTokenId', 'NativeToken']), html[:1000]
     warm, _ = invoke('warm-documentation')
     assert all(action['status'] == 'local_hit' for action in warm['actions'])
     selected, html = invoke('jvm-selection-preserves-common-metadata', selected_targets=['jvm'])
     assert all(text in html for text in ['Library', 'Token', 'platformName'])
     assert 'workerId' not in html
+    assert 'nativeTokenId' not in html
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in selected['actions'])
     write('Module.md', '# Module library\nRevised module description\n')
     query = run(['verification', '--run', project / '.kvik/runs' / first['runId']])
