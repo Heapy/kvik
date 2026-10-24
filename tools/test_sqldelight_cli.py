@@ -52,7 +52,7 @@ def main():
     sql.write_text(original_sql)
     env = dict(os.environ)
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
-    common = ['--project', str(project), '--store', str(store)]
+    common = ['--project', str(project), '--store', str(store), '--pin', 'org.jetbrains.kotlin:kotlin-stdlib:2.4.20']
 
     def resolve():
         project.write_text(json.dumps(config))
@@ -80,6 +80,15 @@ def main():
         return actions[name]['status']
 
     resolve()
+    inspected = subprocess.run([str(runtime), 'inspect', '--project', str(project),
+                                '--pin', 'org.jetbrains.kotlin:kotlin-stdlib:2.4.20'], env=env,
+                               capture_output=True, check=True, timeout=30)
+    inspection = json.loads(inspected.stdout)
+    owner = next(item for item in inspection['files'] if item['path'] == 'data/sql/fixture/database/Person.sq')
+    assert owner['modules'] == ['data'] and owner['sourceSets'] == ['main'] and owner['targets'] == ['jvm']
+    assert 'generator:sqldelight' in owner['tags'] and 'kind:generator-input' in owner['tags']
+    assert inspection['origins']['generator:data:sqldelight']['pointer'] == '/modules/0/sqlDelight'
+    print('PASS SQL input inspection', flush=True)
     first, _ = run('generated-only-main')
     assert status(first, 'data:jvm:sqldelight') == status(first, 'data:jvm:main') == 'executed'
     warm, _ = run('warm-build')
