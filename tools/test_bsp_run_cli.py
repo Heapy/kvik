@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run real JVM applications through BSP, including overrides and owned cancellation."""
+"""Run real JVM and optional host-native applications through BSP, including owned cancellation."""
 import argparse
 import base64
 import json
@@ -37,6 +37,25 @@ fun main(args: Array<String>) {
 '''
 
 
+NATIVE_APPLICATION = '''@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+package fixture
+import kotlinx.cinterop.toKString
+import platform.posix.*
+fun main(args: Array<String>) {
+    val text = args.joinToString("|")
+    val path = checkNotNull(getenv("EFFECT")).toKString()
+    val file = checkNotNull(fopen(path, "a"))
+    try {
+        check(fputs(text + "\\n", file) >= 0)
+        check(fflush(file) == 0)
+    } finally { fclose(file) }
+    println("BSP-NATIVE-OUT: $text")
+    fputs("BSP-NATIVE-ERR: свежий запуск\\n", stderr)
+    fflush(null)
+}
+'''
+
+
 def result(value, status=1, origin=None):
     expected = dict(statusCode=status)
     if origin is not None:
@@ -60,6 +79,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--store', type=Path, required=True)
+    parser.add_argument('--native-target', choices=('macosArm64', 'linuxX64'), help='Also run a native application on this host target')
     parser.add_argument('--output-dir', type=Path, default=Path(tempfile.gettempdir())/'kvik-bsp-run-tests')
     args = parser.parse_args()
     runtime, tools, store = args.runtime.resolve(strict=True), args.tools.resolve(strict=True), args.store.resolve()
@@ -84,6 +104,14 @@ def main():
              targets=[dict(name='jvm', main='main', test=None, compilerOptions=[])], compilerPlugins=[]),
         dict(id='app', sourceSets=[source('main', 'app/src', [dict(module='library')]), source('test', 'app/test')],
              targets=[dict(name='jvm', main='main', test='test', compilerOptions=[], application=application)], compilerPlugins=[])])
+    native_effect = root/'native-executions.txt'
+    native_arguments = ['native argument', 'привет ☃']
+    if args.native_target:
+        config['modules'].append(dict(id='native-app', sourceSets=[source('main', 'native-app/src')],
+            targets=[dict(name=args.native_target, main='main', test=None, compilerOptions=[],
+                application=dict(entryPoint='fixture.main', arguments=native_arguments, environment=dict(EFFECT=str(native_effect))))],
+            compilerPlugins=[]))
+        write('native-app/src/App.kt', NATIVE_APPLICATION)
     project = write('kvik.json', json.dumps(config))
     write('library/src/Library.kt', 'package fixture\nfun answer() = 42\n')
     source_file = write('app/src/App.kt', APPLICATION)
@@ -174,6 +202,24 @@ def main():
         assert len(observations()) == 4
         print('PASS defaults, Unicode overrides, working-directory URI, empty arguments and fresh cached runs', flush=True)
 
+        if args.native_target:
+            native = by_suffix[f'native-app/{args.native_target}/main']
+            assert native['capabilities']['canRun'], native
+            start = len(client.notifications)
+            result(client.request('buildTarget/run', dict(target=native['id'], originId='native'), timeout=1200), origin='native')
+            expected_line = '|'.join(native_arguments)
+            assert native_effect.read_text().splitlines() == [expected_line]
+            for method, text in [('run/printStdout', 'BSP-NATIVE-OUT: '+expected_line),
+                                 ('run/printStderr', 'BSP-NATIVE-ERR: свежий запуск')]:
+                messages = [n['params'] for n in client.notifications[start:] if n['method'] == method]
+                assert messages and all(p['originId'] == 'native' for p in messages), messages
+                assert text in ''.join(p['message'] for p in messages), messages
+            before = records()
+            result(client.request('buildTarget/run', dict(target=native['id'])))
+            assert native_effect.read_text().splitlines() == [expected_line, expected_line]
+            assert_compilation_cached(before)
+            print('PASS native application execution and cached preparation with a fresh second run', flush=True)
+
         result(client.request('buildTarget/run', dict(target=app, environmentVariables=dict(MODE='fail'), originId='failed')), status=2, origin='failed')
         assert len(observations()) == 5
         source_file.write_text('package fixture\nfun main() = missingBspRunSymbol\n')
@@ -187,6 +233,7 @@ def main():
         project.write_text(json.dumps(config))
         resolve()
         client.request('workspace/reload')
+        imported = client.request('workspace/buildTargets')['targets']
         result(client.request('buildTarget/run', dict(target=app)))
         assert_observation(['after reload'])
         print('PASS nonzero exit, compile failure and resolved configuration reload', flush=True)
