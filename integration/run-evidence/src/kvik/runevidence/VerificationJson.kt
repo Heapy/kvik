@@ -10,7 +10,7 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
     fun checks(name: String): Set<String> {
         val values = fields.getValue(name).arrayValue().map { it.stringValue() }
         require(values.distinct().size == values.size) { "Duplicate $name in verification record" }
-        require(values.all(::validCheck)) { "Invalid $name: expected module:target:build|test|application|package|abi-dump|abi-check or script:name:jvm:prepare|run" }
+        require(values.all(::validCheck)) { "Invalid $name: expected module:target:build|test|compile-tests|application|package|abi-dump|abi-check or script:name:jvm:prepare|run" }
         return values.toSet()
     }
     return VerificationRecord(fields.getValue("runId").stringValue(), checks("requestedChecks"), checks("completedChecks"),

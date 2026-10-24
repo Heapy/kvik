@@ -4782,7 +4782,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test))$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests))$(?![\\s\\S])"
         },
         {
           "type": "string",

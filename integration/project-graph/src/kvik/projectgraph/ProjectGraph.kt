@@ -11,7 +11,7 @@ import kvik.library.*
 import kvik.abi.*
 import kvik.documentation.*
 
-enum class ProjectMode { BUILD, TEST, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
+enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
 private fun ProjectMode.checkScope() = name.lowercase().replace('_', '-')
 data class JvmCoverageTools(val version: String, val agent: Digest, val reporter: Digest, val excludes: List<String> = emptyList()) {
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
@@ -53,7 +53,8 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
     for (module in request.modules) for (target in request.targets) {
         visit(module, target, "main", request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
             request.mode == ProjectMode.BUILD && modules.getValue(module).targets.single { it.name == target }.nativeFramework != null)
-        if (request.mode == ProjectMode.TEST) visit(module, target, "test", true)
+        if (request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS))
+            visit(module, target, "test", request.mode == ProjectMode.TEST || target != "jvm")
     }
     return targets.toSet()
 }
@@ -103,8 +104,8 @@ private class Builder(
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
         require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unknown project module/target selection" }
-        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST)) {
-            "JS/Wasm currently supports build and test; packaging, ABI, documentation and application modes require their own adapters"
+        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS)) {
+            "JS/Wasm currently supports build, test and compile-tests; packaging, ABI, documentation and application modes require their own adapters"
         }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
@@ -113,10 +114,10 @@ private class Builder(
             require(tools[target]?.keys == if (target == "jvm") setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
                 else if (KotlinJsTarget.find(target) != null) setOf("jdk", "jvm-compiler", "jvm-worker", "junit", "node")
                 else NativeTarget.require(target).toolIdentityNames) { "Missing/incompatible tool identities: $target" }
-            val scope = if (this.request.mode == ProjectMode.TEST) "test" else "main"
+            val scope = if (this.request.mode in setOf(ProjectMode.TEST, ProjectMode.COMPILE_TESTS)) "test" else "main"
             if (scope == "test") require(target(module, target).test != null) { "No test compilation: $module:$target" }
             if (this.request.mode == ProjectMode.APPLICATION) require(target(module, target).application != null) { "No application settings: $module:$target" }
-            val runtime = scope == "test" || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
+            val runtime = scope == "test" && (this.request.mode == ProjectMode.TEST || target != "jvm") || this.request.mode in setOf(ProjectMode.APPLICATION, ProjectMode.PACKAGE) ||
                 this.request.mode == ProjectMode.BUILD && target(module, target).nativeFramework != null
             val usages = if (target == "jvm") if (runtime) listOf("java-api", "java-runtime") else listOf("java-api") else if (runtime) listOf("kotlin-api", "kotlin-runtime") else listOf("kotlin-api")
             for (usage in usages) require(ResolutionDomain(module, target, scope, usage) in authorized) { "Lock configuration does not authorize $module:$target:$scope:$usage" }
@@ -138,6 +139,7 @@ private class Builder(
             terminals[check] = when (request.mode) {
                 ProjectMode.BUILD -> if (target(module, target).nativeFramework == null) mainId(module, target) else ensureFramework(module, target)
                 ProjectMode.TEST -> ensureTest(module, target)
+                ProjectMode.COMPILE_TESTS -> ensureTest(module, target, execute = false)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
                 ProjectMode.PACKAGE -> ensurePackage(module, target)
                 ProjectMode.ABI_DUMP -> ensureAbiDump(module, target)
@@ -821,10 +823,10 @@ private class Builder(
         return id
     }
 
-    private fun ensureTest(module: String, target: String): String {
-        if (KotlinJsTarget.find(target) != null) return ensureJsTest(module, KotlinJsTarget.require(target))
+    private fun ensureTest(module: String, target: String, execute: Boolean = true): String {
+        if (KotlinJsTarget.find(target) != null) return ensureJsTest(module, KotlinJsTarget.require(target), execute)
         val dependencies = closure(module, target, "test").modules
-        val runtimeDependencies = closure(module, target, "test", true).modules
+        val runtimeDependencies = if (execute || target != "jvm") closure(module, target, "test", true).modules else emptyList()
         (dependencies + runtimeDependencies).distinct().forEach { ensureMain(it, target) }
         val main = mainSources.getValue(module to target)
         val allSources = sources(module, target, "test")
@@ -910,6 +912,11 @@ private class Builder(
                 }
             }
         } else require(selectedPlugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
+        if (!execute) return when {
+            NativeTarget.find(target) != null -> linkId(module, target)
+            hasTestCompile -> compileId(module, target)
+            else -> mainId(module, target)
+        }
         val id = "$module:$target:test"
         val runtimeIds = listOf(module) + runtimeDependencies
         val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(if (NativeTarget.find(target) != null) linkId(module, target) else compileId(module, target)) else emptySet()
@@ -948,7 +955,7 @@ private class Builder(
 
     private fun jsCompilerTools(target: String): Map<String, Digest> = tools.getValue(target).filterKeys { it != "node" }
 
-    private fun ensureJsTest(module: String, jsTarget: KotlinJsTarget): String {
+    private fun ensureJsTest(module: String, jsTarget: KotlinJsTarget, execute: Boolean): String {
         val target = jsTarget.projectName
         var testModuleName = "_kvik_test_$module"
         while (testModuleName in modules) testModuleName += "_"
@@ -984,6 +991,7 @@ private class Builder(
                 output = LogicalPath("tests"), moduleName = testModuleName, includedLibrary = LogicalPath("tests.klib")),
                 merge(compiled, runtimeArtifacts, dependencyFiles), composition, jsCompilerTools(target))
         }
+        if (!execute) return linkId(module, target)
         val id = "$module:$target:test"
         val settings = target(module, target).jsTestSettings ?: JsTestSettings()
         val resources = resources(module, target, "main") + resources(module, target, "test") +

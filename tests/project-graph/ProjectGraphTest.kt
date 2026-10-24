@@ -1443,6 +1443,76 @@ class IosFrameworkGraphTest {
     }
 }
 
+class CompileTestsGraphTest {
+    @Test fun compileOnlyReusesEveryCompilerAndLinkKeyWithoutAnyTestExecutionLeaf() {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
+            val config = configuration(*listOf(base, app).map { module ->
+                module.copy(targets = listOf(TargetSpec(target, "jvmMain", "jvmTest", emptyList(), testCompilerOptions = listOf("-Werror"))))
+            }.toTypedArray())
+            val execution = resolved(graph(config, request = request(ProjectMode.TEST, target)))
+            val selection = request(ProjectMode.COMPILE_TESTS, target)
+            val plan = graph(config, request = selection)
+            val actions = resolved(plan)
+            val terminal = "app:$target:" + if (target == "jvm") "test-compile" else "test-link"
+            assertEquals(setOf("app:$target:compile-tests"), plan.requestedChecks)
+            assertEquals(projectRequestedChecks(selection), plan.requestedChecks)
+            assertEquals(mapOf("app:$target:compile-tests" to terminal), plan.terminalActions)
+            assertFalse(actions.keys.any { it.endsWith(":test") })
+            assertTrue(actions.values.all { it.kind != ActionKind.TEST && it.cachePolicy != CachePolicy.NEVER })
+            for ((id, action) in actions) assertEquals(execution.getValue(id).key(Sha256), action.key(Sha256), id)
+            assertEquals(setOf(target), projectToolTargets(config.project, selection))
+        }
+    }
+
+    @Test fun jvmCompilationNeedsNoDiscoverySelectionOrRuntimeOnlyWorkspaceModules() {
+        val runtime = module("runtime")
+        val selected = app.copy(sourceSets = app.sourceSets.map { set ->
+            if (set.name == "jvmTest") set.copy(dependencies = listOf(Dependency.Module("runtime", DependencyScopeKind.RUNTIME))) else set
+        })
+        val config = configuration(base, runtime, selected)
+        val files = TreeManifest(snapshot().files + snapshot().files.filter { it.path.value.startsWith("base/") }
+            .map { it.copy(path = LogicalPath(it.path.value.replaceFirst("base/", "runtime/"))) })
+        val compilation = resolved(graph(config, files, request(ProjectMode.COMPILE_TESTS)))
+        assertTrue(compilation.keys.none { it.startsWith("runtime:") })
+        assertTrue("runtime:jvm:main" in resolved(graph(config, files, request(ProjectMode.TEST))))
+        val options = JvmCompilation.fromJson(compilation.getValue("app:jvm:test-compile").parameters)
+        assertEquals(listOf(LogicalPath("modules/app/jvm/main")), options.friendPaths)
+        assertFails { graph(config, files, request(ProjectMode.COMPILE_TESTS).copy(jvmTests = mapOf("app" to JvmTests(emptyList())))) }
+    }
+
+    @Test fun emptyJvmTestsReuseMainAndStillRejectSelectedTestPluginsOrMissingTestCompilation() {
+        val files = TreeManifest(snapshot().files.filterNot { it.path.value.contains("Test/") })
+        val plan = graph(files = files, request = request(ProjectMode.COMPILE_TESTS))
+        assertEquals(mapOf("app:jvm:compile-tests" to "app:jvm:main"), plan.terminalActions)
+        assertTrue(plan.nodes.none { ":test" in it.id })
+        val plugin = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
+            setOf("jvm"), setOf("test"), emptyList(), emptyList())
+        assertFails { graph(configuration(base, app.copy(compilerPlugins = listOf(plugin))), files, request(ProjectMode.COMPILE_TESTS)) }
+        val noTests = app.copy(targets = app.targets.map { it.copy(test = null) })
+        assertFails { graph(configuration(base, noTests), request = request(ProjectMode.COMPILE_TESTS)) }
+    }
+
+    @Test fun testCompilerOptionsAndTestPluginProducersArePreserved() {
+        val plugin = CompilerPluginSpec("producer", null, setOf("macosArm64"), setOf("test"), emptyList(), emptyList(),
+            "example.plugin", "2.4.20")
+        val selected = app.copy(compilerPlugins = listOf(plugin))
+        val config = configuration(base, selected, module("producer"))
+        val files = TreeManifest(snapshot().files + snapshot().files.filter { it.path.value.startsWith("base/") }
+            .map { it.copy(path = LogicalPath(it.path.value.replaceFirst("base/", "producer/"))) })
+        val selection = request(ProjectMode.COMPILE_TESTS, "macosArm64")
+        assertEquals(setOf("macosArm64", "jvm"), projectToolTargets(config.project, selection))
+        val plan = graph(config, files, selection)
+        assertTrue("producer:jvm:main" in plan.nodes.single { it.id == "app:macosArm64:test-compile" }.dependencies)
+        val changed = configuration(base, app.copy(targets = app.targets.map {
+            if (it.name == "jvm") it.copy(testCompilerOptions = listOf("-Werror")) else it
+        }))
+        val plain = resolved(graph(request = request(ProjectMode.COMPILE_TESTS)))
+        val altered = resolved(graph(changed, request = request(ProjectMode.COMPILE_TESTS)))
+        assertEquals(plain.getValue("app:jvm:main").key(Sha256), altered.getValue("app:jvm:main").key(Sha256))
+        assertNotEquals(plain.getValue("app:jvm:test-compile").key(Sha256), altered.getValue("app:jvm:test-compile").key(Sha256))
+    }
+}
+
 class JsProjectGraphTest {
     private fun fixture(target: String) = configuration(*listOf(base, app).map {
         it.copy(targets = listOf(TargetSpec(target, "jvmMain", "jvmTest", emptyList())))

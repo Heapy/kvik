@@ -52,9 +52,13 @@ private class RunJournal(private val runId: String, directory: String, private v
 internal data class PreparedRun(val directory: String, val descriptor: Digest)
 internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null, val exitCode: Int = status.code, val directory: String? = null)
 
-internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
+internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
+    projectBuildCommand(args, if (test) ProjectMode.TEST else ProjectMode.BUILD)
+
+internal fun compileTestsCommand(args: List<String>): ExitStatus = projectBuildCommand(args, ProjectMode.COMPILE_TESTS)
+
+private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStatus {
     val (source, remaining) = sourceProjectOptions(args)
-    val mode = if (test) ProjectMode.TEST else ProjectMode.BUILD
     if (source == null) return executeBuild(remaining, mode).status
     val options = buildOptions(remaining)
     check(kvik_interrupt_install() == 0) { "Cannot install source build interruption handlers" }
@@ -98,6 +102,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val command = if (scriptFile != null) "run-script" else when (mode) {
         ProjectMode.BUILD -> "build"
         ProjectMode.TEST -> "test"
+        ProjectMode.COMPILE_TESTS -> "compile-tests"
         ProjectMode.APPLICATION -> "prepare-application"
         ProjectMode.PACKAGE -> "package-library"
         ProjectMode.ABI_DUMP -> "abi-dump"
