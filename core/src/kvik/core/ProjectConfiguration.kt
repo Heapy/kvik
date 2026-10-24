@@ -64,7 +64,7 @@ fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
 }
 
 private fun parseModule(value: JsonValue): ModuleSpec {
-    val fields = value.fields(setOf("id", "sourceSets", "targets", "compilerPlugins"), setOf("publication", "documentation"))
+    val fields = value.fields(setOf("id", "sourceSets", "targets", "compilerPlugins"), setOf("publication", "documentation", "sqlDelight"))
     val id = fields.getValue("id").identifier()
     val sourceSets = fields.getValue("sourceSets").arrayValue().map { source ->
         val entry = source.fields(setOf("name", "directories", "resources", "dependsOn", "dependencies"))
@@ -108,7 +108,7 @@ private fun parseModule(value: JsonValue): ModuleSpec {
         LibraryPublicationSpec(Coordinate.parse(declaration.getValue("coordinate").stringValue()))
     }
     return ModuleSpec(id, sourceSets, targets, fields.getValue("compilerPlugins").arrayValue().map(::parseCompilerPlugin), publication,
-        fields["documentation"]?.let(DocumentationSettings::fromJson))
+        fields["documentation"]?.let(DocumentationSettings::fromJson), fields["sqlDelight"]?.let(SqlDelightSpec::fromJson))
 }
 
 private fun parseDependency(value: JsonValue): Dependency {

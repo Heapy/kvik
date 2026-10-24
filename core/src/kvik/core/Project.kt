@@ -138,8 +138,16 @@ data class LibraryPublicationSpec(val coordinate: Coordinate) {
 }
 
 data class ModuleSpec(val id: String, val sourceSets: List<SourceSet>, val targets: List<TargetSpec>, val compilerPlugins: List<CompilerPluginSpec>,
-                      val publication: LibraryPublicationSpec? = null, val documentation: DocumentationSettings? = null) {
+                      val publication: LibraryPublicationSpec? = null, val documentation: DocumentationSettings? = null,
+                      val sqlDelight: SqlDelightSpec? = null) {
     init {
+        sqlDelight?.let { spec ->
+            require(sourceSets.any { it.name == spec.sourceSet }) { "Unknown SQLDelight source set in $id" }
+            val consumers = targets.filter { target -> sourceSetClosure(this, listOf(target.main)).any { it.name == spec.sourceSet } }
+            require(consumers.isNotEmpty() && consumers.all { it.name == "jvm" }) {
+                "SQLDelight currently requires a source set consumed only by JVM main in $id"
+            }
+        }
         publication?.let { spec ->
             require(targets.none { it.application != null }) { "Published library module $id cannot declare application settings" }
             targets.forEach { spec.coordinateFor(it.name) }
