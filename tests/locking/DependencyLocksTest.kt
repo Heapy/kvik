@@ -74,6 +74,17 @@ class DependencyLocksTest {
         assertEquals(tools.toSet(), effective(project, scopes = listOf(scope(name = "test"))).requests
             .filter { it.domain == host }.map { it.coordinate }.toSet())
         assertTrue(effective(project, scopes = emptyList()).requests.isEmpty())
+        val application = JsonValue.Object(module + mapOf("id" to "application".json(), "sourceSets" to
+            module.getValue("sourceSets").arrayValue().map { source ->
+                val fields = source.objectValue()
+                JsonValue.Object(fields + ("dependencies" to if (fields.getValue("name").stringValue() == "main")
+                    listOf(obj("module" to "sample".json())).json() else emptyList<JsonValue>().json()))
+            }.json()))
+        val withConsumer = parseProjectConfiguration(JsonValue.Object(document + ("modules" to
+            (project.document.objectValue().getValue("modules").arrayValue() + application).json())))
+        val prerequisite = effectiveConfiguration(withConsumer, scopes = listOf(DependencyScope("application", "jvm", "test", "java-api")))
+        assertEquals(tools.toSet(), prerequisite.requests.filter { it.domain == host }.map { it.coordinate }.toSet())
+        assertTrue(prerequisite.requests.filter { it.domain.purpose == "sqldelight-compiler" }.all { it.domain.module == "sample" })
         val entries = tools.flatMap { component(it.toString(), listOf("example:annotations:13.0")).entries }.associate { it.toPair() } +
             component("example:consumer:1.0", listOf("example:annotations:23.0")) +
             component("example:annotations:13.0") + component("example:annotations:23.0")
