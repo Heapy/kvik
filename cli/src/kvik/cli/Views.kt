@@ -1,0 +1,63 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+package kvik.cli
+
+import kvik.cache.NativeContentStore
+import kvik.core.*
+import kvik.execution.platform.*
+
+/** A view exports a projection of a pinned inventory; it never changes the source revision. */
+internal fun viewCommand(args: List<String>): JsonValue {
+    val (source, remaining) = sourceProjectOptions(args)
+    require(source != null) { "A source view requires --kode, --kode-home, --source-project and --revision" }
+    var role: String? = null
+    val all = mutableSetOf<String>()
+    val none = mutableSetOf<String>()
+    val projectArgs = mutableListOf<String>()
+    var index = 0
+    while (index < remaining.size) {
+        val flag = remaining[index++]
+        if (flag !in setOf("--role", "--tag", "--exclude-tag")) { projectArgs += flag; continue }
+        val value = remaining.getOrNull(index++)
+        require(value != null && value.isNotBlank() && !value.startsWith("--")) { "Missing value for $flag" }
+        when (flag) {
+            "--role" -> { require(role == null) { "Duplicate --role" }; role = value }
+            "--tag" -> require(all.add(value)) { "Duplicate --tag: $value" }
+            "--exclude-tag" -> require(none.add(value)) { "Duplicate --exclude-tag: $value" }
+        }
+    }
+    val name = requireNotNull(role) { "Select --role production, tests or all" }
+    val predicate = roleFilePredicate(name, all, none)
+    val options = projectOptions(projectArgs, lockOptions = true)
+    require(options.pins.isEmpty() && options.scopedPins.isEmpty() && options.metadataExclusions.isEmpty()) {
+        "Source views classify declared files; dependency resolution options are not supported"
+    }
+    check(kvik_interrupt_install() == 0) { "Cannot install source view interruption handlers" }
+    try {
+        return withPreparedSourceProject(source, options) { prepared ->
+            val manifest = prepared.scopedManifest(::sourceCheckpoint)
+            val paths = manifest.files.map { it.path }
+            val files = paths.toSet()
+            // A source/resource directory must not alias a file, even when its leaf is absent.
+            val directories = prepared.project.configuration.project.modules.flatMap { module ->
+                module.sourceSets.flatMap { it.directories + it.resources }
+            }.distinct()
+            for (directory in directories) {
+                sourceCheckpoint()
+                var path = directory.value
+                while (path.isNotEmpty()) {
+                    require(LogicalPath(path) !in files) { "Source/resource root is not a directory: ${directory.value}" }
+                    path = path.substringBeforeLast('/', "")
+                }
+            }
+            val lock = LogicalPath(options.lock)
+            prepared.entry(lock) // Validate topology; an absent lock is omitted from the projection.
+            val tagged = tagProjectFiles(prepared.project.configuration, prepared.project.name, lock, paths, ::sourceCheckpoint)
+                .filter { predicate.matches(it.tags) }
+                .map { TaggedProjectFile(prepared.revisionPath(it.path), it.tags) }
+            val view = SourceView(name, prepared.reference, predicate, tagged)
+            if (!options.offline) NativeContentStore(projectPath(currentDirectory(), options.store)).put(prepared.configuration.bytes)
+            sourceCheckpoint()
+            view.toJson()
+        }
+    } finally { kvik_interrupt_restore() }
+}

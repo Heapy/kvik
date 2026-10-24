@@ -27,6 +27,8 @@ internal class PreparedSourceProject(
     fun revisionPath(path: LogicalPath): LogicalPath =
         LogicalPath(if (reference.root.isEmpty()) path.value else "${reference.root}/${path.value}")
 
+    fun scopedManifest(checkpoint: () -> Unit): SourceManifest = resolved.scopedTo(reference.root, checkpoint).manifest
+
     fun entry(path: LogicalPath): SourceFileEntry? {
         val absolute = revisionPath(path)
         require(absolute !in resolved.manifest.directories) { "Source file path is a directory: ${absolute.value}" }

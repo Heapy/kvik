@@ -84,6 +84,7 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             }
         }
     }
+    val tags = tagProjectFiles(configuration, fileName, null, owners.keys.map(::LogicalPath)).associateBy { it.path.value }
     return obj(
         "schemaVersion" to CONTRACT_VERSION.json(), "project" to configuration.document,
         "configuration" to effectiveConfiguration(configuration, policy).digest.toJson(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
@@ -93,7 +94,8 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             "path" to path.json(), "modules" to entries.map { it.module }.distinct().sorted().map { it.json() }.json(),
             "sourceSets" to entries.map { it.sourceSet }.distinct().sorted().map { it.json() }.json(),
             "targets" to entries.flatMap { it.targets }.distinct().sorted().map { it.json() }.json(),
+            "tags" to tags.getValue(path).tags.sorted().map { it.json() }.json(),
         ) }.json(), "origins" to JsonValue.Object(origins),
-        "capabilities" to listOf("runtime-info", "project-inspection", "dependency-resolution", "locked-dependencies", "build", "test", "verification").map { it.json() }.json(),
+        "capabilities" to listOf("runtime-info", "project-inspection", "file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "verification").map { it.json() }.json(),
     )
 }

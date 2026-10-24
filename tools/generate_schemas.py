@@ -756,7 +756,13 @@ DEFS["revisionClaims"]["description"] = "Claim values are retained JSON text, in
 DEFS["claimAssessment"] = object_({"id": {"type": "string", "maxLength": 4096},
     "declaration": {"type": "string", "maxLength": 262144}, "status": enum("confirmed", "refuted", "unchecked"),
     "reason": {"type": "string", "minLength": 1, "maxLength": 4096}})
-DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING)})), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
+FILE_TAG = {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*$"}
+DEFS["taggedProjectFile"] = object_({"path": PATH, "tags": array(FILE_TAG, minItems=1, uniqueItems=True)})
+DEFS["fileTagPredicate"] = object_({key: array(FILE_TAG, maxItems=64, uniqueItems=True) for key in ("all", "any", "none")})
+DEFS["sourceView"] = versioned({"kind": {"const": "source-view"}, "name": enum("production", "tests", "all"),
+    "source": ref("sourceReference"), "predicate": ref("fileTagPredicate"), "files": array(ref("taggedProjectFile"), maxItems=100000)})
+DEFS["sourceView"]["description"] = "Revision-pinned display projection, not an authorization policy. Files have unique revision-relative paths below source.root, satisfy predicate, and total canonical UTF-8 JSON is at most 16 MiB."
+DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING), "tags": array(FILE_TAG, minItems=1, uniqueItems=True)}, optional=("tags",))), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
     "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest")},
     optional=("source", "sourceRoot", "sourceManifest"))
 DEFS["inspection"]["dependentRequired"] = {key: [other for other in ("source", "sourceRoot", "sourceManifest") if other != key]

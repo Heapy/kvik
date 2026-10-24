@@ -5,7 +5,7 @@ private const val SOURCE_VIEW_MAX_BYTES = 16 * 1024 * 1024
 private val FILE_TAG_PATTERN = Regex("[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*")
 
 private fun requireFileTag(tag: String) {
-    require(tag.length in 3..512 && FILE_TAG_PATTERN.matches(tag)) { "Invalid project file tag: $tag" }
+    require(FILE_TAG_PATTERN.matches(tag)) { "Invalid project file tag: $tag" }
 }
 
 /** Declarative ownership and purpose; tags do not grant access to the file. */

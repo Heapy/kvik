@@ -42,6 +42,17 @@ class ProjectFilesTest {
         assertFalse(files.values.flatten().any { it.startsWith("api:") })
     }
 
+    @Test fun derivedTagsPreserveLongProjectIdentifiers() {
+        val name = "a".repeat(1024)
+        val longModule = ModuleSpec(name, listOf(sourceSet(name, "src")),
+            listOf(TargetSpec("jvm", name, null, emptyList())), emptyList())
+        val file = tagged(listOf("src/Long.kt"), configuration(listOf(longModule))).single()
+        assertTrue("module:$name" in file.tags)
+        assertTrue("source-set:$name" in file.tags)
+        assertEquals(file, TaggedProjectFile.fromJson(file.toJson()))
+        assertTrue(FileTagPredicate(all = setOf("source-set:$name")).matches(file.tags))
+    }
+
     @Test fun overlappingOwnersNestedRootsAndKindsAccumulateWithoutPrefixAliases() {
         val other = ModuleSpec("other", listOf(sourceSet("main", "src/common/nested", resources = listOf("src/common"))),
             listOf(TargetSpec("jvm", "main", null, emptyList())), emptyList())
@@ -140,11 +151,11 @@ class ProjectFilesTest {
     }
 
     @Test fun predicateAndTaggedFileJsonRejectUnknownFieldsDuplicatesAndMalformedTags() {
-        for (invalid in listOf("", "scope", "scope:", ":test", "scope:test value", "scope:test/path", "scope:\n", "scope:" + "a".repeat(507))) {
+        for (invalid in listOf("", "scope", "scope:", ":test", "scope:test value", "scope:test/path", "scope:\n")) {
             assertFails(invalid) { FileTagPredicate(all = setOf(invalid)) }
             assertFails(invalid) { TaggedProjectFile(LogicalPath("file"), setOf(invalid)) }
         }
-        val valid = FileTagPredicate(setOf("custom.key:some_value:a-b", "scope:" + "a".repeat(506)))
+        val valid = FileTagPredicate(setOf("custom.key:some_value:a-b", "scope:" + "a".repeat(1024)))
         assertEquals(valid, FileTagPredicate.fromJson(valid.toJson()))
         assertFails { FileTagPredicate(all = (0..64).map { "tag:$it" }.toSet()) }
         assertFails { FileTagPredicate.fromJson(parseJson("""{"all":["a:b","a:b"],"any":[],"none":[]}""")) }

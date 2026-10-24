@@ -129,6 +129,40 @@ As with local resolution, `resolve --offline` performs this check without
 proposing an update. Offline checks need a full revision ID and previously cached
 configuration, lock and dependencies; `--replace-project` requires online resolve.
 
+`inspect` includes derived tags on source and resource files. Use `view` to export
+a revision-pinned projection for Kode:
+
+```sh
+./kvik --no-build -- view --kode /absolute/bin/kode --kode-home /absolute/kode-store \
+  --source-project library --revision main --project sub/kvik.json \
+  --lock locks/dependencies.json --role production > production-view.json
+/absolute/bin/kode --home /absolute/kode-store tree library \
+  --rev IMMUTABLE_REVISION --view production-view.json
+/absolute/bin/kode --home /absolute/kode-store search library 'TODO' \
+  --rev IMMUTABLE_REVISION --view production-view.json --max 20
+```
+
+Use the revision in `source.provenance.revision` from the exported view. Kode
+rejects a view from another project or revision. `read` also accepts `--view` and
+refuses files outside the projection. Search limits count visible matches;
+hidden matches do not consume the limit. An empty view stays empty.
+
+Roles `production` and `tests` select the corresponding source/resource scope,
+plus configuration and the selected lock; production also includes ABI baselines.
+Role `all` includes the whole configuration directory. Repeat `--tag module:NAME`,
+`--tag target:jvm` or another tag to require all selected tags; `--exclude-tag TAG`
+removes matching files. Source-set inheritance determines scopes: main sources
+inherited by test source sets remain production files. Script, plugin-input,
+documentation and ABI-baseline tags follow explicit declarations. Tags do not
+infer generated status or declaration visibility from filenames; generated build
+outputs remain artifacts outside the source revision.
+
+A view is a display projection. `tx --view` validates the base revision and still
+applies to the full tree. `merge --view` validates the target revision, merges full
+trees and reports every conflict, with `hiddenConflicts` identifying paths outside
+the projection. View filters are not edit permissions. Offline view export needs
+a cached immutable inventory and configuration; it does not need source-file bytes.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).

@@ -9909,6 +9909,109 @@
       ],
       "additionalProperties": false
     },
+    "taggedProjectFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "path",
+        "tags"
+      ],
+      "additionalProperties": false
+    },
+    "fileTagPredicate": {
+      "type": "object",
+      "properties": {
+        "all": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "any": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "none": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "all",
+        "any",
+        "none"
+      ],
+      "additionalProperties": false
+    },
+    "sourceView": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "source-view"
+        },
+        "name": {
+          "enum": [
+            "production",
+            "tests",
+            "all"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        },
+        "predicate": {
+          "$ref": "#/$defs/fileTagPredicate"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taggedProjectFile"
+          },
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "name",
+        "source",
+        "predicate",
+        "files"
+      ],
+      "additionalProperties": false,
+      "description": "Revision-pinned display projection, not an authorization policy. Files have unique revision-relative paths below source.root, satisfy predicate, and total canonical UTF-8 JSON is at most 16 MiB."
+    },
     "inspection": {
       "type": "object",
       "properties": {
@@ -9953,6 +10056,15 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
               }
             },
             "required": [
