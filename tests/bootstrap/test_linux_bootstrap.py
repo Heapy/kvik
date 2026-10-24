@@ -52,6 +52,7 @@ class LinuxBootstrapTest(unittest.TestCase):
             self.assertEqual(roots['xcodeToolchain'] / 'usr/bin/ar', ar)
             self.assertEqual(['-D_DARWIN_C_SOURCE', '-isysroot', roots['sdk']], flags)
             self.assertEqual([], native_libraries.linker_options(roots))
+            self.assertEqual('airplaneMode=true', native_libraries.runtime_properties(roots))
             launcher.validate_options(['-target', 'macos_arm64', '-entry', 'kvik.cli.main'])
             with self.assertRaises(ValueError):
                 launcher.validate_options(['-target', 'linux_x64', '-entry', 'kvik.cli.main'])
@@ -72,7 +73,8 @@ class LinuxBootstrapTest(unittest.TestCase):
             roots = pin_tools.tool_roots('/jdk', '/native', '/konan')
             libraries = native_libraries.build(['files', 'resolution', 'toolchains', 'remote'], Path('/sources'), Path('/output'),
                 roots, {'LANG': 'C'}, None, lambda argv, env, log: commands.append(list(map(str, argv))))
-            self.assertEqual(['-linker-option', '-L/usr/lib/x86_64-linux-gnu'], native_libraries.linker_options(roots))
+            self.assertEqual(['-linker-option', '-L/usr/lib/x86_64-linux-gnu', '-linker-option',
+                '-L/konan/dependencies/x86_64-unknown-linux-gnu-gcc-8.3.0-glibc-2.19-kernel-4.9-2/x86_64-unknown-linux-gnu/lib64'], native_libraries.linker_options(roots))
         self.assertEqual([Path('/output') / (name + '.klib') for name in ('files', 'resolution', 'toolchains', 'remote')], libraries)
         self.assertEqual(6, len(commands))
         interops = [c for c in commands if c[0] == '/native/bin/cinterop']
@@ -87,6 +89,26 @@ class LinuxBootstrapTest(unittest.TestCase):
         self.assertEqual('/usr/bin/clang', commands[3][0])
         self.assertIn('-D_GNU_SOURCE', commands[3])
         self.assertEqual('/usr/bin/ar', commands[4][0])
+
+    def test_runtime_uses_captured_host_libc_and_pinned_gcc_support(self):
+        aliases = {'/usr': Path('/usr'), '/lib': Path('/usr/lib'), '/lib64': Path('/usr/lib64')}
+        def resolve(path, strict=False):
+            self.assertTrue(strict)
+            return aliases[str(path)]
+        with host():
+            roots = pin_tools.tool_roots('/jdk', '/native', '/konan')
+        with host(), patch.object(Path, 'resolve', resolve):
+            properties = dict(item.split('=', 1) for item in native_libraries.runtime_properties(roots).split(';'))
+            self.assertEqual('/', properties['targetSysRoot.linux_x64'])
+            self.assertEqual('usr/lib/x86_64-linux-gnu', properties['crtFilesLocation.linux_x64'])
+            self.assertEqual('usr/lib/x86_64-linux-gnu', properties['abiSpecificLibraries.linux_x64'])
+            self.assertTrue(properties['libGcc.linux_x64'].startswith(str(roots['nativeToolchain']) + '/'))
+            self.assertEqual('/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2', properties['dynamicLinker.linux_x64'])
+            for path in ('/lib', '/lib64', '/usr'):
+                original = aliases[path]; aliases[path] = Path('/outside')
+                with self.assertRaisesRegex(ValueError, 'aliases'):
+                    native_libraries.runtime_properties(roots)
+                aliases[path] = original
 
     def test_source_graph_requires_matching_explicit_target_before_observation(self):
         document = json.loads((ROOT / 'docs/decisions/examples/k14-source-graph.lock.json').read_bytes())

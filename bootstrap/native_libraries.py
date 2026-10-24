@@ -1,6 +1,7 @@
 """Bounded, source-pinned Native interop recipes used by the composed runtime."""
 from bootstrap.identity import inventory, canonical, digest
 from bootstrap.pin_tools import native_target
+from pathlib import Path
 
 RECIPES = {
     "files": ("cache/platform", "files", {"files.h", "files.def"}),
@@ -31,7 +32,28 @@ def linker_options(roots):
     # when linking the runtime; library names remain in their source-pinned .def files.
     if native_target() == 'macos_arm64':
         return []
-    return ['-linker-option', f'-L{roots["system"]}/lib/x86_64-linux-gnu']
+    return ['-linker-option', f'-L{roots["system"]}/lib/x86_64-linux-gnu',
+            '-linker-option', f'-L{roots["nativeToolchain"]}/x86_64-unknown-linux-gnu/lib64']
+
+
+def runtime_properties(roots):
+    """Only the host runtime links captured system C libraries, not consumer programs."""
+    if native_target() == 'macos_arm64':
+        return 'airplaneMode=true'
+    # Ubuntu's captured libc linker script names /lib and /lib64. Require those
+    # aliases to remain inside the inventoried /usr tree; do not mix its headers
+    # and shared libraries with Konan's older glibc sysroot.
+    if (roots['system'].resolve(strict=True) != Path('/usr') or
+            Path('/lib').resolve(strict=True) != Path('/usr/lib') or
+            Path('/lib64').resolve(strict=True) != Path('/usr/lib64')):
+        raise ValueError('Linux runtime linking requires captured /usr and /lib, /lib64 aliases into it')
+    gcc = roots['nativeToolchain'] / 'lib/gcc/x86_64-unknown-linux-gnu/8.3.0'
+    if any(char in str(gcc) for char in ';=\r\n'):
+        raise ValueError('Native toolchain path cannot contain property separators')
+    return ';'.join(['airplaneMode=true', 'targetSysRoot.linux_x64=/',
+        f'libGcc.linux_x64={gcc}', 'abiSpecificLibraries.linux_x64=usr/lib/x86_64-linux-gnu',
+        'crtFilesLocation.linux_x64=usr/lib/x86_64-linux-gnu',
+        'dynamicLinker.linux_x64=/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2'])
 
 
 def select(root, names, relative):
