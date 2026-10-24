@@ -8,6 +8,7 @@ import kvik.documentation.DocumentationActionExecutor
 import kvik.application.*
 import kvik.cache.*
 import kvik.cache.remote.*
+import kvik.compiler.jvm.JvmClasspathExecutor
 import kvik.compiler.jvm.JvmActionExecutor
 import kvik.compiler.js.JsCompilerExecutor
 import kvik.compiler.jvm.JvmScriptExecutor
@@ -57,6 +58,15 @@ internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
 
 internal fun compileTestsCommand(args: List<String>): ExitStatus = projectBuildCommand(args, ProjectMode.COMPILE_TESTS)
 
+internal fun jvmClasspathCommand(args: List<String>): ExitStatus {
+    val index = args.indexOf("--compilation")
+    require(args.count { it == "--compilation" } <= 1) { "Duplicate --compilation" }
+    val scope = if (index < 0) "main" else args.getOrNull(index + 1) ?: error("Missing --compilation value")
+    require(scope in setOf("main", "test")) { "Classpath compilation must be main or test" }
+    val remaining = if (index < 0) args else args.filterIndexed { i, _ -> i != index && i != index + 1 }
+    return projectBuildCommand(remaining, if (scope == "main") ProjectMode.CLASSPATH_MAIN else ProjectMode.CLASSPATH_TEST)
+}
+
 private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStatus {
     val (source, remaining) = sourceProjectOptions(args)
     if (source == null) return executeBuild(remaining, mode).status
@@ -103,6 +113,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.BUILD -> "build"
         ProjectMode.TEST -> "test"
         ProjectMode.COMPILE_TESTS -> "compile-tests"
+        ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST -> "jvm-classpath"
         ProjectMode.APPLICATION -> "prepare-application"
         ProjectMode.PACKAGE -> "package-library"
         ProjectMode.ABI_DUMP -> "abi-dump"
@@ -183,7 +194,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         "--project", (sourceProject.reference.root.takeIf { it.isNotEmpty() }?.plus("/") ?: "") + name.value)
         else if (scriptFile == null) listOf("--project", checkNotNull(project).path)
         else scriptFile.primary?.let { listOf("--file", "$root/${it.value}") } ?: listOf(scriptFile.scriptName, "--project", scriptFile.path)
-    val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) + selector + listOf(
+    val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) +
+        (if (mode in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)) listOf("--compilation", if (mode == ProjectMode.CLASSPATH_MAIN) "main" else "test") else emptyList()) + selector + listOf(
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         (remotePath?.let { listOf("--remote-cache", it) } ?: emptyList()) +
@@ -256,6 +268,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider(target))
                     }
                     val kotest = KotestNativeExecutor(run.runId, run.path, host, content)
+                    val classpath = JvmClasspathExecutor(content)
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
                     val kmpLibrary = KmpLibraryPackageExecutor(content)
@@ -264,6 +277,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
                             "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
                             "kvik-jvm-script-v1" -> scripts
+                            "kvik-jvm-classpath-v1" -> classpath
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
                             "kvik-kmp-library-package-v1" -> kmpLibrary
@@ -463,6 +477,24 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
                 journal.diagnostic(Diagnostic("KVIK_ABI_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
                     failure.message ?: "Cannot materialize ABI candidates"))
+            }
+        }
+        if (mode in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST) && record.status == VerificationStatus.PASSED) {
+            try {
+                var current = Freshness.INDETERMINATE
+                val exposed = materializeJvmClasspaths(record, content, run.path) {
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
+                    cancelled = kvik_interrupt_requested() != 0
+                    !cancelled && current == Freshness.CURRENT
+                }
+                if (!exposed) record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                    freshnessAtCompletion = current)
+            } catch (failure: Exception) {
+                failedSetup = true; failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_CLASSPATH_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize JVM classpath"))
             }
         }
         if (mode == ProjectMode.DOCUMENTATION && record.status == VerificationStatus.PASSED) {

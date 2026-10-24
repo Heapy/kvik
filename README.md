@@ -76,10 +76,29 @@ preserved when supplied. Each target gets an exact independent build scope. Comp
 diagnostics are cleared when that compilation succeeds. Test filtering and custom
 BSP arguments are not supported; configure test selection in the project.
 
-External library classpaths, debugging, generated source synchronization and
-unsaved-buffer support remain pending. Compatibility is exercised by the framed
-protocol clients in `tools/test_bsp*_cli.py`; individual IDE clients still need
-integration testing.
+With tools configured, `buildTarget/jvmCompileClasspath` returns ordered absolute
+paths to dependency JARs and workspace class directories. It uses the same compile
+closure as normal JVM compilation, excluding runtime-only dependencies and compiler
+plugins. Only prerequisite modules are compiled: main queries work with broken or
+empty main sources in the requested module; test queries require its main output but
+do not compile or run its tests. The connection stays responsive during preparation,
+and cancellation follows the same foreground ownership rules as builds.
+
+The matching CLI operation is:
+
+```sh
+./kvik --no-build -- jvm-classpath --project /absolute/project/kvik.json --tools /absolute/tools.json --module app --target jvm --compilation test
+```
+
+Each successful run exposes `classpath/<module>/<main|test>/manifest.json` with
+ordered paths relative to its `input/` directory. Materialized files belong to that
+run; later builds do not overwrite them. Failed or stale prerequisites produce an
+error instead of a partial classpath. Preparation records use `classpath-main` or
+`classpath-test` checks and do not claim that the requested sources compiled.
+
+Debugging, generated source synchronization and unsaved-buffer support remain
+pending. Compatibility is exercised by the framed protocol clients in
+`tools/test_bsp*_cli.py`; individual IDE clients still need integration testing.
 
 ### Configuration changes
 

@@ -28,11 +28,12 @@ fun main(args: Array<String>) {
 
 private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
+        "jvm-classpath" -> exitProcess(jvmClasspathCommand(args.drop(1)).code)
         "bsp" -> exitProcess(bspCommand(args.drop(1)))
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
@@ -44,6 +45,7 @@ private fun command(args: Array<String>) {
             Revision view: view with source flags and --role production|tests|all [--tag TAG] [--exclude-tag TAG]; emits a pinned view for kode --view FILE
             Role policy: view also accepts --policy-name NAME [--edit-tag TAG] [--edit-any-tag TAG] [--exclude-edit-tag TAG] [--allow-all-edits] [--allow CAPABILITY]; emits a pinned policy for kode --policy FILE
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs (repeatable) --tools PATH
+            IDE classpath: jvm-classpath --compilation main|test plus JVM build options; prepares prerequisite outputs without compiling the requested source set
             Test compilation: compile-tests uses build options and compiles/links tests without running them
             JS/Wasm: build/test use explicit stdlib/test KLIB dependencies; tools require node.root and pinned node.identity; browser and WASI runtimes are not yet supported
             Configuration edits: config validate --project PATH; config plan --project PATH --edits FILE; config apply --plan FILE

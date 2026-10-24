@@ -175,6 +175,7 @@ class BspSession(private val operations: BspOperations? = null,
                         put("inverseSourcesProvider", true.json()); put("resourcesProvider", true.json()); put("canReload", true.json())
                         if (dependencies != null) put("dependencyModulesProvider", true.json())
                         if (operations != null) {
+                            put("jvmCompileClasspathProvider", true.json())
                             put("compileProvider", obj("languageIds" to listOf("kotlin".json()).json()))
                             put("testProvider", obj("languageIds" to listOf("kotlin".json()).json()))
                         }
@@ -186,7 +187,7 @@ class BspSession(private val operations: BspOperations? = null,
         if (!initialized) return bspError(id, -32002, "Send build/initialized before workspace requests")
         val methods = setOf("workspace/buildTargets", "workspace/reload", "buildTarget/sources", "buildTarget/resources", "buildTarget/inverseSources", "kvik/projectModel") +
             (if (dependencies != null) setOf("buildTarget/dependencyModules") else emptySet()) +
-            (if (operations != null) setOf("buildTarget/compile", "buildTarget/test") else emptySet())
+            (if (operations != null) setOf("buildTarget/compile", "buildTarget/test", "buildTarget/jvmCompileClasspath") else emptySet())
         if (method !in methods) return bspError(id, -32601, "Unsupported method: $method")
         return try {
             fun targets(): List<String> {
@@ -204,15 +205,16 @@ class BspSession(private val operations: BspOperations? = null,
                     try { checkNotNull(dependencies)(current, selected) }
                     catch (failure: Exception) { return bspError(id, -32603, failure.message ?: "Cannot read locked dependencies") }
                 }
-                "buildTarget/compile", "buildTarget/test" -> {
+                "buildTarget/compile", "buildTarget/test", "buildTarget/jvmCompileClasspath" -> {
                     val service = checkNotNull(operations)
                     check(service.activeId == null) { "Another build request is active" }
                     val params = fields.getValue("params").fields()
                     require(params["arguments"]?.array().orEmpty().isEmpty()) { "BSP arguments must be declared in project configuration" }
                     require("data" !in params && "dataKind" !in params) { "BSP test selection extensions are not supported" }
                     val selected = current.select(targets())
+                    if (method == "buildTarget/jvmCompileClasspath" && selected.isEmpty()) return success(obj("items" to emptyList<JsonValue>().json()))
                     require(selected.size in 1..128) { "Select 1..128 targets" }
-                    require(selected.all { if (method == "buildTarget/test") it.compilation == "test" && it.target in service.testTargets else it.target in service.compileTargets }) { "Selected targets do not support this operation on the current host" }
+                    require(selected.all { if (method == "buildTarget/jvmCompileClasspath") it.target == "jvm" else if (method == "buildTarget/test") it.compilation == "test" && it.target in service.testTargets else it.target in service.compileTargets }) { "Selected targets do not support this operation on the current host" }
                     service.start(BspBuildRequest(id, method, selected, params["originId"]?.string()), current)
                     return null
                 }
