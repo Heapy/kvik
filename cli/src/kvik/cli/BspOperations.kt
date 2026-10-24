@@ -145,7 +145,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             val directory = "$runs/${NativeFiles.names(runs).single()}"
             record = verificationRecordFromJson(parseJson(NativeFiles.read("$directory/verification.json", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)))
             val events = committedRunEvents(record, parseJson(NativeFiles.read("$directory/completion.json", 8192).decodeToString()), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
-            val check = "${child.target.module}:${child.target.target}:" + if (state.applicationRun) "prepare-application" else if (state.classpathQuery) "classpath-${child.target.compilation}" else if (state.request.method == "buildTarget/test") "test" else if (child.target.compilation == "test") "compile-tests" else "build"
+            val check = "${child.target.module}:${child.target.target}:" + if (state.applicationRun) "application" else if (state.classpathQuery) "classpath-${child.target.compilation}" else if (state.request.method == "buildTarget/test") "test" else if (child.target.compilation == "test") "compile-tests" else "build"
             require(record.requestedChecks == setOf(check) && record.configuration == state.model.inspection.configuration && record.composition == state.model.inspection.composition) {
                 "Build result does not match the imported BSP target/configuration"
             }

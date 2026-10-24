@@ -193,7 +193,7 @@ private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
         require(Sha256.digest(after.record.toJson()) == descriptor.verification) { "Preparation verification changed during JDK validation" }
         if (after.exitStatus != ExitStatus.SUCCESS) throw CliFailure("KVIK_APPLICATION_PREPARATION_STALE", DiagnosticCategory.CONFIGURATION,
             after.reason ?: "Application preparation changed during JDK validation", after.exitStatus)
-        listOf(java, "--disable-@files", "-cp",
+        listOf(java, "--disable-@files", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp",
             launch.classpath.joinToString(":") { "$inputs/${it.value}" }, launch.application.entryPoint) + launch.application.arguments
     } else listOf("$inputs/${checkNotNull(launch.executable).value}") + launch.application.arguments
     require(access(arguments.first(), X_OK) == 0) { "Application executable is not executable" }

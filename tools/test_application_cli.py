@@ -295,8 +295,8 @@ def main():
         assert request['environment'] == expected_env
         assert request['arguments'][-len(settings['arguments']):] == settings['arguments']
         if prepared['launch']['target'] == 'jvm':
-            assert request['arguments'][1:3] == ['--disable-@files', '-cp']
-            assert request['arguments'][3].split(':') == [str(prepared['run']/'prepared/application/input'/p) for p in prepared['launch']['classpath']]
+            assert request['arguments'][1:5] == ['--disable-@files', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', '-cp']
+            assert request['arguments'][5].split(':') == [str(prepared['run']/'prepared/application/input'/p) for p in prepared['launch']['classpath']]
         expected_output = 'args='+'|'.join(a.encode().hex() for a in settings['arguments'])+'\nenv='+settings['environment']['APP_DECLARED']+f'\ncwd={project}\nruntime=runtime-external\nresource=runtime-resource\n'
         assert stdout.read_text() == expected_output, (stdout, stdout.read_text(), expected_output)
         assert stderr.read_text() == 'APPLICATION_STDERR_'+prepared['launch']['target']+'\n'
