@@ -15,6 +15,9 @@ fun interface JvmToolchainProvider {
         checkpoint()
         return verified(identities).also { checkpoint() }
     }
+    /** Runtime-only consumers still verify their JDK and bundled inputs, but do not use compiler jars. */
+    fun verifiedExecution(identities: Map<String, Digest>, checkpoint: () -> Unit): JvmToolchainLayout =
+        verified(identities, checkpoint)
 }
 data class JvmToolchainLayout(
     val identities: Map<String, Digest>,
@@ -240,7 +243,9 @@ class JvmActionExecutor(
             }
         }
         return preparingAction(actionId, expected, prepare = { checkpoint ->
-            toolchains.verified(expected.toolchains, checkpoint).also { layout ->
+            val layout = if (compilerOutput != null) toolchains.verified(expected.toolchains, checkpoint)
+                else toolchains.verifiedExecution(expected.toolchains, checkpoint)
+            layout.also { layout ->
                 require(layout.identities == expected.toolchains) { "JVM toolchain provider returned different identities" }
                 require(Sha256.digest(parseJson(readJvmFile(layout.compilerManifest).decodeToString(throwOnInvalidSequence = true))) == expected.toolchains.getValue("jvm-compiler")) { "JVM compiler manifest identity mismatch" }
                 selection?.coverage?.let { coverage ->

@@ -40,7 +40,7 @@ class VerifiedToolchains internal constructor(
 class InstalledToolchainVerifier(private val limits: InventoryLimits = InventoryLimits()) {
     fun verify(lockJson: String, roots: Map<ToolComponent, String>, checkpoint: () -> Unit = {}): VerifiedToolchains {
         checkpoint()
-        val lock = parseLock(lockJson)
+        val lock = parseToolchainDeclaration(lockJson)
         checkpoint()
         require(roots.keys == lock.components.keys) { "Explicit roots for all host tool components are required" }
         val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
@@ -62,7 +62,7 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
     /** A JVM worker consumes the JDK, not Native/LLVM/Xcode. No SDK verification is claimed. */
     fun verifyJdk(lockJson: String, root: String, checkpoint: () -> Unit = {}): VerifiedToolComponent {
         checkpoint()
-        val lock = parseLock(lockJson)
+        val lock = parseToolchainDeclaration(lockJson)
         checkpoint()
         val captured = captureInventory(root, limits, false, checkpoint)
         val expected = lock.components.getValue(ToolComponent.JDK)
@@ -71,25 +71,37 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
         return VerifiedToolComponent(captured.root, captured.summary)
     }
 
-    private data class Lock(val host: ToolHost, val kotlinVersion: String, val components: Map<ToolComponent, Digest>)
+}
 
-    private fun parseLock(lockJson: String): Lock {
-        require(lockJson.length <= 1048576 && lockJson.encodeToByteArray(throwOnInvalidSequence = true).size <= 1048576) { "Tool lock exceeds 1 MiB" }
-        val lock = parseJson(lockJson).fields(setOf("schemaVersion", "kotlinVersion", "host", "components"))
-        lock.requireVersion()
-        val kotlinVersion = lock.getValue("kotlinVersion").stringValue()
-        require(kotlinVersion == "2.4.20") { "Unsupported Kotlin toolchain version: $kotlinVersion" }
-        val hostFields = lock.getValue("host").fields(setOf("os", "architecture", "release", "sdk"))
-        val expectedHost = ToolHost(hostFields.getValue("os").stringValue(), hostFields.getValue("architecture").stringValue(),
-            hostFields.getValue("release").stringValue(), hostFields.getValue("sdk").stringValue())
-        val actualHost = nativeHost()
-        require(expectedHost.os == actualHost.first && expectedHost.architecture == actualHost.second && expectedHost.release == actualHost.third) { "Tool lock host does not match uname: $actualHost" }
-        val required = toolComponentsFor(expectedHost.os, expectedHost.architecture)
-        if (expectedHost.os == "Linux") require(expectedHost.sdk.isEmpty()) { "Linux host must not declare an Apple SDK" }
-        val components = lock.getValue("components").fields(required.map { it.lockName }.toSet())
-        val expected = required.associateWith { Digest.fromJson(components.getValue(it.lockName)) }
-        return Lock(expectedHost, kotlinVersion, expected)
-    }
+/** Desired content identities only; no installation paths have been inspected or verified. */
+class ToolchainDeclaration internal constructor(
+    val host: ToolHost,
+    val kotlinVersion: String,
+    components: Map<ToolComponent, Digest>,
+) {
+    val components: Map<ToolComponent, Digest> = components.toMap()
+}
+
+/** Strict lock/host validation for planning and cached artifacts; deliberately performs no IO
+ * against installations. Physical providers independently verify bytes before fresh execution.
+ */
+fun parseToolchainDeclaration(lockJson: String): ToolchainDeclaration {
+    require(lockJson.length <= 1048576 && lockJson.encodeToByteArray(throwOnInvalidSequence = true).size <= 1048576) { "Tool lock exceeds 1 MiB" }
+    val lock = parseJson(lockJson).fields(setOf("schemaVersion", "kotlinVersion", "host", "components"))
+    lock.requireVersion()
+    val kotlinVersion = lock.getValue("kotlinVersion").stringValue()
+    require(kotlinVersion == "2.4.20") { "Unsupported Kotlin toolchain version: $kotlinVersion" }
+    val hostFields = lock.getValue("host").fields(setOf("os", "architecture", "release", "sdk"))
+    val expectedHost = ToolHost(hostFields.getValue("os").stringValue(), hostFields.getValue("architecture").stringValue(),
+        hostFields.getValue("release").stringValue(), hostFields.getValue("sdk").stringValue())
+    val actualHost = nativeHost()
+    require(expectedHost.os == actualHost.first && expectedHost.architecture == actualHost.second && expectedHost.release == actualHost.third) { "Tool lock host does not match uname: $actualHost" }
+    val required = toolComponentsFor(expectedHost.os, expectedHost.architecture)
+    if (expectedHost.os == "Linux") require(expectedHost.sdk.isEmpty()) { "Linux host must not declare an Apple SDK" }
+    else require(expectedHost.sdk.isNotBlank()) { "Darwin tool lock must declare its SDK version" }
+    val components = lock.getValue("components").fields(required.map { it.lockName }.toSet())
+    val expected = required.associateWith { Digest.fromJson(components.getValue(it.lockName)) }
+    return ToolchainDeclaration(expectedHost, kotlinVersion, expected)
 }
 
 internal fun nativeHost(): Triple<String, String, String> = memScoped {

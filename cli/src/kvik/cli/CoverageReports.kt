@@ -86,8 +86,10 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
             process.getValue("setupFailure") == JsonValue.Null && testResult.status != ActionStatus.CANCELLED &&
             tests.getValue("counts").objectValue().getValue("discoveryComplete").booleanValue()
         val tools = BuildTools(toolsPath)
-        val identities = tools.verify(setOf("jvm")).getValue("jvm")
-        val layout = tools.jvmProvider().verified(identities)
+        val identities = tools.desiredIdentities(setOf("jvm")).getValue("jvm")
+        val layout = tools.jvmProvider().verifiedExecution(identities) {
+            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_COVERAGE_CANCELLED", DiagnosticCategory.CANCELLATION, "Coverage report cancelled", ExitStatus.CANCELLED)
+        }
         require(layout.jacocoAgentIdentity == specification.agent && layout.jacocoCliIdentity == specification.reporter) {
             "Installed coverage tools differ from the test producer"
         }

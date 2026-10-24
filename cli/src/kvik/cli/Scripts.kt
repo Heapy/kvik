@@ -131,12 +131,12 @@ internal fun inspectScriptCommand(args: List<String>): JsonValue {
         else effectiveConfiguration(snapshot.configuration, policy)
     val lock = DependencyLocks(store, NativePomParser()).loadLocked(snapshot.lockBytes, effective)
     val tools = BuildTools(toolsPath)
-    val identities = tools.verify(setOf("jvm")).getValue("jvm")
+    val identities = tools.desiredIdentities(setOf("jvm")).getValue("jvm")
     val graph = scriptActionGraph(effective, lock, snapshot.inputs, Digest(runtimeComposition, runtimeCompositionSize), identities, ScriptGraphRequest(file.scriptName))
     val expanded = if (file.selection == SnapshotSelection.StandaloneScript) snapshot.standaloneConfiguration.expanded()
         else expandScript(snapshot.configuration.project, file.scriptName)
-    val layout = tools.jvmProvider().verified(identities)
-    val stdlib = Sha256.digest(NativeFiles.read(layout.stdlibJar, 64 * 1024 * 1024))
+    val worker = verifiedRuntimeJvmWorker()
+    val stdlib = Sha256.digest(NativeFiles.read(worker.stdlib, 64 * 1024 * 1024))
     if (observer.freshness(snapshot) != Freshness.CURRENT) throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
         "Script inputs changed during inspection; retry", ExitStatus.INCOMPLETE)
     fun dependency(value: ScriptValue<Dependency>): JsonValue {
@@ -161,7 +161,7 @@ internal fun inspectScriptCommand(args: List<String>): JsonValue {
         }.json(),
         "actions" to graph.nodes.map { obj("id" to it.id.json(), "dependencies" to it.dependencies.sorted().map(String::json).json()) }.json(),
         "requestedChecks" to graph.requestedChecks.sorted().map(String::json).json(),
-        "languageRuntime" to obj("path" to layout.stdlibJar.json(), "digest" to stdlib.toJson(), "classpathPosition" to "after-declared-dependencies".json()),
+        "languageRuntime" to obj("path" to worker.stdlib.json(), "digest" to stdlib.toJson(), "classpathPosition" to "after-declared-dependencies".json()),
         "entrypoint" to obj("requested" to (expanded.declaration.mainClass?.json() ?: JsonValue.Null), "status" to "requires-compiled-script-metadata".json()),
         "execution" to "not-requested".json()).also {
             if (it.canonical().encodeToByteArray().size > 16 * 1024 * 1024) throw CliFailure("KVIK_SCRIPT_INSPECTION_BOUND",

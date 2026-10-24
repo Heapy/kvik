@@ -4,7 +4,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.projectgraph.*
 
-/** Retained models/graphs only. Each operation has fresh inputs, lock replay and separate tool admission. */
+/** Retained models/graphs only. Each operation has fresh inputs, lock replay and validated desired tool identities. */
 internal class BuildSessionCache {
     private val models = linkedMapOf<Digest, ProjectConfiguration>()
     private val graphs = linkedMapOf<Digest, ProjectActionGraph>()

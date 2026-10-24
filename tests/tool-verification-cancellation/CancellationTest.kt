@@ -104,6 +104,23 @@ class CancellationTest {
         cancelAtRepresentativeBoundaries { checkpoint -> verifier.verifyJdk(lock, roots.getValue(ToolComponent.JDK), checkpoint) }
     }
 
+    @Test fun cachedDeclarationsSurviveMissingCompilerButFreshCompilerAndJdkUseStillVerifyBytes() = fixture { root ->
+        val (roots, lock) = installations(root)
+        val desired = parseToolchainDeclaration(lock)
+        NativeFiles.removeTree(roots.getValue(ToolComponent.KOTLIN_NATIVE))
+        assertEquals(desired.components, parseToolchainDeclaration(lock).components)
+        val verifier = InstalledToolchainVerifier()
+        assertFails { verifier.verify(lock, roots) }
+        val jdk = roots.getValue(ToolComponent.JDK)
+        assertEquals(desired.components.getValue(ToolComponent.JDK), verifier.verifyJdk(lock, jdk).digest)
+        // Same-size replacement must be noticed at actual JVM execution, even though the desired
+        // declaration remains usable to restore artifacts compiled with the original identity.
+        assertEquals(0, unlink("$jdk/tool"))
+        put("$jdk/tool", "edit".encodeToByteArray())
+        assertEquals(desired.components, parseToolchainDeclaration(lock).components)
+        assertFails { verifier.verifyJdk(lock, jdk) }
+    }
+
     @Test fun nativeProviderPropagatesCancellationWithoutPartialLayout() = fixture { root ->
         val (roots, lock) = installations(root)
         val verified = InstalledToolchainVerifier().verify(lock, roots)
@@ -187,5 +204,21 @@ class CancellationTest {
         val expected = provider.verified(identities)
         cancelAtRepresentativeBoundaries { checkpoint -> provider.verified(identities, checkpoint) }
         assertEquals(expected, provider.verified(identities))
+        assertEquals(expected, provider.verifiedExecution(identities) {})
+        NativeFiles.removeTree("$root/artifacts")
+        NativeFiles.removeTree(roots.getValue(ToolComponent.KOTLIN_NATIVE))
+        assertFails { provider.verified(identities) }
+        assertEquals(expected, provider.verifiedExecution(identities) {})
+        cancelAtRepresentativeBoundaries { checkpoint -> provider.verifiedExecution(identities, checkpoint) }
+        val java = "${roots.getValue(ToolComponent.JDK)}/bin/java"
+        val original = NativeFiles.read(java, 1024)
+        NativeFiles.removeEntry(java)
+        put(java, ByteArray(original.size) { 1 }, true)
+        assertFails { provider.verifiedExecution(identities) {} }
+        NativeFiles.removeEntry(java); put(java, original, true)
+        assertEquals(expected, provider.verifiedExecution(identities) {})
+        NativeFiles.removeEntry("$bundle/lib/stdlib.jar")
+        put("$bundle/lib/stdlib.jar", "broken jar".encodeToByteArray())
+        assertFails { provider.verifiedExecution(identities) {} }
     }
 }

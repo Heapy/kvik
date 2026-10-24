@@ -6,14 +6,12 @@ import kvik.projectsnapshot.NativeProjectSnapshotter
 import kvik.projectsnapshot.SnapshotSelection
 import kvik.runevidence.verificationRecordFromJson
 import kvik.runevidence.committedRunEvents
-import kvik.toolchains.ToolComponent
 
 internal data class CheckedRun(
     val record: VerificationRecord,
     val metadata: Map<String, JsonValue>,
     val freshness: Freshness,
     val reason: String?,
-    val javaExecutable: String?,
 ) {
     val exitStatus: ExitStatus get() = when {
         freshness != Freshness.CURRENT -> ExitStatus.INCOMPLETE
@@ -24,7 +22,9 @@ internal data class CheckedRun(
     }
 }
 
-/** Read-only validation shared by queries and prepared application execution. */
+/** Compare sources and desired tool identities without requiring their installations. Execution
+ * must independently verify any physical tool it consumes; this result contains no tool paths.
+ */
 internal fun checkRun(directory: String): CheckedRun {
     NativeFiles.ensureDirectory(directory, create = false)
     fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))
@@ -34,7 +34,6 @@ internal fun checkRun(directory: String): CheckedRun {
     require(record.runId == directory.substringAfterLast('/')) { "Verification run identity does not match directory" }
     var current = Freshness.INDETERMINATE
     var reason: String? = null
-    var javaExecutable: String? = null
     try {
         committedRunEvents(record, document("completion.json"), NativeFiles.read("$directory/events.jsonl", 16 * 1024 * 1024))
         val store = object : ContentStore {
@@ -57,13 +56,12 @@ internal fun checkRun(directory: String): CheckedRun {
                 val tools = BuildTools(metadata.getValue("toolsPath").stringValue())
                 val toolTargets = metadata["toolTargets"]?.arrayValue()?.map(JsonValue::stringValue)?.toSet() ?: targets
                 require(toolTargets.containsAll(targets) && toolTargets.all { it == "jvm" || NativeTarget.find(it) != null }) { "Invalid retained tool target selection" }
-                val verified = tools.verify(toolTargets)
+                val desired = tools.desiredIdentities(toolTargets)
                     .flatMap { (target, identities) -> identities.map { (name, digest) -> "$target:$name" to digest } }.toMap()
-                if (verified != record.toolchains) { current = Freshness.STALE; reason = "Verified tool identities changed" }
+                if (desired != record.toolchains) { current = Freshness.STALE; reason = "Desired tool identities changed" }
                 else {
                     current = freshness(record.inputSnapshot, fingerprint())
-                    if (current != Freshness.CURRENT) reason = "Inputs changed or became unavailable during tool verification"
-                    else if ("jvm" in targets) javaExecutable = "${tools.roots.getValue(ToolComponent.JDK)}/bin/java"
+                    if (current != Freshness.CURRENT) reason = "Inputs changed or became unavailable during declaration validation"
                 }
             }
         }
@@ -71,10 +69,10 @@ internal fun checkRun(directory: String): CheckedRun {
         current = Freshness.INDETERMINATE
         reason = failure.message ?: "Cannot verify current inputs/tools"
     }
-    return CheckedRun(record, metadata, current, reason, javaExecutable)
+    return CheckedRun(record, metadata, current, reason)
 }
 
-/** Read-only query; missing tools or unstable inputs never preserve a current claim. */
+/** Read-only freshness query. Cacheable results do not require their compiler/SDK installations. */
 internal fun verificationCommand(args: List<String>): ExitStatus {
     require(args.size == 2 && args[0] == "--run") { "Use verification --run PATH" }
     val checked = checkRun(projectPath(currentDirectory(), args[1]))

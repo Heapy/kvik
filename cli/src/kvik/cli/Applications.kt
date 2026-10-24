@@ -176,7 +176,16 @@ private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
     val inputs = "$directory/prepared/application/input"
     val arguments = if (launch.target == "jvm") {
         require(':' !in inputs) { "JVM bundle directory cannot contain the classpath separator ':'" }
-        listOf(checkNotNull(checked.javaExecutable), "--disable-@files", "-cp",
+        val tools = BuildTools(checked.metadata.getValue("toolsPath").stringValue())
+        val java = tools.verifiedJavaExecutable(record.toolchains.getValue("jvm:jdk")) {
+            check(kvik_interrupt_requested() == 0) { "Application JDK verification cancelled" }
+        }
+        // JDK hashing can be lengthy: source/config/lock and desired pins must still match after it.
+        val after = checkRun(directory)
+        require(Sha256.digest(after.record.toJson()) == descriptor.verification) { "Preparation verification changed during JDK validation" }
+        if (after.exitStatus != ExitStatus.SUCCESS) throw CliFailure("KVIK_APPLICATION_PREPARATION_STALE", DiagnosticCategory.CONFIGURATION,
+            after.reason ?: "Application preparation changed during JDK validation", after.exitStatus)
+        listOf(java, "--disable-@files", "-cp",
             launch.classpath.joinToString(":") { "$inputs/${it.value}" }, launch.application.entryPoint) + launch.application.arguments
     } else listOf("$inputs/${checkNotNull(launch.executable).value}") + launch.application.arguments
     require(access(arguments.first(), X_OK) == 0) { "Application executable is not executable" }

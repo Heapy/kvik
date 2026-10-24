@@ -175,7 +175,7 @@ class JvmScriptExecutor(
         }
         var continued = false
         val preparing = preparingAction(actionId, expected,
-            prepare = { checkpoint -> toolchains.verified(expected.toolchains, checkpoint) },
+            prepare = { checkpoint -> toolchains.verifiedExecution(expected.toolchains, checkpoint) },
             start = { layout -> continued = true; startVerified(layout) })
         return object : RunningAction {
             private var result: ActionResult? = null
