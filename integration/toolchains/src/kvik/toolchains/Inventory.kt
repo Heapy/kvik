@@ -54,21 +54,24 @@ private fun names(path: String, limit: Int, checkpoint: () -> Unit): List<String
     checkpoint()
     val directory = opendir(path) ?: ioFailure("opendir $path")
     try {
-        val result = mutableListOf<String>()
+        val result = mutableListOf<Pair<String, ByteArray>>()
         while (true) {
             checkpoint()
             set_posix_errno(0)
             val entry = readdir(directory)
             if (entry == null) { if (errno != 0) ioFailure("readdir $path"); break }
-            val name = entry.pointed.d_name.readBytes(strlen(entry.pointed.d_name).toInt()).decodeToString(throwOnInvalidSequence = true)
+            val bytes = entry.pointed.d_name.readBytes(strlen(entry.pointed.d_name).toInt())
+            val name = bytes.decodeToString(throwOnInvalidSequence = true)
             if (name == "." || name == "..") continue
             require(result.size < limit) { "Directory entry limit exceeded: $path" }
-            result += name
+            result += name to bytes
         }
         // Python Path sorting compares path components by Unicode code point, not UTF-16.
-        return result.sortedWith { left, right ->
+        // Retain the validated UTF-8 bytes from readdir rather than encoding both names
+        // again for every comparison. Each directory still has the same entry bound.
+        result.sortWith { left, right ->
             checkpoint()
-            val a = left.encodeToByteArray(); val b = right.encodeToByteArray()
+            val a = left.second; val b = right.second
             var result = 0
             for (i in 0 until minOf(a.size, b.size)) {
                 result = (a[i].toInt() and 255).compareTo(b[i].toInt() and 255)
@@ -76,6 +79,7 @@ private fun names(path: String, limit: Int, checkpoint: () -> Unit): List<String
             }
             if (result != 0) result else a.size.compareTo(b.size)
         }
+        return result.map { checkpoint(); it.first }
     } finally { closedir(directory) }
 }
 
