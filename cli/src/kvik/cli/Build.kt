@@ -93,9 +93,10 @@ private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStat
 internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null): BuildOutcome =
     executeBuildOptions(buildOptions(args), mode, ownInterrupts, sessionCache = sessionCache)
 
-internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile): BuildOutcome = executeBuildOptions(
+internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile, sourceProject: PreparedSourceProject? = null,
+                                ownInterrupts: Boolean = true): BuildOutcome = executeBuildOptions(
     BuildOptions(options.forFile(file), emptySet(), setOf("jvm"), checkNotNull(options.tools), options.runs, options.budget),
-    ProjectMode.BUILD, true, file, options.arguments)
+    ProjectMode.BUILD, ownInterrupts, file, options.arguments, sourceProject = sourceProject)
 
 internal fun executeSelectedVerificationBuild(options: BuildOptions, mode: ProjectMode, snapshot: Digest,
                                               selection: SnapshotSelection,
@@ -132,8 +133,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.DOCUMENTATION -> "docs"
         ProjectMode.BENCHMARK_SMOKE, ProjectMode.BENCHMARK_MEASUREMENT -> "benchmark"
     }
-    val project = sourceProject?.project ?: if (scriptFile == null) {
-        if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
+    val project = if (scriptFile == null) {
+        sourceProject?.project ?: if (sessionCache == null) readProject(options.project.project) else readProject(options.project.project, sessionCache::configuration)
     } else null
     val root = scriptFile?.root ?: checkNotNull(project).root
     val name = scriptFile?.name ?: checkNotNull(project).name
@@ -155,7 +156,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     // against the captured configuration below, since the project may change meanwhile.
     val initialEffective = scriptFile?.effective(policy) ?: effectiveConfiguration(checkNotNull(project).configuration, policy)
     if (scriptFile == null && sourceProject == null) requireDisjointStore(checkNotNull(project), storePath, lockPath, toolsPath, selection)
-    else if (scriptFile != null) requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
+    else if (scriptFile != null && sourceProject == null) requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
     val content = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes)
     if (sourceProject != null) content.put(sourceBytes)
     val snapshots = if (sourceProject != null) null else if (sessionCache == null) NativeProjectSnapshotter(root, content)
@@ -201,10 +202,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val run = NativeRunDirectory(runsPath)
     NativeFiles.syncDirectory(runsPath)
     val composition = Digest(runtimeComposition, runtimeCompositionSize)
-    val selector = if (sourceProject != null) listOf("--kode", sourceProject.options.executable, "--kode-home", sourceProject.options.home,
+    val selector = if (sourceProject != null) {
+        listOf("--kode", sourceProject.options.executable, "--kode-home", sourceProject.options.home,
         "--source-project", sourceProject.reference.provenance.project, "--revision", sourceProject.reference.provenance.revision,
-        "--project", (sourceProject.reference.root.takeIf { it.isNotEmpty() }?.plus("/") ?: "") + name.value)
-        else if (scriptFile == null) listOf("--project", checkNotNull(project).path)
+        ) + if (scriptFile?.primary != null) listOf("--file", sourceProject.revisionPath(scriptFile.primary).value)
+            else (scriptFile?.let { listOf(it.scriptName) } ?: emptyList()) + listOf("--project", sourceProject.revisionPath(name).value)
+    } else if (scriptFile == null) listOf("--project", checkNotNull(project).path)
         else scriptFile.primary?.let { listOf("--file", "$root/${it.value}") } ?: listOf(scriptFile.scriptName, "--project", scriptFile.path)
     val reproduction = listOf("${runtimeDirectory()}/kvik.kexe", command) +
         (if (mode in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)) listOf("--compilation", if (mode == ProjectMode.CLASSPATH_MAIN) "main" else "test") else emptyList()) +

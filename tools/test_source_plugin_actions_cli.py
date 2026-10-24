@@ -81,6 +81,9 @@ def main():
     info = invoke('info', ['runtime-info'])[0]
     assert {plugin['id'] for plugin in info['plugins']} >= {'kvik.kotlin', 'fixture.classpath'}
     invoke('resolve', ['resolve', '--project', config, '--store', store])
+    inspection = invoke('inspect-script', ['inspect-script', 'task', '--project', config,
+        '--tools', tools, '--store', store, '--offline'])[0]
+    assert PLUGIN_ACTION in {action['id'] for action in inspection['actions']}, inspection['actions']
 
     def build(label, script=False, extra=()):
         command = ['run-script', 'task'] if script else ['build', '--module', 'app', '--target', 'jvm']

@@ -12319,6 +12319,9 @@
         "schemaVersion": {
           "const": 1
         },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        },
         "kind": {
           "const": "script-inspection"
         },

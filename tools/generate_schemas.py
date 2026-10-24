@@ -932,6 +932,7 @@ DEFS["configurationSourceEditPlan"] = {**DEFS["dependencyResolution"],
 
 DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
 DEFS["scriptInspection"] = versioned({
+    "source": ref("sourceReference"),
     "kind": {"const": "script-inspection"}, "script": SCRIPT_ID, "configurationPath": STRING,
     "inputSelection": ref("snapshotSelection"), "inputSnapshot": ref("digest"), "configuration": ref("digest"),
     "dependencyLock": ref("digest"), "inputs": ref("tree"), "declaration": ref("script"),
@@ -947,7 +948,7 @@ DEFS["scriptInspection"] = versioned({
     "languageRuntime": object_({"path": STRING, "digest": ref("digest"), "classpathPosition": {"const": "after-declared-dependencies"}}),
     "entrypoint": object_({"requested": nullable(STRING), "status": {"const": "requires-compiled-script-metadata"}}),
     "execution": {"const": "not-requested"},
-})
+}, optional=("source",))
 
 DEFS["actionExplanation"] = versioned({
     "runId": NONEMPTY, "actionId": NONEMPTY, "currentFreshness": {"type": "null"},

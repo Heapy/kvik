@@ -324,6 +324,29 @@ and stderr files. `inspect-script` reports inputs, expanded dependency/profile o
 and action prerequisites without compiling or running. See the [script contract](docs/decisions/k12-scripts.md)
 and [CLI validation status](docs/evidence/k12-script-cli.md).
 
+All four script commands also accept `--kode`, `--kode-home`, `--source-project`
+and `--revision` to select an immutable Kode snapshot. For example:
+
+```sh
+./kvik --no-build -- run-script --file scripts/update.kt \
+  --kode /absolute/kode --kode-home /absolute/workspace \
+  --source-project repository --revision REVISION \
+  --tools /absolute/tools.json --store /absolute/cache -- --revision literal-argument
+```
+
+With a source selector, `--project` and `--file` are logical revision paths;
+the lock path is relative to the configuration's directory. Tools, cache and run
+directories remain local, relative to the invoking directory. Script execution
+uses captured inputs in its action workspace. Inspection and run results retain
+the source revision, and reproduction commands pin that revision. Arguments after
+`--` always belong to the script.
+
+`resolve-script` returns a guarded Kode transaction for the lockfile. Apply it
+explicitly through `kode tx`, then use the returned revision for inspection or
+execution. It does not advance the workspace head or write a local source copy.
+`--offline` requires a previously captured immutable revision and cached inputs,
+dependencies and tools; missing source data never falls back to local files.
+
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
 
 Independent module/target test actions run in parallel within `--jobs` and

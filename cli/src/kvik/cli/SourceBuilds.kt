@@ -48,7 +48,7 @@ internal class PreparedSourceProject(
     }
 
     fun capture(content: ContentStore, lockPath: LogicalPath, selection: SnapshotSelection, checkpoint: () -> Unit): ProjectInputSnapshot =
-        captureResolved(resolved, reference.root, project.name, lockPath, selection, content, checkpoint)
+        captureResolved(resolved, reference.root, configuration.name, lockPath, selection, content, checkpoint)
 }
 
 private fun captureResolved(resolved: ResolvedSourceSnapshot, root: String, configuration: LogicalPath, lock: LogicalPath,
@@ -99,14 +99,16 @@ internal fun <T> withSourceWorkspace(block: (String) -> T): T {
     try { return block(workspace) } finally { NativeFiles.removeTree(workspace) }
 }
 
-internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: BuildOptions, block: (PreparedSourceProject) -> T): T {
+internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: BuildOptions,
+                                          validateConfiguration: Boolean = true, block: (PreparedSourceProject) -> T): T {
     val root = currentDirectory()
     val store = projectPath(root, options.project.store)
     val runs = projectPath(root, options.runs)
     val tools = projectPath(root, options.tools)
     for (output in listOf(store, runs)) for (input in listOf(source.home, source.executable, tools))
         require(!pathsPhysicallyOverlap(output, input)) { "Source build output overlaps provider or tool configuration: $input" }
-    return withPreparedSourceProject(source, options.project, loadClaims = true, retainSource = true, block = block)
+    return withPreparedSourceProject(source, options.project, loadClaims = true, retainSource = true,
+        validateConfiguration = validateConfiguration, block = block)
 }
 
 internal fun <T> withPreparedSourceProject(source: KodeProjectOptions, options: ProjectOptions,

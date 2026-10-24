@@ -56,6 +56,7 @@ private fun command(args: Array<String>) {
             Scripts: run-script NAME --project PATH --tools PATH -- ARGS; or run-script --file FILE.kt --tools PATH -- ARGS
             Script locks: resolve-script or check-script-lock with NAME --project PATH or --file FILE.kt, plus lock options
             Script inspection: inspect-script with the same selector and --tools PATH (read-only; no execution)
+            Source scripts: add --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF; --project/--file are revision paths
             Standalone companions: FILE.kvik.json and default FILE.kvik.lock.json alongside FILE.kt; no nearby-project discovery
             Libraries: package-library plus build options; selected modules and ordinary dependencies require publication coordinates
             Documentation: docs plus build selectors; requires module documentation settings; emits documentation-ready with HTML index

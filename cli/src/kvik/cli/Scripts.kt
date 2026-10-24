@@ -86,14 +86,52 @@ internal fun readScript(options: ScriptOptions): ScriptFile {
 internal fun ScriptOptions.forFile(file: ScriptFile): ProjectOptions = if (file.primary == null || lockExplicit) project
     else project.copy(lock = file.primary.value.removeSuffix(".kt") + ".kvik.lock.json")
 
+/** Source selectors before `--` belong to Kvik; everything after it belongs to the script. */
+private fun scriptCommandOptions(args: List<String>, execution: Boolean, toolsRequired: Boolean): Pair<KodeProjectOptions?, ScriptOptions> {
+    val separator = args.indexOf("--")
+    val (source, remaining) = sourceProjectOptions(if (separator < 0) args else args.take(separator))
+    val options = scriptOptions(remaining + if (separator < 0) emptyList() else args.drop(separator), execution, toolsRequired)
+    if (source == null) return null to options
+    val primary = options.file?.let(::LogicalPath)
+    require(primary == null || primary.value.endsWith(".kt")) { "Standalone script must be a .kt file" }
+    val configuration = primary?.value?.removeSuffix(".kt")?.plus(".kvik.json") ?: options.project.project
+    LogicalPath(configuration)
+    val lock = if (primary != null && !options.lockExplicit) primary.value.substringAfterLast('/').removeSuffix(".kt") + ".kvik.lock.json"
+        else options.project.lock
+    LogicalPath(lock)
+    return source to options.copy(project = options.project.copy(project = configuration, lock = lock))
+}
+
+internal fun readSourceScript(options: ScriptOptions, prepared: PreparedSourceProject): ScriptFile {
+    val captured = prepared.configuration
+    options.name?.let { name ->
+        val project = prepared.project.configuration
+        expandScript(project.project, name)
+        return ScriptFile(captured.root, captured.name, captured.bytes, name, SnapshotSelection.Script(name), project, null, null)
+    }
+    val primary = LogicalPath(checkNotNull(options.file).substringAfterLast('/'))
+    val configuration = parseStandaloneScriptConfiguration(parseJson(captured.bytes.decodeToString(throwOnInvalidSequence = true)))
+    configuration.requirePrimarySource(primary)
+    require(prepared.entry(primary) != null) { "Selected standalone script is absent from source revision" }
+    return ScriptFile(captured.root, captured.name, captured.bytes, configuration.name,
+        SnapshotSelection.StandaloneScript, null, configuration, primary)
+}
+
 internal fun runScriptCommand(args: List<String>): Int {
-    val options = scriptOptions(args, execution = true, toolsRequired = true)
-    val file = readScript(options)
-    return executeScriptBuild(options, file).exitCode
+    val (source, options) = scriptCommandOptions(args, execution = true, toolsRequired = true)
+    if (source == null) return executeScriptBuild(options, readScript(options)).exitCode
+    check(kvik.execution.platform.kvik_interrupt_install() == 0) { "Cannot install source script interruption handlers" }
+    try {
+        val build = BuildOptions(options.project, emptySet(), setOf("jvm"), checkNotNull(options.tools), options.runs, options.budget)
+        return withPreparedSourceProject(source, build, validateConfiguration = options.file == null) { prepared ->
+            executeScriptBuild(options, readSourceScript(options, prepared), prepared, ownInterrupts = false).exitCode
+        }
+    } finally { kvik.execution.platform.kvik_interrupt_restore() }
 }
 
 internal fun scriptDependencyCommand(args: List<String>, updateRequested: Boolean): JsonValue {
-    val options = scriptOptions(args, execution = false, toolsRequired = false)
+    val (source, options) = scriptCommandOptions(args, execution = false, toolsRequired = false)
+    if (source != null) return sourceDependencyCommand(source, options.project, updateRequested, replacement = null, script = options)
     val file = readScript(options)
     val project = options.forFile(file)
     val lock = projectPath(file.root, project.lock)
@@ -105,21 +143,34 @@ internal fun scriptDependencyCommand(args: List<String>, updateRequested: Boolea
 
 /** Inspection verifies inputs/tools/lock but never compiles, executes a script, or publishes CAS bytes. */
 internal fun inspectScriptCommand(args: List<String>): JsonValue {
-    val options = scriptOptions(args, execution = false, toolsRequired = true)
-    val file = readScript(options)
+    val (source, options) = scriptCommandOptions(args, execution = false, toolsRequired = true)
+    if (source == null) return inspectScript(options, readScript(options))
+    val store = projectPath(currentDirectory(), options.project.store)
+    require(!pathsPhysicallyOverlap(store, projectPath(currentDirectory(), checkNotNull(options.tools)))) { "Source cache overlaps tool configuration" }
+    check(kvik.execution.platform.kvik_interrupt_install() == 0) { "Cannot install source script inspection interruption handlers" }
+    try {
+        return withPreparedSourceProject(source, options.project, validateConfiguration = options.file == null) { prepared ->
+            inspectScript(options, readSourceScript(options, prepared), prepared)
+        }
+    } finally { kvik.execution.platform.kvik_interrupt_restore() }
+}
+
+private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: PreparedSourceProject? = null): JsonValue {
     val projectOptions = options.forFile(file)
     val policy = projectOptions.resolverPolicy()
     val initial = file.effective(policy)
-    val lockPath = projectPath(file.root, projectOptions.lock)
+    val lockPath = if (source == null) projectPath(file.root, projectOptions.lock) else LogicalPath(projectOptions.lock).value
     val storePath = projectPath(file.root, projectOptions.store)
     val toolsPath = projectPath(file.root, checkNotNull(options.tools))
-    requireDisjointStore(file.root, file.path, file.inputPlan(), storePath, lockPath, toolsPath)
+    if (source == null) requireDisjointStore(file.root, file.path, file.inputPlan(), storePath, lockPath, toolsPath)
     val store = ReadOnlyContentStore(storePath, initial.maxArtifactBytes)
-    val observer = NativeProjectSnapshotter(file.root, object : ContentStore {
+    val observedContent = object : ContentStore {
         override fun put(bytes: ByteArray) = Sha256.digest(bytes)
         override fun get(digest: Digest) = store.get(digest)
-    })
-    val snapshot = when (val captured = observer.capture(file.name, lockPath, Sha256.digest(file.bytes), file.selection)) {
+    }
+    val observer = NativeProjectSnapshotter(file.root, observedContent)
+    val snapshot = if (source != null) source.capture(observedContent, LogicalPath(lockPath), file.selection, ::sourceCheckpoint)
+        else when (val captured = observer.capture(file.name, lockPath, Sha256.digest(file.bytes), file.selection)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
@@ -132,12 +183,13 @@ internal fun inspectScriptCommand(args: List<String>): JsonValue {
     val lock = DependencyLocks(store, NativePomParser()).loadLocked(snapshot.lockBytes, effective)
     val tools = BuildTools(toolsPath)
     val identities = tools.desiredIdentities(setOf("jvm")).getValue("jvm")
-    val graph = scriptActionGraph(effective, lock, snapshot.inputs, Digest(runtimeComposition, runtimeCompositionSize), identities, ScriptGraphRequest(file.scriptName))
+    val graph = composedScriptActionGraph(buildPlugins, ProjectBuildContext(effective, lock, snapshot.inputs,
+        Digest(runtimeComposition, runtimeCompositionSize), mapOf("jvm" to identities)), ScriptGraphRequest(file.scriptName))
     val expanded = if (file.selection == SnapshotSelection.StandaloneScript) snapshot.standaloneConfiguration.expanded()
         else expandScript(snapshot.configuration.project, file.scriptName)
     val worker = verifiedRuntimeJvmWorker()
     val stdlib = Sha256.digest(NativeFiles.read(worker.stdlib, 64 * 1024 * 1024))
-    if (observer.freshness(snapshot) != Freshness.CURRENT) throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
+    if (source == null && observer.freshness(snapshot) != Freshness.CURRENT) throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
         "Script inputs changed during inspection; retry", ExitStatus.INCOMPLETE)
     fun dependency(value: ScriptValue<Dependency>): JsonValue {
         val reference = when (val dependency = value.value) {
@@ -147,7 +199,7 @@ internal fun inspectScriptCommand(args: List<String>): JsonValue {
         return obj("reference" to reference, "scope" to value.value.scope.name.lowercase().json(), "origin" to value.origin.toJson())
     }
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "kind" to "script-inspection".json(), "script" to file.scriptName.json(),
-        "configurationPath" to file.path.json(), "inputSelection" to file.selection.toJson(), "inputSnapshot" to snapshot.fingerprint.toJson(),
+        "configurationPath" to (source?.revisionPath(file.name)?.value ?: file.path).json(), "inputSelection" to file.selection.toJson(), "inputSnapshot" to snapshot.fingerprint.toJson(),
         "configuration" to effective.digest.toJson(), "dependencyLock" to lock.digest.toJson(), "inputs" to snapshot.inputs.toJson(),
         "declaration" to expanded.declaration.toJson(), "dependencies" to expanded.dependencies.map(::dependency).json(),
         "compilerOptions" to expanded.compilerOptions.map { obj("value" to it.value.json(), "origin" to it.origin.toJson()) }.json(),
@@ -163,7 +215,9 @@ internal fun inspectScriptCommand(args: List<String>): JsonValue {
         "requestedChecks" to graph.requestedChecks.sorted().map(String::json).json(),
         "languageRuntime" to obj("path" to worker.stdlib.json(), "digest" to stdlib.toJson(), "classpathPosition" to "after-declared-dependencies".json()),
         "entrypoint" to obj("requested" to (expanded.declaration.mainClass?.json() ?: JsonValue.Null), "status" to "requires-compiled-script-metadata".json()),
-        "execution" to "not-requested".json()).also {
+        "execution" to "not-requested".json()).let { result ->
+            if (source == null) result else JsonValue.Object(result.values + ("source" to source.reference.toJson()))
+        }.also {
             if (it.canonical().encodeToByteArray().size > 16 * 1024 * 1024) throw CliFailure("KVIK_SCRIPT_INSPECTION_BOUND",
                 DiagnosticCategory.CONFIGURATION, "Script inspection exceeds 16 MiB", ExitStatus.INCOMPLETE)
         }
