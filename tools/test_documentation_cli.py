@@ -86,8 +86,12 @@ expect fun platformName(): String
         result = run(parts)
         write(label + '.jsonl', result.stdout)
         write(label + '.stderr', result.stderr)
-        assert (result.returncode == 0) == success, (label, result.returncode, result.stdout, result.stderr)
         events = [json.loads(line) for line in result.stdout.splitlines()]
+        failures = [event['payload'] for event in events if event['type'] == 'diagnostic']
+        failed_actions = [(event['payload']['actionId'], event['payload']['status']) for event in events
+                          if event['type'] == 'action-finished' and event['payload']['status'] in ['failed', 'cancelled']]
+        assert (result.returncode == 0) == success, (label, result.returncode, failures[-10:], failed_actions,
+            result.stderr[-2048:], str(project / (label + '.jsonl')))
         validator = Draft202012Validator({**schema, '$ref': '#/$defs/event'})
         for event in events:
             validator.validate(event)
