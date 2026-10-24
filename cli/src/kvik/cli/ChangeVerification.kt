@@ -13,6 +13,7 @@ import kvik.locking.effectiveConfiguration
 import kvik.projectgraph.ProjectGraphRequest
 import kvik.projectgraph.ProjectMode
 import kvik.projectgraph.projectToolTargets
+import kvik.projectgraph.supportsCoreChangeSelection
 import kvik.projectsnapshot.*
 import kvik.runevidence.committedRunEvents
 import kvik.runevidence.verificationRecordFromJson
@@ -157,6 +158,8 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     val fullReasons = linkedSetOf<String>()
     if (parsed.full) fullReasons += "requested-full"
     if (options.coverage) fullReasons += "coverage-requested"
+    // Source plugins may read any captured input; core module edges cannot describe their impact.
+    if (!supportsCoreChangeSelection(buildPlugins)) fullReasons += "source-build-plugins"
     var baselineFailure: String? = null
     val baselineDirectories = parsed.baselines.map { projectPath(currentDirectory(), it) }
     require(baselineDirectories.distinct().size == baselineDirectories.size) { "Duplicate baseline directory" }

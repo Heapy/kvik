@@ -211,8 +211,8 @@ def main():
     session=Session('reload',bootstrap+['--']);session.wait('operation-started');_,first_response=session.status()
     first_done=session.wait('operation-finished',lambda e:not e['payload']['cancelled']);assert first_done['payload']['exitCode']==0,first_done
     plugin=source/'plugins/kotlin/src/kvik/plugins/kotlin/KotlinBuildPlugin.kt';before=plugin.read_text()
-    needle='obj("type" to "object".json(),';assert needle in before
-    plugin.write_text(before.replace(needle,'obj("description" to "raw-terminal-recomposition-proof".json(), "type" to "object".json(),'))
+    needle='Kotlin consumes the core project or standalone script authoring document.';assert needle in before
+    plugin.write_text(before.replace(needle,'raw-terminal-recomposition-proof'))
     session.wait('rebuild-started');session.key(b't');control=session.wait('control',lambda e:e['payload']['command']=='t');assert control['payload']['pending']=='test'
     status,rebuild_response=session.status();assert not status['payload']['compositionReady']
     session.wait('replacement-checked',lambda e:e['payload']['compatible']);boundary=session.wait('session-restarting');resumed=session.wait('session-started')

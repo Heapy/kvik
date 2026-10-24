@@ -17,9 +17,23 @@ class RunEvidenceTest {
         dependencies: Map<String, Set<String>> = graph, actions: List<ActionResult> = graph.keys.map(::result),
         reports: Map<String, TestObservation> = mapOf("tests" to report()), freshness: Freshness = Freshness.CURRENT,
         cancelled: Boolean = false,
+        requiredActions: Set<String> = emptySet(),
     ) = aggregateRunEvidence("run-42", checks, terminals, dependencies, actions, reports,
         digest("snapshot"), digest("configuration"), digest("lock"), digest("composition"), mapOf("compiler" to digest("compiler")),
-        listOf("kvik", "test", "--module", "app"), freshness, cancelled)
+        listOf("kvik", "test", "--module", "app"), freshness, cancelled, requiredActions)
+
+    @Test fun additionalActionsGateCompletionWithoutReplacingTestTerminals() {
+        val dependencies = graph + ("plugin" to setOf("main"))
+        for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
+            val record = aggregate(dependencies = dependencies,
+                actions = graph.keys.map(::result) + result("plugin", status), requiredActions = setOf("plugin")).record
+            assertEquals(if (status in setOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT)) setOf("app:jvm:test") else emptySet(),
+                record.completedChecks)
+            assertEquals(1, record.testCounts.executed)
+        }
+        assertTrue(aggregate(dependencies = dependencies, requiredActions = setOf("plugin")).record.completedChecks.isEmpty())
+        assertFailsWith<IllegalArgumentException> { aggregate(requiredActions = setOf("absent")) }
+    }
 
     @Test fun benchmarkProfilesRequireFreshMeasurementAndAcceptCachedPreparation() {
         for (profile in listOf("smoke", "measurement")) {

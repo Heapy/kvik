@@ -24,16 +24,18 @@ internal class BuildSessionCache {
 
     fun graph(effective: EffectiveConfiguration, lock: DependencyLock, snapshot: TreeManifest,
               snapshotIdentity: Digest, lockBytes: ByteArray, composition: Digest,
-              tools: Map<String, Map<String, Digest>>, toolsDocument: Digest, request: ProjectGraphRequest): ProjectActionGraph {
+              tools: Map<String, Map<String, Digest>>, toolsDocument: Digest, request: ProjectGraphRequest,
+              plugins: List<BuildPlugin>): ProjectActionGraph {
         val key = Sha256.digest(obj("configuration" to effective.digest.toJson(), "lock" to Sha256.digest(lockBytes).toJson(),
             "snapshot" to snapshotIdentity.toJson(), "toolsDocument" to toolsDocument.toJson(), "composition" to composition.toJson(),
+            "plugins" to plugins.sortedBy { it.id }.map { obj("id" to it.id.json(), "apiVersion" to it.apiVersion.json(), "schema" to it.configurationSchema) }.json(),
             "tools" to JsonValue.Object(tools.mapValues { (_, values) -> JsonValue.Object(values.mapValues { it.value.toJson() }) }),
             "modules" to request.modules.sorted().map { it.json() }.json(), "targets" to request.targets.sorted().map { it.json() }.json(),
             "mode" to request.mode.name.json(), "tests" to JsonValue.Object(request.jvmTests.mapValues { (_, tests) ->
                 obj("classes" to tests.classes.map { it.json() }.json(), "engines" to tests.engines.map { it.json() }.json(),
                     "coverage" to (tests.coverage?.toJson() ?: JsonValue.Null)) })))
         graphs[key]?.let { graphReused = true; return it }
-        val graph = projectActionGraph(effective, lock, snapshot, composition, tools, request)
+        val graph = composedProjectActionGraph(plugins, ProjectBuildContext(effective, lock, snapshot, composition, tools), request)
         if (graphs.size == 3) graphs.remove(graphs.keys.first())
         graphs[key] = graph
         return graph

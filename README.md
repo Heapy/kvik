@@ -932,6 +932,44 @@ Module documentation settings support `includes` (Markdown files), `documentedVi
 
 Dokka 2.2.0 runs offline in an owned JVM, using a separate pinned tool distribution. Common metadata and Native stdlib are declared inputs. Successful sites are cached locally and can be restored without installed tools. This command generates per-module HTML for supported JVM, Native, JS and WasmJS source sets; tests are neither compiled nor run. Aggregation, custom Dokka plugins, external documentation links, SDK/cinterop documentation and deployment need separate integrations.
 
+### Source build plugins and action graphs
+
+The composed registry participates in every project build and script invocation,
+including BSP requests and foreground sessions. Exactly one `ProjectBuildPlugin`
+provides the graph; the bundled `KotlinBuildPlugin` supplies Kotlin compilation,
+tests, packaging and script actions through the ordinary adapters.
+
+Additional `ProjectGraphContributor` plugins receive the locked configuration,
+captured input manifest, tool identities and current graph. They can add actions
+that consume declared predecessor artifacts. Contributors run in plugin-ID order;
+duplicate action IDs, missing dependencies, cycles and missing requested terminals
+are rejected. Existing `BuildPlugin.actions(project)` implementations remain
+supported as additive callbacks over the authoring document.
+
+Actions must use the current runtime composition identity. Contributions use the
+existing typed executor adapters and remain locally cached or uncached; a plugin
+cannot opt an added action into remote caching. Custom executor registration and
+additional project-configuration fields require separate adapter support. Graph
+construction must be deterministic and perform no external effects.
+Test and script execution belong to checks declared by the graph provider;
+additive callbacks cannot introduce extra test or script executions.
+
+All contributed actions must succeed before requested checks count as completed.
+With additional plugins or a custom graph provider, `verify` defaults to the full
+requested scope (`source-build-plugins`): plugins can consume any captured input,
+so the core module dependency graph alone cannot safely narrow verification.
+Individual actions still reuse their valid local cache entries.
+A sole provider may opt into core change selection with `usesCoreProjectImpact`
+only when the core module/source-set impact model covers all of its graph inputs.
+
+`runtime-info` exposes plugin identities, API versions and configuration schemas.
+The Kotlin schema references the project and standalone-script definitions in
+[contracts.json](schemas/v1/contracts.json); register that local schema by its
+`$id` when resolving these references. Source edits rebuild the composed native
+executable and invalidate its action identities. See the
+[classpath contributor](tests/build-plugins/src/ClasspathPlugin.kt) and its
+[CLI test](tools/test_source_plugin_actions_cli.py) for a working example.
+
 ### JVM benchmarks
 
 Declare JMH benchmarks in a JVM module's main source set. Add `org.openjdk.jmh:jmh-core:1.37` as a compile dependency and `org.openjdk.jmh:jmh-generator-reflection:1.37` as a runtime dependency. Set `benchmarkSettings` on its JVM target:

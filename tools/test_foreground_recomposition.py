@@ -51,7 +51,7 @@ def main():
     shutil.copyfile(ROOT/'kvik',source/'kvik')
     plugin=source/'plugins/kotlin/src/kvik/plugins/kotlin/KotlinBuildPlugin.kt';original_plugin=plugin.read_text()
     def plugin_version(value):
-        return original_plugin.replace('obj("type" to "object".json(),','obj("description" to "'+value+'".json(), "type" to "object".json(),')
+        return original_plugin.replace('Kotlin consumes the core project or standalone script authoring document.', value)
     def project(label):
         path=evidence/label;path.mkdir()
         for name in ('kvik.json','kvik.lock.json'):shutil.copyfile(args.fixture/name,path/name)

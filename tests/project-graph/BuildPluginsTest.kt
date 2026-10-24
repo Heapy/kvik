@@ -58,6 +58,13 @@ private class Contributor(id: String, private val add: (ProjectBuildContext, Pro
 }
 
 class BuildPluginsTest {
+    @Test fun impactSelectionRequiresAnExplicitProviderContractAndNoContributors() {
+        assertTrue(supportsCoreChangeSelection(listOf(KotlinBuildPlugin())))
+        assertFalse(supportsCoreChangeSelection(emptyList()))
+        assertFalse(supportsCoreChangeSelection(listOf(FixtureProvider())))
+        assertFalse(supportsCoreChangeSelection(listOf(KotlinBuildPlugin(), AdditivePlugin("extra"))))
+    }
+
     @Test fun providerReceivesInputsAndContributorsUseItsGraphInStableOrder() {
         val context = pluginContext()
         val calls = mutableListOf<String>()
@@ -81,6 +88,7 @@ class BuildPluginsTest {
         val graph = composedProjectActionGraph(listOf(second, provider, first), context, pluginRequest)
         assertEquals(listOf("provider", "a", "z"), calls)
         assertEquals(listOf("main", "extra-a", "extra-z"), graph.nodes.map { it.id })
+        assertEquals(setOf("extra-a", "extra-z"), graph.contributedActions)
         assertEquals(setOf("extra-a"), graph.nodes.last().dependencies)
         assertEquals(listOf(LogicalPath("extra-z.txt")), graph.nodes.last().resolve(emptyMap()).outputs)
         calls.clear()
@@ -124,6 +132,16 @@ class BuildPluginsTest {
         }
     }
 
+    @Test fun differentChecksCannotShareOneTerminal() {
+        val request = pluginRequest.copy(modules = setOf("app", "other"))
+        val checks = projectRequestedChecks(request)
+        val provider = FixtureProvider(project = { _, _ -> pluginGraph(checks = checks,
+            terminals = checks.associateWith { "main" }) })
+        assertFailsWith<IllegalArgumentException> {
+            composedProjectActionGraph(listOf(provider), pluginContext(), request)
+        }
+    }
+
     @Test fun invalidProviderAndContributionGraphsAreRejected() {
         val badNodes = listOf(listOf(pluginNode("main"), pluginNode("main")), listOf(pluginNode("main", setOf("missing"))),
             listOf(pluginNode("main", setOf("main"))), listOf(pluginNode("main"), pluginNode(" ")))
@@ -159,6 +177,17 @@ class BuildPluginsTest {
         nodes.clear()
         assertEquals(listOf("main", "extra"), graph.nodes.map { it.id })
         assertEquals(setOf("main"), graph.nodes.last().dependencies)
+    }
+
+    @Test fun contributorsCannotExecuteTestsOrScriptsWithoutDeclaringChecks() {
+        for (kind in listOf(ActionKind.TEST, ActionKind.SCRIPT)) {
+            val node = ActionNode("extra", emptySet()) {
+                pluginNode("extra", policy = CachePolicy.NEVER).resolve(emptyMap()).copy(kind = kind)
+            }
+            val graph = composedProjectActionGraph(listOf(FixtureProvider(), Contributor("extra") { _, _ -> listOf(node) }),
+                pluginContext(), pluginRequest)
+            assertFailsWith<IllegalArgumentException> { graph.nodes.last().resolve(emptyMap()) }
+        }
     }
 
     @Test fun scriptProviderGetsInvocationAndRequiresItsRunCheck() {

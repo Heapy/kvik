@@ -38,6 +38,7 @@ fun aggregateRunEvidence(
     reproduction: List<String>,
     freshnessAtCompletion: Freshness,
     cancelled: Boolean = false,
+    requiredActions: Set<String> = emptySet(),
 ): RunEvidence {
     val checks = requestedChecks.sorted().toSet()
     require(checks.isNotEmpty() && checks.all(::validCheck)) {
@@ -47,6 +48,7 @@ fun aggregateRunEvidence(
     val graph = actionDependencies.mapValues { it.value.toSet() }
     require(graph.keys.all { it.isNotBlank() }) { "Planned action IDs must be nonempty" }
     validateGraph(graph)
+    require(requiredActions.all { it in graph }) { "Required completion action is outside the planned graph" }
     require(terminals.keys.all { it in checks } && terminals.values.all { it in graph }) { "Terminal mapping contains an unknown check/action" }
     require(terminals.values.distinct().size == terminals.size) { "A terminal action cannot satisfy multiple checks" }
     val results = actions.map { it.copy(outputs = TreeManifest(it.outputs.files.toList())) }.sortedBy { it.actionId }
@@ -98,9 +100,10 @@ fun aggregateRunEvidence(
             byId[id]?.successful == true && graph.getValue(id).all(::visit)
         return visit(action)
     }
+    val requirementsPassed = requiredActions.all(::successfulClosure)
     val completed = checks.filter { check ->
         val terminal = terminals[check]
-        terminal != null && successfulClosure(terminal) &&
+        requirementsPassed && terminal != null && successfulClosure(terminal) &&
             (!check.endsWith(":test") || observations[terminal]?.status == VerificationStatus.PASSED)
     }.toSet()
     val status = when {

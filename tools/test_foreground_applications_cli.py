@@ -229,7 +229,7 @@ def main():
             assert s.status()['application']['active'] is not None
             assert 'Native compiler failed' in (Path(failure['evidenceDirectory'])/'stderr.log').read_text()
             assert old_pids <= {row[0] for row in table()}
-            changed_plugin=plugin_original.decode().replace('obj("type" to "object".json(),','obj("description" to "foreground-application-handoff".json(), "type" to "object".json(),')
+            changed_plugin=plugin_original.decode().replace('Kotlin consumes the core project or standalone script authoring document.', 'foreground-application-handoff')
             assert changed_plugin!=plugin_original.decode();plugin.write_text(changed_plugin)
             source=project/'app/jvm/Application.kt';original=source.read_bytes();restore_sources[source]=original
             source.write_bytes(original+b'\nINVALID APPLICATION CANDIDATE\n')

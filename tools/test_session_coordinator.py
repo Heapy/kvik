@@ -32,7 +32,7 @@ def main():
          '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'],
     ]
     sources = [p for directory in ('core/src', 'execution/src', 'integration/resolution/src', 'integration/project-graph/src', 'integration/library/src',
-                                   'integration/project-snapshot/src', 'tests/session-coordinator')
+                                   'integration/project-snapshot/src', 'plugins/kotlin/src', 'tests/session-coordinator')
                for p in sorted((ROOT / directory).rglob('*.kt'))]
     sources += [ROOT / name for name in (
         'compiler/documentation/src/kvik/documentation/DocumentationActions.kt', 'compiler/abi/src/kvik/abi/AbiActions.kt',

@@ -264,10 +264,11 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 if (effective.requests.any { it.domain.purpose == "sqldelight-compiler" })
                     sqlDelightWorkerSources().values.forEach { content.put(it.encodeToByteArray()) }
                 graph = if (scriptFile != null)
-                    scriptActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities.getValue("jvm"), ScriptGraphRequest(scriptFile.scriptName, scriptArguments))
+                    composedScriptActionGraph(buildPlugins, ProjectBuildContext(effective, lock, snapshot.inputs, composition, toolIdentities),
+                        ScriptGraphRequest(scriptFile.scriptName, scriptArguments))
                 else if (sessionCache != null) sessionCache.graph(effective, lock, snapshot.inputs, snapshot.fingerprint, snapshot.lockBytes,
-                    composition, toolIdentities, Sha256.digest(tools.document), graphRequest)
-                else projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities, graphRequest)
+                    composition, toolIdentities, Sha256.digest(tools.document), graphRequest, buildPlugins)
+                else composedProjectActionGraph(buildPlugins, ProjectBuildContext(effective, lock, snapshot.inputs, composition, toolIdentities), graphRequest)
                 runtimeProcessHost().use { host ->
                     val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val js = if (toolTargets.any { KotlinJsTarget.find(it) != null })
@@ -417,10 +418,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             }
                         }
                     }
+                    val contributedActions = graph.contributedActions
                     val traced = graph.nodes.map { node -> node.copy(resolve = { predecessors ->
                         node.resolve(predecessors).let { action ->
                             // Keep the same identity in online and offline runs of this configured policy.
-                            if (remoteConfiguration != null && portableJvmCompilation(action)) action.copy(cachePolicy = CachePolicy.REMOTE) else action
+                            if (remoteConfiguration != null && node.id !in contributedActions && portableJvmCompilation(action))
+                                action.copy(cachePolicy = CachePolicy.REMOTE) else action
                         }.also { action ->
                             NativeFiles.writeNew("${run.path}/actions/${Sha256.digest(node.id.encodeToByteArray()).hash}.json",
                                 obj("schemaVersion" to CONTRACT_VERSION.json(), "actionId" to node.id.json(), "key" to action.key(Sha256).toJson(),
@@ -474,7 +477,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         val evidence = aggregateRunEvidence(run.runId, requested, graph?.terminalActions ?: emptyMap(), dependencies,
             results, reports, snapshot.fingerprint, effective.digest, lock.digest, composition,
             toolIdentities.flatMap { (target, identities) -> identities.map { (name, digest) -> "$target:$name" to digest } }.toMap(),
-            reproduction, fresh, cancelled)
+            reproduction, fresh, cancelled, requiredActions = graph?.contributedActions ?: emptySet())
         // Setup/journal-independent runtime errors are actual failures even when no action could start.
         cancelled = cancelled || kvik_interrupt_requested() != 0
         var record = evidence.record.copy(source = sourceProject?.reference, status = buildCompletion(evidence.record.status,

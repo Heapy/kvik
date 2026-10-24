@@ -27,7 +27,13 @@ data class ProjectGraphRequest(
     val mode: ProjectMode,
     val jvmTests: Map<String, JvmTests> = emptyMap(),
 )
-data class ProjectActionGraph(val nodes: List<ActionNode>, val requestedChecks: Set<String>, val terminalActions: Map<String, String>)
+data class ProjectActionGraph(
+    val nodes: List<ActionNode>,
+    val requestedChecks: Set<String>,
+    val terminalActions: Map<String, String>,
+    /** Additional plugin actions must succeed before any requested check is complete. */
+    val contributedActions: Set<String> = emptySet(),
+)
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
     if (request.mode == ProjectMode.DOCUMENTATION) request.modules.map { "$it:common:documentation" }.toSet() else request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.checkScope()}" } +

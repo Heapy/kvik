@@ -3,6 +3,7 @@ package kvik.cli
 import kvik.core.*
 import kvik.locking.*
 import kvik.projectgraph.*
+import kvik.plugins.kotlin.KotlinBuildPlugin
 import kotlin.test.*
 
 class BuildSessionCacheTest {
@@ -12,6 +13,7 @@ class BuildSessionCacheTest {
     private val composition = digest("composition")
     private val tools = mapOf("jvm" to listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith(::digest))
     private val request = ProjectGraphRequest(setOf("app"), setOf("jvm"), ProjectMode.BUILD)
+    private val plugins = listOf(KotlinBuildPlugin())
 
     @Test fun exactModelsAreRetainedButChangedBytesAreParsedAndValidated() {
         val cache = BuildSessionCache()
@@ -29,7 +31,7 @@ class BuildSessionCacheTest {
         fun graph(tree: TreeManifest = files, snapshot: Digest = digest("snapshot"), lockBytes: String = "lock",
                   toolIds: Map<String, Map<String, Digest>> = tools, toolDoc: Digest = digest("tools"),
                   selected: ProjectGraphRequest = request, comp: Digest = composition) = cache.graph(effective, lock, tree, snapshot,
-            lockBytes.encodeToByteArray(), comp, toolIds, toolDoc, selected)
+            lockBytes.encodeToByteArray(), comp, toolIds, toolDoc, selected, plugins)
         cache.begin(); val first = graph(); assertFalse(cache.graphReused)
         cache.begin(); assertSame(first, graph()); assertTrue(cache.graphReused)
         val baseNode = first.nodes.single { it.id == "base:jvm:main" }
@@ -46,14 +48,14 @@ class BuildSessionCacheTest {
         val changedConfig = cache.configuration(source.replace("fixture", "changed").encodeToByteArray())
         val changedEffective = effectiveConfiguration(changedConfig)
         assertNotSame(first, cache.graph(changedEffective, DependencyLock(changedEffective.digest, emptyList()), files, digest("snapshot"),
-            "lock".encodeToByteArray(), composition, tools, digest("tools"), request))
+            "lock".encodeToByteArray(), composition, tools, digest("tools"), request, plugins))
     }
 
     @Test fun retainedTestGraphStillResolvesNeverCachedTestsFromFreshOutputs() {
         val cache = BuildSessionCache(); val effective = effectiveConfiguration(cache.configuration(source.encodeToByteArray()))
         val selected = request.copy(mode = ProjectMode.TEST, jvmTests = mapOf("app" to JvmTests(listOf("fixture.Tests"))))
         fun graph() = cache.graph(effective, DependencyLock(effective.digest, emptyList()), files, digest("snapshot"), "lock".encodeToByteArray(),
-            composition, tools, digest("tools"), selected)
+            composition, tools, digest("tools"), selected, plugins)
         val first = graph(); cache.begin(); assertSame(first, graph())
         val results = linkedMapOf<String, ActionResult>()
         for (node in first.nodes) {

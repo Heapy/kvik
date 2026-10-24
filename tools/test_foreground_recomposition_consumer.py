@@ -72,7 +72,7 @@ def main():
         process.stdin.write(json.dumps(dict(schemaVersion=1, requestId=command, command=command)) + '\n'); process.stdin.flush()
     first = wait('session-started'); wait('operation-finished')
     plugin = source / 'plugins/kotlin/src/kvik/plugins/kotlin/KotlinBuildPlugin.kt'
-    plugin.write_text(plugin.read_text().replace('obj("type" to "object".json(),', 'obj("description" to "recomposition-v1".json(), "type" to "object".json(),'))
+    plugin.write_text(plugin.read_text().replace('Kotlin consumes the core project or standalone script authoring document.', 'recomposition-v1'))
     wait('rebuild-started')
     shutil.copyfile(args.fixture / 'tools.json', project / 'tools.json'); send('t')
     boundary = wait('session-restarting'); resumed = wait('session-started')

@@ -7,6 +7,7 @@ import kvik.projectgraph.*
 class KotlinBuildPlugin : ProjectBuildPlugin {
     override val id: String = "kvik.kotlin"
     override val apiVersion: Int = CONTRACT_VERSION
+    override val usesCoreProjectImpact: Boolean = true
     override val configurationSchema: JsonValue.Object = obj(
         "description" to "Kotlin consumes the core project or standalone script authoring document.".json(),
         "oneOf" to listOf("project", "standaloneScript").map {
