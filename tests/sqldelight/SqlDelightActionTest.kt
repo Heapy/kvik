@@ -40,6 +40,7 @@ class SqlDelightActionTest {
     @Test fun emptySqlInventoryIsAnExplicitCacheableGeneration() {
         val empty = generation.copy(sources = emptyList())
         val action = sqlDelightAction(empty, TreeManifest(inputs.files.filter { it.path != source }), digest, tools)
+        assertEquals(emptyList(), action.outputs)
         assertEquals(empty, SqlDelightGeneration.fromJson(action.parameters))
         assertEquals(CachePolicy.LOCAL, action.cachePolicy)
     }

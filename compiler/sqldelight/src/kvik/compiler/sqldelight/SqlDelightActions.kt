@@ -42,6 +42,6 @@ fun sqlDelightAction(generation: SqlDelightGeneration, inputs: TreeManifest, com
     require(inputs.files.all { !it.executable && (it.path in generation.sources || it.path in generation.classpath ||
         it.path.value.startsWith("${generation.worker.value}/")) }) { "Unexpected SQLDelight input" }
     return ActionSpec("kvik-sqldelight-v1", composition, ActionKind.GENERATE, jvmHostPlatform(), "jvm", toolchains.toMap(),
-        TreeManifest(inputs.files.toList()), listOf(generation.output), listOf("kvik.sqldelight.Generate"),
+        TreeManifest(inputs.files.toList()), if (generation.sources.isEmpty()) emptyList() else listOf(generation.output), listOf("kvik.sqldelight.Generate"),
         mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "TZ" to "UTC"), generation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
