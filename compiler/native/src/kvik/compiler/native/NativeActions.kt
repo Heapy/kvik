@@ -4,6 +4,25 @@ import kvik.core.*
 
 enum class NativeOutput { LIBRARY, PROGRAM, TEST, KOTEST_TEST, FRAMEWORK }
 
+/** Closed source-language settings; paths and arbitrary compiler arguments are never accepted here. */
+data class NativeLanguageOptions(val returnValueChecker: String? = null, val nameBasedDestructuring: String? = null) {
+    init {
+        require(returnValueChecker == null || returnValueChecker in setOf("check", "full")) { "Unsupported return-value checker mode" }
+        require(nameBasedDestructuring == null || nameBasedDestructuring in setOf("only-syntax", "name-mismatch", "complete")) { "Unsupported destructuring mode" }
+    }
+    fun arguments(): List<String> = listOfNotNull(returnValueChecker?.let { "-Xreturn-value-checker=$it" },
+        nameBasedDestructuring?.let { "-Xname-based-destructuring=$it" })
+    fun toJson(): JsonValue.Object = obj("returnValueChecker" to (returnValueChecker?.json() ?: JsonValue.Null),
+        "nameBasedDestructuring" to (nameBasedDestructuring?.json() ?: JsonValue.Null))
+    companion object {
+        fun fromJson(value: JsonValue): NativeLanguageOptions {
+            val fields = value.fields(setOf("returnValueChecker", "nameBasedDestructuring"))
+            fun mode(name: String) = fields.getValue(name).let { if (it == JsonValue.Null) null else it.stringValue() }
+            return NativeLanguageOptions(mode("returnValueChecker"), mode("nameBasedDestructuring"))
+        }
+    }
+}
+
 /** Bind the verified dependency component inventories without leaking installation paths into keys. */
 fun nativeDependenciesIdentity(llvm: Digest, libffi: Digest, xcodeToolchain: Digest): Digest = Sha256.digest(obj(
     "schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-native-dependencies-v1".json(),
@@ -50,6 +69,7 @@ data class NativeCompilation(
     val target: NativeTarget = NativeTarget.MACOS_ARM64,
     val isStaticFramework: Boolean = false,
     val sourceFragments: List<NativeSourceFragment> = emptyList(),
+    val languageOptions: NativeLanguageOptions = NativeLanguageOptions(),
 ) {
     init {
         require(!isStaticFramework || produce == NativeOutput.FRAMEWORK) { "Static framework requires FRAMEWORK output" }
@@ -73,6 +93,7 @@ data class NativeCompilation(
         require(sources.distinct().size == sources.size && sources.all { it.value.endsWith(".kt") })
         require((sources + libraries + plugins + listOfNotNull(includedLibrary)).none { "," in it.value }) { "Comma-separated compiler path syntax unsupported" }
         if (includedLibrary == null) require(sources.isNotEmpty()) else {
+            require(languageOptions == NativeLanguageOptions()) { "Source-language options are invalid for source-free linking" }
             require(sources.isEmpty() && produce != NativeOutput.LIBRARY && includedLibrary.value.endsWith(".klib") && includedLibrary !in libraries) { "Included klib requires a distinct source-free link input" }
             require(commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && optIns.isEmpty() && !explicitApi && kotestLauncher == null) { "Source compilation options are invalid for source-free linking" }
         }
@@ -119,6 +140,7 @@ data class NativeCompilation(
         if (explicitApi) add("-Xexplicit-api=strict")
         if (warningsAsErrors) add("-Werror")
         optIns.forEach { add("-opt-in=$it") }
+        addAll(languageOptions.arguments())
         libraries.forEach { addAll(listOf("-library", "input/${it.value}")) }
         includedLibrary?.let {
             add("-Xinclude=input/${it.value}")
@@ -133,13 +155,13 @@ data class NativeCompilation(
         "commonSources" to commonSources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
         "plugins" to plugins.map { it.value.json() }.json(), "output" to output.value.json(), "produce" to produce.name.json(),
         "moduleName" to moduleName.json(), "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(), "warningsAsErrors" to warningsAsErrors.json()).let {
-            JsonValue.Object(it.objectValue() + listOfNotNull(sourceFragments.takeIf { it.isNotEmpty() }?.let { "sourceFragments" to it.map(NativeSourceFragment::toJson).json() }, if (isStaticFramework) "isStaticFramework" to true.json() else null, kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, target.takeIf { it != NativeTarget.MACOS_ARM64 }?.let { "target" to it.projectName.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
+            JsonValue.Object(it.objectValue() + listOfNotNull(languageOptions.takeIf { it != NativeLanguageOptions() }?.let { "languageOptions" to it.toJson() }, sourceFragments.takeIf { it.isNotEmpty() }?.let { "sourceFragments" to it.map(NativeSourceFragment::toJson).json() }, if (isStaticFramework) "isStaticFramework" to true.json() else null, kotestLauncher?.let { "kotestLauncher" to it.value.json() }, includedLibrary?.let { "includedLibrary" to it.value.json() }, entryPoint?.let { "entryPoint" to it.json() }, target.takeIf { it != NativeTarget.MACOS_ARM64 }?.let { "target" to it.projectName.json() }, pluginApplications.takeIf { it.isNotEmpty() }?.let { "pluginApplications" to it.map(JvmPluginApplication::toJson).json() }).toMap())
         }
     companion object {
         fun fromJson(value: JsonValue): NativeCompilation {
-            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications", "target", "isStaticFramework", "sourceFragments"))
+            val d = value.fields(setOf("module", "sources", "commonSources", "libraries", "plugins", "output", "produce", "moduleName", "optIns", "explicitApi", "warningsAsErrors"), setOf("kotestLauncher", "includedLibrary", "entryPoint", "pluginApplications", "target", "isStaticFramework", "sourceFragments", "languageOptions"))
             fun paths(name: String) = d.getValue(name).arrayValue().map { LogicalPath(it.stringValue()) }
-            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(), d["target"]?.stringValue()?.let(NativeTarget::require) ?: NativeTarget.MACOS_ARM64, d["isStaticFramework"]?.booleanValue() ?: false, d["sourceFragments"]?.arrayValue()?.map(NativeSourceFragment::fromJson) ?: emptyList())
+            return NativeCompilation(d.getValue("module").stringValue(), paths("sources"), paths("commonSources"), paths("libraries"), paths("plugins"), LogicalPath(d.getValue("output").stringValue()), NativeOutput.valueOf(d.getValue("produce").stringValue()), d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), d["kotestLauncher"]?.stringValue()?.let(::LogicalPath), d["includedLibrary"]?.stringValue()?.let(::LogicalPath), d["entryPoint"]?.stringValue(), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(), d["target"]?.stringValue()?.let(NativeTarget::require) ?: NativeTarget.MACOS_ARM64, d["isStaticFramework"]?.booleanValue() ?: false, d["sourceFragments"]?.arrayValue()?.map(NativeSourceFragment::fromJson) ?: emptyList(), d["languageOptions"]?.let(NativeLanguageOptions::fromJson) ?: NativeLanguageOptions())
         }
     }
 }

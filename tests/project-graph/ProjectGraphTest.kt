@@ -1236,6 +1236,37 @@ class ProjectGraphTest {
         assertEquals(CachePolicy.NEVER, zeroActions.getValue("app:macosArm64:test").cachePolicy)
     }
 
+    @Test fun nativeSourceLanguageOptionsAreTypedAndInvalidateCompilation() {
+        fun configured(checker: String) = app.copy(targets = app.targets.map {
+            if (it.name == "macosArm64") it.copy(compilerOptions = listOf("-Xreturn-value-checker=$checker", "-Xname-based-destructuring=complete")) else it
+        })
+        val before = resolved(graph(configuration(base, configured("check")), request = request(ProjectMode.TEST, "macosArm64")))
+        val after = resolved(graph(configuration(base, configured("full")), request = request(ProjectMode.TEST, "macosArm64")))
+        for (id in listOf("app:macosArm64:main", "app:macosArm64:test-compile")) {
+            val compilation = NativeCompilation.fromJson(after.getValue(id).parameters)
+            assertEquals(NativeLanguageOptions("full", "complete"), compilation.languageOptions)
+            assertTrue(compilation.arguments().containsAll(listOf("-Xreturn-value-checker=full", "-Xname-based-destructuring=complete")))
+            assertEquals(compilation, NativeCompilation.fromJson(compilation.toJson()))
+            assertNotEquals(before.getValue(id).key(Sha256), after.getValue(id).key(Sha256))
+        }
+        assertEquals(before.getValue("base:macosArm64:main").key(Sha256), after.getValue("base:macosArm64:main").key(Sha256))
+        val link = NativeCompilation.fromJson(after.getValue("app:macosArm64:test-link").parameters)
+        assertEquals(NativeLanguageOptions(), link.languageOptions)
+        assertFalse("languageOptions" in link.toJson().values)
+        assertFails { link.copy(languageOptions = NativeLanguageOptions("full")) }
+        for (arguments in listOf(listOf("-Xreturn-value-checker=bad"), listOf("-Xname-based-destructuring=complete,-Xplugin=evil"),
+            listOf("-Xreturn-value-checker=check", "-Xreturn-value-checker=full"))) {
+            assertFails { compilerOptions("app", "macosArm64", arguments) }
+        }
+        assertEquals(NativeLanguageOptions("full", "complete"), compilerOptions("app", "macosArm64",
+            listOf("-Xreturn-value-checker", "full", "-Xname-based-destructuring", "complete")).nativeLanguageOptions)
+        val publishedBase = published(base, resources = false)
+        val publishedApp = published(configured("full"), resources = false)
+        val unsupportedMetadata = assertFails { graph(configuration(publishedBase, publishedApp),
+            request = ProjectGraphRequest(setOf("app"), setOf("jvm", "macosArm64"), ProjectMode.PACKAGE)) }
+        assertTrue(unsupportedMetadata.message.orEmpty().contains("metadata adapter"), unsupportedMetadata.message)
+    }
+
     @Test fun compilerOptionsAndSingleTargetCommonConventionAreExplicit() {
         val arguments = listOf("-jvm-target=21", "-opt-in", "kotlin.ExperimentalStdlibApi", "-Xexplicit-api=strict", "-Werror", "-language-version", "2.4", "-api-version=2.4", "-Xmulti-platform")
         val singleBase = base.copy(targets = base.targets.filter { it.name == "jvm" })

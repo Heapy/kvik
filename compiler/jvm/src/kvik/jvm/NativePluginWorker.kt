@@ -65,6 +65,8 @@ object NativePluginWorker {
                 "-entry" -> require(value().matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")))
                 "-library" -> { val path = value(); require(path.startsWith("input/") && path.endsWith(".klib")); workspace.path(path) }
                 "-generate-test-runner", "-Xmulti-platform", "-Xexplicit-api=strict", "-Werror", "-Xoverride-konan-properties=airplaneMode=true" -> Unit
+                "-Xreturn-value-checker=check", "-Xreturn-value-checker=full", "-Xname-based-destructuring=only-syntax",
+                "-Xname-based-destructuring=name-mismatch", "-Xname-based-destructuring=complete" -> Unit
                 else -> when {
                     argument.startsWith("-opt-in=") -> require(argument.substringAfter('=').matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")))
                     argument.startsWith("-Xfragments=") -> require(argument.substringAfter('=').matches(Regex("[A-Za-z_][A-Za-z0-9_.-]{0,127}")))

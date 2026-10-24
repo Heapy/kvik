@@ -217,6 +217,9 @@ private class Builder(
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val options = spec.targets.filter { it.name in targets }.map { compilerOptions(module, it.name, it.compilerOptions) }
+        require(options.all { it.nativeLanguageOptions == NativeLanguageOptions() }) {
+            "Native return-value checker/destructuring settings are not yet represented by the metadata adapter"
+        }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
@@ -550,7 +553,8 @@ private class Builder(
                 jdkRelease = options.jdkRelease, pluginApplications = workspace.applications), inputs, composition, tools.getValue(target))
             else nativeCompileAction(NativeCompilation(module, source.paths, source.common, classpath, plugin.map { it.path }, LogicalPath("module.klib"),
                 moduleName = options.nativeModuleName, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
-                pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main")), inputs, composition, nativeTools(target, workspace.applications),
+                pluginApplications = workspace.applications, target = NativeTarget.require(target), sourceFragments = nativeFragments(module, target, "main"),
+                languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
     }
@@ -689,6 +693,9 @@ private class Builder(
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val settings = spec.targets.map { compilerOptions(module, it.name, it.compilerOptions) }
+        require(settings.all { it.nativeLanguageOptions == NativeLanguageOptions() }) {
+            "Native return-value checker/destructuring settings are not yet represented by the metadata adapter"
+        }
         nodes[id] = ActionNode(id, edges) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
@@ -829,6 +836,9 @@ private class Builder(
             }
             val artifacts = artifactEntries(external(module, target, "test", if (target == "jvm") "java-api" else "kotlin-api"), target)
             if (kotest != null) {
+                require(options.nativeLanguageOptions == NativeLanguageOptions()) {
+                    "Native return-value checker/destructuring settings are not yet represented by the KSP adapter"
+                }
                 val lockedRuntime = external(module, target, "test", "kotlin-api")
                 require(lockedRuntime.any { it.coordinate == Coordinate("io.kotest", "kotest-framework-engine-${NativeTarget.require(target).publicationSuffix}", "6.2.5") } &&
                     lockedRuntime.none { it.coordinate.group == "io.kotest" && it.coordinate.version != "6.2.5" }) { "Native Kotest tests require the pinned 6.2.5 runtime closure" }
@@ -868,7 +878,7 @@ private class Builder(
                 else nativeCompileAction(NativeCompilation(module, source.paths + generated.map { it.path }, source.common, classpath, plugin.map { it.path }, LogicalPath("tests.klib"),
                     NativeOutput.LIBRARY, options.nativeModuleName, options.optIns, options.explicitApi, options.warningsAsErrors,
                     kotestLauncher = kotest?.let { kotestGeneratedLauncher }, pluginApplications = workspace.applications, target = NativeTarget.require(target),
-                    sourceFragments = nativeFragments(module, target, "test", generated.map { it.path })), inputs, composition, nativeTools(target, workspace.applications),
+                    sourceFragments = nativeFragments(module, target, "test", generated.map { it.path }), languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
                     timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
             }
             if (NativeTarget.find(target) != null) {

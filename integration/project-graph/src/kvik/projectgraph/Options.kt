@@ -1,6 +1,7 @@
 package kvik.projectgraph
 
 import kvik.core.*
+import kvik.compiler.native.NativeLanguageOptions
 
 internal data class CompilerOptions(
     val jvmTarget: Int,
@@ -10,6 +11,7 @@ internal data class CompilerOptions(
     val warningsAsErrors: Boolean,
     val multiplatform: Boolean,
     val jdkRelease: Int?,
+    val nativeLanguageOptions: NativeLanguageOptions,
 )
 
 /** Parse only settings represented by the typed compiler adapters. No arbitrary flag forwarding. */
@@ -20,6 +22,8 @@ internal fun compilerOptions(module: String, target: String, arguments: List<Str
     var explicitApi = false
     var warningsAsErrors = false
     var multiplatform = false
+    var returnValueChecker: String? = null
+    var nameBasedDestructuring: String? = null
     val optIns = mutableListOf<String>()
     val seen = mutableSetOf<String>()
     var position = 0
@@ -54,8 +58,17 @@ internal fun compilerOptions(module: String, target: String, arguments: List<Str
             "-Xexplicit-api" -> { require(value() == "strict"); explicitApi = true }
             "-Werror" -> { flag(); warningsAsErrors = true }
             "-Xmulti-platform" -> { flag(); multiplatform = true }
+            "-Xreturn-value-checker" -> {
+                require(NativeTarget.find(target) != null) { "Return-value checker settings currently require a Native target" }
+                returnValueChecker = value()
+            }
+            "-Xname-based-destructuring" -> {
+                require(NativeTarget.find(target) != null) { "Destructuring settings currently require a Native target" }
+                nameBasedDestructuring = value()
+            }
             else -> error("Unsupported project compiler option: $argument")
         }
     }
-    return CompilerOptions(jvmTarget, nativeModuleName, optIns.toList(), explicitApi, warningsAsErrors, multiplatform, jvm.jdkRelease)
+    return CompilerOptions(jvmTarget, nativeModuleName, optIns.toList(), explicitApi, warningsAsErrors, multiplatform, jvm.jdkRelease,
+        NativeLanguageOptions(returnValueChecker, nameBasedDestructuring))
 }
