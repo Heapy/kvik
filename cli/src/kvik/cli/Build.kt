@@ -150,6 +150,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val journal = RunJournal(run.runId, run.path)
     var graph: ProjectActionGraph? = null
     var toolIdentities = emptyMap<String, Map<String, Digest>>()
+    var toolAdmission: BuildToolAdmission? = null
     var results = emptyList<ActionResult>()
     val reports = mutableMapOf<String, TestObservation>()
     var scriptObservation: JvmScriptObservation? = null
@@ -162,7 +163,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         journal.emit("run-started", obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson()))
         began = true
         try {
-            toolIdentities = tools.verify(toolTargets)
+            val admission = tools.admission(toolTargets)
+            toolAdmission = admission
+            toolIdentities = admission.identities
             cancelled = kvik_interrupt_requested() != 0
             if (!cancelled) {
                 graph = if (scriptFile != null)
@@ -171,11 +174,11 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     composition, toolIdentities, Sha256.digest(tools.document), graphRequest)
                 else projectActionGraph(effective, lock, snapshot.inputs, composition, toolIdentities, graphRequest)
                 runtimeProcessHost().use { host ->
-                    val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
-                    val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
-                    val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(), tools.jvmProvider())
-                    val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
-                    val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider())
+                    val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider(admission))
+                    val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider(admission))
+                    val native = NativeCompilerExecutor(run.runId, run.path, host, content, tools.nativeProvider(admission = admission), tools.jvmProvider(admission))
+                    val ksp = KspNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider(admission = admission))
+                    val kotest = KotestNativeExecutor(run.runId, run.path, host, content, tools.nativeProvider(admission = admission))
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
                     val kmpLibrary = KmpLibraryPackageExecutor(content)
@@ -194,7 +197,15 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             }
                         }
                         override fun resources(action: ActionSpec) = executor(action).resources(action)
-                        override fun start(runId: String, actionId: String, action: ActionSpec) = executor(action).start(runId, actionId, action)
+                        override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
+                            val selected = executor(action)
+                            // These transforms do not invoke a tool provider themselves. Admit all
+                            // prerequisites before creating/cache-publishing an application/package.
+                            return if (selected === application || selected === library || selected === kmpLibrary)
+                                preparingAction(actionId, action, prepare = { checkpoint -> admission.admit(checkpoint); Unit },
+                                    start = { selected.start(runId, actionId, action) })
+                            else selected.start(runId, actionId, action)
+                        }
                     }
                     fun cacheDiagnostic(value: CacheDiagnostic) = journal.diagnostic(Diagnostic("KVIK_CACHE_NOTICE", DiagnosticCategory.CACHE, "${value.code}: ${value.message}"))
                     val localCache = NativeActionCache("$storePath/actions", content)
@@ -284,13 +295,21 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         while (!scheduler.isFinished) {
                             if (kvik_interrupt_requested() != 0) { cancelled = true; scheduler.cancel() }
                             scheduler.tick()
-                            remote?.observeCompleted(scheduler.results)
+                            // Remote writes wait for admission of every required target. Retained
+                            // publication candidates remain subject to the decorator's count/byte caps.
                             observations()
                             if (!scheduler.isFinished) usleep(10_000u)
                         }
                         results = scheduler.results.values.toList()
                     }
-                    if (remote != null) {
+                    cancelled = cancelled || kvik_interrupt_requested() != 0
+                    if (!cancelled) {
+                        // Fresh actions have already reverified their own providers. Only entirely
+                        // cached targets need a scan here; no layouts survive across actions/runs.
+                        admission.admit { check(kvik_interrupt_requested() == 0) { "Tool admission cancelled" } }
+                        remote?.observeCompleted(results.associateBy { it.actionId })
+                    } else remote?.abortPublications()
+                    if (remote != null && !cancelled) {
                         while (!remote.pollPublications()) {
                             if (kvik_interrupt_requested() != 0) { cancelled = true; remote.abortPublications(); break }
                             usleep(10_000u)
@@ -304,11 +323,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
             failureExit = when {
                 toolIdentities.isEmpty() -> ExitStatus.INCOMPLETE
                 graph == null -> ExitStatus.INVALID_CONFIGURATION
+                toolAdmission?.complete != true -> ExitStatus.INCOMPLETE
                 else -> ExitStatus.FAILED
             }
             cancelled = cancelled || kvik_interrupt_requested() != 0
             journal.diagnostic(Diagnostic(if (graph == null) "KVIK_BUILD_SETUP_FAILED" else "KVIK_RUN_FAILED",
-                if (toolIdentities.isEmpty()) DiagnosticCategory.TOOLCHAIN else if (graph == null) DiagnosticCategory.CONFIGURATION else DiagnosticCategory.INFRASTRUCTURE,
+                if (toolIdentities.isEmpty() || graph != null && toolAdmission?.complete != true) DiagnosticCategory.TOOLCHAIN else if (graph == null) DiagnosticCategory.CONFIGURATION else DiagnosticCategory.INFRASTRUCTURE,
                 failure.message ?: "Build failed"))
         }
         val fresh = try { snapshots.freshness(snapshot) } catch (_: Exception) { Freshness.INDETERMINATE }

@@ -39,6 +39,7 @@ def main():
     sources = [path for base in ('core/src', 'cache/src', 'execution/src', 'compiler/jvm/native/src',
                                 'compiler/native/src', 'integration/toolchains/src', 'integration/compiler-tools/src',
                                 'tests/tool-verification-cancellation') for path in sorted((ROOT / base).rglob('*.kt'))]
+    sources.append(ROOT / 'cli/src/kvik/cli/BuildToolAdmission.kt')
     run(files_interop_command(ROOT, konan, output))
     run([konan / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true',
          '-library', output / 'stream_hash.klib', '-library', output / 'process.klib', '-generate-test-runner',

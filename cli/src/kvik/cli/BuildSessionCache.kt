@@ -4,7 +4,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.projectgraph.*
 
-/** Invocation-local objects only. Fresh snapshot, lock replay and tool verification precede graph lookup. */
+/** Retained models/graphs only. Each operation has fresh inputs, lock replay and separate tool admission. */
 internal class BuildSessionCache {
     private val models = linkedMapOf<Digest, ProjectConfiguration>()
     private val graphs = linkedMapOf<Digest, ProjectActionGraph>()
