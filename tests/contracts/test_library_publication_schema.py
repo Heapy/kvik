@@ -30,7 +30,7 @@ class LibraryPublicationSchemaTest(unittest.TestCase):
         validator('workerRequest').validate(request)
         for targets in (['jvm', 'linuxX64'], ['macosArm64', 'linuxX64'], ['jvm', 'macosArm64', 'linuxX64']):
             validator('workerRequest').validate({**request, 'metadataTargets': targets})
-        for targets in ([], ['jvm'], ['jvm', 'jvm'], ['jvm', 'iosArm64']):
+        for targets in ([], ['jvm'], ['jvm', 'jvm'], ['jvm', 'iosX64']):
             self.assertFalse(validator('workerRequest').is_valid({**request, 'metadataTargets': targets}))
         validator('workerRequest').validate({**request, 'pluginClasspath': ['plugin.jar']})
         self.assertFalse(validator('workerRequest').is_valid({**request, 'operation': 'jvm-compile'}))

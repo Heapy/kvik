@@ -404,7 +404,9 @@
           "enum": [
             "jvm",
             "macosArm64",
-            "linuxX64"
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
           ]
         },
         "main": {
@@ -445,6 +447,9 @@
         },
         "application": {
           "$ref": "#/$defs/applicationSettings"
+        },
+        "nativeFramework": {
+          "$ref": "#/$defs/nativeFramework"
         }
       },
       "required": [
@@ -520,7 +525,9 @@
               "name": {
                 "enum": [
                   "macosArm64",
-                  "linuxX64"
+                  "linuxX64",
+                  "iosArm64",
+                  "iosSimulatorArm64"
                 ]
               }
             }
@@ -553,8 +560,75 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "enum": [
+                  "iosArm64",
+                  "iosSimulatorArm64"
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "then": {
+            "properties": {
+              "test": {
+                "type": "null"
+              }
+            },
+            "not": {
+              "required": [
+                "application"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "nativeFramework"
+            ]
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "enum": [
+                  "iosArm64",
+                  "iosSimulatorArm64"
+                ]
+              }
+            },
+            "not": {
+              "required": [
+                "application"
+              ]
+            }
+          }
         }
       ]
+    },
+    "nativeFramework": {
+      "type": "object",
+      "properties": {
+        "baseName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$(?![\\s\\S])"
+        },
+        "isStatic": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "baseName"
+      ],
+      "additionalProperties": false
     },
     "pluginPathOption": {
       "type": "object",
@@ -663,7 +737,9 @@
             "enum": [
               "jvm",
               "macosArm64",
-              "linuxX64"
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64"
             ]
           },
           "minItems": 1,
@@ -745,7 +821,9 @@
                 "enum": [
                   "jvm",
                   "macosArm64",
-                  "linuxX64"
+                  "linuxX64",
+                  "iosArm64",
+                  "iosSimulatorArm64"
                 ]
               },
               "minItems": 1,
@@ -1610,7 +1688,9 @@
             "common",
             "jvm",
             "macosArm64",
-            "linuxX64"
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
           ]
         },
         "usage": {
@@ -1683,7 +1763,9 @@
             "common",
             "jvm",
             "macosArm64",
-            "linuxX64"
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64"
           ]
         },
         "compilation": {
@@ -1812,6 +1894,50 @@
                 "const": "dependencies"
               },
               "target": {
+                "const": "iosArm64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "enum": [
+                  "kotlin-api",
+                  "kotlin-runtime"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "dependencies"
+              },
+              "target": {
+                "const": "iosSimulatorArm64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usage": {
+                "enum": [
+                  "kotlin-api",
+                  "kotlin-runtime"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "dependencies"
+              },
+              "target": {
                 "const": "common"
               }
             }
@@ -1869,6 +1995,31 @@
               },
               "compilation": {
                 "const": "test"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "target": {
+                "enum": [
+                  "iosArm64",
+                  "iosSimulatorArm64"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "compilation": {
+                "const": "main"
+              },
+              "purpose": {
+                "enum": [
+                  "dependencies",
+                  "compiler-plugin"
+                ]
               }
             }
           }
@@ -3239,6 +3390,12 @@
             },
             "xcodeToolchain": {
               "$ref": "#/$defs/digest"
+            },
+            "iosSdk": {
+              "$ref": "#/$defs/digest"
+            },
+            "iosSimulatorSdk": {
+              "$ref": "#/$defs/digest"
             }
           },
           "required": [
@@ -3382,6 +3539,14 @@
                 "xcodeToolchain": {
                   "type": "string",
                   "pattern": "\\S"
+                },
+                "iosSdk": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "iosSimulatorSdk": {
+                  "type": "string",
+                  "pattern": "\\S"
                 }
               },
               "required": [
@@ -3410,7 +3575,79 @@
             "konanData",
             "compilerArtifacts"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "toolLock": {
+                    "properties": {
+                      "components": {
+                        "required": [
+                          "iosSdk"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "roots": {
+                    "required": [
+                      "iosSdk"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "roots": {
+                    "not": {
+                      "required": [
+                        "iosSdk"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "toolLock": {
+                    "properties": {
+                      "components": {
+                        "required": [
+                          "iosSimulatorSdk"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "roots": {
+                    "required": [
+                      "iosSimulatorSdk"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "roots": {
+                    "not": {
+                      "required": [
+                        "iosSimulatorSdk"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
         },
         {
           "type": "object",
@@ -3985,7 +4222,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|application|package)$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|application|package)|(iosArm64|iosSimulatorArm64):(build|package))$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -8163,6 +8400,82 @@
         }
       ]
     },
+    "frameworkReady": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "iosArm64",
+            "iosSimulatorArm64"
+          ]
+        },
+        "actionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(iosArm64|iosSimulatorArm64):framework$(?![\\s\\S])"
+        },
+        "directory": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "framework": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "dSYM": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^/"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isStatic": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "module",
+        "target",
+        "actionId",
+        "directory",
+        "framework",
+        "dSYM",
+        "isStatic"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "isStatic": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dSYM": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "dSYM": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -8188,7 +8501,8 @@
             "session-state",
             "application-prepared",
             "application-started",
-            "application-finished"
+            "application-finished",
+            "framework-ready"
           ]
         },
         "payload": {
@@ -8232,6 +8546,22 @@
                   "inputSnapshot"
                 ],
                 "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "framework-ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/frameworkReady"
               }
             }
           }
@@ -8587,7 +8917,9 @@
             "enum": [
               "jvm",
               "macosArm64",
-              "linuxX64"
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64"
             ]
           },
           "uniqueItems": true
@@ -8637,7 +8969,7 @@
             "properties": {
               "metadataTargets": {
                 "minItems": 2,
-                "maxItems": 3
+                "maxItems": 5
               }
             }
           },
