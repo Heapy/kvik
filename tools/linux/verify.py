@@ -73,6 +73,7 @@ def main():
         run([sys.executable, ROOT/'tools/test_files_platform.py'])
         run([sys.executable, ROOT/'tools/test_foreground_keys_boundary.py'])
         run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/bootstrap', '-p', 'test_linux*.py'])
+        run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_worktree_isolation_unit.py'])
     bootstrap = [ROOT/'kvik', '--java-home', java, '--konan-home', native, '--konan-data', data,
                  '--bootstrap-command-timeout', str(args.bootstrap_command_timeout)]
     built = run([*bootstrap, '--print-runtime'], stdout=subprocess.PIPE, text=True)

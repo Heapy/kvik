@@ -611,6 +611,15 @@ Slot occupancy is not CPU utilization, and individual RSS peaks do not represent
 combined process-tree memory. This small synthetic workload has no speedup
 threshold. Linux CI retains the JSON as the `test-parallelism-linux` artifact.
 
+The public CLI suite also runs `tools/check_worktree_isolation.py` with two linked
+Git worktrees sharing one cache. It checks identical and divergent inputs, fresh
+test execution, separate mutable worker directories and cancellation of one run
+while the other continues. Barrier-controlled JVM tests verify actual overlap;
+recovery runs must reuse compilation and execute tests again. The gate can also
+run directly with `--runtime PATH --fixture PATH`, using a prepared fixture from
+`tools/test_build_cli.py --prepare-only`. Commands and results stay in the generated
+`worktree-isolation-*` directory beside that fixture.
+
 These settings apply to JVM, Native (including Kotest), JS and WasmJS tests.
 `cpuSlots` defaults to 1 and accepts integers from 1 to 1024. The sum of active
 action reservations cannot exceed `--jobs`: with `--jobs 4`, two tests reserving
@@ -1260,7 +1269,7 @@ unchanged sources and Git state. Separate clean checkouts independently rerun
 each branch. Kvik shares an action/blob cache between the worktrees; KTC shares
 provisioned tools/downloads and keeps project-local incremental state. This
 scenario uses a two-second test wait to make overlap observable. Identical-input
-worktrees and cancellation isolation remain separate runtime gates.
+worktrees and cancellation isolation are checked separately by the public CLI suite.
 
 The harness retains prompts, JSONL transcripts, token usage, tool calls, returned
 command-output bytes, compiler invocation counts, diffs and independent test
