@@ -27,6 +27,22 @@ internal fun prepareOutputRoots(staging: Path, logical: List<LogicalPath>): Map<
 
 internal data class PreparedWorkspacePlugin(val id: String, val classpath: List<Path>, val options: List<String>)
 
+/** Native/JS recipes carry published plugins in CLI flags; validate them before typed installation. */
+internal fun validatedPublishedPluginPaths(arguments: List<String>, applications: List<JvmPluginApplication>,
+    workspace: Workspace, pinned: Distribution): List<Path> {
+    val flags = arguments.filter { it.startsWith("-Xplugin=") }
+    if (flags.isEmpty()) return emptyList()
+    if (flags.size != 1 || applications.any { it.id == "org.jetbrains.kotlinx.serialization" })
+        reject("KVIK_UNSUPPORTED_PLUGIN", "At most one pinned serialization plugin is allowed, without a duplicate workspace plugin ID")
+    val logical = flags.single().substringAfter('=')
+    if (!logical.startsWith("input/") || !logical.endsWith(".jar"))
+        reject("KVIK_UNSUPPORTED_PLUGIN", "Published compiler plugin must be a declared input JAR")
+    val path = workspace.path(logical)
+    if (!Files.isRegularFile(path) || pinned.serialization == null || fileDigest(path) != pinned.serialization)
+        reject("KVIK_UNSUPPORTED_PLUGIN", "Only the manifest-pinned Kotlin serialization plugin is supported")
+    return listOf(path)
+}
+
 /** Native hosts authorize the pinned JVM API dependency while loading their own verified parent API. */
 internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>, consumerClasspath: List<Path>, workspace: Workspace,
     outputs: Map<LogicalPath, Path>, compilerLoader: ClassLoader, compilerArtifacts: List<Path>,

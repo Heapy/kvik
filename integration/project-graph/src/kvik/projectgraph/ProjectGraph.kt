@@ -214,8 +214,9 @@ private class Builder(
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList(), compilations = compilations.values.toList(), scriptCompilations = scriptCompilations.values.toList())
     }
 
-    private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
-        selectedPlugins(module, target, scope).flatMap { plugin -> compilerPluginOutputArtifacts(listOf(plugin)) }
+    private fun pluginOutputArtifacts(module: String, target: String, scope: String,
+                                     selected: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): List<OutputArtifact> =
+        compilerPluginOutputArtifacts(selected)
 
     private fun nativeLinkOutputs(path: String, target: String, framework: Boolean = false,
                                   staticFramework: Boolean = false): ActionOutputContract = ActionOutputContract(
@@ -274,7 +275,7 @@ private class Builder(
         val sets = documentationCommonSourceSets(spec, targets)
         require(sets.isNotEmpty()) { "Documentation dependency needs shared source sets: $module" }
         val pluginTarget = if ("jvm" in targets) "jvm" else targets.sorted().first()
-        val applyPlugin = selectedPlugins(module, pluginTarget, "main").singleOrNull()?.targets?.containsAll(targets) == true
+        val commonPlugins = selectedPlugins(module, pluginTarget, "main").filter { it.targets.containsAll(targets) }
         val source = sets.flatMap { set -> set.directories.flatMap { directory ->
             require(files.none { it.path == directory }) { "Documentation source directory is a file" }
             files.filter { it.path.value.startsWith(directory.value + "/") }.map {
@@ -286,25 +287,25 @@ private class Builder(
         val generators = ensureSourceGenerators(module, sets)
         require(source.isNotEmpty() || sqlDelight != null || generators.isNotEmpty()) { "No common documentation dependency sources: $module" }
         val dependencies = documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) }
-        val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
+        val pluginDependencies = pluginModules(module, pluginTarget, "main", commonPlugins)
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val nativeTarget = if (targets.all { NativeTarget.find(it) != null }) targets.intersect(request.targets).sorted().firstOrNull()
             ?: error("Native documentation metadata has no selected supporting target") else null
         val stdlibId = nativeTarget?.let { ensureDocumentationStdlib(module, it) }
-        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + (if (applyPlugin) pluginResourceDependencies(module, pluginTarget, "main") else emptySet()) + listOfNotNull(stdlibId, sqlDelight) + generators.map(::generatorId)
+        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, pluginTarget, "main", commonPlugins) + listOfNotNull(stdlibId, sqlDelight) + generators.map(::generatorId)
         val artifacts = documentationArtifacts(module, targets, includeStdlib = nativeTarget == null)
-        val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
+        val plugin = plugins(module, pluginTarget, "main", commonPlugins)
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val options = spec.targets.filter { it.name in targets }.map { compilerOptions(module, it.name, it.compilerOptions) }
         require(options.all { it.nativeLanguageOptions == NativeLanguageOptions() }) {
             "Native return-value checker/destructuring settings are not yet represented by the metadata adapter"
         }
         nodes[id] = ActionNode(id, edges,
-            ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + if (applyPlugin) pluginOutputArtifacts(module, pluginTarget, "main") else emptyList())) { results ->
+            ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + pluginOutputArtifacts(module, pluginTarget, "main", commonPlugins))) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
             val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
-            val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
+            val workspace = workspacePlugin(module, pluginTarget, "main", results, commonPlugins)
             val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + sourceGeneratorOutputs(generators, results).values.flatten()
             jvmMetadataCompileAction(JvmMetadataCompilation(module, (source + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path } +
@@ -484,8 +485,9 @@ private class Builder(
             selection.pluginDependencies.forEach(::ensurePluginGenerator)
         }
 
-    private fun pluginResourceDependencies(module: String, target: String, scope: String): Set<String> =
-        pluginModules(module, target, scope).flatMap { resources(it, "jvm", "main").dependencies }.toSet()
+    private fun pluginResourceDependencies(module: String, target: String, scope: String,
+                                           selected: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): Set<String> =
+        pluginModules(module, target, scope, selected).flatMap { resources(it, "jvm", "main").dependencies }.toSet()
 
     private fun closure(module: String, target: String, scope: String, runtime: Boolean = false): DependencyClosure =
         dependencyClosure(project, module, target, scope, if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
@@ -514,9 +516,17 @@ private class Builder(
     }.distinct()
     private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
         modules.getValue(module).compilerPlugins.filter { it.appliesTo(target, scope) }.distinct()
-            .also { require(it.size <= 1) { "Multiple compiler plugins per compilation are unsupported" } }
-    private fun plugins(module: String, target: String, scope: String): List<FileEntry> {
-        val selected = selectedPlugins(module, target, scope).filter { it.module == null }
+            .also { selected ->
+                require(selected.count { it.module != null } <= 1 && selected.count { it.coordinate != null } <= 1) {
+                    "Compilations support at most one workspace plugin and one published serialization plugin"
+                }
+                require(selected.none { it.coordinate != null } || selected.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
+                    "Workspace and published plugins cannot share the serialization plugin ID"
+                }
+            }
+    private fun plugins(module: String, target: String, scope: String,
+                        applied: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): List<FileEntry> {
+        val selected = applied.filter { it.module == null }
         require(selected.all { it.options.isEmpty() && it.inputs.isEmpty() }) { "Serialization plugin options/extra inputs are unsupported" }
         val roots = selected.map { it.coordinate!! }.distinct()
         require(roots.size <= 1) { "Multiple compiler plugins are unsupported" }
@@ -527,19 +537,21 @@ private class Builder(
             artifactEntries(artifacts, "jvm", true)
         }
     }
-    private fun pluginModules(module: String, target: String, scope: String): List<String> =
-        selectedPlugins(module, target, scope).flatMap { plugin -> plugin.module?.let {
+    private fun pluginModules(module: String, target: String, scope: String,
+                              selected: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): List<String> =
+        selected.flatMap { plugin -> plugin.module?.let {
             listOf(it) + closure(it, "jvm", "main", true).modules
         } ?: emptyList() }.distinct()
 
     private data class WorkspacePlugin(val entries: List<FileEntry>, val applications: List<JvmPluginApplication>)
-    private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>): WorkspacePlugin {
-        val plugin = selectedPlugins(module, target, scope).singleOrNull()?.takeIf { it.module != null }
+    private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>,
+                                selected: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): WorkspacePlugin {
+        val plugin = selected.singleOrNull { it.module != null }
             ?: return WorkspacePlugin(emptyList(), emptyList())
         val prefix = "plugins/${plugin.id!!}"
         val entries = mutableListOf<FileEntry>()
         val classpath = mutableListOf<LogicalPath>()
-        for (producer in pluginModules(module, target, scope)) {
+        for (producer in pluginModules(module, target, scope, selected)) {
             val root = LogicalPath("$prefix/modules/$producer/classes")
             classpath += root
             val original = modulePath(producer, "jvm", "main").value
@@ -992,7 +1004,7 @@ private class Builder(
         // A common plugin must cover every published target. Its dependency domain is
         // JVM-hosted regardless of the consumer platform selected below.
         val pluginTarget = if ("jvm" in request.targets) "jvm" else request.targets.sorted().first()
-        val applyPlugin = selectedPlugins(module, pluginTarget, "main").singleOrNull()?.targets?.containsAll(request.targets) == true
+        val commonPlugins = selectedPlugins(module, pluginTarget, "main").filter { it.targets.containsAll(request.targets) }
         val shared = commonPublicationSourceSets(spec)
         require(shared.isNotEmpty()) { "Root publication requires shared main source sets: $module" }
         val sources = shared.flatMap { set -> set.directories.flatMap { directory ->
@@ -1006,21 +1018,21 @@ private class Builder(
         val generators = ensureSourceGenerators(module, shared)
         require((sources.isNotEmpty() || sqlDelight != null || generators.isNotEmpty()) && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
         val dependencies = commonPublicationDependencyClosure(project, module).modules
-        val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
+        val pluginDependencies = pluginModules(module, pluginTarget, "main", commonPlugins)
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + (if (applyPlugin) pluginResourceDependencies(module, pluginTarget, "main") else emptySet()) + listOfNotNull(sqlDelight) + generators.map(::generatorId)
+        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, pluginTarget, "main", commonPlugins) + listOfNotNull(sqlDelight) + generators.map(::generatorId)
         val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
-        val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
+        val plugin = plugins(module, pluginTarget, "main", commonPlugins)
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val settings = spec.targets.map { compilerOptions(module, it.name, it.compilerOptions) }
         require(settings.all { it.nativeLanguageOptions == NativeLanguageOptions() }) {
             "Native return-value checker/destructuring settings are not yet represented by the metadata adapter"
         }
         nodes[id] = ActionNode(id, edges,
-            ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + if (applyPlugin) pluginOutputArtifacts(module, pluginTarget, "main") else emptyList())) { results ->
+            ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + pluginOutputArtifacts(module, pluginTarget, "main", commonPlugins))) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
-            val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
+            val workspace = workspacePlugin(module, pluginTarget, "main", results, commonPlugins)
             val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + sourceGeneratorOutputs(generators, results).values.flatten()
             jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", (sources + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),

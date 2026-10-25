@@ -1209,6 +1209,79 @@ class ProjectGraphTest {
         assertFails { graph(project, files = TreeManifest(files.files.filter { it.path.value != "config.txt" }), request = request(ProjectMode.TEST)).let(::resolved) }
     }
 
+    @Test fun workspaceAndSerializationPluginsComposeForModuleMainAndTests() {
+        val workspace = CompilerPluginSpec("producer", null, setOf("jvm", "macosArm64", "js", "wasmJs"), setOf("main", "test"),
+            listOf("text=first"), listOf(LogicalPath("config.txt")), "example.plugin", "2.4.20")
+        val serialization = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
+            workspace.targets, workspace.scopes, emptyList(), emptyList())
+        fun web(module: ModuleSpec) = module.copy(targets = module.targets + listOf("js", "wasmJs").map {
+            TargetSpec(it, "commonMain", "commonTest", emptyList())
+        })
+        val producer = module("producer")
+        val files = TreeManifest(snapshot().files + listOf("producer/common/Plugin.kt", "producer/jvm/Actual.kt", "config.txt")
+            .map { FileEntry(LogicalPath(it), digest(it)) })
+        for (target in workspace.targets) for (plugins in listOf(listOf(workspace, serialization), listOf(serialization, workspace))) {
+            fun plan(selected: List<CompilerPluginSpec> = plugins, changedPublished: Boolean = false): ProjectActionGraph {
+                val effective = effectiveConfiguration(configuration(web(base), producer, web(app).copy(compilerPlugins = selected)))
+                val original = lock(effective)
+                val pinned = if (!changedPublished) original else original.copy(selections = original.selections.map { selection ->
+                    if (selection.requested != serialization.coordinate) selection else selection.copy(selection = selection.selection.copy(
+                        artifacts = selection.artifacts.map { it.copy(digest = digest("changed published plugin")) }))
+                })
+                return projectActionGraph(effective, pinned, files, composition, tools, request(ProjectMode.TEST, target))
+            }
+            val graph = plan()
+            val actions = resolved(graph)
+            for (id in listOf("app:$target:main", "app:$target:test-compile")) {
+                val action = actions.getValue(id)
+                val parameters = action.parameters.objectValue()
+                val published = parameters.getValue("plugins").arrayValue().map { LogicalPath(it.stringValue()) }.single()
+                val applied = parameters.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson).single()
+                assertEquals(workspace.id, applied.id)
+                assertContains(action.inputs.files.map { it.path }, published)
+                assertTrue(applied.classpath.none { it == published })
+                assertContains(graph.nodes.single { it.id == id }.dependencies, "producer:jvm:main")
+                assertNotEquals(action.key(Sha256), resolved(graph, "producer:jvm:main").getValue(id).key(Sha256))
+                assertNotEquals(action.key(Sha256), resolved(plan(changedPublished = true)).getValue(id).key(Sha256))
+                assertNotEquals(action.key(Sha256), resolved(plan(plugins.map {
+                    if (it.module == null) it else it.copy(options = listOf("text=second"))
+                })).getValue(id).key(Sha256))
+            }
+            assertTrue(actions.getValue("app:$target:test").inputs.files.none { it.path.value.startsWith("plugins/") })
+            assertFails { plan(listOf(workspace.copy(id = "org.jetbrains.kotlinx.serialization"), serialization)) }
+        }
+    }
+
+    @Test fun metadataSelectsEachPluginIndependentlyByTargetCoverage() {
+        val targets = setOf("jvm", "macosArm64")
+        val workspace = CompilerPluginSpec("producer", null, targets, setOf("main"), emptyList(), emptyList(), "example.plugin", "2.4.20",
+            pathOptions = listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))),
+            outputs = listOf(LogicalPath("report")))
+        val serialization = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
+            targets, setOf("main"), emptyList(), emptyList())
+        val producer = module("producer")
+        val files = TreeManifest(snapshot().files + listOf("producer/common/Plugin.kt", "producer/jvm/Actual.kt")
+            .map { FileEntry(LogicalPath(it), digest(it)) })
+        for (documentation in listOf(false, true)) for (sharedWorkspace in listOf(false, true)) for (sharedPublished in listOf(false, true)) {
+            val selected = listOf(workspace.copy(targets = if (sharedWorkspace) targets else setOf("jvm")),
+                serialization.copy(targets = if (sharedPublished) targets else setOf("jvm")))
+            val config = if (documentation) configuration(base.copy(compilerPlugins = selected), producer, app.copy(documentation = DocumentationSettings()))
+                else configuration(published(base, false).copy(compilerPlugins = selected), producer, published(app, false))
+            val plan = graph(config, files, ProjectGraphRequest(setOf("app"), targets, if (documentation) ProjectMode.DOCUMENTATION else ProjectMode.PACKAGE))
+            val node = plan.nodes.single { it.id == if (documentation) "base:common:documentation-metadata-jvm-macosArm64" else "base:common:metadata" }
+            assertEquals(if (sharedWorkspace) setOf("producer:jvm:main") else emptySet(), node.dependencies)
+            val inputs = node.dependencies.associateWith { id -> ActionResult(id, digest(id), ActionStatus.EXECUTED,
+                TreeManifest(listOf(FileEntry(LogicalPath("classes/Plugin.class"), digest(id)))), 0) }
+            val action = node.resolve(inputs)
+            val compilation = JvmMetadataCompilation.fromJson(action.parameters)
+            assertEquals(if (sharedPublished) 1 else 0, compilation.plugins.size)
+            assertEquals(if (sharedWorkspace) 1 else 0, compilation.pluginApplications.size)
+            assertEquals(listOf(LogicalPath("metadata")) + if (sharedWorkspace) listOf(LogicalPath("plugins/example.plugin/report")) else emptyList(), action.outputs)
+            assertTrue(compilation.plugins.none { it in compilation.classpath })
+            assertTrue(compilation.pluginApplications.flatMap { it.classpath }.none { it in compilation.classpath })
+        }
+    }
+
     @Test fun nativeWorkspacePluginBuildsJvmProducersAndKeepsReportsOutOfLinks() {
         val plugin = CompilerPluginSpec("producer", null, setOf("macosArm64"), setOf("main", "test"),
             listOf("value=with,comma=andEquals"), listOf(LogicalPath("config.txt")), "example.plugin", "2.4.20",

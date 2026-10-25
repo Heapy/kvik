@@ -23,7 +23,9 @@ object JsPluginWorker {
             val pinned = distribution(Path.of(args[3]), parseJson(Files.readString(Path.of(args[4]))), Digest.fromJson(fields.getValue("compiler")))
             val applications = fields.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
             require(applications.size == 1) { "Exactly one workspace plugin application is required" }
-            val arguments = fields.getValue("arguments").arrayValue().map(JsonValue::stringValue)
+            val requestedArguments = fields.getValue("arguments").arrayValue().map(JsonValue::stringValue)
+            val published = validatedPublishedPluginPaths(requestedArguments, applications, workspace, pinned)
+            val arguments = requestedArguments.filterNot { it.startsWith("-Xplugin=") }
             val libraries = fields.getValue("libraries").arrayValue().map(JsonValue::stringValue)
             validateJsPluginArguments(arguments, target, libraries, workspace)
             val bootstrap = listOf(Path.of(JsPluginWorker::class.java.protectionDomain.codeSource.location.toURI()).toRealPath(),
@@ -37,7 +39,7 @@ object JsPluginWorker {
                 require(version == "2.4.20") { "Unsupported JS/Wasm compiler version: $version" }
                 val outputs = prepareOutputRoots(workspace.root.resolve("output"), applications.flatMap { it.outputs })
                 val plugins = validatedWorkspacePlugins(applications, libraries.map { workspace.path(it) }, workspace, outputs, loader, pinned.classpath)
-                compile(requestId, target, arguments, plugins.single(), loader, workspace)
+                compile(requestId, target, arguments, plugins.single(), published, loader, workspace)
             }
         } catch (failure: Exception) {
             val cause = if (failure is InvocationTargetException) failure.targetException else failure
@@ -50,7 +52,7 @@ object JsPluginWorker {
         exitProcess(result.exitCode)
     }
 
-    private fun compile(requestId: String, target: KotlinJsTarget, arguments: List<String>, plugin: PreparedWorkspacePlugin,
+    private fun compile(requestId: String, target: KotlinJsTarget, arguments: List<String>, plugin: PreparedWorkspacePlugin, published: List<Path>,
         loader: ClassLoader, workspace: Workspace): WorkerResult {
         val compilerType = loader.loadClass("org.jetbrains.kotlin.cli.js." + if (target == KotlinJsTarget.JS) "K2JSCompiler" else "KotlinWasmCompiler")
         val compiler = compilerType.getDeclaredConstructor().newInstance()
@@ -84,7 +86,8 @@ object JsPluginWorker {
             else -> error("Unsupported MessageCollector method: ${method.name}")
         } }
         val result = withTypedWorkspacePlugin(plugin, loader, workspace) { serviceDirectory ->
-            argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject, arrayOf(serviceDirectory.toString()) as Any)
+            val classpaths = (published.map(Path::toString) + serviceDirectory.toString()).toTypedArray()
+            argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject, classpaths as Any)
             argumentObject.javaClass.getMethod("setPluginOptions", Array<String>::class.java).invoke(argumentObject, emptyArray<String>() as Any)
             val services = loader.loadClass("org.jetbrains.kotlin.config.Services").getField("EMPTY").get(null)
             compilerType.methods.single { it.name == "exec" && it.parameterCount == 3 && it.parameterTypes[0] == collectorType }

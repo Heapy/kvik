@@ -110,7 +110,8 @@ data class JvmMetadataCompilation(
         require(sources.isNotEmpty() && sources.all { it.value.endsWith(".kt") })
         for (paths in listOf(sources, classpath, plugins)) require(paths.distinct().size == paths.size && paths.none { ':' in it.value })
         require(plugins.size <= 1 && plugins.all { it.value.endsWith(".jar") && it !in classpath })
-        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
+        require(pluginApplications.size <= 1) { "At most one workspace plugin is supported" }
+        require(plugins.isEmpty() || pluginApplications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
         require(pluginApplications.all { plugin -> plugin.classpath.none { it in classpath } && plugin.outputs.none { pathsOverlap(it, output) } }) {
             "Plugin paths overlap metadata classpath/output"
         }

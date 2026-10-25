@@ -28,7 +28,8 @@ data class JsCompilation(
             ApplicationSpec(it).requireTarget(target.projectName)
             require(sources.isEmpty() && commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && !explicitApi)
         }
-        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
+        require(pluginApplications.size <= 1) { "At most one workspace plugin is supported" }
+        require(plugins.isEmpty() || pluginApplications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
         require(pluginApplications.all { plugin ->
             plugin.classpath.none { it in libraries } && plugin.outputs.all { root ->
                 root.value.startsWith("plugins/${plugin.id}/") && !pathsOverlap(root, output)

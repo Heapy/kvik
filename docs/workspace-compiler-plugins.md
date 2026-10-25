@@ -64,6 +64,13 @@ After changing configuration, resolve the lock explicitly, then build or test:
 
 The current adapter accepts one workspace compiler plugin per compilation and
 Kotlin 2.4.20, with fixtures on JVM, macosArm64, `js` and `wasmJs`.
+A compilation can also apply the published
+`org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20`
+plugin alongside it. Declare both entries in `compilerPlugins`; each retains its
+own target and scope selection. Common publication and documentation metadata
+apply each plugin only when its declaration covers every target of that metadata
+compilation. A workspace plugin cannot reuse the serialization plugin ID when both
+are selected.
 JS/Wasm uses the JVM-hosted compiler and requires a plugin compatible with that
 backend. Source-free JS/Wasm links do not load the plugin. Project scripts can use workspace plugins with
 `targets: ["jvm"]` and `scopes: ["script"]`; see the

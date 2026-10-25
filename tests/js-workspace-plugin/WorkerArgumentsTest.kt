@@ -1,12 +1,12 @@
 package kvik.jvm
 
-import kvik.core.KotlinJsTarget
+import kvik.core.*
 import java.nio.file.Files
 
 /** Run with the worker sources so the argument boundary is tested without loading a compiler. */
 object WorkerArgumentsTest {
     @JvmStatic fun main(args: Array<String>) {
-        val root = Files.createTempDirectory("kvik-js-worker-arguments-")
+        val root = Files.createTempDirectory("kvik-js-worker-arguments-").toRealPath()
         val workspace = Workspace(root)
         try {
             Files.createDirectories(root.resolve("input"))
@@ -61,6 +61,27 @@ object WorkerArgumentsTest {
             reject(base + "input/Alias.kt")
             Files.createDirectory(root.resolve("input/Directory.kt"))
             reject(base + "input/Directory.kt")
+            val jar = root.resolve("input/serialization.jar")
+            Files.writeString(jar, "pinned plugin bytes")
+            val pinned = Distribution(emptyList(), fileDigest(jar))
+            val plugin = JvmPluginApplication("example.plugin", "2.4.20", listOf(LogicalPath("input/producer")), emptyList(), emptyList(), emptyList(), emptyList())
+            val flag = "-Xplugin=input/serialization.jar"
+            check(validatedPublishedPluginPaths(base + flag, listOf(plugin), workspace, pinned) == listOf(jar)); checks++
+            check(validatedPublishedPluginPaths(base, listOf(plugin), workspace, pinned).isEmpty()); checks++
+            fun refusePublished(flags: List<String>, applications: List<JvmPluginApplication> = listOf(plugin), distribution: Distribution = pinned) {
+                check(runCatching { validatedPublishedPluginPaths(base + flags, applications, workspace, distribution) }.isFailure)
+                checks++
+            }
+            refusePublished(listOf(flag, flag))
+            refusePublished(listOf(flag), listOf(plugin.copy(id = "org.jetbrains.kotlinx.serialization")))
+            refusePublished(listOf(flag), distribution = pinned.copy(serialization = null))
+            refusePublished(listOf("-Xplugin=output/serialization.jar"))
+            refusePublished(listOf("-Xplugin=input/../serialization.jar"))
+            refusePublished(listOf("-Xplugin=input/Directory.kt"))
+            Files.createSymbolicLink(root.resolve("input/alias.jar"), jar)
+            refusePublished(listOf("-Xplugin=input/alias.jar"))
+            Files.writeString(jar, "untrusted replacement")
+            refusePublished(listOf(flag))
             println("PASS $checks JS/Wasm worker argument checks")
         } finally { workspace.removeTree(root) }
     }

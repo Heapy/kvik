@@ -46,7 +46,11 @@ class NativeWorkspacePluginTest {
         assertEquals(legacy, NativeCompilation.fromJson(legacy.toJson()))
         assertEquals(baseTools, nativeCompileAction(legacy, inputs, digest, baseTools).toolchains)
         assertFailsWith<IllegalArgumentException> { compilation().copy(produce = NativeOutput.PROGRAM, output = LogicalPath("main.kexe")) }
-        assertFails { compilation().copy(plugins = listOf(LogicalPath("serialization.jar"))) }
+        val combined = compilation().copy(plugins = listOf(LogicalPath("serialization.jar")))
+        assertEquals(combined, NativeCompilation.fromJson(combined.toJson()))
+        assertContains(combined.arguments(), "-Xplugin=input/serialization.jar")
+        assertFails { combined.copy(pluginApplications = listOf(plugin.copy(id = "org.jetbrains.kotlinx.serialization"))) }
+        assertFails { combined.copy(plugins = listOf(LogicalPath("serialization.jar"), LogicalPath("other.jar"))) }
         assertFails { compilation().copy(sources = emptyList(), includedLibrary = LogicalPath("tests.klib"), produce = NativeOutput.TEST, output = LogicalPath("tests.kexe")) }
         assertFails { compilation().copy(output = LogicalPath("plugins/fixture.rewrite/report")) }
         assertFails { compilation().copy(pluginApplications = listOf(plugin.copy(outputs = listOf(LogicalPath("other/report")),

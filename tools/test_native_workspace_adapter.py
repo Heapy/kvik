@@ -27,7 +27,7 @@ def canonical(value):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--fixture', type=Path, required=True)
+    parser.add_argument('--fixture', type=Path)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--konan-home', type=Path, required=True)
@@ -39,9 +39,10 @@ def main():
     output = ROOT/'.kvik/tests/native-workspace-adapter'; output.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
     print('CASE', case, flush=True)
-    fixture = args.fixture.resolve()
-    invocation = json.loads((fixture/'invocation.json').read_text())
-    env = json.loads((fixture/'compile-producer/command.json').read_text())['environment']
+    if not args.units_only and args.fixture is None:
+        parser.error('--fixture is required unless --units-only is selected')
+    fixture = args.fixture.resolve() if args.fixture is not None else None
+    env = {**os.environ, 'JAVA_HOME': str(args.java_home.resolve())} if args.units_only else json.loads((fixture/'compile-producer/command.json').read_text())['environment']
     env.update(HOME=str(case/'home'), TMPDIR=str(case/'tmp'), KONAN_USE_INTERNAL_SERVER='0')
     (case/'home').mkdir(); (case/'tmp').mkdir()
     java = args.java_home.resolve()/'bin/java'; native = args.konan_home.resolve()
@@ -73,6 +74,7 @@ def main():
         command('unit', [case/'unit.kexe'])
         print('PASS Native existing and workspace-plugin unit tests',flush=True)
         return
+    invocation = json.loads((fixture/'invocation.json').read_text())
     jars = [Path(item['path']) for item in invocation['compilerClasspath']]
     for item, path in zip(invocation['compilerClasspath'], jars): assert digest(path) == item['digest']
     api = args.artifacts/'kotlin-build-tools-api-2.4.20.jar'; stdlib = args.artifacts/'kotlin-stdlib-2.4.20.jar'

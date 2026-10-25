@@ -27,7 +27,7 @@ The supported options are:
 - `-Xcommon-sources` with comma-separated paths already declared in `sources`.
 - `-Xfriend-paths` with comma-separated paths already declared in `classpath`.
 
-Other flags, duplicate non-repeatable options, arbitrary `-d`/classpath flags and arbitrary plugin flags are rejected. The only supported plugin is the single manifest-pinned serialization plugin, loaded under `org.jetbrains.kotlinx.serialization`; plugin options and other plugins are currently unsupported. Plugin and consumer classpaths remain separate.
+Other flags, duplicate non-repeatable options, arbitrary `-d`/classpath flags and arbitrary plugin flags are rejected. A compilation can combine the manifest-pinned serialization plugin (`org.jetbrains.kotlinx.serialization`) with one typed workspace plugin application. Serialization has no configurable options; workspace plugins accept declared literal and path options. Plugin and consumer classpaths remain separate, and duplicate plugin IDs are rejected.
 
 The BTA `CompilerMessageRenderer` supplies structured compiler warnings/errors and source locations. Messages use stable Kvik diagnostic codes, with logical source paths where possible. Tool stdout/stderr are logs, not protocol records. Outputs compile into a new staging directory and are exposed by atomic rename only after successful compilation. Compilation errors and handled infrastructure failures remove staging output. A killed worker can leave an unexposed staging directory for the run owner to clean.
 

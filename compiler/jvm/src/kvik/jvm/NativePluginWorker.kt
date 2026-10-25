@@ -23,7 +23,9 @@ object NativePluginWorker {
             val pinned = distribution(Path.of(args[3]), parseJson(Files.readString(Path.of(args[4]))), Digest.fromJson(fields.getValue("compiler")))
             val applications = fields.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
             require(applications.size == 1) { "Exactly one workspace plugin application is required" }
-            val arguments = fields.getValue("arguments").arrayValue().map(JsonValue::stringValue)
+            val requestedArguments = fields.getValue("arguments").arrayValue().map(JsonValue::stringValue)
+            val published = validatedPublishedPluginPaths(requestedArguments, applications, workspace, pinned)
+            val arguments = requestedArguments.filterNot { it.startsWith("-Xplugin=") }
             validateArguments(arguments, workspace)
             val libraries = fields.getValue("libraries").arrayValue().map { workspace.path(it.stringValue()) }
             val home = Path.of(args[5]).toRealPath()
@@ -39,7 +41,7 @@ object NativePluginWorker {
                 require(version == "2.4.20") { "Unsupported Native compiler version: $version" }
                 val outputs = prepareOutputRoots(workspace.root.resolve("output"), applications.flatMap { it.outputs })
                 val plugins = validatedWorkspacePlugins(applications, libraries, workspace, outputs, loader, pinned.classpath, nativeJar)
-                compile(requestId, arguments, plugins, loader, workspace)
+                compile(requestId, arguments, plugins, published, loader, workspace)
             }
         } catch (failure: Exception) {
             val cause = if (failure is InvocationTargetException) failure.targetException else failure
@@ -88,7 +90,7 @@ object NativePluginWorker {
         }
     }
 
-    private fun compile(requestId: String, arguments: List<String>, plugins: List<PreparedWorkspacePlugin>, loader: ClassLoader, workspace: Workspace): WorkerResult {
+    private fun compile(requestId: String, arguments: List<String>, plugins: List<PreparedWorkspacePlugin>, published: List<Path>, loader: ClassLoader, workspace: Workspace): WorkerResult {
         val compilerType = loader.loadClass("org.jetbrains.kotlin.cli.bc.K2Native")
         val compiler = compilerType.getDeclaredConstructor().newInstance()
         val argumentObject = compilerType.methods.single { it.name == "createArguments" && it.returnType.name.endsWith("K2NativeCompilerArguments") }.invoke(compiler)
@@ -121,7 +123,8 @@ object NativePluginWorker {
             else -> error("Unsupported MessageCollector method: ${method.name}")
         } }
         val result = withTypedPlugin(plugins.single(), loader, workspace) { serviceDirectory ->
-            argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject, arrayOf(serviceDirectory.toString()) as Any)
+            val classpaths = (published.map(Path::toString) + serviceDirectory.toString()).toTypedArray()
+            argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject, classpaths as Any)
             argumentObject.javaClass.getMethod("setPluginOptions", Array<String>::class.java).invoke(argumentObject, emptyArray<String>() as Any)
             val services = loader.loadClass("org.jetbrains.kotlin.config.Services").getField("EMPTY").get(null)
             compilerType.methods.single { it.name == "exec" && it.parameterCount == 3 && it.parameterTypes[0] == collectorType }
