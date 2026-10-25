@@ -48,6 +48,10 @@ def check_active_input_mutation(executable, fixture, validate):
     changed = original.replace(b'greeting()', b'"changed!"')
     assert len(changed) == len(original) and changed != original
     original_stat = source.stat()
+    extra_source = source.with_name('Extra.kt')
+    extra_bytes = b'package fixture\nfun extraValue() = 1\n'
+    assert not extra_source.exists()
+    extra_source.write_bytes(extra_bytes)
     environment = dict(os.environ)
     environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     runs = case / '.kvik/runs'
@@ -150,6 +154,37 @@ def check_active_input_mutation(executable, fixture, validate):
         name: action['key'] for name, action in before.items()}
     assert all(a['status'] == ('executed' if name.endswith(':test') else 'local_hit')
                for name, a in restored_actions.items())
+
+    def input_change_build(label, expect_reuse):
+        with (case / (label + '.stdout.jsonl')).open('w') as stdout, \
+                (case / (label + '.stderr.log')).open('w') as stderr:
+            result = subprocess.run(command('build'), env=environment, stdout=stdout, stderr=stderr, timeout=180)
+        record, _ = check_result(label, result.returncode, 0, 'passed', 'current')
+        actions = {a['actionId']: a for a in record['actions']}
+        assert actions['library:jvm:main']['status'] == 'local_hit'
+        assert actions['library:jvm:main']['key'] == before['library:jvm:main']['key']
+        consumer = actions['consumer:jvm:main']
+        assert consumer['status'] == ('local_hit' if expect_reuse else 'executed')
+        assert (consumer['key'] == before['consumer:jvm:main']['key']) == expect_reuse
+        return {entry['path'] for entry in consumer['outputs']['files']}
+
+    renamed_extra = extra_source.with_name('Moved.kt')
+    try:
+        extra_source.rename(renamed_extra)
+        output_paths = input_change_build('renamed-source-build', expect_reuse=False)
+        assert 'classes/fixture/MovedKt.class' in output_paths
+        assert 'classes/fixture/ExtraKt.class' not in output_paths
+    finally:
+        renamed_extra.rename(extra_source)
+    input_change_build('restored-rename-build', expect_reuse=True)
+    try:
+        extra_source.unlink()
+        output_paths = input_change_build('deleted-source-build', expect_reuse=False)
+        assert 'classes/fixture/ExtraKt.class' not in output_paths
+    finally:
+        extra_source.write_bytes(extra_bytes)
+    output_paths = input_change_build('restored-delete-build', expect_reuse=True)
+    assert 'classes/fixture/ExtraKt.class' in output_paths
 
     def query_freshness(label, expected):
         result = subprocess.run([str(executable), 'verification', '--run', str(restored_run)], env=environment,

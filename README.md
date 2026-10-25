@@ -601,6 +601,16 @@ their execution, or use `--jobs 1` for a build whose actions each need one slot.
 ends when the test action stops, including failure or cancellation. Separate Kvik
 invocations have separate resource pools.
 
+`tools/test_test_resources_cli.py` exercises these policies with real JVM workers
+and records paired `--jobs 1` / default-parallel measurements after warming
+compilation. `--performance-trials` defaults to four pairs with alternating order;
+test identities, outcomes and action keys must match. The fixture's
+`parallel-comparison.json` records invocation time, test-action slot occupancy,
+CPU time and largest individual test-child peak RSS, with tool and host identities.
+Slot occupancy is not CPU utilization, and individual RSS peaks do not represent
+combined process-tree memory. This small synthetic workload has no speedup
+threshold. Linux CI retains the JSON as the `test-parallelism-linux` artifact.
+
 These settings apply to JVM, Native (including Kotest), JS and WasmJS tests.
 `cpuSlots` defaults to 1 and accepts integers from 1 to 1024. The sum of active
 action reservations cannot exceed `--jobs`: with `--jobs 4`, two tests reserving

@@ -5,9 +5,57 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import tempfile
+import time
+
+
+def measurement_host():
+    host = dict(os=platform.system(), release=platform.release(), architecture=platform.machine(), cpus=os.cpu_count())
+    if platform.system() == 'Darwin':
+        for field, name in [('model', 'hw.model'), ('cpuModel', 'machdep.cpu.brand_string')]:
+            result = subprocess.run(['/usr/sbin/sysctl', '-n', name], capture_output=True, text=True, timeout=5)
+            host[field] = result.stdout.strip() if result.returncode == 0 else None
+    elif platform.system() == 'Linux':
+        try:
+            host['model'] = Path('/sys/class/dmi/id/product_name').read_text().strip()
+        except OSError:
+            host['model'] = None
+        try:
+            host['cpuModel'] = next((line.split(':', 1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines()
+                                     if line.startswith('model name')), None)
+        except OSError:
+            host['cpuModel'] = None
+    return host
+
+
+def measure_test_actions(record, events, slots, wall_nanos):
+    """Measure one-slot test actions; occupancy is not a CPU-usage percentage."""
+    assert slots > 0 and wall_nanos > 0
+    selected = {a['actionId']: a for a in record['actions'] if a['actionId'].endswith(':test')}
+    assert selected and all(a['status'] == 'executed' for a in selected.values())
+    timings = [e['payload'] for e in events if e['type'] == 'action-timing' and e['payload']['actionId'] in selected]
+    assert len(timings) == len(selected) and {t['actionId'] for t in timings} == set(selected)
+    intervals = [(t['startedAfterNanos'], t['startedAfterNanos'] + t['durationNanos']) for t in timings]
+    assert all(0 <= start < end for start, end in intervals)
+    span = max(end for _, end in intervals) - min(start for start, _ in intervals)
+    occupied = sum(end - start for start, end in intervals)
+    active = peak = 0
+    for _, delta in sorted([(start, 1) for start, _ in intervals] + [(end, -1) for _, end in intervals]):
+        active += delta
+        peak = max(peak, active)
+    assert active == 0 and peak <= slots
+    usage = [process for action in selected.values() for process in action.get('processUsage', [])]
+    assert all(action.get('processUsage') for action in selected.values()), 'Missing test process usage'
+    assert all(process['peakRssBytes'] > 0 for process in usage)
+    return dict(invocationWallNanos=wall_nanos, testActionWindowNanos=span,
+        summedTestActionNanos=occupied, testActionSlots=slots, peakActiveTestActions=peak,
+        testActionSlotUtilization=occupied / (span * slots),
+        measuredTestProcesses=len(usage), largestTestChildPeakRssBytes=max(p['peakRssBytes'] for p in usage),
+        testProcessUserCpuNanos=sum(p['userCpuNanos'] for p in usage),
+        testProcessSystemCpuNanos=sum(p['systemCpuNanos'] for p in usage), testCounts=record['testCounts'])
 
 
 def main():
@@ -16,7 +64,10 @@ def main():
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--store', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, default=Path(tempfile.gettempdir()) / 'kvik-test-resource-tests')
+    parser.add_argument('--performance-trials', type=int, default=4, help='Paired serial/default-parallel measurements')
     args = parser.parse_args()
+    if args.performance_trials < 1:
+        parser.error('--performance-trials must be positive')
     args.output_dir.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='case-', dir=args.output_dir)).resolve()
     print('Fixture:', root, flush=True)
@@ -86,6 +137,7 @@ class Tests {
     env = dict(os.environ)
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     common = ['--project', str(project), '--store', str(store)]
+    elapsed = {}
 
     def resolve():
         project.write_text(json.dumps(document))
@@ -99,7 +151,10 @@ class Tests {
         selected = [value for module in modules for value in ('--module', module)]
         command = [str(runtime), operation, *common, '--tools', str(tools), '--target', 'jvm',
                    '--runs', str(root / 'runs'), '--offline', *selected, *extra]
+        started = time.perf_counter_ns()
         result = subprocess.run(command, env=env, capture_output=True, timeout=600)
+        elapsed[label] = time.perf_counter_ns() - started
+        write(label + '.command.json', json.dumps(command))
         write(label + '.stdout', result.stdout.decode())
         write(label + '.stderr', result.stderr.decode())
         events = [json.loads(line) for line in result.stdout.splitlines()]
@@ -150,6 +205,45 @@ class Tests {
     assert parallel['testCounts']['executed'] == 2
     assert all('resources' not in test_parameters(parallel, module) for module in ('a', 'b'))
     print('PASS independent tests run in parallel by default', flush=True)
+
+    # Use exactly the same workload in both modes. The earlier correctness probe
+    # deliberately blocks for overlap; it is not a valid speed comparison with
+    # a serial run. "measurement" has neither that barrier nor exclusive locks.
+    comparison = []
+    for index in range(args.performance_trials):
+        order = ('serial', 'default-parallel') if index % 2 == 0 else ('default-parallel', 'serial')
+        pair, outcomes, keys = {}, {}, {}
+        for mode in order:
+            label = f'measure-{index}-{mode}'
+            record, events = run(label, modules=('a', 'b'), mode='measurement',
+                                 extra=('--jobs', '1') if mode == 'serial' else ())
+            assert_reused_compilation(record)
+            assert record['testCounts']['executed'] == 2 and record['testCounts']['discoveryComplete']
+            assert all(test['status'] == 'passed' for test in record['tests'])
+            outcomes[mode] = sorted((t['module'], t['target'], t['id'], t['status']) for t in record['tests'])
+            keys[mode] = {name: action['key'] for name, action in actions(record).items()}
+            reproduction = record['reproduction']
+            slots = int(reproduction[reproduction.index('--jobs') + 1])
+            assert slots == 1 if mode == 'serial' else slots >= 2
+            pair[mode] = dict(runId=record['runId'], **measure_test_actions(record, events,
+                slots=slots, wall_nanos=elapsed[label]))
+        assert outcomes['serial'] == outcomes['default-parallel']
+        assert keys['serial'] == keys['default-parallel']
+        comparison.append(dict(trial=index, order=order, measurements=pair,
+            serialToParallelWallRatio=pair['serial']['invocationWallNanos'] / pair['default-parallel']['invocationWallNanos']))
+    write('parallel-comparison.json', json.dumps(dict(schemaVersion=1, kind='test-action-parallelism-comparison',
+        host=measurement_host(),
+        runtimeSha256=hashlib.sha256(runtime.read_bytes()).hexdigest(),
+        toolInstallation=json.loads(tools.read_text()), configurationSha256=hashlib.sha256(project.read_bytes()).hexdigest(),
+        dependencyLockSha256=hashlib.sha256((root / 'kvik.lock.json').read_bytes()).hexdigest(),
+        trials=comparison, limitations=[
+            'Two one-slot JVM test actions with a 150 ms wait each; this is not a real-library throughput estimate.',
+            'Compilation is warm; tests execute on every trial. Order alternates; OS caches are not flushed.',
+            'Slot utilization is summed test-action duration divided by the first-to-last action window and slots; it is not CPU utilization.',
+            'Memory is the largest individual test child peak RSS, not simultaneous process-tree or orchestrator peak memory.',
+            'Invocation wall time includes input capture and setup; test action windows include worker preparation and shutdown.'
+        ]), indent=2))
+    print('PASS serial/default-parallel comparison: identical tests and action keys, fresh execution, timing and process usage', flush=True)
 
     targets = [module['targets'][0] for module in document['modules']]
     targets[0]['testResources'] = dict(memoryMiB=768, exclusiveResources=['port:5432', 'database'])
