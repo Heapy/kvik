@@ -43,6 +43,11 @@ fun projectSettingsInspection(configuration: ProjectConfiguration, file: Logical
                 declaration.values[name] as? JsonValue.Object, "$pointer/$name")
             target.testSettings?.let { settings("testSettings", obj("classes" to it.classes.map(String::json).json(),
                 "engines" to it.engines.map(String::json).json(), "parallelism" to it.parallelism.json(), "maxRetries" to it.maxRetries.json())) }
+            if (target.test != null && NativeTarget.find(target.name) != null) {
+                val native = target.nativeTestSettings ?: NativeTestSettings("kotlin")
+                settings("nativeTestSettings", JsonValue.Object(obj("engine" to native.engine.json(), "maxRetries" to native.maxRetries.json()).values +
+                    listOfNotNull(native.kspVersion?.let { "kspVersion" to it.json() }, native.processor?.let { "processor" to it.toString().json() }).toMap()))
+            }
             if (target.test != null) (target.testResources ?: TestResources()).let {
                 settings("testResources", JsonValue.Object(it.toJson().values + ("cpuSlots" to it.cpuSlots.json())))
             }

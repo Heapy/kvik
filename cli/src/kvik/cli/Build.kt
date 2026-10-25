@@ -351,7 +351,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         NativeFiles.syncDirectory("${run.path}/observations")
                     }
                     fun retainedTests(id: String, tests: List<TestResult>, stdout: String, stderr: String): List<TestResult> {
-                        if (tests.none { it.details != null }) return tests
+                        if (tests.none { it.details?.attempts?.any { attempt -> attempt.logs.isEmpty() } == true }) return tests
                         val logs = listOf(TestLogStream.STDOUT to stdout, TestLogStream.STDERR to stderr).mapNotNull { (stream, path) ->
                             try {
                                 require(path.startsWith("${run.path}/")) { "Test log is outside retained run" }
@@ -365,7 +365,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             }
                         }
                         return tests.map { test -> test.details?.let { details ->
-                            test.copy(details = details.copy(attempts = details.attempts.map { it.copy(logs = logs) }))
+                            test.copy(details = details.copy(attempts = details.attempts.map { if (it.logs.isEmpty()) it.copy(logs = logs) else it }))
                         } ?: test }
                     }
                     fun observations() {

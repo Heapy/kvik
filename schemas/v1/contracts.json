@@ -264,24 +264,52 @@
       ]
     },
     "nativeTestSettings": {
-      "type": "object",
-      "properties": {
-        "engine": {
-          "const": "kotest"
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "engine": {
+              "const": "kotlin"
+            },
+            "maxRetries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9,
+              "default": 0
+            }
+          },
+          "required": [
+            "engine"
+          ],
+          "additionalProperties": false
         },
-        "kspVersion": {
-          "const": "2.3.12"
-        },
-        "processor": {
-          "const": "io.kotest:kotest-framework-symbol-processor:6.2.5"
+        {
+          "type": "object",
+          "properties": {
+            "engine": {
+              "const": "kotest"
+            },
+            "kspVersion": {
+              "const": "2.3.12"
+            },
+            "processor": {
+              "const": "io.kotest:kotest-framework-symbol-processor:6.2.5"
+            },
+            "maxRetries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9,
+              "default": 0
+            }
+          },
+          "required": [
+            "engine",
+            "kspVersion",
+            "processor"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "engine",
-        "kspVersion",
-        "processor"
-      ],
-      "additionalProperties": false
+      ]
     },
     "nativeTimeouts": {
       "type": "object",
@@ -14792,10 +14820,10 @@
                 },
                 "agents": {
                   "type": "array",
-                  "maxItems": 16,
                   "items": {
                     "$ref": "#/$defs/jvmTestAgent"
-                  }
+                  },
+                  "maxItems": 16
                 },
                 "parallelism": {
                   "type": "integer",
@@ -14882,6 +14910,12 @@
                 },
                 "resources": {
                   "$ref": "#/$defs/testResources"
+                },
+                "maxRetries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9,
+                  "default": 0
                 }
               },
               "required": [
@@ -14944,6 +14978,12 @@
                 },
                 "resources": {
                   "$ref": "#/$defs/testResources"
+                },
+                "maxRetries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9,
+                  "default": 0
                 }
               },
               "required": [

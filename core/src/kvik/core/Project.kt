@@ -59,12 +59,14 @@ data class JvmTestSettings(val classes: List<String>, val engines: List<String> 
     }
 }
 
-/** The initial Native Kotest integration pins the generator/runtime protocol versions explicitly. */
-data class NativeTestSettings(val engine: String, val kspVersion: String, val processor: Coordinate) {
+/** Built-in Native tests need no generator; Kotest pins its generator/runtime protocol explicitly. */
+data class NativeTestSettings(val engine: String, val kspVersion: String? = null, val processor: Coordinate? = null, val maxRetries: Int = 0) {
     init {
-        require(engine == "kotest" && kspVersion == "2.3.12" &&
+        require(maxRetries in 0..9) { "Native test maxRetries must be an integer in 0..9" }
+        require(engine == "kotlin" && kspVersion == null && processor == null ||
+            engine == "kotest" && kspVersion == "2.3.12" &&
             processor == Coordinate("io.kotest", "kotest-framework-symbol-processor", "6.2.5")) {
-            "Native tests currently require Kotest 6.2.5 and KSP 2.3.12"
+            "Native tests require kotlin without generator settings, or Kotest 6.2.5 with KSP 2.3.12"
         }
     }
 }

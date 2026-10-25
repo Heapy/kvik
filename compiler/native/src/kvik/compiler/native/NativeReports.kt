@@ -66,7 +66,8 @@ private fun serviceMessage(line: String): ServiceMessage? {
     return ServiceMessage(type, values)
 }
 
-data class NativeTestReport(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus, val diagnostic: String? = null) {
+data class NativeTestReport(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus, val diagnostic: String? = null,
+    internal val retryable: Boolean = false) {
     fun toJson(): JsonValue.Object = obj("tests" to tests.map { it.toJson() }.json(), "counts" to counts.toJson(), "status" to status.name.lowercase().json(), "diagnostic" to (diagnostic?.json() ?: JsonValue.Null))
 }
 
@@ -146,7 +147,8 @@ fun nativeTestReport(module: String, discovered: List<String>, text: String, pro
         !counts.satisfiesExecution -> VerificationStatus.INCOMPLETE
         else -> VerificationStatus.PASSED
     }
-    return NativeTestReport(tests, counts, status, protocolError ?: if (counts.executed == 0 && !process.cancelled && !process.timedOut) "No Native tests executed (discovered=${counts.discovered}, skipped=${counts.skipped})" else if (process.timedOut) "Native tests timed out" else if (process.exitCode != 0 && counts.failed == 0) "Native runner exited ${process.exitCode}" else null)
+    return NativeTestReport(tests, counts, status, protocolError ?: if (counts.executed == 0 && !process.cancelled && !process.timedOut) "No Native tests executed (discovered=${counts.discovered}, skipped=${counts.skipped})" else if (process.timedOut) "Native tests timed out" else if (process.exitCode != 0 && counts.failed == 0) "Native runner exited ${process.exitCode}" else null,
+        retryable = counts.discoveryComplete && counts.failed > 0 && !process.cancelled && !process.timedOut && process.exitCode in 0..1)
 }
 
 /** Truncate optional report text without producing an unpaired surrogate. Identity is never truncated. */

@@ -1195,7 +1195,8 @@ private class Builder(
         }
         val resource = resources(module, target, "test") + resources(module, target, "main")
         val moduleIds = listOf(module) + dependencies
-        val kotest = target(module, target).nativeTestSettings
+        val nativeSettings = target(module, target).nativeTestSettings
+        val kotest = nativeSettings?.takeIf { it.engine == "kotest" }
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val mainSets = sourceSets(module, target, "main").map { it.name }.toSet()
@@ -1224,8 +1225,8 @@ private class Builder(
                     return artifactEntries(roots.flatMap { locked(it, domain).artifacts }, "jvm").distinctBy { it.path }
                         .map { it.copy(path = LogicalPath("ksp/$purpose/${it.path.value.substringAfterLast('/')}")) }
                 }
-                val ksp = host("ksp-runtime", listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps").map { Coordinate("com.google.devtools.ksp", it, kotest.kspVersion) })
-                val processors = host("symbol-processor", listOf(kotest.processor))
+                val ksp = host("ksp-runtime", listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps").map { Coordinate("com.google.devtools.ksp", it, checkNotNull(kotest.kspVersion)) })
+                val processors = host("symbol-processor", listOf(checkNotNull(kotest.processor)))
                 val testSources = source.entries.filter { it.path !in main.paths }
                 nodes[generationId(module, target)] = ActionNode(generationId(module, target), producerEdges,
                     ActionOutputContract(treeOutput("generated", "generated-sources"))) { results ->
@@ -1319,7 +1320,7 @@ private class Builder(
             val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                 runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
             JvmTestLaunch(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, testResources, parallelism = testSelection.parallelism, maxRetries = testSelection.maxRetries))
-        } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources)
+        } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources, maxRetries = nativeSettings?.maxRetries ?: 0)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, edges,
             launch.outputContract) { results ->

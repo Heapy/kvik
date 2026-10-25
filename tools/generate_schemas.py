@@ -66,8 +66,12 @@ DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"mini
     "then": {"properties": {"engines": {"const": ["junit"]}}}}]
 DEFS["jvmTestSettings"]["allOf"].append({"if": {"properties": {"maxRetries": {"minimum": 1}}, "required": ["maxRetries"]},
     "then": {"properties": {"engines": {"const": ["junit"]}}}})
-DEFS["nativeTestSettings"] = object_({"engine": {"const": "kotest"}, "kspVersion": {"const": "2.3.12"},
-    "processor": {"const": "io.kotest:kotest-framework-symbol-processor:6.2.5"}})
+NATIVE_RETRIES = {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}
+DEFS["nativeTestSettings"] = {"oneOf": [
+    object_({"engine": {"const": "kotlin"}, "maxRetries": NATIVE_RETRIES}, optional=("maxRetries",)),
+    object_({"engine": {"const": "kotest"}, "kspVersion": {"const": "2.3.12"},
+             "processor": {"const": "io.kotest:kotest-framework-symbol-processor:6.2.5"},
+             "maxRetries": NATIVE_RETRIES}, optional=("maxRetries",))]}
 DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maximum": 3600000}
     for name in ("compileMillis", "linkMillis")}, optional=("compileMillis", "linkMillis"))
 DEFS["nativeTimeouts"]["minProperties"] = 1
@@ -1119,9 +1123,9 @@ DEFS["testLaunch"] = {"oneOf": [
         "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("coverage", "resources", "agents", "parallelism", "maxRetries"))),
     test_launch("kvik-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
         "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"}),
-        "resources": ref("testResources")}, optional=("resources",))),
+        "resources": ref("testResources"), "maxRetries": NATIVE_RETRIES}, optional=("resources", "maxRetries"))),
     test_launch("kvik-kotest-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
-        "resources": ref("testResources")}, optional=("resources",))),
+        "resources": ref("testResources"), "maxRetries": NATIVE_RETRIES}, optional=("resources", "maxRetries"))),
     test_launch("kvik-js-tests-v1", JS_TARGETS, object_({"module": NONEMPTY, "target": enum(*JS_TARGETS), "entryPoint": PATH,
         "filter": DEFS["jsTestSettings"]["properties"]["filter"], "resources": ref("testResources")}, optional=("resources",))),
 ]}

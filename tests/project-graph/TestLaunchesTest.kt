@@ -20,6 +20,24 @@ class TestLaunchesTest {
         assertFails { JvmTestSelection.fromJson(JsonValue.Object(selection.toJson().values + ("maxRetries" to 4294967296L.json()))) }
     }
 
+    @Test fun nativeRetryPolicyChangesTestActionsAndPreservesCanonicalDefaults() {
+        for (target in listOf(NativeTarget.MACOS_ARM64, NativeTarget.LINUX_X64)) for (kotest in listOf(false, true)) {
+            val inputs = TreeManifest(listOf(file("tests.kexe", true)))
+            val tools = target.toolIdentityNames.associateWith { digest }
+            fun launch(count: Int) = NativeTestLaunch("app", target, LogicalPath("tests.kexe"), kotest = kotest, maxRetries = count)
+            val ordinary = launch(0).action(inputs, digest, tools)
+            assertFalse("maxRetries" in ordinary.parameters.values)
+            val retry = launch(2)
+            val action = retry.action(inputs, digest, tools)
+            retry.requireMatches(action)
+            assertEquals(2.json(), retry.parameters.values.getValue("maxRetries"))
+            assertNotEquals(ordinary.key(Sha256), action.key(Sha256))
+            assertEquals(ordinary.inputs, action.inputs)
+            assertEquals(ordinary.arguments, action.arguments)
+            for (count in listOf(-1, 10)) assertFails { launch(count) }
+        }
+    }
+
     @Test fun javaAgentsBindOrderedOptionsDeclaredInputsAndOutputs() {
         val options = mutableListOf(JvmAgentOption(JvmAgentOptionKind.LITERAL, "config="),
             JvmAgentOption(JvmAgentOptionKind.INPUT_FILE, "agent/config.txt"), JvmAgentOption(JvmAgentOptionKind.LITERAL, ",out="),

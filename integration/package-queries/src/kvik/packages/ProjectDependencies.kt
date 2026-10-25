@@ -48,12 +48,12 @@ fun projectDeclarations(project: ProjectSpec, scripts: Map<String, ExpandedScrip
             for (coordinate in sqlDelightCompilerCoordinates(settings.version)) add(declaration(module.id, settings.sourceSet,
                 "sqldelight-compiler", coordinate, null, "runtime", false, listOf("jvm"), listOf("main")))
         }
-        for (target in module.targets) target.nativeTestSettings?.let { settings ->
+        for (target in module.targets) target.nativeTestSettings?.takeIf { it.engine == "kotest" }?.let { settings ->
             for (artifact in listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps")) {
-                add(declaration(module.id, null, "ksp-runtime", Coordinate("com.google.devtools.ksp", artifact, settings.kspVersion), null,
+                add(declaration(module.id, null, "ksp-runtime", Coordinate("com.google.devtools.ksp", artifact, checkNotNull(settings.kspVersion)), null,
                     "runtime", false, listOf(target.name), listOf("test")))
             }
-            add(declaration(module.id, null, "symbol-processor", settings.processor, null, "runtime", false, listOf(target.name), listOf("test")))
+            add(declaration(module.id, null, "symbol-processor", checkNotNull(settings.processor), null, "runtime", false, listOf(target.name), listOf("test")))
         }
     }
     for (name in project.scripts.keys) {

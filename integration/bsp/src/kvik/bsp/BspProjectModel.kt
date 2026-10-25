@@ -111,7 +111,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         if (parts.size != 3) return emptyList()
         val owners = when (parts[2]) {
             "ksp-test" -> listOfNotNull(byUri[targetUri(parts[0], parts[1], "test")]).filter {
-                it.target.nativeTestSettings != null && NativeTarget.find(parts[1]) != null
+                it.target.nativeTestSettings?.engine == "kotest" && NativeTarget.find(parts[1]) != null
             }
             "sqldelight" -> {
                 if (parts[1] != "jvm") return emptyList()

@@ -77,6 +77,13 @@ class ProjectConfigurationTest {
         assertEquals(NativeTestSettings("kotest", "2.3.12", Coordinate.parse("io.kotest:kotest-framework-symbol-processor:6.2.5")),
             configuration.project.modules.single().targets.single().nativeTestSettings)
         assertNull(parse(native).project.modules.single().targets.single().nativeTestSettings)
+        val builtin = parse(selected("""{"engine":"kotlin","maxRetries":2}"""))
+        assertEquals(NativeTestSettings("kotlin", maxRetries = 2), builtin.project.modules.single().targets.single().nativeTestSettings)
+        val inspected = projectSettingsInspection(builtin, LogicalPath("kvik.json"))
+        assertEquals(2.json(), inspected.getValue("target:library:macosArm64:nativeTestSettings:maxRetries").value)
+        for (count in listOf(-1, 10, 4294967296L)) assertFails { parse(selected("""{"engine":"kotlin","maxRetries":$count}""")) }
+        assertFails { parse(selected(settings.replace("kotest", "kotlin"))) }
+        assertFails { parse(selected("""{"engine":"kotest","maxRetries":1}""")) }
         assertNotEquals(parse(native).digest, configuration.digest)
         assertEquals(configuration, parse(configuration.document.canonical()))
         for (value in listOf("null", "{}", settings.replace("2.3.12", "2.3.13"), settings.replace("6.2.5", "6.2.4"),

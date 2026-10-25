@@ -183,7 +183,7 @@ fun nativeCompileAction(compilation: NativeCompilation, inputs: TreeManifest, co
         listOf(compilation.output) + compilation.pluginApplications.flatMap { it.outputs } + (if (compilation.produce == NativeOutput.LIBRARY || !compilation.target.isApple || compilation.isStaticFramework) emptyList() else listOf(LogicalPath(compilation.output.value + ".dSYM"))), compilation.arguments(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin", "KONAN_USE_INTERNAL_SERVER" to "0"), compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, filter: String? = null, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64, resources: TestResources = TestResources()): ActionSpec {
+fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, filter: String? = null, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64, resources: TestResources = TestResources(), maxRetries: Int = 0): ActionSpec {
     require(target.supportsHostExecution) { "iOS test execution is unsupported" }
     require(module.matches(Regex("[A-Za-z0-9_.-]+")))
     require(inputs.files.singleOrNull { it.path == executable }?.executable == true) { "Test executable must be a declared executable input" }
@@ -191,17 +191,17 @@ fun nativeTestAction(module: String, executable: LogicalPath, inputs: TreeManife
     require(filter == null || filter.matches(Regex("[A-Za-z0-9_.*]+"))) { "Unsupported test filter" }
     return ActionSpec("kvik-native-tests-v1", composition, ActionKind.TEST, target.platform, target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("test-results.json")), listOf("--ktest_logger=TEAMCITY") + listOfNotNull(filter?.let { "--ktest_filter=$it" }),
-        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)).withTestResources(resources), timeoutMillis, CachePolicy.NEVER)
+        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), obj("module" to module.json(), "executable" to executable.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)).withTestResources(resources).withNativeRetries(maxRetries), timeoutMillis, CachePolicy.NEVER)
 }
 
-fun kotestNativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64, resources: TestResources = TestResources()): ActionSpec {
+fun kotestNativeTestAction(module: String, executable: LogicalPath, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000, target: NativeTarget = NativeTarget.MACOS_ARM64, resources: TestResources = TestResources(), maxRetries: Int = 0): ActionSpec {
     require(target.supportsHostExecution) { "iOS test execution is unsupported" }
     require(module.matches(Regex("[A-Za-z0-9_.-]+")))
     require(inputs.files.singleOrNull { it.path == executable }?.executable == true) { "Kotest executable must be a declared executable input" }
     require(toolchains.keys == target.toolIdentityNames) { "Complete Native toolchain identities required" }
     return ActionSpec("kvik-kotest-native-tests-v1", composition, ActionKind.TEST, target.platform, target.projectName, toolchains.toMap(), TreeManifest(inputs.files.toList()),
         listOf(LogicalPath("test-results.json")), emptyList(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"),
-        obj("module" to module.json(), "executable" to executable.value.json()).withTestResources(resources), timeoutMillis, CachePolicy.NEVER)
+        obj("module" to module.json(), "executable" to executable.value.json()).withTestResources(resources).withNativeRetries(maxRetries), timeoutMillis, CachePolicy.NEVER)
 }
 
 private fun JsonValue.Object.withTestResources(resources: TestResources): JsonValue.Object =
@@ -209,3 +209,13 @@ private fun JsonValue.Object.withTestResources(resources: TestResources): JsonVa
 
 internal fun nativeTestResources(action: ActionSpec): TestResources =
     action.parameters.objectValue()["resources"]?.let(TestResources::fromJson) ?: TestResources()
+
+private fun JsonValue.Object.withNativeRetries(maxRetries: Int): JsonValue.Object {
+    require(maxRetries in 0..9) { "Native test maxRetries must be an integer in 0..9" }
+    return if (maxRetries == 0) this else JsonValue.Object(values + ("maxRetries" to maxRetries.json()))
+}
+
+internal fun nativeMaxRetries(action: ActionSpec): Int =
+    (action.parameters.objectValue()["maxRetries"]?.longValue() ?: 0).also {
+        require(it in 0L..9L) { "Native test maxRetries must be an integer in 0..9" }
+    }.toInt()

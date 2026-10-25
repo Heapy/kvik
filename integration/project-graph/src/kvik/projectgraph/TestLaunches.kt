@@ -47,10 +47,12 @@ class NativeTestLaunch(
     override val module: String, val nativeTarget: NativeTarget, val executable: LogicalPath,
     val kotest: Boolean = false, val filter: String? = null,
     resources: TestResources = TestResources(), override val timeoutMillis: Long = 60_000,
+    val maxRetries: Int = 0,
 ) : TestLaunch {
     override val resources = resources.copy(exclusiveResources = resources.exclusiveResources.toSet())
     init {
         require(timeoutMillis > 0 && module.matches(Regex("[A-Za-z0-9_.-]+")))
+        require(maxRetries in 0..9) { "Native test maxRetries must be an integer in 0..9" }
         require(nativeTarget.supportsHostExecution) { "iOS test execution is unsupported" }
         require(!kotest || filter == null) { "Kotest Native filtering is unsupported" }
         require(filter == null || filter.matches(Regex("[A-Za-z0-9_.*]+"))) { "Unsupported test filter" }
@@ -61,10 +63,11 @@ class NativeTestLaunch(
     override val parameters get() = JsonValue.Object(
         obj("module" to module.json(), "executable" to executable.value.json()).values +
             (if (kotest) emptyMap() else mapOf("filter" to (filter?.json() ?: JsonValue.Null))) +
-            (if (resources == TestResources()) emptyMap() else mapOf("resources" to resources.toJson())))
+            (if (resources == TestResources()) emptyMap() else mapOf("resources" to resources.toJson())) +
+            (if (maxRetries == 0) emptyMap() else mapOf("maxRetries" to maxRetries.json())))
     override fun action(inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>) =
-        if (kotest) kotestNativeTestAction(module, executable, inputs, composition, toolchains, timeoutMillis, nativeTarget, resources)
-        else nativeTestAction(module, executable, inputs, composition, toolchains, filter, timeoutMillis, nativeTarget, resources)
+        if (kotest) kotestNativeTestAction(module, executable, inputs, composition, toolchains, timeoutMillis, nativeTarget, resources, maxRetries)
+        else nativeTestAction(module, executable, inputs, composition, toolchains, filter, timeoutMillis, nativeTarget, resources, maxRetries)
 }
 
 class JsTestLaunch(selection: JsTestSelection, override val timeoutMillis: Long = 60_000) : TestLaunch {

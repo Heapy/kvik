@@ -215,16 +215,16 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         closure.modules.forEach { visit(ResolutionDomain(it, target.name, "main", api)) }
         if (domain.compilation == "test") visit(ResolutionDomain(module.id, target.name, "main", api))
         if (domain.compilation == "main") sqlDelightTools(module, sourceSetClosure(module, listOf(target.main)))
-        if (domain.compilation == "test") target.nativeTestSettings?.let { settings ->
+        if (domain.compilation == "test") target.nativeTestSettings?.takeIf { it.engine == "kotest" }?.let { settings ->
             val runtimeDomain = domain.copy(usage = "java-runtime", purpose = "ksp-runtime")
             val processorDomain = domain.copy(usage = "java-runtime", purpose = "symbol-processor")
             domains += runtimeDomain
             domains += processorDomain
             val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
             for (artifact in listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps")) {
-                requests += ResolutionRequest(Coordinate("com.google.devtools.ksp", artifact, settings.kspVersion), host, runtimeDomain)
+                requests += ResolutionRequest(Coordinate("com.google.devtools.ksp", artifact, checkNotNull(settings.kspVersion)), host, runtimeDomain)
             }
-            requests += ResolutionRequest(settings.processor, host, processorDomain)
+            requests += ResolutionRequest(checkNotNull(settings.processor), host, processorDomain)
         }
         val selectedPlugins = module.compilerPlugins.filter { it.appliesTo(target.name, domain.compilation) }
         if (selectedPlugins.isNotEmpty()) {

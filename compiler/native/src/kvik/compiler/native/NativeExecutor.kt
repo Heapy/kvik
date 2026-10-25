@@ -64,10 +64,10 @@ class NativeCompilerExecutor(
             module = compile.module; executable = null; filter = null
         } else {
             require(action.implementation == "kvik-native-tests-v1") { "Unsupported native adapter" }
-            val fields = action.parameters.fields(setOf("module", "executable", "filter"), setOf("resources"))
+            val fields = action.parameters.fields(setOf("module", "executable", "filter"), setOf("resources", "maxRetries"))
             module = fields.getValue("module").stringValue(); executable = LogicalPath(fields.getValue("executable").stringValue())
             filter = fields.getValue("filter").let { if (it == JsonValue.Null) null else it.stringValue() }
-            require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis, target, nativeTestResources(action)) == action)
+            require(nativeTestAction(module, executable, action.inputs, action.composition, action.toolchains, filter, action.timeoutMillis, target, nativeTestResources(action), nativeMaxRetries(action)) == action)
         }
         startedActions += actionId
         if (compile == null) {
@@ -146,11 +146,15 @@ class NativeCompilerExecutor(
         }
         var process = if (compile != null) launch(checkNotNull(compileCommand), phase)
                       else launch(listOf("$directory/input/${executable!!.value}", "--ktest_list_tests") + listOfNotNull(filter?.let { "--ktest_filter=$it" }), phase)
+        var processClosed = false
+        fun closeProcess() { if (!processClosed) { process.close(); processClosed = true } }
         return object : RunningAction {
             private var result: ActionResult? = null
             private var discovered = emptyList<String>()
             private val usage = mutableListOf<ProcessUsage>()
             private var cancellationRequested = false
+            private var attempt = 1
+            private var history: NativeTestReport? = null
             override fun poll(): ActionResult? {
                 result?.let { return it }
                 val completed = process.poll() ?: return null
@@ -158,8 +162,22 @@ class NativeCompilerExecutor(
                 // Cancellation belongs to the whole action. The process may already have exited
                 // before cancel(), while discovery completion has not yet been consumed here.
                 val exit = if (cancellationRequested) ProcessResult(130, cancelled = true) else completed
-                val stdout = readNativeFile("$directory/$phase.stdout").decodeToString(throwOnInvalidSequence = true)
-                val stderr = readNativeFile("$directory/$phase.stderr").decodeToString(throwOnInvalidSequence = true)
+                var readFailure: String? = null
+                fun text(path: String): String? = try { readNativeFile(path).decodeToString(throwOnInvalidSequence = true) }
+                    catch (failure: Exception) { readFailure = "Native result/log unavailable: ${failure.message}"; null }
+                val stdoutText = text("$directory/$phase.stdout")
+                val stderrText = text("$directory/$phase.stderr")
+                val stdout = stdoutText.orEmpty()
+                val stderr = stderrText.orEmpty()
+                if (readFailure != null) {
+                    val report = if (compile != null) null else {
+                        val partial = if (phase == "discovery") NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), VerificationStatus.INCOMPLETE)
+                            else nativeTestAttemptLogs(nativeTestReport(module, discovered, stdout, exit, NativeTarget.require(action.target)),
+                                runDirectory, "$directory/$phase.stdout", stdoutText, "$directory/$phase.stderr", stderrText)
+                        mergeNativeTestAttempts(history, partial).interruptedRetry(checkNotNull(readFailure), exit.cancelled)
+                    }
+                    return finish(exit, emptyList(), report, stdout, stderr, readFailure)
+                }
                 if (phase == "discovery" && !exit.cancelled && started.elapsedNow().inWholeMilliseconds >= action.timeoutMillis) {
                     return finish(ProcessResult(124, timedOut = true), emptyList(), NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), VerificationStatus.INCOMPLETE, "Native discovery timed out"), stdout, stderr, "Native discovery timed out")
                 }
@@ -170,9 +188,10 @@ class NativeCompilerExecutor(
                         val pattern = Regex("^" + filter.split('*').joinToString(".*") { Regex.escape(it) } + "$")
                         discovered = discovered.filter { pattern.matches(it) }
                     }
-                    process.close()
+                    closeProcess()
                     phase = "test"
                     process = launch(listOf("$directory/input/${executable!!.value}") + action.arguments, phase)
+                    processClosed = false
                     return null
                 }
                 var diagnostics = if (compile != null) nativeCompilerDiagnostics(stdout + "\n" + stderr, module, actionId, NativeTarget.require(action.target)) else emptyList()
@@ -188,7 +207,24 @@ class NativeCompilerExecutor(
                             failure.message ?: "Invalid Native worker result")
                     }
                 }
-                val report = if (phase == "test") nativeTestReport(module, discovered, stdout, exit, NativeTarget.require(action.target)) else if (phase == "discovery") NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, "Native discovery failed") else null
+                val report = if (compile == null && phase != "discovery") {
+                    val round = nativeTestAttemptLogs(nativeTestReport(module, discovered, stdout, exit, NativeTarget.require(action.target)),
+                        runDirectory, "$directory/$phase.stdout", stdoutText, "$directory/$phase.stderr", stderrText)
+                    mergeNativeTestAttempts(history, round).also { history = it }
+                } else if (phase == "discovery") NativeTestReport(emptyList(), TestCounts(null,0,0,0,false), if (exit.cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, "Native discovery failed") else null
+                if (report?.retryable == true && attempt <= nativeMaxRetries(action)) {
+                    if (started.elapsedNow().inWholeMilliseconds >= action.timeoutMillis) {
+                        return finish(ProcessResult(124, timedOut = true), diagnostics, report.interruptedRetry("Native test retry budget exhausted"), stdout, stderr, null)
+                    }
+                    closeProcess()
+                    phase = "test-${++attempt}"
+                    try { process = launch(listOf("$directory/input/${executable!!.value}") + action.arguments, phase) }
+                    catch (failure: Exception) {
+                        return finish(ProcessResult(1), diagnostics, report.interruptedRetry("Native retry could not start: ${failure.message}"), stdout, stderr, null)
+                    }
+                    processClosed = false
+                    return null
+                }
                 return finish(exit, diagnostics, report, stdout, stderr,
                     if (phase == "discovery") "Native test discovery did not complete" else null)
             }
@@ -228,7 +264,7 @@ class NativeCompilerExecutor(
                 cancellationRequested = true
                 process.cancel()
             }
-            override fun close() { process.close() }
+            override fun close() { closeProcess() }
         }
     }
 }

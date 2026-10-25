@@ -176,5 +176,6 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
         counts.failed > 0 -> "Kotest reported failing leaves"
         else -> null
     }
-    return NativeTestReport(tests, counts, status, diagnostic)
+    return NativeTestReport(tests, counts, status, diagnostic,
+        retryable = complete && engineFailure == null && counts.failed > 0 && !process.cancelled && !process.timedOut && process.exitCode == 0)
 }

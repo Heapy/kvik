@@ -617,9 +617,20 @@ cover all attempts; coverage includes execution from all attempts.
 
 The verification policy remains strict: any failed attempt makes the run fail,
 even if a later attempt passes. Unique test counts use identities, while reports
-retain all attempts and initial failures. Retries are opt-in and currently support
-only the `junit` engine on JVM. `inspect-graph` exposes the retry limit in test launch
-parameters; changing it does not invalidate compilation.
+retain all attempts and initial failures. `inspect-graph` exposes the retry limit
+in test launch parameters; changing it does not invalidate compilation.
+
+Host Native tests support the same bounded policy through
+`"nativeTestSettings": {"engine": "kotlin", "maxRetries": 2}`. For Kotest, add
+`"maxRetries": 2` to the existing pinned Kotest `nativeTestSettings`. Each Native
+attempt starts a fresh owned process and reruns the selected scope, including
+passing siblings and lifecycle callbacks. In-memory state starts fresh; the
+action's working directory and HOME remain available across attempts. Each
+attempt retains separate stdout/stderr logs. The action deadline and scheduler
+resource reservation cover discovery and all attempts. Cancellation, timeout,
+runner failures, incomplete reporting or changed test identities stop retries.
+Earlier failed attempts continue to make verification fail. JS/Wasm retries and
+JVM/Kotest retries are not yet supported.
 
 
 ### JS and WasmJS

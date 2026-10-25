@@ -41,6 +41,12 @@ class ProjectSettingsSchemaTest(unittest.TestCase):
         settings = dict(engine='kotest', kspVersion='2.3.12', processor='io.kotest:kotest-framework-symbol-processor:6.2.5')
         target = {**self.target(), 'name': 'macosArm64', 'nativeTestSettings': settings}
         VALIDATOR.validate(target)
+        for engine in [dict(engine='kotlin'), settings]:
+            for count in (0, 1, 9):
+                VALIDATOR.validate({**target, 'nativeTestSettings': {**engine, 'maxRetries': count}})
+            for count in (-1, 10, True, '1', None, 1.5):
+                self.assertFalse(VALIDATOR.is_valid({**target, 'nativeTestSettings': {**engine, 'maxRetries': count}}))
+        self.assertFalse(VALIDATOR.is_valid({**target, 'nativeTestSettings': {**settings, 'engine': 'kotlin'}}))
         for value in [None, {}, {**settings, 'filter': '*'}, {**settings, 'kspVersion': '2.3.13'},
                       {**settings, 'processor': 'io.kotest:kotest-framework-symbol-processor:6.2.4'}, {**settings, 'engine': 'junit'}]:
             self.assertFalse(VALIDATOR.is_valid({**target, 'nativeTestSettings': value}), value)

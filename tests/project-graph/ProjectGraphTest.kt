@@ -1010,6 +1010,31 @@ class ProjectGraphTest {
     }
 
 
+    @Test fun nativeRetriesDoNotAddBuiltinGeneratorDependenciesOrRecompileCode() {
+        for (kotest in listOf(false, true)) {
+            val settings = if (kotest) """"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"""" else """"engine":"kotlin""""
+            val document = if (kotest) project.document.canonical().replace("g:tests:1", "io.kotest:kotest-framework-engine-macosarm64:6.2.5") else project.document.canonical()
+            fun configured(count: Int) = parseProjectConfiguration(parseJson(document.replace("\"name\":\"macosArm64\"",
+                "\"name\":\"macosArm64\",\"nativeTestSettings\":{$settings,\"maxRetries\":$count}")))
+            val before = configured(0)
+            val after = configured(2)
+            val defaults = resolved(graph(before, request = request(ProjectMode.TEST, "macosArm64")))
+            val retried = resolved(graph(after, request = request(ProjectMode.TEST, "macosArm64")))
+            assertEquals(effectiveConfiguration(before).requests, effectiveConfiguration(after).requests)
+            assertEquals(defaults.keys, retried.keys)
+            if (!kotest) {
+                assertTrue(effectiveConfiguration(after).requests.none { it.domain.purpose in setOf("ksp-runtime", "symbol-processor") })
+                assertTrue(defaults.keys.none { it.endsWith(":ksp-test") })
+            }
+            for ((id, action) in defaults) {
+                if (action.kind == ActionKind.TEST) {
+                    assertNotEquals(action.key(Sha256), retried.getValue(id).key(Sha256))
+                    assertEquals(2.json(), retried.getValue(id).parameters.objectValue().getValue("maxRetries"))
+                } else assertEquals(action, retried.getValue(id))
+            }
+        }
+    }
+
     @Test fun nativeTimeoutOverridesBindOnlyTheirCompilerPhaseAndKeepDefaultIdentities() {
         for (kotest in listOf(false, true)) {
             val document = if (kotest) project.document.canonical().replace("\"name\":\"macosArm64\"",
