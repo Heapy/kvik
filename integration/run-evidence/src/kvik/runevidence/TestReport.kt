@@ -62,17 +62,24 @@ fun testReport(record: VerificationRecord, events: List<RunEvent>, modules: Set<
         val tests = record.tests.filter { it.module == module && it.target == target }.sortedBy { it.id }
         val completed = check in record.completedChecks
         val terminal = record.actions.singleOrNull { it.actionId == check }
+        val summary = record.testScopes[check]
         val status = when {
+            summary != null -> if (summary.status == VerificationStatus.PASSED && !completed) {
+                if (record.status == VerificationStatus.CANCELLED) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE
+            } else summary.status
             terminal?.status == ActionStatus.CANCELLED || (!completed && record.status == VerificationStatus.CANCELLED) -> VerificationStatus.CANCELLED
             tests.any { it.hasFailedAttempt } -> VerificationStatus.FAILED
             completed -> VerificationStatus.PASSED
+            // The coordinator can validate partial test observations after a timeout or
+            // early exit. Their raw process code need not be the CLI's INCOMPLETE code.
+            record.status == VerificationStatus.INCOMPLETE -> VerificationStatus.INCOMPLETE
             terminal?.status == ActionStatus.FAILED && terminal.exitCode != ExitStatus.INCOMPLETE.code -> VerificationStatus.FAILED
             else -> VerificationStatus.INCOMPLETE
         }
         if (tests.any { it.details == null }) losses += TestReportNotice("UNKNOWN_ATTEMPTS", "Legacy test outcomes have no attempt metadata; XML labels their attempt as unknown.", check)
-        if (expected.size > 1) losses += TestReportNotice("SCOPE_DISCOVERY_UNKNOWN", "The retained record has aggregate discovery counts only; per-scope discovery counts are unknown.", check)
+        if (expected.size > 1 && summary == null) losses += TestReportNotice("SCOPE_DISCOVERY_UNKNOWN", "The retained record has aggregate discovery counts only; per-scope discovery counts are unknown.", check)
         TestReportScope(check, module, target, completed, status, tests,
-            counts(tests, if (expected.size == 1) record.testCounts else null), attemptCounts(tests),
+            counts(tests, summary?.counts ?: if (expected.size == 1) record.testCounts else null), attemptCounts(tests),
             diagnostics.filter { it.actionId == check || (it.module == module && (it.target == null || it.target == target)) },
             record.actions.filter { it.actionId == check && (it.diagnostic != null || !it.successful) })
     }
@@ -89,10 +96,16 @@ fun testReport(record: VerificationRecord, events: List<RunEvent>, modules: Set<
         obj("inputSnapshot" to record.inputSnapshot.toJson(), "configuration" to record.configuration.toJson(),
             "dependencyLock" to record.dependencyLock.toJson(), "composition" to record.composition.toJson(),
             "toolchains" to JsonValue.Object(record.toolchains.mapValues { it.value.toJson() }), "reproduction" to record.reproduction.map { it.json() }.json()),
-        expected, selected, scopes, counts(tests, if (selected == expected) record.testCounts else null), attemptCounts(tests), status,
+        expected, selected, scopes, counts(tests, if (selected == expected) record.testCounts else scopeDiscovery(scopes)), attemptCounts(tests), status,
         diagnostics, record.actions.filter { it.diagnostic != null || !it.successful }, losses.toList())
     return if (containsInvalidXml(report.toJson())) report.copy(conversionLosses = report.conversionLosses +
         TestReportNotice("XML_INVALID_CHARACTERS", "XML 1.0 cannot represent some retained characters; XML replaces those characters with U+FFFD. JSON preserves the originals.")) else report
+}
+
+private fun scopeDiscovery(scopes: List<TestReportScope>): TestCounts {
+    val discovered = if (scopes.all { it.uniqueCounts.discovered != null }) scopes.sumOf { checkNotNull(it.uniqueCounts.discovered).toLong() }
+        .also { require(it <= Int.MAX_VALUE) { "Selected discovery count exceeds supported integer bounds" } }.toInt() else null
+    return TestCounts(discovered, 0, 0, 0, scopes.all { it.uniqueCounts.discoveryComplete })
 }
 
 private fun counts(tests: List<TestResult>, discovery: TestCounts?): TestCounts = TestCounts(discovery?.discovered,
@@ -153,7 +166,7 @@ internal fun renderJUnit(scopes: List<TestReportScope>, retainedFailures: (Boole
             }
             if (attempts == null) render(null) else attempts.forEach(::render)
         }
-        if ((!scope.completed || scope.status != VerificationStatus.PASSED) && scope.tests.none { it.hasFailedAttempt }) {
+        if (scope.status == VerificationStatus.CANCELLED || ((!scope.completed || scope.status != VerificationStatus.PASSED) && scope.tests.none { it.hasFailedAttempt })) {
             visibleFailure = true
             val details = listOf("Scope ${scope.check} is ${scope.status.name.lowercase()}; completed=${scope.completed}.") +
                 scope.diagnostics.map { "${it.code}: ${it.message}" } + scope.actionDiagnostics.map { "${it.actionId}: ${it.status.name.lowercase()}: ${it.diagnostic ?: "No diagnostic recorded"}" }

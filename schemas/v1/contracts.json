@@ -5274,6 +5274,27 @@
       ],
       "additionalProperties": false
     },
+    "testScopeSummary": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "counts": {
+          "$ref": "#/$defs/testCounts"
+        }
+      },
+      "required": [
+        "status",
+        "counts"
+      ],
+      "additionalProperties": false
+    },
     "jvmClasspath": {
       "type": "object",
       "properties": {
@@ -5414,6 +5435,24 @@
         },
         "source": {
           "$ref": "#/$defs/sourceReference"
+        },
+        "testScopes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/requestedCheck"
+              },
+              {
+                "pattern": ":test$(?![\\s\\S])"
+              }
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/testScopeSummary"
+          },
+          "description": "Optional validated per-scope outcomes. Keys must be requested test checks and counts/status must agree with the retained tests and aggregate; runtime validation enforces these relationships."
         },
         "sourceClaims": {
           "type": "array",

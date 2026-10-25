@@ -7,6 +7,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,7 +70,44 @@ def main():
         report = json.loads((folder / 'output/test-results.json').read_text())
         assert report['requestId'] == request['requestId'] and report['selection'] == selection
         assert report['exitCode'] == expected
+        progress = [json.loads(line) for line in (folder / 'test-progress.jsonl').read_text().splitlines()]
+        assert progress[0] == dict(schemaVersion=1, kind='js-test-progress', **request)
+        if report['counts']['discovered'] is not None:
+            assert progress[1] == dict(sequence=0, kind='discovered', count=report['counts']['discovered'])
+            assert progress[2:] == [dict(sequence=i+1, kind='test-result', test=test) for i, test in enumerate(report['tests'])]
         return report
+
+    def interrupt(entry, target, stop):
+        folder = Path(tempfile.mkdtemp(prefix='interrupted-', dir=work))
+        (folder / 'output').mkdir()
+        (folder / 'input').symlink_to(entry.parent, target_is_directory=True)
+        request = dict(requestId=folder.name, selection=dict(module='sample', target=target, entryPoint=entry.name, filter=None))
+        request_file = folder / 'request.json'; request_file.write_text(json.dumps(request))
+        with (folder / 'stdout.log').open('wb') as stdout, (folder / 'stderr.log').open('wb') as stderr:
+            process = subprocess.Popen([node, '--unhandled-rejections=strict', runner, request_file], cwd=folder,
+                                       stdout=stdout, stderr=stderr, start_new_session=True, env={**os.environ, 'NODE_OPTIONS': ''})
+            try:
+                deadline = time.monotonic() + 10
+                while not (folder / 'ready').exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert (folder / 'ready').exists(), (folder / 'stderr.log').read_text()
+                if stop is not None:
+                    os.killpg(process.pid, stop)
+                process.wait(timeout=10)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+        assert process.returncode == (0 if stop is None else -stop)
+        assert not (folder / 'output/test-results.json').exists()
+        progress = [json.loads(line) for line in (folder / 'test-progress.jsonl').read_text().splitlines()]
+        assert progress[0] == dict(schemaVersion=1, kind='js-test-progress', **request)
+        assert progress[1] == dict(sequence=0, kind='discovered', count=4)
+        assert [event['sequence'] for event in progress[1:]] == [0, 1, 2, 3]
+        observed = [event['test'] for event in progress[2:]]
+        assert [test['status'] for test in observed] == ['passed', 'skipped', 'failed']
+        assert observed[2]['details']['attempts'][0]['failure']['message'] == 'retained failure'
+        assert all(test['target'] == target for test in observed)
 
     # The bridge must await promises, preserve ignored suite children and reject duplicate/late discovery.
     synthetic = work / 'synthetic.mjs'
@@ -97,6 +135,20 @@ def main():
     report = execute(synthetic, 'js', expected=3)
     assert report['diagnostic'] == 's' * 32767
     json.dumps(report, ensure_ascii=False).encode('utf-8', errors='strict')
+    # Stopping an owned process must leave earlier results available without inventing
+    # an outcome for the active test, including when user code exits with status zero.
+    for target in ['js', 'wasmJs']:
+        for stop in [signal.SIGTERM, signal.SIGKILL, None]:
+            end = "process.exit(0)" if stop is None else "return new Promise(()=>setInterval(()=>{},1000))"
+            body = """describe('partial',()=>{
+                it('passed',()=>{});
+                xit('ignored',()=>{throw Error('must not execute')});
+                it('failed',()=>{throw Error('retained failure')});
+                it('interrupted',()=>{writeFileSync('ready','ready');END});
+            });""".replace('END', end)
+            synthetic.write_text("import {writeFileSync} from 'node:fs';\n" +
+                                 (body if target == 'js' else 'export function startUnitTests(){' + body + '}'))
+            interrupt(synthetic, target, stop)
     if args.runner_only:
         print('Node bridge checks passed', flush=True)
         return

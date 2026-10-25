@@ -428,6 +428,7 @@ DEFS["testDetails"] = object_({"suite": nullable(TEST_TEXT), "name": nullable(TE
 DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, "status": enum("passed", "failed", "skipped"),
     "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
+DEFS["testScopeSummary"] = object_({"status": enum("passed", "failed", "incomplete", "cancelled"), "counts": ref("testCounts")})
 DEFS["jvmClasspath"] = versioned({"module": ID, "compilation": enum("main", "test"), "classpath": array(PATH, uniqueItems=True)})
 DEFS["jvmClasspath"]["description"] = "Ordered compiler classpath; accompanying input tree must cover every JAR or directory and contain no unrelated files."
 DEFS["requestedCheck"] = {"oneOf": [
@@ -438,6 +439,12 @@ DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1), "source": ref("sourceReference")}, optional=("source",))
+DEFS["verification"]["properties"]["testScopes"] = {
+    "type": "object", "minProperties": 1,
+    "propertyNames": {"allOf": [ref("requestedCheck"), {"pattern": r":test$(?![\s\S])"}]},
+    "additionalProperties": ref("testScopeSummary"),
+    "description": "Optional validated per-scope outcomes. Keys must be requested test checks and counts/status must agree with the retained tests and aggregate; runtime validation enforces these relationships.",
+}
 DEFS["verification"]["properties"]["sourceClaims"] = array(ref("claimAssessment"), maxItems=1024)
 DEFS["verification"]["dependentRequired"] = {"sourceClaims": ["source"]}
 REPORT_STATUS = enum("passed", "failed", "incomplete", "cancelled")

@@ -2,7 +2,7 @@ package kvik.compiler.js
 
 /** Uses kotlin.test's Jasmine-compatible bridge; tests are discovered by the compiler, not source parsing. */
 internal val jsTestRunnerSource = """
-import { readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
@@ -11,6 +11,21 @@ let discoveryComplete = false;
 let closed = false;
 let ignoredDepth = 0;
 let diagnostic = null;
+// Append complete observations synchronously so process.exit, cancellation or a timeout
+// cannot erase tests which already finished. The final report alone establishes success.
+const progress = openSync('test-progress.jsonl', 'wx', 0o600);
+let progressBytes = 0, sequence = 0;
+function retain(event) {
+    const bytes = Buffer.from(JSON.stringify(event) + '\n');
+    if (progressBytes + bytes.length > 64 * 1024 * 1024) throw new Error('Test progress exceeds 64 MiB');
+    let offset = 0;
+    while (offset < bytes.length) {
+        const written = writeSync(progress, bytes, offset, bytes.length - offset);
+        if (written <= 0) throw new Error('Cannot retain test progress');
+        offset += written;
+    }
+    progressBytes += bytes.length;
+}
 function bounded(value, limit = 8192) {
     const text = String(value).slice(0, limit);
     // Kotlin's limits count UTF-16 units. Do not serialize half of a supplementary character.
@@ -39,11 +54,13 @@ globalThis.kotlinTest = {adapterTransformer: null};
 const matcher = request.selection.filter === null ? null : new RegExp('^' + request.selection.filter.split('*').map(s => s.replace(/[.*+?^{}()|[\]\\]/g, '\\' + '\u0024&')).join('.*') + '\u0024', 'u');
 let selected = [];
 try {
+    retain({schemaVersion: 1, kind: 'js-test-progress', requestId: request.requestId, selection: request.selection});
     const module = await import(pathToFileURL(resolve('input', request.selection.entryPoint)).href);
     if (request.selection.target === 'wasmJs' && typeof module.startUnitTests === 'function') module.startUnitTests();
     closed = true;
     selected = tests.filter(t => matcher === null || matcher.test(t.id));
     discoveryComplete = true;
+    retain({sequence: sequence++, kind: 'discovered', count: selected.length});
     for (const t of selected) {
         let status = 'skipped', durationNanos = null, failure = null;
         if (!t.ignored) {
@@ -60,9 +77,12 @@ try {
             message: failure?.message ?? null,
             details: {suite: bounded(t.suite), name: bounded(t.name), attempts: [{number: 1, status, durationNanos,
                 skipReason: t.ignored ? 'Ignored by kotlin.test' : null, failure, logs: []}]}});
+        retain({sequence: sequence++, kind: 'test-result', test: records[records.length - 1]});
     }
 } catch (e) {
     diagnostic = bounded(e?.stack ?? e, 32768);
+} finally {
+    closeSync(progress);
 }
 const failed = records.filter(t => t.status === 'failed').length;
 const skipped = records.filter(t => t.status === 'skipped').length;

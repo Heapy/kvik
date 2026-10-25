@@ -159,7 +159,13 @@ class JsCompilerExecutor(
                     status = ActionStatus.FAILED; outputs = TreeManifest(emptyList()); failure = error.message ?: "Invalid JS/Wasm result"
                 }
                 if (selection != null && (report == null || status != ActionStatus.EXECUTED && report?.status == VerificationStatus.PASSED || status == ActionStatus.CANCELLED)) {
-                    report = JsTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), if (status == ActionStatus.CANCELLED) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE, failure)
+                    val verificationStatus = if (status == ActionStatus.CANCELLED) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE
+                    report = try {
+                        parseJsTestProgress(readFile("$directory/test-progress.jsonl", 64 * 1024 * 1024), reservation.runId, selection, verificationStatus, failure)
+                    } catch (error: Exception) {
+                        failure = listOfNotNull(failure, "Invalid JS/Wasm test progress: ${error.message ?: "unreadable journal"}").joinToString("; ")
+                        JsTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), verificationStatus, failure)
+                    }
                 }
                 if (failure != null) diagnostics = diagnostics + Diagnostic(
                     if (status == ActionStatus.CANCELLED) "KVIK_JS_CANCELLED" else if (selection != null) "KVIK_JS_TEST_RESULT" else "KVIK_JS_PROCESS_FAILED",

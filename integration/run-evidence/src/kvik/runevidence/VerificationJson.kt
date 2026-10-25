@@ -5,7 +5,7 @@ import kvik.core.*
 /** Strict v1 persisted-record parsing. Reuses core invariants; does not rerun execution proofs. */
 fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
     val fields = value.fields(setOf("schemaVersion", "runId", "requestedChecks", "completedChecks", "inputSnapshot", "configuration", "dependencyLock",
-        "composition", "toolchains", "actions", "tests", "testCounts", "status", "freshnessAtCompletion", "reproduction"), setOf("source", "sourceClaims"))
+        "composition", "toolchains", "actions", "tests", "testCounts", "status", "freshnessAtCompletion", "reproduction"), setOf("source", "sourceClaims", "testScopes"))
     fields.requireVersion()
     fun checks(name: String): Set<String> {
         val values = fields.getValue(name).arrayValue().map { it.stringValue() }
@@ -22,7 +22,11 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
         }, fields.getValue("tests").arrayValue().map(TestResult::fromJson), testCountsFromJson(fields.getValue("testCounts")),
         fields.getValue("status").enumValue(), fields.getValue("freshnessAtCompletion").enumValue(),
         fields.getValue("reproduction").arrayValue().map { it.stringValue() }, fields["source"]?.let(SourceReference::fromJson),
-        fields["sourceClaims"]?.arrayValue()?.map(ClaimAssessment::fromJson)).also { record ->
+        fields["sourceClaims"]?.arrayValue()?.map(ClaimAssessment::fromJson),
+        testScopes = fields["testScopes"]?.objectValue()?.also { require(it.isNotEmpty()) { "Empty testScopes must be omitted" } }?.mapValues { (_, value) ->
+            val summary = value.fields(setOf("status", "counts"))
+            TestScopeSummary(summary.getValue("status").enumValue(), testCountsFromJson(summary.getValue("counts")))
+        } ?: emptyMap()).also { record ->
         record.sourceClaims?.let { claims ->
             require(assessSourceClaims(RevisionClaims(claims.associate { it.id to it.declaration }), record) == claims) {
                 "Claim assessments do not match the recorded checks"

@@ -82,6 +82,15 @@ data class TestCounts(val discovered: Int?, val executed: Int, val failed: Int, 
 enum class VerificationStatus { PASSED, FAILED, INCOMPLETE, CANCELLED }
 enum class Freshness { CURRENT, STALE, INDETERMINATE }
 
+/** Adapter-validated outcome for one requested test scope, independent of the overall run. */
+data class TestScopeSummary(val status: VerificationStatus, val counts: TestCounts) {
+    init {
+        require(status != VerificationStatus.PASSED || counts.satisfiesExecution) { "Passing test scope requires complete execution" }
+        require(status != VerificationStatus.INCOMPLETE || counts.failed == 0) { "Incomplete test scope cannot conceal failed tests" }
+    }
+    fun toJson(): JsonValue.Object = obj("status" to status.name.lowercase().json(), "counts" to counts.toJson())
+}
+
 data class VerificationRecord(
     val runId: String,
     val requestedChecks: Set<String>,
@@ -99,6 +108,7 @@ data class VerificationRecord(
     val reproduction: List<String>,
     val source: SourceReference? = null,
     val sourceClaims: List<ClaimAssessment>? = null,
+    val testScopes: Map<String, TestScopeSummary> = emptyMap(),
 ) {
     init {
         if (sourceClaims != null) {
@@ -109,6 +119,34 @@ data class VerificationRecord(
         require(runId.isNotBlank() && requestedChecks.isNotEmpty() && reproduction.isNotEmpty())
         require(completedChecks.all { it in requestedChecks })
         require(tests.map { Triple(it.module, it.target, it.id) }.distinct().size == tests.size) { "Duplicate test identity" }
+        val testChecks = requestedChecks.filter { it.endsWith(":test") }.toSet()
+        require(testScopes.keys.all { it in testChecks }) { "Test scope summary is outside the requested checks" }
+        val scopedTests = tests.groupBy { "${it.module}:${it.target}:test" }
+        for ((check, summary) in testScopes) {
+            val observed = scopedTests[check].orEmpty()
+            val counts = summary.counts
+            require(counts.executed == observed.count { it.status != TestStatus.SKIPPED } &&
+                counts.failed == observed.count { it.status == TestStatus.FAILED } && counts.skipped == observed.count { it.status == TestStatus.SKIPPED }) {
+                "Test scope counts do not match recorded identities: $check"
+            }
+            require(summary.status !in setOf(VerificationStatus.PASSED, VerificationStatus.INCOMPLETE) || observed.none { it.hasFailedAttempt }) {
+                "Test scope summary conceals a failed attempt: $check"
+            }
+            require(check !in completedChecks || summary.status == VerificationStatus.PASSED) { "Completed test scope lacks a passing observation: $check" }
+            require(!testCounts.discoveryComplete || counts.discoveryComplete) { "Complete run discovery conceals an incomplete test scope" }
+            when (summary.status) {
+                VerificationStatus.CANCELLED -> require(status == VerificationStatus.CANCELLED) { "Run conceals a cancelled test scope" }
+                VerificationStatus.FAILED -> require(status == VerificationStatus.FAILED || status == VerificationStatus.CANCELLED) { "Run conceals a failed test scope" }
+                else -> Unit
+            }
+        }
+        if (testScopes.isNotEmpty() && testScopes.keys == testChecks) {
+            val counts = testScopes.values.map { it.counts }
+            val discovered = if (counts.all { it.discovered != null }) counts.sumOf { it.discovered!!.toLong() } else null
+            require(testCounts.discovered?.toLong() == discovered && testCounts.discoveryComplete == counts.all { it.discoveryComplete }) {
+                "Aggregate discovery contradicts test scope summaries"
+            }
+        }
         for (check in completedChecks.filter { it.endsWith(":test") }) {
             val observed = tests.filter { "${it.module}:${it.target}:test" == check }
             require(observed.any { it.status == TestStatus.PASSED } && observed.none { it.hasFailedAttempt }) {
@@ -140,6 +178,7 @@ data class VerificationRecord(
         "reproduction" to reproduction.map { it.json() }.json(),
     ).let { if (source == null) it else JsonValue.Object(it.values + ("source" to source.toJson())) }
         .let { if (sourceClaims == null) it else JsonValue.Object(it.values + ("sourceClaims" to sourceClaims.map { claim -> claim.toJson() }.json())) }
+        .let { if (testScopes.isEmpty()) it else JsonValue.Object(it.values + ("testScopes" to JsonValue.Object(testScopes.mapValues { scope -> scope.value.toJson() }))) }
 }
 
 /** Complete manifest includes source directory inventories, configuration and lockfiles. */

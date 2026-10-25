@@ -115,7 +115,8 @@ fun aggregateRunEvidence(
         else -> VerificationStatus.PASSED
     }
     val record = VerificationRecord(runId, checks, completed, inputSnapshot, configuration, dependencyLock, composition,
-        toolchains.toMap(), results, tests, counts, status, freshnessAtCompletion, reproduction.toList())
+        toolchains.toMap(), results, tests, counts, status, freshnessAtCompletion, reproduction.toList(),
+        testScopes = observations.map { (action, report) -> testTerminals.getValue(action) to TestScopeSummary(report.status, report.counts) }.toMap())
     return RunEvidence(record, when (status) {
         VerificationStatus.PASSED -> ExitStatus.SUCCESS
         VerificationStatus.FAILED -> ExitStatus.FAILED

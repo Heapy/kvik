@@ -10,7 +10,7 @@ class VerificationJsonTest {
         listOf(ActionResult("test", digest, ActionStatus.EXECUTED, exitCode = 0)),
         mapOf("test" to TestObservation(listOf(TestResult("example", "app", "jvm", TestStatus.PASSED)), TestCounts(1, 1, 0, 0, true), VerificationStatus.PASSED)),
         digest, digest, digest, digest, mapOf("compiler" to digest), listOf("kvik", "test"), Freshness.CURRENT,
-    ).record.copy(status = status)
+    ).record.copy(status = status, testScopes = emptyMap())
     private fun JsonValue.change(vararg values: Pair<String, JsonValue>) = JsonValue.Object(objectValue() + values.toMap())
     private fun invalid(document: JsonValue) { assertFails { verificationRecordFromJson(parseJson(document.canonical())) } }
 

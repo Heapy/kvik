@@ -126,6 +126,67 @@ class JsAdapterTest {
         val (_, failed) = report(TestStatus.FAILED)
         assertEquals(VerificationStatus.FAILED, parseJsTestReport(failed, "run", selection, 1).status)
     }
+    private fun progress(selection: JsTestSelection, tests: List<JsonValue>, discovered: Int = tests.size): List<JsonValue> =
+        listOf(obj("schemaVersion" to 1.json(), "kind" to "js-test-progress".json(), "requestId" to "run".json(), "selection" to selection.toJson()),
+            obj("sequence" to 0.json(), "kind" to "discovered".json(), "count" to discovered.json())) +
+            tests.mapIndexed { index, test -> obj("sequence" to (index + 1).json(), "kind" to "test-result".json(), "test" to test) }
+
+    private fun journal(lines: List<JsonValue>) = (lines.joinToString("\n") { it.canonical() } + "\n").encodeToByteArray()
+
+    @Test fun interruptedProgressRetainsOutcomesAndNeverProvesCompletion() {
+        for (status in TestStatus.entries) {
+            val (selection, value) = report(status)
+            val tests = value.values.getValue("tests").arrayValue()
+            val lines = progress(selection, tests, 3)
+            val parsed = parseJsTestProgress(journal(lines), "run", selection, VerificationStatus.INCOMPLETE, "timed out")
+            assertEquals(tests.map(TestResult::fromJson), parsed.tests)
+            assertEquals(TestCounts(3, if (status == TestStatus.SKIPPED) 0 else 1, if (status == TestStatus.FAILED) 1 else 0, if (status == TestStatus.SKIPPED) 1 else 0, false), parsed.counts)
+            assertEquals(if (status == TestStatus.FAILED) VerificationStatus.FAILED else VerificationStatus.INCOMPLETE, parsed.status)
+            assertEquals("timed out", parsed.diagnostic)
+            assertEquals(VerificationStatus.CANCELLED, parseJsTestProgress(journal(lines), "run", selection, VerificationStatus.CANCELLED, "cancelled").status)
+            val allObserved = parseJsTestProgress(journal(progress(selection, tests)), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+            assertFalse(allObserved.counts.discoveryComplete)
+            assertFalse(allObserved.counts.satisfiesExecution)
+        }
+    }
+
+    @Test fun partialProgressDropsUncommittedBytesBeforeUtf8Decoding() {
+        val (selection, value) = report()
+        val lines = progress(selection, value.values.getValue("tests").arrayValue())
+        val complete = journal(lines)
+        val parsed = parseJsTestProgress(complete + byteArrayOf(123, 34, 0xE2.toByte(), 0x82.toByte()), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+        assertEquals(1, parsed.tests.size)
+        val header = parseJsTestProgress(journal(lines.take(1)), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+        assertEquals(TestCounts(null, 0, 0, 0, false), header.counts)
+        val discovery = parseJsTestProgress(journal(lines.take(2)), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+        assertEquals(TestCounts(1, 0, 0, 0, false), discovery.counts)
+        assertFails { parseJsTestProgress(complete + byteArrayOf(0xFF.toByte(), 10), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+        assertFails { parseJsTestProgress(lines.first().canonical().encodeToByteArray(), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+    }
+
+    @Test fun corruptProgressRejectsEveryObservation() {
+        val (selection, value) = report()
+        val test = value.values.getValue("tests").arrayValue().single() as JsonValue.Object
+        val lines = progress(selection, listOf(test))
+        fun changed(index: Int, key: String, value: JsonValue): List<JsonValue> = lines.mapIndexed { i, line ->
+            if (i == index) JsonValue.Object((line as JsonValue.Object).values + (key to value)) else line
+        }
+        val bad = listOf(
+            emptyList(), lines.drop(1), listOf(lines[0], lines[2]), lines + lines[2],
+            changed(0, "requestId", "other".json()), changed(0, "schemaVersion", 2.json()), changed(0, "kind", "other".json()),
+            changed(0, "selection", selection.copy(filter = "other.*").toJson()),
+            changed(1, "count", (-1).json()), changed(1, "count", 100001.json()), changed(1, "count", 0.json()),
+            changed(1, "sequence", 1.json()), changed(2, "sequence", 3.json()), changed(2, "kind", "discovered".json()),
+            progress(selection, listOf(test, test)),
+            progress(selection, listOf(JsonValue.Object(test.values + ("id" to "unselected.test".json())))),
+            progress(selection, listOf(JsonValue.Object(test.values + ("module" to "other".json())))),
+            progress(selection, listOf(JsonValue.Object(test.values - "details")))
+        )
+        for (records in bad) assertFails { parseJsTestProgress(journal(records), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+        assertFails { parseJsTestProgress(journal(lines), "run", selection, VerificationStatus.PASSED, null) }
+        assertFails { parseJsTestProgress(ByteArray(64 * 1024 * 1024 + 1), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+    }
+
     @Test fun wasmLinkSuppressesOnlyTheKnownCompilerMainCall() {
         assertEquals("const exports = instance.exports;\nexports._initialize();\n", wasmTestLoaderWithoutMain("const exports = instance.exports;\nexports._initialize();\nexports._start();\n"))
         assertEquals("export const { startUnitTests } = exports;\n", wasmTestLoaderWithoutMain("export const { startUnitTests } = exports;\n"))

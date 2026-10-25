@@ -19,6 +19,13 @@ IDs. Filters match qualified IDs such as `example.Sample.test`; `*` is the only 
 Zero matching tests and selections containing only ignored tests produce an incomplete result.
 A failed test produces a failed result even if later tests pass.
 
+Completed test outcomes survive timeout, cancellation and early Node exit. The runner
+appends them to a bounded progress journal; the Native adapter reads it after the owned
+process tree has stopped. Recovery preserves observed failures and skips, marks discovery
+incomplete, and never invents an outcome for the interrupted test. Cancellation remains
+cancelled; other interrupted runs with observed failures remain failed. Only a validated
+final report from a normally completed process can establish success.
+
 Executable links currently serve tests. They suppress application `main()`. The 2.4.20 Wasm
 compiler ignores `-main noCall` when writing the loader (`WasmOutputGenerationPipelinePhase`
 in upstream `compiler/cli/cli-js/src/org/jetbrains/kotlin/cli/pipeline/web/wasm`). The adapter
@@ -41,3 +48,5 @@ separate capabilities. Arbitrary compiler flags are not accepted.
 
 Run `tools/test_js_compiler.py --help` for the offline integration checks. Supply explicit
 compiler artifacts, Maven cache and Node paths. `--konan-home` also runs native contract tests.
+`tools/test_js_execution.py` exercises the Native adapter with real owned Node processes,
+including timeout/cancellation and retained JSON/JUnit reports, without compiling consumers.

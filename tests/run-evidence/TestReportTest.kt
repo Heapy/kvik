@@ -88,6 +88,21 @@ class TestReportTest {
         assertContains(junitXml(stale), "freshness at completion stale")
     }
 
+    @Test fun incompleteRunnerExitDoesNotInventAFailedTestScope() {
+        for (exit in listOf(0, 124, 143)) {
+            val source = record(listOf(test()), completed = emptySet(), status = VerificationStatus.INCOMPLETE,
+                actions = listOf(ActionResult("app:jvm:test", digest, ActionStatus.FAILED, exitCode = exit, diagnostic = "interrupted")),
+                discovered = null)
+            val report = testReport(source, emptyList())
+            assertEquals(VerificationStatus.INCOMPLETE, report.status)
+            assertEquals(VerificationStatus.INCOMPLETE, report.scopes.single().status)
+            assertEquals(1, report.uniqueCounts.executed)
+            assertEquals(0, report.uniqueCounts.failed)
+            assertContains(junitXml(report), "incomplete")
+            assertContains(junitXml(report), "interrupted")
+        }
+    }
+
     @Test fun jsonRetainsInputIdentityFullMetadataAndSourceDigest() {
         val logs = listOf(TestLogReference(TestLogStream.STDERR, LogicalPath("logs/test.stderr"), digest))
         val result = test(status = TestStatus.SKIPPED).copy(details = TestDetails("suite", "display", listOf(TestAttempt(1, TestStatus.SKIPPED, skipReason = "requires service", logs = logs))))
