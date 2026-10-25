@@ -1,5 +1,9 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package kvik.compilertools
 
+import platform.posix.access
+import platform.posix.X_OK
 import kvik.cache.NativeFiles
 import kvik.compiler.native.NativeToolchainLayout
 import kvik.compiler.native.NativeToolchainProvider
@@ -58,7 +62,7 @@ class InstalledNativeToolchainProvider(
             checkpoint()
             NativeFiles.ensureDirectory(path.substringBeforeLast('/'), create = false)
             val info = NativeFiles.info(path) ?: error("Missing verified executable: $path")
-            require(NativeFiles.regular(info) && info.mode and 73 != 0) { "Verified tool must be a regular executable: $path" }
+            require(NativeFiles.regular(info) && info.mode and 73 != 0 && access(path, X_OK) == 0) { "Verified tool must be a regular executable: $path" }
         }
         val compiler = "${native.root}/bin/konanc"
         executable(compiler); executable("${native.root}/bin/run_konan"); executable("${jdk.root}/bin/java")

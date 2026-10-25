@@ -13445,6 +13445,118 @@
         "slowestActions"
       ],
       "additionalProperties": false
+    },
+    "doctor": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "incomplete"
+          ]
+        },
+        "scope": {
+          "const": "tool-installations"
+        },
+        "tools": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "check": {
+          "enum": [
+            "build",
+            "test"
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "enum": [
+                  "runtime-guardian",
+                  "tools-declaration",
+                  "compilation-tools",
+                  "test-runtime"
+                ]
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "jvm",
+                      "macosArm64",
+                      "linuxX64",
+                      "iosArm64",
+                      "iosSimulatorArm64",
+                      "js",
+                      "wasmJs"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "skipped"
+                ]
+              },
+              "diagnostic": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/diagnostic"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "target",
+              "status",
+              "diagnostic"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 3
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "status",
+        "scope",
+        "tools",
+        "check",
+        "targets",
+        "checks"
+      ],
+      "additionalProperties": false
     }
   }
 }

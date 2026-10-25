@@ -33,7 +33,8 @@ private fun command(args: Array<String>) {
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, doctor, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
+            Tool diagnostics: doctor --tools PATH --target TARGET (repeatable) [--check build|test]; reads installed tools without launching or downloading them
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
@@ -86,6 +87,7 @@ private fun command(args: Array<String>) {
             Coverage aggregation: coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
+        "doctor" -> exitProcess(doctorCommand(args.drop(1)).code)
         "runtime-info" -> {
             verifiedRuntimeGuardian()
             val worker = verifiedRuntimeJvmWorker()

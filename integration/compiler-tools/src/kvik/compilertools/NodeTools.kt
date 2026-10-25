@@ -1,5 +1,9 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package kvik.compilertools
 
+import platform.posix.access
+import platform.posix.X_OK
 import kvik.cache.NativeFiles
 import kvik.compiler.js.NodeToolchainProvider
 import kvik.core.Digest
@@ -17,7 +21,7 @@ class InstalledNodeToolchainProvider(private val root: String, private val expec
         NativeFiles.ensureDirectory("$root/bin", create = false)
         val executable = "$root/bin/node"
         val info = NativeFiles.info(executable) ?: error("Missing verified Node executable")
-        require(NativeFiles.regular(info) && info.mode and 73 != 0) { "Node bin/node must be a regular executable" }
+        require(NativeFiles.regular(info) && info.mode and 73 != 0 && access(executable, X_OK) == 0) { "Node bin/node must be a regular executable" }
         checkpoint()
         return executable
     }

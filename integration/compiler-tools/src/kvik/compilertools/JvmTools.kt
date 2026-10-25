@@ -1,5 +1,9 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package kvik.compilertools
 
+import platform.posix.access
+import platform.posix.X_OK
 import kvik.cache.NativeFiles
 import kvik.compiler.jvm.JvmToolchainLayout
 import kvik.compiler.jvm.JvmToolchainProvider
@@ -65,7 +69,7 @@ class InstalledJvmToolchainProvider(
         val java = "${jdk.root}/bin/java"
         NativeFiles.ensureDirectory("${jdk.root}/bin", create = false)
         val javaInfo = NativeFiles.info(java) ?: error("Missing verified JDK java executable")
-        require(NativeFiles.regular(javaInfo) && javaInfo.mode and 73 != 0) { "Verified JDK java must be a regular executable" }
+        require(NativeFiles.regular(javaInfo) && javaInfo.mode and 73 != 0 && access(java, X_OK) == 0) { "Verified JDK java must be a regular executable" }
         checkpoint()
         return JvmToolchainLayout(requested, java, bundle.classes, bundle.api, bundle.stdlib, bundle.junit,
             compilerArtifactsRoot, bundle.compilerManifest, jacocoAgent = bundle.jacocoAgent, jacocoCli = bundle.jacocoCli,

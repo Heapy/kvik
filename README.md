@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work uses an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `verify`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `test-report`, `test-aggregate`, `coverage-report`, `coverage-check`, `coverage-aggregate`, `coverage-export`, `coverage-publish`, `explain`, `run-stats`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache, [remote JVM compilation cache](docs/remote-cache.md) and retained run results. [Foreground sessions](docs/foreground.md) retain project models and action graphs across reloads. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `doctor`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `verify`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `test-report`, `test-aggregate`, `coverage-report`, `coverage-check`, `coverage-aggregate`, `coverage-export`, `coverage-publish`, `explain`, `run-stats`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache, [remote JVM compilation cache](docs/remote-cache.md) and retained run results. [Foreground sessions](docs/foreground.md) retain project models and action graphs across reloads. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -1129,3 +1129,21 @@ It starts no service, and clients do not extend the owner's lifetime: stdin EOF,
 terminal loss, output backpressure and normal shutdown retain their existing
 behavior. The directory has the same trusted-local-filesystem boundary as the
 artifact store; it is not a remote authorization protocol.
+
+Check installed tools before a build:
+
+```sh
+kvik doctor --tools /path/to/tools.json --target jvm
+```
+
+Repeat `--target` for additional platforms; add
+`--check test` to check test runtime availability, including pinned Node for
+JS/Wasm. The command checks the runtime guardian, tool declaration and the same
+installation digests/layouts used by compiler execution, reporting independent
+failures together as JSON ([schema](schemas/v1/doctor.json)). It reads local files
+without starting tools, downloading dependencies or creating build outputs.
+Exit status is 0 when the selected checks pass, 3 for failed or skipped checks,
+and 2 for invalid command arguments. Passing covers the selected tool
+installations at query time; it does not compile a project, check its dependencies
+or establish compatibility of project-specific compiler plugins and test engines.
+The source launcher can still provision/build Kvik before this command starts.

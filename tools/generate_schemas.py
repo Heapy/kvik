@@ -1019,6 +1019,16 @@ DEFS["runStatistics"] = versioned({
 })
 
 
+DEFS["doctor"] = versioned({
+    "status": enum("passed", "incomplete"), "scope": {"const": "tool-installations"},
+    "tools": NONEMPTY, "check": enum("build", "test"),
+    "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
+    "checks": array(object_({"id": enum("runtime-guardian", "tools-declaration", "compilation-tools", "test-runtime"),
+        "target": nullable(enum(*PROJECT_TARGETS)), "status": enum("passed", "failed", "skipped"),
+        "diagnostic": nullable(ref("diagnostic"))}), minItems=3),
+})
+
+
 def main():
     directory = ROOT / "schemas/v1"
     directory.mkdir(parents=True, exist_ok=True)
@@ -1036,6 +1046,9 @@ def main():
     statistics = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/run-stats.json",
         "$ref": "contracts.json#/$defs/runStatistics"}
     (directory / "run-stats.json").write_text(json.dumps(statistics, indent=2) + "\n")
+    doctor = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/doctor.json",
+        "$ref": "contracts.json#/$defs/doctor"}
+    (directory / "doctor.json").write_text(json.dumps(doctor, indent=2) + "\n")
     coverage = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/coverage.json",
         "$ref": "contracts.json#/$defs/coverageReport"}
     (directory / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
