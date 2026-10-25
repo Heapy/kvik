@@ -246,6 +246,7 @@ println("EFFECT literal declarations")
         (mixed / 'output').mkdir()
         shutil.copy2(plugin, mixed / 'input/plugin.jar')
         shutil.copy2(second_plugin, mixed / 'input/second-plugin.jar')
+        shutil.copy2(cache / 'kotlin-compiler-embeddable-2.4.20.jar', mixed / 'input/compiler-api.jar')
         shutil.copy2(cache / 'kotlin-stdlib-2.4.20.jar', mixed / 'input/stdlib.jar')
         runtime_paths = ['input/stdlib.jar']
         for coordinate, jar in serial_jars.items():
@@ -262,7 +263,8 @@ println("EFFECT literal declarations")
         (mixed / ('input/Main.' + extension)).write_text(declarations + (body if extension == 'kts' else 'fun main() { ' + body + ' }'))
         mixed_request = {**(worker_request if extension == 'kts' else ordinary_request),
             'sources': ['input/Main.' + extension], 'classpath': runtime_paths, 'pluginClasspath': ['input/serialization.jar'],
-            'pluginApplications': [application, second_application]}
+            'pluginApplications': [{**item, 'classpath': item['classpath'] + ['input/compiler-api.jar']}
+                                   for item in (application, second_application)]}
         (mixed / 'request.json').write_text(json.dumps(mixed_request))
         worker_class = 'kvik.jvm.KotlinScriptCompileWorker' if extension == 'kts' else 'kvik.jvm.CompilerWorkerKt'
         process('mixed-' + extension, ['-cp', bootstrap_cp, worker_class, mixed, 'request.json', 'result.json', cache, manifest])
@@ -279,10 +281,24 @@ println("EFFECT literal declarations")
         assert json.loads(evaluated.stdout) == {'value': 'both-transformed'}, evaluated.stdout
         duplicate = case / ('duplicate-' + extension)
         shutil.copytree(mixed / 'input', duplicate / 'input')
+        (duplicate / 'output').mkdir()
         (duplicate / 'request.json').write_text(json.dumps({**mixed_request, 'pluginApplications': [application, application]}))
         process('duplicate-' + extension, ['-cp', bootstrap_cp, worker_class, duplicate, 'request.json', 'result.json', cache, manifest], expected=1)
         failure = json.loads((duplicate / 'result.json').read_text())
         assert failure['status'] == 'infrastructure-error' and not (duplicate / 'output/classes').exists(), failure
+        incompatible = case / ('incompatible-second-api-' + extension)
+        shutil.copytree(mixed / 'input', incompatible / 'input')
+        (incompatible / 'output').mkdir()
+        with zipfile.ZipFile(incompatible / 'input/wrong-api.jar', 'w') as jar:
+            jar.writestr('org/jetbrains/kotlin/compiler/plugin/CompilerPluginRegistrar.class', b'incompatible API')
+        invalid_second = {**second_application, 'classpath': ['input/second-plugin.jar', 'input/wrong-api.jar']}
+        (incompatible / 'request.json').write_text(json.dumps({**mixed_request,
+            'pluginApplications': [mixed_request['pluginApplications'][0], invalid_second]}))
+        process('incompatible-second-api-' + extension, ['-cp', bootstrap_cp, worker_class, incompatible,
+            'request.json', 'result.json', cache, manifest], expected=1)
+        failure = json.loads((incompatible / 'result.json').read_text())
+        assert failure['status'] == 'infrastructure-error' and not (incompatible / 'output/classes').exists(), failure
+        assert any('different compiler API' in diagnostic['message'] for diagnostic in failure['diagnostics']), failure
     print('PASS isolated ordered workspace plugins plus serialization for .kt/.kts; duplicate IDs refused', flush=True)
 
     _, failure = compile_script('annotation-cycle', {'main/Main.kts': '@file:Import("../helpers/Helper.kts")',
