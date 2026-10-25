@@ -32,7 +32,7 @@ internal fun mcpVerifyResult(request: McpBuildRequest, process: ProcessResult, p
             }
         val selection = requireNotNull(plan) { "Verification did not publish a selection" }
         val directory = selection.values.getValue("directory").stringValue()
-        val parent = "${request.options.project.project.substringBeforeLast('/')}/.kvik/verification"
+        val parent = requireNotNull(request.verificationParent)
         require(directory.substringBeforeLast('/') == parent) { "Unexpected verification directory" }
         fun document(name: String) = parseJson(NativeFiles.read("$directory/$name", 16 * 1024 * 1024)
             .decodeToString(throwOnInvalidSequence = true)) as? JsonValue.Object ?: error("Invalid retained verification document")
@@ -41,6 +41,22 @@ internal fun mcpVerifyResult(request: McpBuildRequest, process: ProcessResult, p
         val fields = retained.values
         require(fields["schemaVersion"] == CONTRACT_VERSION.json() && fields["kind"] == "change-verification".json() &&
             fields["directory"] == directory.json() && fields["inputSnapshot"] == selection.values["inputSnapshot"]) { "Invalid retained verification result" }
+        require(fields["source"] == selection.values["source"]) { "Retained verification source differs from selection" }
+        if (request.source == null) require("source" !in fields) { "Local verification returned a source revision" }
+        else {
+            val source = SourceReference.fromJson(fields.getValue("source"))
+            require(source.provenance.project == request.source.project &&
+                source.root == request.options.project.project.substringBeforeLast('/', "")) { "Verification source differs from requested project" }
+            for (entry in fields.getValue("executionRuns").arrayValue()) {
+                val run = entry.objectValue().getValue("directory").stringValue()
+                require(run.substringBeforeLast('/') == "${request.directory}/runs") { "Source verification run is outside its request" }
+                val record = kvik.runevidence.verificationRecordFromJson(parseJson(NativeFiles.read("$run/verification.json", 16 * 1024 * 1024)
+                    .decodeToString(throwOnInvalidSequence = true)))
+                require(record.source == source && record.inputSnapshot.toJson() == fields.getValue("inputSnapshot")) {
+                    "Execution source or inputs differ from verification selection"
+                }
+            }
+        }
         val selected = fields.getValue("selectedChecks").arrayValue().toSet()
         val omitted = fields.getValue("omittedChecks").arrayValue().toSet()
         val expected = options.build.modules.flatMap { module -> options.build.targets.flatMap { target ->

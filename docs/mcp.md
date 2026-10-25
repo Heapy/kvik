@@ -44,8 +44,8 @@ revision when inspection and execution must address the same contents. Inspect
 `source.root` in validation and verification records.
 
 Source mode exposes inspection, configuration validation, package/dependency
-queries, retained-run/session queries and, with `--tools`, build/test execution.
-Change-aware `kvik_verify` remains local-only. `--config-edits` enables source configuration
+queries, retained-run/session queries and, with `--tools`, build/test execution
+and change-aware `kvik_verify`. `--config-edits` enables source configuration
 plans for explicit publication through Kode, as described below. Session controls
 remain independently available with `--session-controls`.
 
@@ -178,7 +178,17 @@ for planning, or `passed`/`unchanged` for execution. `planned` ran no checks;
 `unchanged` omitted checks using retained baselines. `freshChecks` lists newly
 completed checks; compilation and ABI checks may use the artifact cache.
 
-Selection and result documents remain under the project's `.kvik/verification`;
+With a source selector, verification resolves one immutable revision for selection
+and every execution group. Selection and result documents include its `source`
+reference. Compatible source baselines may come from earlier revisions in the
+same provider store, project and configuration root. Missing or altered baseline
+content widens selection. Local and source baselines cannot authorize omissions
+for each other. Omitted checks do not assess claims attached to the new revision.
+Source baseline paths resolve against the server's working directory. The CLI
+supports the same source options on `verify`.
+
+Selection and result documents remain under the project's `.kvik/verification`
+(the server's working directory in source mode);
 execution runs are retained under the MCP request directory. Both locations
 survive connection closure. Progress, cancellation, execution limits and
 concurrent-query behavior are the same as for `kvik_build` and `kvik_test`.

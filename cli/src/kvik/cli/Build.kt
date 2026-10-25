@@ -102,7 +102,7 @@ internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile, source
 
 internal fun executeSelectedVerificationBuild(options: BuildOptions, mode: ProjectMode, snapshot: Digest,
                                               selection: SnapshotSelection,
-                                              tools: Map<String, Map<String, Digest>>): BuildOutcome {
+                                              tools: Map<String, Map<String, Digest>>, sourceProject: PreparedSourceProject? = null): BuildOutcome {
     require(mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.ABI_CHECK)) { "Unsupported selected verification mode" }
     require(selection == SnapshotSelection.Project || selection is SnapshotSelection.AbiCheck) { "Verification requires complete project inputs" }
     if (mode == ProjectMode.ABI_CHECK) require(selection is SnapshotSelection.AbiCheck &&
@@ -110,7 +110,7 @@ internal fun executeSelectedVerificationBuild(options: BuildOptions, mode: Proje
         "Verification snapshot must include every requested ABI baseline"
     }
     return executeBuildOptions(options, mode, ownInterrupts = false, expectedSnapshot = snapshot,
-        expectedTools = tools, selectionOverride = selection)
+        expectedTools = tools, selectionOverride = selection, sourceProject = sourceProject)
 }
 
 private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInterrupts: Boolean,

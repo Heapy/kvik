@@ -518,6 +518,14 @@ lock, runtime or desired tool changes widen to all requested checks. Unknown inp
 ownership, damaged or older baselines without bound manifests also widen the
 selection. A check missing from the baseline's completed checks always runs.
 
+`verify` also accepts `--kode`, `--kode-home`, `--source-project` and `--revision`.
+It resolves the revision once, then selects and executes checks against that
+immutable snapshot without a checkout. Source baselines can come from previous
+revisions of the same project and configuration root in the same provider store.
+Selection and result JSON include `source`; outputs are retained under the
+working directory's `.kvik/verification`. Exact cached revisions work with
+`--offline`. Omitted checks do not assess claims attached to the new revision.
+
 Repeat `--since` to combine completed checks from runs bound to the same input
 snapshot, input selection, configuration, lock, runtime and compatible tools.
 Runs from different snapshots force all requested checks. Mixed verification

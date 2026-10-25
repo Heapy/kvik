@@ -10,7 +10,8 @@ import kvik.runevidence.committedRunEvents
 import kvik.runevidence.verificationRecordFromJson
 
 internal data class McpBuildRequest(val directory: String, val options: BuildOptions, val operation: String,
-                                  val verification: ChangeVerificationOptions? = null, val source: KodeProjectOptions? = null) {
+                                  val verification: ChangeVerificationOptions? = null, val source: KodeProjectOptions? = null,
+                                  val verificationParent: String? = null) {
     val stdout: String get() = "$directory/stdout.jsonl"
     val stderr: String get() = "$directory/stderr.log"
 }
@@ -53,7 +54,7 @@ internal fun prepareMcpBuild(arguments: List<String>, options: McpOptions, id: J
     NativeFiles.writeNew("$directory/request.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to id,
         "command" to (command + options.source?.arguments().orEmpty()).map { it.json() }.json()).canonical().encodeToByteArray())
     NativeFiles.syncDirectory(directory)
-    return McpBuildRequest(directory, selected, arguments.first(), verification, options.source) to command
+    return McpBuildRequest(directory, selected, arguments.first(), verification, options.source, "$root/.kvik/verification") to command
 }
 
 /** A zero exit code alone never establishes build success. Bind the response to the committed journal. */

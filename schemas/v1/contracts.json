@@ -11415,6 +11415,9 @@
         },
         "selection": {
           "$ref": "#/$defs/affectedCheckSelection"
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -11556,6 +11559,9 @@
               "type": "null"
             }
           ]
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [

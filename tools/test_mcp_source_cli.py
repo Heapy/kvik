@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import jsonschema
 
 from test_mcp_cli import Client
 
@@ -67,6 +68,25 @@ def main():
         assert reference.get('root', value.get('sourceRoot')) == 'nested', value
 
     common = dict(modules=['consumer'], targets=['jvm'])
+    schema = json.loads((ROOT/'schemas/v1/contracts.json').read_text())
+
+    def verify(c, arguments, revision, status, failed=False):
+        value = call(c, 'kvik_verify', common | arguments, failed=failed)
+        assert value['complete'], value
+        for key, definition in [('selection', 'changeVerificationPlan'), ('result', 'changeVerificationResult')]:
+            document = value[key]
+            jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/'+definition}).validate(document)
+            source(document, revision)
+        result = value['result']
+        assert result['status'] == status, value
+        assert Path(result['directory']).parent == root/'.kvik/verification', result
+        for run in result['executionRuns']:
+            assert Path(run['directory']).parent == Path(value['requestDirectory'])/'runs'
+            record = json.loads((Path(run['directory'])/'verification.json').read_text())
+            source(record, revision)
+            assert record['inputSnapshot'] == result['inputSnapshot']
+        return value
+
     try:
         kode_call('init')
         base = kode_call('projects', 'add', 'fixture', '--intent', 'Create MCP fixture')['revision']
@@ -77,7 +97,7 @@ def main():
         names = {t['name'] for t in c.request('tools/list')['tools']}
         assert {'kvik_inspect', 'kvik_config_validate', 'kvik_build', 'kvik_test', 'kvik_verification'} <= names
         assert {'kvik_dependencies', 'kvik_package_versions', 'kvik_package_dependencies'} <= names
-        assert not {'kvik_verify', 'kvik_config_plan'} & names
+        assert 'kvik_verify' in names and 'kvik_config_plan' not in names
         source(call(c, 'kvik_inspect'), revision)
         source(call(c, 'kvik_config_validate'), revision)
         built = call(c, 'kvik_build', common)
@@ -91,13 +111,63 @@ def main():
         source(call(c, 'kvik_verification', dict(run=tested['runDirectory']))['verification'], revision)
         assert not (root/'nested').exists(), 'MCP created a project checkout'
 
+        baseline = dict(since=[built['runDirectory'], tested['runDirectory']], checks=['build', 'test'])
+        unchanged = verify(c, baseline, revision, 'unchanged')['result']
+        assert unchanged['selectedChecks'] == [] and unchanged['executionRuns'] == []
+        assert set(unchanged['omittedChecks']) == {'consumer:jvm:build', 'consumer:jvm:test'}
+        unrelated = tx(revision, [dict(op='write', path='notes.txt', content='Not a build input\n')])
+        assert verify(c, baseline, unrelated, 'unchanged')['result']['inputSnapshot'] == unchanged['inputSnapshot']
+
+        test_path = 'consumer/test/Tests.kt'
+        test_edit = tx(unrelated, [dict(op='write', path='nested/'+test_path,
+            content=(fixture/test_path).read_text()+'\n// Source verification selection\n')])
+        planned = verify(c, baseline | dict(planOnly=True), test_edit, 'planned')['result']
+        assert planned['selectedChecks'] == ['consumer:jvm:test']
+        assert planned['omittedChecks'] == ['consumer:jvm:build'] and planned['executionRuns'] == []
+        affected = verify(c, baseline, test_edit, 'passed')['result']
+        assert affected['freshChecks'] == ['consumer:jvm:test']
+        record = json.loads((Path(affected['executionRuns'][0]['directory'])/'verification.json').read_text())
+        assert record['testCounts']['executed'] == 1
+
+        # The CLI and MCP use the same selection for an exact source revision.
+        cli_command = command(test_edit)
+        cli_command[1] = 'verify'
+        cli_command += ['--module', 'consumer', '--target', 'jvm', '--check', 'build', '--check', 'test', '--plan-only']
+        for run in baseline['since']: cli_command += ['--since', run]
+        cli = subprocess.run(cli_command, env=env, capture_output=True, timeout=180)
+        assert cli.returncode == 0, (cli.stdout, cli.stderr)
+        selection = next(json.loads(line) for line in cli.stdout.splitlines()
+                         if json.loads(line).get('kind') == 'verification-selection')
+        source(selection, test_edit)
+        assert selection['selection']['selectedChecks'] == planned['selectedChecks']
+
+        # Altered retained provenance must never authorize an omitted check.
+        metadata_path = Path(tested['runDirectory'])/'run.json'
+        original_metadata = metadata_path.read_bytes()
+        original_mode = metadata_path.stat().st_mode & 0o777
+        metadata = json.loads(original_metadata)
+        metadata['source']['provenance']['revision'] = '0'*40
+        metadata_path.chmod(0o600)
+        metadata_path.write_text(json.dumps(metadata))
+        try:
+            invalid = verify(c, baseline | dict(planOnly=True), test_edit, 'planned')
+            assert 'baseline-invalid' in invalid['selection']['selection']['fullReasons']
+            assert invalid['result']['omittedChecks'] == []
+        finally:
+            metadata_path.write_bytes(original_metadata)
+            metadata_path.chmod(original_mode)
+
         path = next((fixture/'consumer/main').rglob('*.kt')).relative_to(fixture)
-        changed = tx(revision, [dict(op='write', path='nested/'+str(path), content='package fixture\nfun broken(\n')])
+        changed = tx(test_edit, [dict(op='write', path='nested/'+str(path), content='package fixture\nfun broken(\n')])
         source(call(c, 'kvik_inspect'), changed)
         failed = call(c, 'kvik_build', common, failed=True)
         assert failed['complete'] and failed['verification']['status'] == 'failed', failed
         source(failed['verification'], changed)
         assert any(d.get('source', {}).get('provenance', {}).get('revision') == changed for d in failed['diagnostics']), failed
+        broken_plan = verify(c, baseline | dict(planOnly=True), changed, 'planned')['result']
+        assert set(broken_plan['selectedChecks']) == {'consumer:jvm:build', 'consumer:jvm:test'}
+        assert broken_plan['omittedChecks'] == []
+        verify(c, baseline, changed, 'failed', failed=True)
 
         # Exact cached revisions remain usable after the provider executable disappears.
         hidden = root/'kode-hidden'; kode.rename(hidden)
@@ -109,6 +179,10 @@ def main():
             source(repeated['verification'], revision)
             assert repeated['verification']['runId'] != tested['verification']['runId']
             assert repeated['verification']['tests']
+            assert verify(offline, baseline, revision, 'unchanged')['result']['executionRuns'] == []
+            fresh = verify(offline, dict(full=True), revision, 'passed')['result']
+            assert fresh['freshChecks'] == ['consumer:jvm:test']
+            assert fresh['executionRuns'][0]['directory'] != tested['runDirectory']
             missing = client('0'*40, ['--offline'])
             call(missing, 'kvik_inspect', failed=True)
             missing.stop(); offline.stop()
@@ -123,7 +197,7 @@ def main():
         unsafe.stop()
         for c in clients: c.stop()
         assert not list(scratch.iterdir())
-        print('PASS MCP source inspection/validation/build/test, moving refs, immutable results, offline reuse and output isolation', flush=True)
+        print('PASS MCP source queries/build/test/verify, affected checks, CLI parity, provenance, offline reuse and output isolation', flush=True)
     finally:
         for c in clients: c.stop()
         os.chdir(previous)
