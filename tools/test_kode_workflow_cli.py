@@ -227,10 +227,24 @@ def finish(args):
     assert workspace.resolve('integration/conflict') == ours
     assert 'src/Names.kt' in conflict['error']['details']['conflicts'], conflict
     resolved = workspace.transaction(ours, 'integration/conflict', {
-        'src/Names.kt': 'package fixture\nfun normalizeName(input: String): String = input.trim().lowercase().replace(Regex("\\\\s+"), " ")\n',
+        'src/Names.kt': '''package fixture
+fun normalizeName(input: String): String = buildString {
+    var pendingSpace = false
+    for (character in input.lowercase()) {
+        if (character.isWhitespace()) {
+            if (isNotEmpty()) pendingSpace = true
+        } else {
+            if (pendingSpace) append(' ')
+            append(character)
+            pendingSpace = false
+        }
+    }
+}
+''',
         'test/NameTests.kt': test_source('NameTests', '''
     @Test fun simpleName() { assertEquals("ada", normalizeName("Ada")) }
     @Test fun combinedNormalization() { assertEquals("ada lovelace", normalizeName("  ADA \\t  Lovelace  ")) }
+    @Test fun unicodeWhitespace() { assertEquals("ada lovelace", normalizeName("\\u2003ADA\\u2003\\u00a0Lovelace\\u2003")) }
     @Test fun blankName() { assertEquals("", normalizeName("  ")) }'''),
     }, 'Resolve name normalization conflict by preserving lowercase and whitespace folding')
     workspace.test(resolved)
@@ -260,6 +274,7 @@ def finish(args):
         'test/IntegrationTests.kt': test_source('IntegrationTests', '''
     @Test fun combinedBehavior() {
         assertEquals("ada lovelace", normalizeName("  ADA \\t Lovelace  "))
+        assertEquals("ada lovelace", normalizeName("\\u2003ADA\\u2003\\u00a0Lovelace\\u2003"))
         assertEquals("", normalizeName("  "))
         assertEquals(0, boundedCount(Int.MIN_VALUE))
         assertEquals(Int.MAX_VALUE, boundedCount(Int.MAX_VALUE))
