@@ -151,10 +151,12 @@ class NativeCompilerExecutor(
         return object : RunningAction {
             private var result: ActionResult? = null
             private var discovered = emptyList<String>()
+            private val usage = mutableListOf<ProcessUsage>()
             private var cancellationRequested = false
             override fun poll(): ActionResult? {
                 result?.let { return it }
                 val completed = process.poll() ?: return null
+                completed.usage?.let { usage += it }
                 // Cancellation belongs to the whole action. The process may already have exited
                 // before cancel(), while discovery completion has not yet been consumed here.
                 val exit = if (cancellationRequested) ProcessResult(130, cancelled = true) else completed
@@ -219,7 +221,7 @@ class NativeCompilerExecutor(
                 else if (status == ActionStatus.FAILED && diagnostics.none { it.code == "KVIK_NATIVE_ERROR" }) listOf(Diagnostic(
                     if (report != null) "KVIK_NATIVE_TEST_RESULT" else "KVIK_NATIVE_PROCESS_FAILED", if (report != null) DiagnosticCategory.TEST else DiagnosticCategory.INFRASTRUCTURE,
                     diagnostic ?: "Native process exited ${exit.exitCode}", actionId, module, action.target)) else emptyList()
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostic).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostic, processUsage = usage.toList()).also {
                     result = it; observations[actionId] = NativeActionObservation(it, finalDiagnostics, report, stdout, stderr, directory)
                 }
             }

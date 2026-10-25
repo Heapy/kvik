@@ -107,6 +107,27 @@ fun executorChecks(root: String) {
     } finally { executor.close() }
     println("PASS executor scheduler-confirmed publication, cancelled terminal discard, local-first reuse and caller-thread callbacks")
 
+    val cancelledUsage = listOf(ProcessUsage(11, 22, 333))
+    val cancelledDelegate = Delegate(content).apply {
+        complete = { id, a -> ActionResult(id, a.key(Sha256), ActionStatus.EXECUTED, outputs(content), 0,
+            processUsage = cancelledUsage) }
+    }
+    val cancelledRemote = Remote()
+    val cancelledCache = RemoteCachingActionExecutor(cancelledDelegate, local, content, cancelledRemote, { true })
+    try {
+        val cache = cancelledCache
+        val action = spec("cancelled-process-usage")
+        cache.start("run", "cancelled-process", action).use { handle ->
+            await { check(handle.poll() == null); cancelledDelegate.starts == 1 }
+            handle.cancel()
+            val completed = checkNotNull(handle.poll())
+            check(completed.status == ActionStatus.CANCELLED && completed.processUsage == cancelledUsage)
+            cache.observeCompleted(mapOf(completed.actionId to completed))
+        }
+        cache.drain()
+        check(cancelledRemote.uploads.load() == 0 && local.lookup(action.key(Sha256)) == null)
+    } finally { cancelledCache.close() }
+
     for (status in listOf(ActionStatus.FAILED, ActionStatus.CANCELLED)) {
         val fake = Remote(); val failing = Delegate(content)
         failing.complete = { id, a -> ActionResult(id, a.key(Sha256), status, exitCode = if (status == ActionStatus.CANCELLED) 130 else 1) }

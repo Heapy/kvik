@@ -10,6 +10,8 @@ fun runStatistics(record: VerificationRecord, events: List<RunEvent>): JsonValue
     val transfers = events.filter { it.type == "action-cache-transfer" }.map { ActionCacheTransfer.fromJson(it.payload) }
     val measuredTransfers = transfers.mapNotNull { it.stats }
     val results = record.actions.associateBy { it.actionId }
+    val measuredActions = record.actions.filter { it.actionId in started && it.processUsage.isNotEmpty() }
+    val processUsage = measuredActions.flatMap { it.processUsage }
     fun counts(actions: List<ActionResult>) = JsonValue.Object(ActionStatus.entries.associate { status ->
         status.name.lowercase() to actions.count { it.status == status }.json()
     })
@@ -39,12 +41,17 @@ fun runStatistics(record: VerificationRecord, events: List<RunEvent>): JsonValue
     val observedWindow = timings.maxOfOrNull { it.startedAfterNanos + it.durationNanos }
     fun timingValue(value: Long) = if (timings.isEmpty()) JsonValue.Null else value.json()
     fun transferValue(values: List<Long>) = if (measuredTransfers.isEmpty()) JsonValue.Null else values.boundedSum().json()
+    fun processValue(values: List<Long>) = if (processUsage.isEmpty()) JsonValue.Null else values.boundedSum().json()
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to record.runId.json(),
         "status" to record.status.name.lowercase().json(), "currentFreshness" to JsonValue.Null,
         "inputCapture" to (capture?.toJson() ?: JsonValue.Null),
         "requestedChecks" to record.requestedChecks.sorted().map { it.json() }.json(),
         "completedChecks" to record.completedChecks.sorted().map { it.json() }.json(),
         "testCounts" to record.testCounts.toJson(),
+        "processUsage" to obj("measuredActions" to measuredActions.size.json(), "measuredProcesses" to processUsage.size.json(),
+            "userCpuNanos" to processValue(processUsage.map { it.userCpuNanos }),
+            "systemCpuNanos" to processValue(processUsage.map { it.systemCpuNanos }),
+            "largestChildPeakRssBytes" to (processUsage.maxOfOrNull { it.peakRssBytes }?.json() ?: JsonValue.Null)),
         "actions" to obj("total" to record.actions.size.json(),
             "startedOutcomes" to counts(record.actions.filter { it.actionId in started }),
             "unstartedOutcomes" to counts(record.actions.filter { it.actionId !in started })),

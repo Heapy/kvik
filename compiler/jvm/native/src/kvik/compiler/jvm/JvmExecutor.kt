@@ -253,7 +253,7 @@ class JvmActionExecutor(
                                 failure.message ?: "Cannot retain test report", actionId, module, "jvm")
                         }
                     }
-                    val finished = ActionResult(actionId, key, status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message)
+                    val finished = ActionResult(actionId, key, status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit.usage))
                     recorded[actionId] = JvmActionObservation(finished, diagnostics, tests, directory, exit)
                     result = finished
                     return finished

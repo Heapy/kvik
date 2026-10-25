@@ -21,7 +21,9 @@ private class ManualExecutor : ActionExecutor {
     inner class Handle(val id: String, val action: ActionSpec) : RunningAction {
         var status: ActionStatus? = null
         var closed = false
-        override fun poll() = status?.let { ActionResult(id, action.key(Sha256), it, exitCode = if (it == ActionStatus.EXECUTED) 0 else 1) }
+        var usage = emptyList<ProcessUsage>()
+        override fun poll() = status?.let { ActionResult(id, action.key(Sha256), it, exitCode = if (it == ActionStatus.EXECUTED) 0 else 1,
+            processUsage = usage) }
         override fun cancel() { status = ActionStatus.CANCELLED }
         override fun close() { closed = true }
     }
@@ -93,10 +95,14 @@ class SchedulerTest {
             ActionNode("c", setOf("b")) { predecessors -> assertEquals(setOf("b"), predecessors.keys); spec("child") })
         val run = SchedulerRun("run", nodes, executor, ResourceBudget(4, 4), EventJournal { events += it })
         run.tick(); assertEquals(listOf("a"), executor.started)
+        val usage = listOf(ProcessUsage(100, 200, 300))
+        executor.running.getValue("a").usage = usage
         executor.finish("a"); run.tick(); assertEquals(listOf("a", "c"), executor.started)
         executor.finish("c"); assertTrue(run.tick())
         assertEquals(setOf("a", "b", "c"), run.results.keys)
         assertTrue(run.results.values.all { it.successful })
+        assertEquals(usage, run.results.getValue("a").processUsage)
+        assertTrue(run.results.getValue("b").processUsage.isEmpty())
         assertEquals((1L..events.size.toLong()).toList(), events.map { it.sequence })
         assertEquals(listOf("a", "c"), events.filter { it.type == "action-started" }.map { it.payload.objectValue().getValue("actionId").stringValue() })
         assertTrue(events.all { it.type in setOf("action-started", "action-timing", "action-finished") })

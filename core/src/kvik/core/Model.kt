@@ -105,12 +105,21 @@ data class ActionResult(
     val outputs: TreeManifest = TreeManifest(emptyList()),
     val exitCode: Int? = null,
     val diagnostic: String? = null,
+    val processUsage: List<ProcessUsage> = emptyList(),
 ) {
     val successful: Boolean get() = status in setOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)
-    init { require(!successful || (exitCode == 0 && key != null)) { "Successful action requires an identity and exit code zero" } }
+    init {
+        require(!successful || (exitCode == 0 && key != null)) { "Successful action requires an identity and exit code zero" }
+        require(processUsage.size <= 10000)
+        require(processUsage.isEmpty() || status !in setOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT, ActionStatus.BLOCKED)) {
+            "Cached or blocked results cannot report process execution"
+        }
+    }
     fun toJson(): JsonValue = obj("actionId" to actionId.json(), "key" to (key?.toJson() ?: JsonValue.Null),
         "status" to status.name.lowercase().json(), "outputs" to outputs.toJson(),
-        "exitCode" to (exitCode?.json() ?: JsonValue.Null), "diagnostic" to (diagnostic?.json() ?: JsonValue.Null))
+        "exitCode" to (exitCode?.json() ?: JsonValue.Null), "diagnostic" to (diagnostic?.json() ?: JsonValue.Null)).let {
+            if (processUsage.isEmpty()) it else JsonValue.Object(it.values + ("processUsage" to processUsage.map { usage -> usage.toJson() }.json()))
+        }
 }
 
 /** Implementations resolve only declared predecessor outputs, never mutable build directories. */
@@ -168,6 +177,7 @@ data class ProcessResult(
     val timedOut: Boolean = false,
     val cancelled: Boolean = false,
     val setupFailure: ProcessSetupFailure? = null,
+    val usage: ProcessUsage? = null,
 ) {
     init {
         if (setupFailure != null) {

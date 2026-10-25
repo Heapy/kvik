@@ -53,12 +53,13 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
 }
 
 private fun actionResultFromJson(value: JsonValue): ActionResult {
-    val fields = value.fields(setOf("actionId", "key", "status", "outputs", "exitCode", "diagnostic"))
+    val fields = value.fields(setOf("actionId", "key", "status", "outputs", "exitCode", "diagnostic"), setOf("processUsage"))
     val id = fields.getValue("actionId").stringValue()
     require(id.isNotBlank()) { "Action result requires an identity" }
     return ActionResult(id, fields.getValue("key").let { if (it == JsonValue.Null) null else Digest.fromJson(it) },
         fields.getValue("status").enumValue(), TreeManifest.fromJson(fields.getValue("outputs")),
-        fields.getValue("exitCode").let { if (it == JsonValue.Null) null else it.intValue() }, fields.getValue("diagnostic").nullableString())
+        fields.getValue("exitCode").let { if (it == JsonValue.Null) null else it.intValue() }, fields.getValue("diagnostic").nullableString(),
+        fields["processUsage"]?.arrayValue()?.also { require(it.isNotEmpty()) }?.map(ProcessUsage::fromJson) ?: emptyList())
 }
 
 private fun testCountsFromJson(value: JsonValue): TestCounts {

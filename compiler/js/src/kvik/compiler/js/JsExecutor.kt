@@ -171,7 +171,7 @@ class JsCompilerExecutor(
                     if (status == ActionStatus.CANCELLED) "KVIK_JS_CANCELLED" else if (selection != null) "KVIK_JS_TEST_RESULT" else "KVIK_JS_PROCESS_FAILED",
                     if (status == ActionStatus.CANCELLED) DiagnosticCategory.CANCELLATION else if (selection != null) DiagnosticCategory.TEST else DiagnosticCategory.INFRASTRUCTURE,
                     failure!!, actionId, compile?.module ?: selection!!.module, action.target)
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, failure).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, failure, processUsage = listOfNotNull(exit.usage)).also {
                     result = it; observations[actionId] = JsActionObservation(it, diagnostics, report, directory)
                 }
             }

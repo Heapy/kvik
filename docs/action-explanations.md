@@ -77,7 +77,22 @@ Both timing and transfer sections label measurement coverage as complete,
 partial or unavailable. Partial values cover only recorded measurements;
 unavailable totals are null. An old journal with no transfer records does not
 establish zero network traffic. This query does not check current freshness,
-infer avoided tests, or estimate memory consumption.
+or infer avoided tests.
+
+`processUsage` reports OS resource accounting for reaped child processes: measured
+action/process counts, summed user/system CPU nanoseconds, and the largest child
+peak RSS in bytes. Per-child measurements are retained on each action result and
+visible through `explain`. Failed, timed-out and cancelled processes contribute
+when their terminal measurement is available. Cache hits and shared action results
+do not duplicate measurements. Old or unmeasured runs return null CPU/RSS totals.
+Counts describe available measurements, not all processes in a run.
+
+The guardian collects `wait4` accounting after cleanup. This includes only child
+and descendant usage accounted by the OS; unawaited descendants can be absent.
+RSS is a per-child high-water mark, not the simultaneous memory peak of the whole
+build. Kvik, guardians, acquisition workers and reusable foreground workers are
+outside these action measurements. CPU time is not elapsed time or a utilization
+percentage, and scheduler memory reservations remain separate.
 
 `inputCapture` reports the initial successful input capture before action
 scheduling: its elapsed nanoseconds and SHA-256 operation count, bytes and elapsed

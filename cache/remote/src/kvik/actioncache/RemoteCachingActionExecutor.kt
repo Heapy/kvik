@@ -86,7 +86,7 @@ class RemoteCachingActionExecutor(
             override fun poll(): ActionResult? {
                 check(!done)
                 result?.let { return it.copy(outputs = TreeManifest(it.outputs.files.toList())) }
-                if (cancelled) {
+                if (cancelled && running == null) {
                     decide("remote-error", "Cache lookup or execution cancelled")
                     return ActionResult(actionId, key, ActionStatus.CANCELLED, exitCode = 130).also { result = it }
                 }

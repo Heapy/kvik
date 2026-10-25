@@ -51,11 +51,12 @@ def main():
         [*flags, platform/'guardian.c', '-o', output/'guardian'],
         [*flags, fixture/'fault_guardian.c', '-o', output/'fault-guardian'],
         [*flags, fixture/'frame_guardian.c', '-o', output/'frame-guardian'],
+        [*flags, fixture/'usage_child.c', '-o', output/'usage-child'],
         [*flags, '-c', platform/'process.c', '-o', output/'process.o'],
         [ar, 'rcs', output/'libkvik-process.a', output/'process.o'],
         [*flags, fixture/'probe.c', output/'libkvik-process.a', '-o', output/'probe'],
     ]
-    binaries = ['guardian', 'fault-guardian', 'frame-guardian', 'probe']
+    binaries = ['guardian', 'fault-guardian', 'frame-guardian', 'probe', 'usage-child']
     if not args.c_only:
         commands += [
             [native/'bin/cinterop', '-def', platform/'process.def', '-compiler-option', '-I'+str(platform),
@@ -89,14 +90,14 @@ def main():
     shutil.copy2(receipt, case/'build.json'); shutil.copy2(log_path, case/'compile.log')
     summary = dict(passed=False, build=digest(case/'build.json'), cases=[])
     write(case/'summary.json', summary)
-    ordinary = [('normal',0,0,0),('exit125',125,0,0),('exit127',127,0,0),('pause',0,0,0),('signal',143,0,0),
+    ordinary = [('usage',0,0,0),('usage-cancel',130,0,0),('usage-timeout',124,0,0),('normal',0,0,0),('exit125',125,0,0),('exit127',127,0,0),('pause',0,0,0),('signal',143,0,0),
                 ('cwd',125,17,errno.ENOENT),('exec',127,24,errno.ENOENT),
                 ('stdout',125,19,errno.EEXIST),('stderr',125,20,errno.EEXIST)]
     injected = [('fork',125,13,errno.EAGAIN),('parent-group',125,14,errno.EPERM),('child-group',125,15,errno.EPERM),
                 ('cancel',130,17,errno.ENOENT),('timeout',124,17,errno.ENOENT)]
     malformed_status = ['partial-status','unknown-status','extra-status']
     malformed_frames = ['unknown-frame','zero-error','negative-error','orphan-error','success-with-error','exec-wrong-code',
-                        'cancel-wrong-code','both-flags','old-frame','partial-frame','extra-frame','empty-frame']
+                        'cancel-wrong-code','both-flags','negative-usage','orphan-usage','setup-usage','unknown-usage','old-frame','partial-frame','extra-frame','empty-frame']
     for helper, cases in [('guardian',ordinary),('fault-guardian',injected),
                           ('fault-guardian',[(n,None,None,None) for n in malformed_status]),
                           ('frame-guardian',[(n,None,None,None) for n in malformed_frames])]:
@@ -111,10 +112,16 @@ def main():
             assert result.returncode == 0,(mode,result.returncode,result.stderr)
             value = json.loads(result.stdout)
             if code is None:
-                assert value['poll']==-1 and value['close']==-1 and value['setup']==-1,(mode,value)
+                assert value['poll']==-1 and value['close']==-1 and value['setup']==-1 and value['usage']==-1,(mode,value)
             else:
-                assert value == dict(poll=1,exitCode=code,timedOut=int(mode=='timeout'),cancelled=int(mode=='cancel'),
+                outcome = {k:v for k,v in value.items() if k not in ('usage','userCpuNanos','systemCpuNanos','peakRssBytes')}
+                assert outcome == dict(poll=1,exitCode=code,timedOut=int(mode in ('timeout','usage-timeout')),cancelled=int(mode in ('cancel','usage-cancel')),
                     setup=int(stage!=0),stage=stage,errno=error,close=0),(mode,value)
+                assert value['usage'] == int(stage == 0), (mode,value)
+                assert all(value[k] >= 0 for k in ('userCpuNanos','systemCpuNanos','peakRssBytes')), (mode,value)
+                if mode.startswith('usage'):
+                    assert 32*1024*1024 <= value['peakRssBytes'] < 256*1024*1024, value
+                    assert value['userCpuNanos'] + value['systemCpuNanos'] > 0, value
                 if mode in ('stdout','stderr'): assert (directory/mode).read_bytes()==b'preserve'
             summary['cases'].append(dict(mode=mode,result=value,seconds=time.monotonic()-started))
             write(case/'summary.json',summary)

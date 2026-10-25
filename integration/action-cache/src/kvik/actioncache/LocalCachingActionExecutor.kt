@@ -98,8 +98,8 @@ class LocalCachingActionExecutor(
                 else {
                     val outputs = try { checkedOutputs(observed.outputs) } catch (failure: Exception) {
                         val invalid = failed("local-cache-output-invalid", failure.message ?: "Executor outputs unavailable")
-                        result = invalid
-                        return invalid.snapshot()
+                        result = invalid.copy(processUsage = observed.processUsage.toList())
+                        return result!!.snapshot()
                     }
                     var successful = observed.copy(outputs = outputs)
                     if (observed.status == ActionStatus.EXECUTED) {
@@ -117,8 +117,8 @@ class LocalCachingActionExecutor(
                     }
                     successful
                 }
-                result = completed
-                return completed.snapshot()
+                result = completed.copy(processUsage = observed.processUsage.toList())
+                return result!!.snapshot()
             }
             override fun cancel() {
                 if (closed || result != null || cancelled) return
@@ -134,7 +134,7 @@ class LocalCachingActionExecutor(
     }
 }
 
-private fun ActionResult.snapshot(): ActionResult = copy(outputs = TreeManifest(outputs.files.toList()))
+private fun ActionResult.snapshot(): ActionResult = copy(outputs = TreeManifest(outputs.files.toList()), processUsage = processUsage.toList())
 
 internal fun snapshotCacheAction(action: ActionSpec): ActionSpec {
     val snapshot = action.copy(platform = action.platform.toMap(), toolchains = action.toolchains.toMap(),

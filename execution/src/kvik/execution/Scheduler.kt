@@ -46,7 +46,7 @@ class SchedulerRun(
     }
 
     private fun complete(result: ActionResult, timing: ActionTiming? = null) {
-        val snapshot = result.copy(outputs = TreeManifest(result.outputs.files.toList()))
+        val snapshot = result.copy(outputs = TreeManifest(result.outputs.files.toList()), processUsage = result.processUsage.toList())
         completed[result.actionId] = snapshot
         if (timing != null) emit("action-timing", timing.toJson())
         emit("action-finished", snapshot.toJson() as JsonValue.Object)
@@ -71,7 +71,7 @@ class SchedulerRun(
             }
             for ((id, owner) in followers.entries.sortedBy { it.key }) {
                 val result = completed[owner] ?: continue
-                complete(result.copy(actionId = id, diagnostic = "Shared within run with $owner${result.diagnostic?.let { ": $it" } ?: ""}"))
+                complete(result.copy(actionId = id, processUsage = emptyList(), diagnostic = "Shared within run with $owner${result.diagnostic?.let { ": $it" } ?: ""}"))
                 followers.remove(id)
             }
             for ((id, node) in nodes) {
@@ -98,7 +98,7 @@ class SchedulerRun(
                 if (action.spec.cachePolicy != CachePolicy.NEVER) {
                     owners[action.key]?.let { owner ->
                         val result = completed[owner]
-                        if (result != null) complete(result.copy(actionId = id, diagnostic = "Shared within run with $owner"))
+                        if (result != null) complete(result.copy(actionId = id, processUsage = emptyList(), diagnostic = "Shared within run with $owner"))
                         else followers[id] = owner
                     }
                     if (id in completed || id in followers) continue

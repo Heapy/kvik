@@ -78,7 +78,7 @@ class JvmScriptRealTest {
     @Test fun realJavaUsesEofDeclaredEnvironmentWorkingDirectoryAndSeparateStreams() {
         val (cwd, observed) = scenario("ordinary", listOf("ordinary", "@not-expanded", "two words", "", "snowman ☃", "astral 🚀"))
         assertEquals(ActionStatus.EXECUTED, observed.result.status)
-        assertEquals(ProcessResult(0), observed.processResult)
+        assertEquals(ProcessResult(0), observed.processResult?.copy(usage = null)); assertTrue(checkNotNull(observed.processResult?.usage).peakRssBytes > 0)
         assertEquals("effect\n", NativeFiles.read("$cwd/effects.txt", 64).decodeToString())
         assertEquals("@not-expanded|two words||snowman ☃|astral 🚀\nuses pinned stdlib\n", NativeFiles.read(observed.stdoutFile!!, 1024).decodeToString())
         assertEquals("separate-stderr ☃ 🚀\n", NativeFiles.read(observed.stderrFile!!, 1024).decodeToString())
@@ -94,13 +94,13 @@ class JvmScriptRealTest {
         for (code in listOf(17, 125, 130, 255)) {
             val (_, observed) = scenario("exit-$code", listOf("exit", "$code"))
             assertEquals(ActionStatus.FAILED, observed.result.status)
-            assertEquals(ProcessResult(code), observed.processResult)
+            assertEquals(ProcessResult(code), observed.processResult?.copy(usage = null)); assertTrue(checkNotNull(observed.processResult?.usage).peakRssBytes > 0)
             assertEquals(JvmScriptPhase.EXECUTION, observed.phase)
         }
     }
     @Test fun ordinaryLeaderExitDrainsResistantDescendantsBeforeTerminal() {
         val (_, observed) = scenario("leader-exit", listOf("child"))
-        assertEquals(ProcessResult(0), observed.processResult); assertEquals(ActionStatus.EXECUTED, observed.result.status)
+        assertEquals(ProcessResult(0), observed.processResult?.copy(usage = null)); assertTrue(checkNotNull(observed.processResult?.usage).peakRssBytes > 0); assertEquals(ActionStatus.EXECUTED, observed.result.status)
     }
     @Test fun actualCancellationDrainsResistantDescendantsAndRetainsHostResult() {
         val (_, observed) = scenario("cancel", listOf("wait"), cancel = true)

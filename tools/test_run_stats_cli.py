@@ -52,6 +52,13 @@ def main():
             measured = [t['stats'] for t in transfers if t['stats'] is not None]
             assert stats['runId'] == record['runId'] and stats['status'] == record['status'] and stats['currentFreshness'] is None
             assert stats['testCounts'] == record['testCounts'] and stats['actions']['total'] == len(record['actions'])
+            measured_actions = [a for a in record['actions'] if a['actionId'] in started and a.get('processUsage')]
+            usage = [p for a in measured_actions for p in a['processUsage']]
+            assert stats['processUsage']['measuredActions'] == len(measured_actions)
+            assert stats['processUsage']['measuredProcesses'] == len(usage)
+            for field in ('userCpuNanos', 'systemCpuNanos'):
+                assert stats['processUsage'][field] == (sum(p[field] for p in usage) if usage else None)
+            assert stats['processUsage']['largestChildPeakRssBytes'] == max((p['peakRssBytes'] for p in usage), default=None)
             for name, selected in [('startedOutcomes', True), ('unstartedOutcomes', False)]:
                 for status, count in stats['actions'][name].items():
                     assert count == sum(a['status'] == status and (a['actionId'] in started) == selected for a in record['actions'])

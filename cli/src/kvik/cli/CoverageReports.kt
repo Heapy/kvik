@@ -195,7 +195,7 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
                                     }
                                 }
                                 return ActionResult(actionId, action.key(Sha256), if (exit.cancelled) ActionStatus.CANCELLED else ActionStatus.FAILED,
-                                    TreeManifest(emptyList()), exit.exitCode, "Coverage worker failed: $detail")
+                                    TreeManifest(emptyList()), exit.exitCode, "Coverage worker failed: $detail", processUsage = listOfNotNull(exit.usage))
                             }
                             val bytes = NativeFiles.read("$workspace/worker-result.json", 64 * 1024 * 1024)
                             val analyzed = json(bytes).fields(setOf("schemaVersion", "requestId", "status", "sources", "xml", "diagnostics"))
@@ -217,7 +217,7 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
                             }
                             worker = analyzed
                             artifacts["worker-result.json"] = bytes
-                            return success(names)
+                            return success(names).copy(processUsage = listOfNotNull(exit.usage))
                         }
                     }
                 }

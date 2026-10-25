@@ -47,7 +47,7 @@ class KspNativeExecutor(
             override fun poll(): ActionResult? {
                 result?.let { return it }
                 val completed = process.poll() ?: return null
-                val exit = if (cancelled) ProcessResult(130, cancelled = true) else completed
+                val exit = if (cancelled) completed.copy(exitCode = 130, timedOut = false, cancelled = true) else completed
                 var problem: String? = null
                 fun log(path: String): String = try { readNativeFile(path).decodeToString(throwOnInvalidSequence = true) }
                     catch (failure: Exception) { problem = "KSP log unavailable: ${failure.message}"; "" }
@@ -70,7 +70,7 @@ class KspNativeExecutor(
                 if (status == ActionStatus.FAILED && problem == null) problem = if (exit.timedOut) "KSP timed out" else "KSP exited ${exit.exitCode}"
                 val diagnostics = if (status == ActionStatus.FAILED) listOf(Diagnostic("KVIK_KSP_NATIVE_FAILED", DiagnosticCategory.COMPILATION,
                     problem ?: "KSP failed", actionId, compilation.module, action.target)) else emptyList()
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, problem).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, problem, processUsage = listOfNotNull(exit.usage)).also {
                     result = it; observations[actionId] = KspActionObservation(it, diagnostics, stdout, stderr, directory)
                 }
             }

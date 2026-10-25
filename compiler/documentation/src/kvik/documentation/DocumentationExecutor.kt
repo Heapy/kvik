@@ -142,7 +142,7 @@ class DocumentationActionExecutor(private val runId: String, private val runDire
                     diagnostics = listOf(Diagnostic("KVIK_DOCUMENTATION_FAILED", DiagnosticCategory.COMPILATION, failure.message ?: "Documentation generation failed"))
                 }
                 diagnostics = diagnostics.map { it.copy(actionId = actionId, module = spec.module, target = "common") }
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit.usage)).also {
                     result = it; recorded[actionId] = DocumentationActionObservation(it, diagnostics, directory, exit)
                 }
             }

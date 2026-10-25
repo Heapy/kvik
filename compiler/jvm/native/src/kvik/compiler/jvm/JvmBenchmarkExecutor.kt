@@ -118,7 +118,7 @@ class JvmBenchmarkExecutor(
                         diagnostics = diagnostics + Diagnostic("KVIK_BENCHMARK_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Invalid benchmark result")
                     }
                     diagnostics = diagnostics.map { it.copy(actionId = actionId, module = module, target = "jvm") }
-                    return ActionResult(actionId, key, status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message).also {
+                    return ActionResult(actionId, key, status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit.usage)).also {
                         result = it; recorded[actionId] = JvmBenchmarkObservation(it, diagnostics, report, directory, exit)
                     }
                 }

@@ -30,8 +30,26 @@ class ExplanationSchemaTest(unittest.TestCase):
     def test_unknown_fields_and_reason_are_rejected(self):
         changed = self.fixture(); changed['inferredSourceChange'] = True
         self.assertTrue(list(self.validator.iter_errors(changed)))
+
         changed = self.fixture(); changed['reason']['code'] = 'sources-changed'
         self.assertTrue(list(self.validator.iter_errors(changed)))
+
+    def test_process_measurements_are_optional_strict_and_excluded_from_cache_hits(self):
+        validator = Draft202012Validator({**self.contracts, '$ref': '#/$defs/actionResult'})
+        value = self.fixture()['result']
+        value.update(status='failed', exitCode=1)
+        validator.validate(value)
+        usage = dict(userCpuNanos=1, systemCpuNanos=2, peakRssBytes=3)
+        value['processUsage'] = [usage]
+        validator.validate(value)
+        for field in usage:
+            for invalid in (-1, 1.5, 2**63, None):
+                self.assertFalse(validator.is_valid({**value, 'processUsage': [{**usage, field: invalid}]}))
+        for invalid in ([], None, [{**usage, 'extra': 1}]):
+            self.assertFalse(validator.is_valid({**value, 'processUsage': invalid}))
+        for status in ('local_hit', 'remote_hit', 'blocked'):
+            self.assertFalse(validator.is_valid({**value, 'status': status, 'exitCode': 0,
+                'key': dict(hash='0' * 64, sizeBytes=0)}))
 
     def test_cache_decision_event_has_strict_shape(self):
         validator = Draft202012Validator({**self.contracts, '$ref': '#/$defs/event'})

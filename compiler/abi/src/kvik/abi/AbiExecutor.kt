@@ -107,7 +107,7 @@ class AbiActionExecutor(private val runId: String, private val runDirectory: Str
                     diagnostics = diagnostics + Diagnostic("KVIK_ABI_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Invalid ABI worker result")
                 }
                 diagnostics = diagnostics.map { it.copy(actionId = actionId, module = extraction.module, target = extraction.target) }
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit.usage)).also {
                     finished = it; recorded[actionId] = AbiActionObservation(it, diagnostics, directory, exit)
                 }
             }

@@ -47,7 +47,7 @@ class KotestNativeExecutor(
             override fun poll(): ActionResult? {
                 result?.let { return it }
                 val completed = process.poll() ?: return null
-                val exit = if (cancelled) ProcessResult(130, cancelled = true) else completed
+                val exit = if (cancelled) completed.copy(exitCode = 130, timedOut = false, cancelled = true) else completed
                 var readFailure: String? = null
                 fun text(path: String): String = try { readNativeFile(path).decodeToString(throwOnInvalidSequence = true) }
                     catch (failure: Exception) { readFailure = "Kotest result/log unavailable: ${failure.message}"; "" }
@@ -70,7 +70,7 @@ class KotestNativeExecutor(
                 val outputs = if (status == ActionStatus.EXECUTED) trees.capture("$directory/output") else TreeManifest(emptyList())
                 val diagnostics = if (status == ActionStatus.FAILED) listOf(Diagnostic("KVIK_KOTEST_NATIVE_RESULT", DiagnosticCategory.TEST,
                     report.diagnostic ?: "Kotest invocation did not pass", actionId, module, action.target)) else emptyList()
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, report.diagnostic).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, report.diagnostic, processUsage = listOfNotNull(exit.usage)).also {
                     result = it
                     observations[actionId] = NativeActionObservation(it, diagnostics, report, stdout, stderr, directory)
                 }

@@ -21,6 +21,8 @@ fun main(args: Array<String>) {
             val finished = checkNotNull(result)
             child.close()
             check(!finished.cancelled && !finished.timedOut)
+            if (finished.setupFailure != null) check(finished.usage == null)
+            else check(checkNotNull(finished.usage).peakRssBytes > 0)
             when (mode) {
                 "exit125" -> check(finished.exitCode == 125 && finished.setupFailure == null)
                 "exit127" -> check(finished.exitCode == 127 && finished.setupFailure == null)
@@ -28,6 +30,7 @@ fun main(args: Array<String>) {
                 "exec" -> check(finished.exitCode == 127 && finished.setupFailure == ProcessSetupFailure(ProcessSetupStage.EXEC, 2))
             }
             observations += obj("mode" to mode.json(), "exitCode" to finished.exitCode.json(),
+                "usage" to (finished.usage?.toJson() ?: JsonValue.Null),
                 "setupFailure" to (finished.setupFailure?.toJson() ?: JsonValue.Null))
         } finally { host.close() }
     }

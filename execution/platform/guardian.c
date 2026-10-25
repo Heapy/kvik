@@ -4,7 +4,7 @@
 #define KVIK_TERMINAL_INTERNAL
 #include "process.h"
 /* Per-process foreground ownership guardian. No sockets, persistent state, or reuse.
- * Protocol: descriptor 3 reaches EOF on owner loss/cancel; descriptor 4 reports three ints.
+ * Protocol: descriptor 3 reaches EOF on owner loss/cancel; descriptor 4 reports a versioned result frame.
  * Only this small C executable forks. The Kotlin runtime never executes after fork. */
 #include <errno.h>
 #include <fcntl.h>
@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
@@ -40,9 +41,29 @@ static int owner_gone(void) {
     return interrupted != 0;
 }
 typedef struct { int stage, error; } SetupFailure;
+static int64_t cpu_nanos(struct timeval value) {
+    if (value.tv_sec < 0 || value.tv_usec < 0 || value.tv_usec >= 1000000 ||
+        value.tv_sec > (INT64_MAX - value.tv_usec * 1000LL) / 1000000000LL) return -1;
+    return value.tv_sec * 1000000000LL + value.tv_usec * 1000LL;
+}
+static void report_usage(int code, int timeout, int cancelled, SetupFailure setup, const struct rusage *usage) {
+    int64_t result[KVIK_PROCESS_RESULT_FIELDS] = {KVIK_PROCESS_RESULT_MAGIC, code, timeout, cancelled, setup.stage, setup.error};
+    if (usage && !setup.stage) {
+        int64_t user = cpu_nanos(usage->ru_utime), system = cpu_nanos(usage->ru_stime);
+        int64_t rss = usage->ru_maxrss;
+#ifndef __APPLE__
+        // Darwin reports bytes; Linux reports KiB.
+        rss = rss < 0 || rss > INT64_MAX / 1024 ? -1 : rss * 1024;
+#endif
+        if (user >= 0 && system >= 0 && rss >= 0) {
+            result[6] = 1; result[7] = user; result[8] = system; result[9] = rss;
+        }
+    }
+    ssize_t written;
+    do { written = write(4, result, sizeof(result)); } while (written < 0 && errno == EINTR);
+}
 static void report_setup(int code, int timeout, int cancelled, SetupFailure setup) {
-    int result[KVIK_PROCESS_RESULT_INTS] = {KVIK_PROCESS_RESULT_MAGIC, code, timeout, cancelled, setup.stage, setup.error};
-    (void)write(4, result, sizeof(result));
+    report_usage(code, timeout, cancelled, setup, NULL);
 }
 static void report(int code, int timeout, int cancelled) { report_setup(code, timeout, cancelled, (SetupFailure){0, 0}); }
 static int setup_error(SetupFailure *failure, int stage) {
@@ -311,7 +332,8 @@ static int process_main(int argc, char **argv) {
     }
     close(barrier_read);
     pid_t reaped;
-    do { reaped = waitpid(child, NULL, 0); } while (reaped < 0 && errno == EINTR);
+    struct rusage usage = {0};
+    do { reaped = wait4(child, NULL, 0, &usage); } while (reaped < 0 && errno == EINTR);
     if (reaped != child) poisoned = 1;
     unsigned char setup_bytes[sizeof(int) * KVIK_PROCESS_SETUP_INTS + 1]; size_t setup_size = 0;
     for (;;) {
@@ -332,7 +354,7 @@ static int process_main(int argc, char **argv) {
         }
     }
     if (poisoned) return 125;
-    report_setup(code, timed_out, cancelled, setup); return 0;
+    report_usage(code, timed_out, cancelled, setup, &usage); return 0;
 early_setup_failure:
     free(environment);
     if (barrier_read >= 0) close(barrier_read);

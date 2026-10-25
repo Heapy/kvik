@@ -410,8 +410,10 @@ _darwin_installation["allOf"] = [
      "else": {"properties": {"roots": {"not": {"required": [name]}}}}}
     for name in ("iosSdk", "iosSimulatorSdk")]
 DEFS["diagnostic"] = object_({"code": {"type": "string", "pattern": "^KVIK_[A-Z0-9_]+$"}, "category": enum("configuration", "compilation", "abi", "test", "toolchain", "cache", "infrastructure", "cancellation"), "message": STRING, "actionId": nullable(STRING), "module": nullable(STRING), "target": nullable(STRING), "path": nullable(STRING), "line": nullable({"type": "integer", "minimum": 1}), "column": nullable({"type": "integer", "minimum": 1}), "source": ref("sourceReference")}, optional=("source",))
-DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest")), "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"), "outputs": ref("tree"), "exitCode": nullable({"type": "integer"}), "diagnostic": nullable(STRING)})
+DEFS["processUsage"] = object_({"userCpuNanos": INT, "systemCpuNanos": INT, "peakRssBytes": INT})
+DEFS["actionResult"] = object_({"actionId": STRING, "key": nullable(ref("digest")), "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"), "outputs": ref("tree"), "exitCode": nullable({"type": "integer"}), "diagnostic": nullable(STRING), "processUsage": array(ref("processUsage"), minItems=1, maxItems=10000)}, optional=("processUsage",))
 DEFS["actionResult"]["allOf"] = [{"if": {"properties": {"status": enum("executed", "local_hit", "remote_hit")}}, "then": {"properties": {"key": ref("digest"), "exitCode": {"const": 0}}}}]
+DEFS["actionResult"]["allOf"].append({"if": {"properties": {"status": enum("local_hit", "remote_hit", "blocked")}}, "then": {"not": {"required": ["processUsage"]}}})
 TEST_TEXT = {"type": "string", "maxLength": 8192}
 DEFS["testFailure"] = object_({"kind": enum("assertion", "exception", "unknown"), "type": nullable(TEST_TEXT),
     "message": nullable(TEST_TEXT), "stackTrace": nullable({"type": "string", "maxLength": 32768})})
@@ -1013,6 +1015,8 @@ DEFS["runStatistics"] = versioned({
     "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
     "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "testCounts": ref("testCounts"),
     "actions": object_({"total": RUN_COUNT, "startedOutcomes": RUN_OUTCOMES, "unstartedOutcomes": RUN_OUTCOMES}),
+    "processUsage": object_({"measuredActions": RUN_COUNT, "measuredProcesses": RUN_COUNT,
+        "userCpuNanos": nullable(RUN_METRIC), "systemCpuNanos": nullable(RUN_METRIC), "largestChildPeakRssBytes": nullable(RUN_METRIC)}),
     "timing": object_({"coverage": RUN_COVERAGE, "measuredActions": RUN_COUNT, "unmeasuredStartedActions": RUN_COUNT,
         "observedSchedulerNanos": nullable(RUN_METRIC), "summedActionNanos": nullable(RUN_METRIC),
         "observedBusyNanos": nullable(RUN_METRIC), "peakObservedActiveActions": nullable(RUN_COUNT)}),
@@ -1022,7 +1026,7 @@ DEFS["runStatistics"] = versioned({
         "summedMeasuredOperationNanos": nullable(RUN_METRIC)}),
     "slowestActions": array(object_({"actionId": NONEMPTY, "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"),
         "startedAfterNanos": RUN_METRIC, "durationNanos": RUN_METRIC}), maxItems=10),
-}, optional=("inputCapture",))
+}, optional=("inputCapture", "processUsage"))
 
 
 DEFS["doctor"] = versioned({

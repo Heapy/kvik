@@ -96,7 +96,7 @@ class SqlDelightExecutor(
                     diagnostics = diagnostics + Diagnostic("KVIK_SQLDELIGHT_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Invalid SQLDelight result")
                 }
                 diagnostics = diagnostics.map { it.copy(actionId = actionId, module = generation.module, target = "jvm") }
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit.usage)).also {
                     result = it; recorded[actionId] = SqlDelightObservation(it, diagnostics, directory, exit)
                 }
             }

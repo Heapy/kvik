@@ -108,7 +108,7 @@ typedef struct {
     pid_t guardian;
     int control, result, eof, reaped, failed, notified, verified, setup_stage, setup_error;
     size_t received;
-    unsigned char bytes[sizeof(int) * KVIK_PROCESS_RESULT_INTS + 1];
+    unsigned char bytes[sizeof(int64_t) * KVIK_PROCESS_RESULT_FIELDS + 1];
 } Process;
 
 /* All pipes are CLOEXEC. Only declared 3/4 and the optional upstream capability 6
@@ -177,7 +177,7 @@ int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancell
             if (p->received == sizeof(p->bytes)) { p->failed = 1; p->eof = 1; kvik_process_cancel(p); }
         } else if (count == 0 || (errno != EAGAIN && errno != EINTR)) {
             p->eof = 1;
-            if (count < 0 || p->received != sizeof(int) * KVIK_PROCESS_RESULT_INTS) p->failed = 1;
+            if (count < 0 || p->received != sizeof(int64_t) * KVIK_PROCESS_RESULT_FIELDS) p->failed = 1;
         }
     }
     if (!p->reaped) {
@@ -188,11 +188,13 @@ int kvik_process_poll(void *handle, int *exit_code, int *timed_out, int *cancell
         } else if (observed < 0 && errno != EINTR) { p->reaped = 1; p->failed = 1; }
     }
     if (!p->eof || !p->reaped) return 0;
-    int values[KVIK_PROCESS_RESULT_INTS]; memcpy(values, p->bytes, sizeof(values));
+    int64_t values[KVIK_PROCESS_RESULT_FIELDS]; memcpy(values, p->bytes, sizeof(values));
     if (p->failed || values[0] != KVIK_PROCESS_RESULT_MAGIC || values[1] < 0 || values[1] > 255 ||
         values[2] < 0 || values[2] > 1 || values[3] < 0 || values[3] > 1 || (values[2] && values[3]) ||
         values[4] < KVIK_SETUP_NONE || values[4] > KVIK_SETUP_EXEC ||
-        (!values[4] && values[5]) || (values[4] && values[5] <= 0) ||
+        (!values[4] && values[5]) || (values[4] && (values[5] <= 0 || values[5] > INT32_MAX)) ||
+        values[6] < 0 || values[6] > 1 || values[7] < 0 || values[8] < 0 || values[9] < 0 ||
+        (!values[6] && (values[7] || values[8] || values[9])) || (values[4] && values[6]) ||
         (values[4] && values[1] != (values[3] ? 130 : values[2] ? 124 : values[4] == KVIK_SETUP_EXEC ? 127 : 125))) {
         if (!p->notified) { kvik_barrier_poison(&inherited_barrier); p->notified = 1; }
         errno = EPROTO; return -1;
@@ -205,6 +207,13 @@ int kvik_process_setup_error(void *handle, int *stage, int *error) {
     if (!p || !p->verified || !stage || !error) { errno = EINVAL; return -1; }
     *stage = p->setup_stage; *error = p->setup_error;
     return p->setup_stage != KVIK_SETUP_NONE;
+}
+int kvik_process_usage(void *handle, long long *user_nanos, long long *system_nanos, long long *peak_rss_bytes) {
+    Process *p = handle;
+    if (!p || !p->verified || !user_nanos || !system_nanos || !peak_rss_bytes) { errno = EINVAL; return -1; }
+    int64_t values[KVIK_PROCESS_RESULT_FIELDS]; memcpy(values, p->bytes, sizeof(values));
+    *user_nanos = values[7]; *system_nanos = values[8]; *peak_rss_bytes = values[9];
+    return (int)values[6];
 }
 void kvik_process_cancel(void *handle) {
     Process *p = handle;

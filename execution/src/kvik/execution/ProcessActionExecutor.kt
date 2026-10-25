@@ -29,7 +29,8 @@ class ProcessActionExecutor(
                 }
                 return ActionResult(actionId, key, status,
                     outputs = if (status == ActionStatus.EXECUTED) collect(actionId, action) else TreeManifest(emptyList()),
-                    exitCode = observed.exitCode, diagnostic = if (observed.timedOut) "Process timeout" else null).also { result = it }
+                    exitCode = observed.exitCode, diagnostic = if (observed.timedOut) "Process timeout" else null,
+                    processUsage = listOfNotNull(observed.usage)).also { result = it }
             }
             override fun cancel() = process.cancel()
             override fun close() = process.close()

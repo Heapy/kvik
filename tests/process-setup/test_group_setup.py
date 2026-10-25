@@ -29,7 +29,9 @@ class GuardianGroupTest(unittest.TestCase):
         directory.mkdir()
         result = subprocess.run([str(self.root / "probe"), str(self.root / "guardian"), str(directory), mode],
                                 capture_output=True, timeout=15, check=True)
-        self.assertEqual(json.loads(result.stdout), dict(poll=1, exitCode=code, timedOut=0, cancelled=0,
+        value = json.loads(result.stdout)
+        self.assertEqual(value['usage'], int(stage == 0))
+        self.assertEqual({k:v for k,v in value.items() if k not in ('usage','userCpuNanos','systemCpuNanos','peakRssBytes')}, dict(poll=1, exitCode=code, timedOut=0, cancelled=0,
                                                        setup=int(stage != 0), stage=stage, errno=error, close=0))
 
     def test_parent_establishes_group_before_child_failure(self):

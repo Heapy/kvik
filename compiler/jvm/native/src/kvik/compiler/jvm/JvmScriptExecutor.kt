@@ -84,7 +84,7 @@ class JvmScriptExecutor(
         fun diagnostic(code: String, category: DiagnosticCategory, message: String) =
             Diagnostic(code, category, scriptMessage(message), actionId = actionId, target = "jvm")
         fun record(status: ActionStatus, exit: ProcessResult?, cancelRequested: Boolean, diagnostics: List<Diagnostic>): ActionResult {
-            val result = ActionResult(actionId, key, status, exitCode = exit?.exitCode, diagnostic = diagnostics.firstOrNull()?.message)
+            val result = ActionResult(actionId, key, status, exitCode = exit?.exitCode, diagnostic = diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit?.usage))
             recorded[actionId] = JvmScriptObservation(result, phase, exit, cancelRequested, mainClass, directory,
                 arguments.toList(), stdlibJar, diagnostics.toList())
             return result

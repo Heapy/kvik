@@ -121,7 +121,7 @@ class NativeUnitTest {
                 writeNativeFile(request.stdoutFile, output.encodeToByteArray())
                 writeNativeFile(request.stderrFile, byteArrayOf())
                 return object : OwnedProcess {
-                    override fun poll() = ProcessResult(0)
+                    override fun poll() = ProcessResult(0, usage = ProcessUsage(10, 20, 30))
                     override fun cancel() = Unit
                     override fun close() = Unit
                 }
@@ -142,6 +142,7 @@ class NativeUnitTest {
                 assertEquals(VerificationStatus.PASSED, executor.observations.getValue("a-test").tests?.status)
                 assertEquals(0, slowExited.load(), "Test must finish while neighbor verification is still pending")
                 assertEquals(2, launches)
+                assertEquals(List(2) { ProcessUsage(10, 20, 30) }, run.results.getValue("a-test").processUsage)
                 run.cancel()
                 assertTrue(run.tick())
                 assertEquals(ActionStatus.CANCELLED, run.results.getValue("b-compile").status)

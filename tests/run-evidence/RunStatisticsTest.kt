@@ -24,10 +24,46 @@ class RunStatisticsTest {
         val bytes = events.joinToString("\n", postfix = "\n") { it.toJson().canonical() }.encodeToByteArray()
         val completion = obj("schemaVersion" to 1.json(), "verification" to Sha256.digest(record.toJson()).toJson(),
             "event" to Sha256.digest(events.last().toJson()).toJson(), "journal" to Sha256.digest(bytes).toJson())
-        return runStatistics(record, committedRunEvents(record, completion, bytes))
+        val restored = verificationRecordFromJson(record.toJson())
+        assertEquals(record, restored)
+        return runStatistics(restored, committedRunEvents(restored, completion, bytes))
     }
     private fun JsonValue.field(name: String): JsonValue = objectValue().getValue(name)
     private fun JsonValue.number(name: String) = field(name).longValue()
+
+    @Test fun processCpuIsSummedButResidentHighWaterMarksAreNot() {
+        val first = ProcessUsage(10, 20, 1000)
+        val second = ProcessUsage(30, 40, 2000)
+        val values = listOf(result("a").copy(processUsage = listOf(first, second)),
+            result("failed", ActionStatus.FAILED).copy(processUsage = listOf(first)),
+            result("cached", ActionStatus.LOCAL_HIT), result("legacy"),
+            result("shared").copy(processUsage = listOf(second)))
+        val stats = summary(values, started = setOf("a", "failed", "cached", "legacy")).field("processUsage")
+        assertEquals(2L, stats.number("measuredActions"))
+        assertEquals(3L, stats.number("measuredProcesses"))
+        assertEquals(50L, stats.number("userCpuNanos"))
+        assertEquals(80L, stats.number("systemCpuNanos"))
+        assertEquals(2000L, stats.number("largestChildPeakRssBytes"))
+        val old = summary(listOf(result("old"))).field("processUsage")
+        assertEquals(0L, old.number("measuredProcesses"))
+        assertEquals(JsonValue.Null, old.field("userCpuNanos"))
+        assertEquals(JsonValue.Null, old.field("largestChildPeakRssBytes"))
+    }
+
+    @Test fun processMeasurementsAreStrictAndDoNotAlterLegacyJson() {
+        val usage = ProcessUsage(0, 0, 0)
+        assertEquals(usage, ProcessUsage.fromJson(usage.toJson()))
+        assertFalse("processUsage" in result("old").toJson().objectValue())
+        for (field in usage.toJson().values.keys) {
+            assertFails { ProcessUsage.fromJson(JsonValue.Object(usage.toJson().values - field)) }
+            assertFails { ProcessUsage.fromJson(JsonValue.Object(usage.toJson().values + (field to (-1L).json()))) }
+        }
+        assertFails { ProcessUsage.fromJson(JsonValue.Object(usage.toJson().values + ("extra" to 0.json()))) }
+        for (status in listOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT, ActionStatus.BLOCKED)) {
+            assertFails { result("cached", status).copy(processUsage = listOf(usage)) }
+        }
+        assertFails { summary(listOf(result("a").copy(processUsage = listOf(ProcessUsage(Long.MAX_VALUE, 0, 1), ProcessUsage(1, 0, 1))))) }
+    }
 
     @Test fun captureMetricsSurviveRetentionAndOldRunsRemainUnknown() {
         assertEquals(JsonValue.Null, summary(emptyList()).field("inputCapture"))

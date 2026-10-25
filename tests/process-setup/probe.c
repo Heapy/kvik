@@ -19,16 +19,20 @@ int main(int argc, char **argv) {
         !strcmp(mode, "signal") ? "kill -TERM $$" :
         !strcmp(mode, "pause") ? "echo $$ > \"$KVIK_TEST_SETUP_ROOT/paused\"; kill -STOP $$; exit 0" : "exit 0", NULL};
     if (!strcmp(mode, "exec")) args[0] = missing;
+    char usage_child[4096]; snprintf(usage_child, sizeof(usage_child), "%s/../usage-child", root);
+    if (!strncmp(mode, "usage", 5)) { args[0] = usage_child; args[1] = (char *)mode; args[2] = NULL; }
     const char *cwd = !strcmp(mode, "cwd") || !strcmp(mode, "cancel") || !strcmp(mode, "timeout") || strstr(mode, "status") ? missing : root;
-    void *owned = kvik_process_start(argv[1], cwd, out, err, !strcmp(mode, "timeout") ? 100 : 0, args, env);
+    void *owned = kvik_process_start(argv[1], cwd, out, err, !strcmp(mode, "timeout") ? 100 : !strcmp(mode, "usage-timeout") ? 1000 : 0, args, env);
     if (!owned) { fprintf(stderr, "start errno=%d\n", errno); return 91; }
     int stage, error;
     if (kvik_process_setup_error(owned, &stage, &error) != -1 || errno != EINVAL) return 92;
+    long long user = -1, system = -1, rss = -1;
+    if (kvik_process_usage(owned, &user, &system, &rss) != -1 || errno != EINVAL) return 92;
     int code = -1, timed = -1, cancelled = -1, result = 0;
     int pause_ticks = 0, resumed = 0;
     char paused[4096]; snprintf(paused, sizeof(paused), "%s/paused", root);
     for (int i = 0; i < 10000 && !result; ++i) {
-        if (!strcmp(mode, "cancel") && !access(ready, F_OK)) kvik_process_cancel(owned);
+        if ((!strcmp(mode, "cancel") || !strcmp(mode, "usage-cancel")) && !access(ready, F_OK)) kvik_process_cancel(owned);
         if (!strcmp(mode, "pause") && !resumed && !access(paused, F_OK) && ++pause_ticks == 100) {
             FILE *file = fopen(paused, "r"); int child = 0;
             if (!file || fscanf(file, "%d", &child) != 1 || child <= 1) return 94;
@@ -41,8 +45,9 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "pause") && !resumed) { kvik_process_close(owned); return 96; }
     stage = -1; error = -1;
     int setup = kvik_process_setup_error(owned, &stage, &error);
+    int usage = kvik_process_usage(owned, &user, &system, &rss);
     int closed = kvik_process_close(owned);
-    printf("{\"poll\":%d,\"exitCode\":%d,\"timedOut\":%d,\"cancelled\":%d,\"setup\":%d,\"stage\":%d,\"errno\":%d,\"close\":%d}\n",
-           result, code, timed, cancelled, setup, stage, error, closed);
+    printf("{\"poll\":%d,\"exitCode\":%d,\"timedOut\":%d,\"cancelled\":%d,\"setup\":%d,\"stage\":%d,\"errno\":%d,\"close\":%d,\"usage\":%d,\"userCpuNanos\":%lld,\"systemCpuNanos\":%lld,\"peakRssBytes\":%lld}\n",
+           result, code, timed, cancelled, setup, stage, error, closed, usage, user, system, rss);
     return 0;
 }

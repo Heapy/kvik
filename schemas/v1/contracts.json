@@ -4879,6 +4879,32 @@
       ],
       "additionalProperties": false
     },
+    "processUsage": {
+      "type": "object",
+      "properties": {
+        "userCpuNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "systemCpuNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "peakRssBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "userCpuNanos",
+        "systemCpuNanos",
+        "peakRssBytes"
+      ],
+      "additionalProperties": false
+    },
     "actionResult": {
       "type": "object",
       "properties": {
@@ -4927,6 +4953,14 @@
               "type": "null"
             }
           ]
+        },
+        "processUsage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/processUsage"
+          },
+          "minItems": 1,
+          "maxItems": 10000
         }
       },
       "required": [
@@ -4959,6 +4993,26 @@
               "exitCode": {
                 "const": 0
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "local_hit",
+                  "remote_hit",
+                  "blocked"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "processUsage"
+              ]
             }
           }
         }
@@ -13285,6 +13339,65 @@
             "total",
             "startedOutcomes",
             "unstartedOutcomes"
+          ],
+          "additionalProperties": false
+        },
+        "processUsage": {
+          "type": "object",
+          "properties": {
+            "measuredActions": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "measuredProcesses": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "userCpuNanos": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "systemCpuNanos": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "largestChildPeakRssBytes": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "measuredActions",
+            "measuredProcesses",
+            "userCpuNanos",
+            "systemCpuNanos",
+            "largestChildPeakRssBytes"
           ],
           "additionalProperties": false
         },

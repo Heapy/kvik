@@ -32,6 +32,8 @@ fun main(args: Array<String>) {
                 check(run.results.getValue("a").status == ActionStatus.FAILED)
                 check(run.results.getValue("b").status == ActionStatus.BLOCKED)
                 check(listOf("c", "d", "e", "f").all { run.results.getValue(it).successful })
+                check(listOf("a", "c", "e", "f").all { run.results.getValue(it).processUsage.single().peakRssBytes > 0 })
+                check(listOf("b", "d").all { run.results.getValue(it).processUsage.isEmpty() })
             }
         }
         host.close(); println("DAG COMPLETE"); return

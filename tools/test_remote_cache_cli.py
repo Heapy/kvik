@@ -141,6 +141,12 @@ def main():
                     env=env, capture_output=True, text=True, timeout=20, check=True)
                 statistics = json.loads(queried.stdout)
                 statistics_schema.validate(statistics)
+                measured_actions = [a for a in record['actions'] if a.get('processUsage')]
+                assert len(measured_actions) == (4 if expected == 'executed' else 1), measured_actions
+                assert all(a['status'] == 'executed' and len(a['processUsage']) == 1 and
+                           a['processUsage'][0]['peakRssBytes'] > 0 for a in measured_actions), measured_actions
+                assert statistics['processUsage']['measuredActions'] == len(measured_actions)
+                assert statistics['processUsage']['measuredProcesses'] == len(measured_actions)
                 measured = statistics['remoteCache']
                 assert measured['recordedOperations'] == len(transfers)
                 if transfers:
