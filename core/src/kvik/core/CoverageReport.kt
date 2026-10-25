@@ -22,6 +22,9 @@ data class CoverageReport(
         require(sources.map { it.source }.toSet() == specification.sources.toSet() && sources.size == specification.sources.size) {
             "Coverage must retain every expected source exactly once"
         }
+        require(specification.excludes.isNotEmpty() || sources.none { source -> source.lines.any { it.state == LineCoverageState.EXCLUDED } }) {
+            "Excluded lines require an explicit exclusion policy"
+        }
         require(!complete || sources.all { it.complete }) { "Unknown source coverage prevents a complete report" }
         require(!complete || (setOf("coverage.exec") + specification.classDirectories.map { "coverage/${it.module}/jacoco.xml" })
             .all { path -> originals.files.any { it.path.value == path } }) { "Complete coverage requires original execution data and every module XML report" }

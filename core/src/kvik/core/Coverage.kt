@@ -39,8 +39,7 @@ data class JvmCoverageSpec(
         require(sources.all { source -> classDirectories.any { it.module == source.module } }) { "Coverage source has no production class root" }
         require(sources.map { it.module to it.path }.distinct().size == sources.size) { "Ambiguous source-set ownership within a module" }
         require(sources.groupBy { it.path }.values.all { group -> group.map { it.digest }.distinct().size == 1 }) { "One logical source path has conflicting contents" }
-        require(excludes.size <= 100 && excludes.distinct().size == excludes.size)
-        require(excludes.all { it.length in 1..1024 && it.matches(Regex("[A-Za-z0-9_.$*?/]+")) }) { "Unsupported coverage exclusion pattern" }
+        validateCoverageExcludes(excludes)
     }
     fun toJson(): JsonValue.Object = obj("engine" to "jacoco".json(), "version" to version.json(), "agent" to agent.toJson(),
         "reporter" to reporter.toJson(), "classDirectories" to classDirectories.map { it.toJson() }.json(),
@@ -55,7 +54,7 @@ data class JvmCoverageSpec(
     }
 }
 
-enum class LineCoverageState { COVERED, UNCOVERED, NON_EXECUTABLE, UNKNOWN }
+enum class LineCoverageState { COVERED, UNCOVERED, NON_EXECUTABLE, UNKNOWN, EXCLUDED }
 data class CoverageLine(val number: Int, val state: LineCoverageState) {
     init { require(number > 0) }
     fun toJson(): JsonValue = obj("number" to number.json(), "state" to state.name.lowercase().json())
@@ -93,3 +92,9 @@ data class SourceCoverage(
 }
 
 private fun coverageId(value: String): Boolean = value.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))
+
+/** JaCoCo class-name patterns; separators for agent options must never be accepted. */
+fun validateCoverageExcludes(excludes: List<String>) {
+    require(excludes.size <= 100 && excludes.distinct().size == excludes.size) { "Coverage exclusions must be unique and bounded to 100 patterns" }
+    require(excludes.all { it.length in 1..1024 && it.matches(Regex("[A-Za-z0-9_.$*?/]+")) }) { "Unsupported coverage exclusion pattern" }
+}

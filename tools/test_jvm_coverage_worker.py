@@ -51,9 +51,10 @@ def main():
     classes = seed/'classes/app'
     sources = seed/'coverage-sources/src'
     sources.mkdir(parents=True)
-    for name in ('Production.java', 'Unexecuted.java'):
+    source_names = ('Production.java', 'Unexecuted.java', 'Shared.java')
+    for name in source_names:
         shutil.copyfile(fixture/name, sources/name)
-    run('compile-production', [javac, '-g', '-d', classes, sources/'Production.java', sources/'Unexecuted.java'])
+    run('compile-production', [javac, '-g', '-d', classes, *[sources/name for name in source_names]])
     run('compile-driver', [javac, '-g', '-cp', classes, '-d', case/'driver', fixture/'Main.java'])
     run('collect-data', [java, f'-javaagent:{agent}=destfile={seed}/coverage.exec,append=false,includes=fixture.*',
                          '-cp', os.pathsep.join(map(str, [case/'driver', classes])), 'fixture.Main'])
@@ -64,7 +65,7 @@ def main():
     def specification(workspace):
         return dict(engine='jacoco', version='0.8.14', agent=digest(agent), reporter=digest(cli), excludes=[],
             classDirectories=[dict(module='app', path='classes/app')], sources=[dict(module='app', sourceSet='main', path='src/'+name,
-                digest=digest(workspace/'coverage-sources/src'/name)) for name in ('Production.java', 'Unexecuted.java')])
+                digest=digest(workspace/'coverage-sources/src'/name)) for name in source_names])
 
     def invoke(label, mutate=None, expected=0):
         workspace = case/label
@@ -84,7 +85,8 @@ def main():
             assert digest(workspace/artifact['path']) == artifact['digest']
             root = ET.parse(workspace/artifact['path']).getroot()
             assert root.tag == 'report' and root.attrib['name'] == artifact['module']
-            assert any(counter.attrib['type'] == 'METHOD' for counter in root.findall('counter'))
+            if root.findall('.//class'):
+                assert any(counter.attrib['type'] == 'METHOD' for counter in root.findall('counter'))
         for source in result['sources']:
             assert [line['number'] for line in source['lines']] == list(range(1, source['lineCount']+1))
         return result
@@ -99,6 +101,71 @@ def main():
     assert production['lineCount'] == len((fixture/'Production.java').read_text().splitlines())
     assert 'covered' not in {line['state'] for line in report['src/Unexecuted.java']['lines']}
     assert any(line['state'] == 'uncovered' for line in report['src/Unexecuted.java']['lines'])
+
+    def exclude(patterns):
+        return lambda w, r: r['specification'].update(excludes=patterns)
+
+    def states_for(result, name):
+        source = next(s for s in result['sources'] if s['source']['path'] == 'src/'+name)
+        return {line['number']: line['state'] for line in source['lines']}
+
+    def xml_classes(label):
+        return {c.attrib['name'] for c in ET.parse(case/label/'coverage/app/jacoco.xml').findall('.//class')}
+
+    patterns = ['fixture.Shared$Excluded*', 'fixture.Unexecuted']
+    mixed = invoke('excluded-mixed', exclude(patterns))
+    assert mixed['status'] == 'complete', mixed
+    assert [s['source'] for s in mixed['sources']] == [s['source'] for s in measured['sources']]
+    shared = states_for(mixed, 'Shared.java')
+    assert states_for(measured, 'Shared.java')[5] == 'covered'
+    assert shared[4] == 'covered' and shared[5] == 'uncovered', shared
+    assert shared[6] == shared[7] == 'excluded' and shared[1] == 'non_executable', shared
+    assert 'excluded' in states_for(mixed, 'Unexecuted.java').values()
+    assert not {'covered', 'uncovered'} & set(states_for(mixed, 'Unexecuted.java').values())
+    assert xml_classes('excluded-mixed') == xml_classes('measured') - {
+        'fixture/Shared$Excluded', 'fixture/Shared$ExcludedOnly', 'fixture/Unexecuted'}
+    shared_xml = ET.parse(case/'excluded-mixed/coverage/app/jacoco.xml').find(".//sourcefile[@name='Shared.java']")
+    shared_xml_lines = {int(line.attrib['nr']): line.attrib for line in shared_xml.findall('line')}
+    assert shared_xml_lines[5]['ci'] == '0' and int(shared_xml_lines[5]['mi']) > 0
+    assert 6 not in shared_xml_lines and 7 not in shared_xml_lines
+    assert ET.parse(case/'excluded-mixed/coverage/app/jacoco.xml').find(".//sourcefile[@name='Unexecuted.java']") is None
+
+    for label, patterns in [('excluded-all-dot', ['fixture.*']), ('excluded-all-slash', ['fixture/*']),
+                            ('excluded-all-star', ['*'])]:
+        excluded = invoke(label, exclude(patterns))
+        assert excluded['status'] == 'complete', excluded
+        assert [s['source'] for s in excluded['sources']] == [s['source'] for s in measured['sources']]
+        for original, filtered in zip(measured['sources'], excluded['sources']):
+            assert [line['state'] for line in filtered['lines']] == [
+                'non_executable' if line['state'] == 'non_executable' else 'excluded' for line in original['lines']]
+        assert not xml_classes(label)
+    question = invoke('excluded-question', exclude(['fixture/Shared$Exclude?']))
+    assert xml_classes('excluded-question') == xml_classes('measured') - {'fixture/Shared$Excluded'}
+    assert states_for(question, 'Shared.java')[5] == 'uncovered'
+    assert states_for(question, 'Shared.java')[7] == 'covered'
+    assert invoke('excluded-unmatched', exclude(['fixture.Absent*']))['sources'] == measured['sources']
+    assert xml_classes('excluded-unmatched') == xml_classes('measured')
+
+    # Collect another real execution using the same exclusions passed to the report worker.
+    agent_excludes = ['fixture.Shared$Excluded*', 'fixture.Unexecuted']
+    excluded_exec = case/'agent-excluded.exec'
+    run('collect-excluded-data', [java,
+        f'-javaagent:{agent}=destfile={excluded_exec},append=false,includes=fixture.*,excludes={":".join(agent_excludes)}',
+        '-cp', os.pathsep.join(map(str, [case/'driver', classes])), 'fixture.Main'])
+    def instrumented_exclusions(w, r):
+        shutil.copyfile(excluded_exec, w/'coverage.exec')
+        r['executionData'] = [entry(w/'coverage.exec', w)]
+        r['specification']['excludes'] = agent_excludes
+    instrumented = invoke('excluded-instrumented', instrumented_exclusions)
+    assert instrumented['status'] == 'complete' and instrumented['sources'] == mixed['sources'], instrumented
+    assert xml_classes('excluded-instrumented') == xml_classes('excluded-mixed')
+
+    def excluded_incomplete(w, r):
+        r['executionComplete'] = False
+        r['specification']['excludes'] = ['*']
+    interrupted_excluded = invoke('excluded-interrupted', excluded_incomplete)
+    assert interrupted_excluded['status'] == 'incomplete'
+    assert all(line['state'] == 'unknown' for s in interrupted_excluded['sources'] for line in s['lines'])
 
     incomplete = invoke('interrupted', lambda w, r: r.update(executionComplete=False))
     assert incomplete['status'] == 'incomplete' and all(line['state'] == 'unknown' for s in incomplete['sources'] for line in s['lines'])
@@ -117,13 +184,19 @@ def main():
 
     for label, options in [('no-debug', ['-g:none']), ('no-lines', ['-g:source,vars'])]:
         alternate = case/(label+'-classes')
-        run('compile-'+label, [javac, *options, '-d', alternate, sources/'Production.java', sources/'Unexecuted.java'])
+        run('compile-'+label, [javac, *options, '-d', alternate, *[sources/name for name in source_names]])
         def replace_classes(w, r):
             shutil.rmtree(w/'classes/app'); shutil.copytree(alternate, w/'classes/app')
             r['files'] = [entry(p, w) for p in sorted((w/'classes').rglob('*.class'))]
         result = invoke(label, replace_classes)
         assert result['status'] == 'incomplete' and all(not s['complete'] for s in result['sources'])
         assert any('debug information' in diagnostic for s in result['sources'] for diagnostic in s['diagnostics'])
+        def replace_excluded_classes(w, r):
+            replace_classes(w, r)
+            r['specification']['excludes'] = ['*']
+        excluded_debug = invoke(label+'-excluded', replace_excluded_classes)
+        assert excluded_debug['status'] == 'incomplete'
+        assert all(line['state'] == 'unknown' for s in excluded_debug['sources'] for line in s['lines'])
 
     def second_module(w, r):
         shutil.copytree(w/'classes/app', w/'classes/other')
@@ -143,7 +216,6 @@ def main():
     def short_source(w, r):
         p = w/'coverage-sources/src/Production.java'; p.write_text('short\n'); r['specification']['sources'][0]['digest'] = digest(p)
     assert invoke('invalid-lines', short_source, 1)['status'] == 'incomplete'
-    assert invoke('unsupported-excludes', lambda w, r: r['specification'].update(excludes=['fixture.*']), 1)['status'] == 'incomplete'
     print(f'PASS coverage worker scenarios ({case})', flush=True)
 
 

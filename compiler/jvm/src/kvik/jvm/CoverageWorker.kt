@@ -49,7 +49,15 @@ object CoverageWorker {
 
     internal fun analyze(workspace: Workspace, requestId: String, specification: JvmCoverageSpec, executionData: List<FileEntry>,
         executionComplete: Boolean, files: List<FileEntry>): JsonValue {
-        require(specification.excludes.isEmpty()) { "Coverage exclusion normalization is not supported" }
+        // The pinned CLI JAR strips the agent's matcher. Match its class-name glob semantics:
+        // dots normalize to VM slashes, * spans any characters, and ? spans one character.
+        val exclusions = specification.excludes.map { pattern -> Regex(buildString {
+            for (character in pattern.replace('.', '/')) append(when (character) {
+                '*' -> ".*"
+                '?' -> "."
+                else -> Regex.escape(character.toString())
+            })
+        }) }
         require(executionData.size <= 1000 && executionData.map { it.path }.distinct().size == executionData.size)
         require(!executionComplete || executionData.isNotEmpty()) { "Complete execution requires execution data" }
         require(files.size <= 100_000)
@@ -101,11 +109,16 @@ object CoverageWorker {
                 }
             }
             require(present == declared.keys) { "Production class tree differs from its input manifest" }
+            // Analyze every declared class for source identity and integrity checks, even when excluded.
             val builder = CoverageBuilder()
+            val includedBuilder = CoverageBuilder()
+            val excludedBuilder = CoverageBuilder()
             val classNames = mutableSetOf<String>()
             val analyzer = Analyzer(loader.executionDataStore) { coverage ->
                 require(classNames.add(coverage.name)) { "Duplicate production class: ${coverage.name}" }
                 builder.visitCoverage(coverage)
+                if (exclusions.any { it.matches(coverage.name) }) excludedBuilder.visitCoverage(coverage)
+                else includedBuilder.visitCoverage(coverage)
             }
             for ((relative, entry) in declared.toSortedMap()) {
                 val data = bytes(entry.path, entry.digest, 32L * 1024 * 1024)
@@ -114,6 +127,8 @@ object CoverageWorker {
             val moduleSources = specification.sources.filter { it.module == root.module }
             val sourceGroups = moduleSources.groupBy { it.path.value.substringAfterLast('/') }
             val measuredGroups = builder.sourceFiles.groupBy { it.name }
+            val includedSources = includedBuilder.sourceFiles.associateBy { it.packageName to it.name }
+            val excludedSources = excludedBuilder.sourceFiles.associateBy { it.packageName to it.name }
             val missingSourceInfo = builder.classes.any { it.sourceFileName == null }
             val allClasses = builder.classes.toList()
             for (source in moduleSources) {
@@ -136,7 +151,13 @@ object CoverageWorker {
                 }
                 val complete = sourceDiagnostics.isEmpty()
                 normalized += SourceCoverage(source, count, (1..count).map { number ->
-                    CoverageLine(number, if (!complete) LineCoverageState.UNKNOWN else lineState(checkNotNull(candidate), number))
+                    CoverageLine(number, if (!complete) LineCoverageState.UNKNOWN else {
+                        val key = checkNotNull(candidate).let { it.packageName to it.name }
+                        val included = lineState(includedSources[key], number)
+                        val excluded = lineState(excludedSources[key], number)
+                        if (included == LineCoverageState.NON_EXECUTABLE && excluded != LineCoverageState.NON_EXECUTABLE)
+                            LineCoverageState.EXCLUDED else included
+                    })
                 }, complete, sourceDiagnostics)
             }
             val unmapped = measuredGroups.keys - sourceGroups.keys
@@ -154,7 +175,7 @@ object CoverageWorker {
                 Files.newOutputStream(temporary).use { stream ->
                     val visitor = XMLFormatter().createVisitor(LimitedOutput(stream, 64L * 1024 * 1024))
                     visitor.visitInfo(loader.sessionInfoStore.infos, loader.executionDataStore.contents)
-                    visitor.visitBundle(builder.getBundle(root.module), object : ISourceFileLocator {
+                    visitor.visitBundle(includedBuilder.getBundle(root.module), object : ISourceFileLocator {
                         override fun getTabWidth(): Int = 4
                         override fun getSourceFile(packageName: String, fileName: String): java.io.Reader? = null
                     })
@@ -181,8 +202,8 @@ object CoverageWorker {
         return count
     }
 
-    private fun lineState(source: ISourceFileCoverage, number: Int): LineCoverageState {
-        val counter = source.getLine(number).instructionCounter
+    private fun lineState(source: ISourceFileCoverage?, number: Int): LineCoverageState {
+        val counter = source?.getLine(number)?.instructionCounter ?: return LineCoverageState.NON_EXECUTABLE
         require(counter.coveredCount >= 0 && counter.missedCount >= 0) { "Invalid line counters" }
         return when {
             counter.coveredCount > 0 -> LineCoverageState.COVERED

@@ -125,8 +125,12 @@ fun aggregateCoverage(scope: CoverageAggregationScope, contributions: List<Cover
                 require(LineCoverageState.NON_EXECUTABLE !in states || states.none { it == LineCoverageState.COVERED || it == LineCoverageState.UNCOVERED }) {
                     "Incompatible executable coverage map: ${path.value}:${index + 1} ($target)"
                 }
+                require(LineCoverageState.EXCLUDED !in states || states.all { it == LineCoverageState.EXCLUDED || it == LineCoverageState.UNKNOWN }) {
+                    "Incompatible excluded coverage map: ${path.value}:${index + 1} ($target)"
+                }
                 CoverageLine(index + 1, when {
                     LineCoverageState.UNKNOWN in states -> LineCoverageState.UNKNOWN
+                    LineCoverageState.EXCLUDED in states -> LineCoverageState.EXCLUDED
                     LineCoverageState.COVERED in states -> LineCoverageState.COVERED
                     LineCoverageState.UNCOVERED in states -> LineCoverageState.UNCOVERED
                     else -> LineCoverageState.NON_EXECUTABLE

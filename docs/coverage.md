@@ -18,12 +18,13 @@ kvik coverage-report --run /path/to/.kvik/runs/RUN_ID \
 
 Select a module when the run contains multiple JVM test scopes. Each report describes one test scope, including the production modules recorded in that scope's coverage specification. The output directory must be new and outside the retained run. The tools file selects the verified JDK and pinned coverage reporter. Report generation analyzes retained execution data, classes and sources; it does not rerun tests or compile current sources.
 
-The normalized report preserves original source paths, modules, source sets and content digests. Each source line has one of four states:
+The normalized report preserves original source paths, modules, source sets and content digests. Each source line has one of five states:
 
 - `covered`: at least one measured instruction on the line executed.
 - `uncovered`: the line contains executable instructions, with none measured as executed.
 - `non_executable`: the mapped line has no executable instructions.
 - `unknown`: a trustworthy measurement or source mapping is unavailable.
+- `excluded`: only explicitly excluded classes contribute executable instructions to this line; it is omitted from coverage counters.
 
 Missing or incomplete execution data, mismatched class bytes, missing debug information and ambiguous source names remain unknown, with diagnostics. Unknown lines never count as uncovered lines or complete coverage. Generated code without a declared source mapping also prevents a complete normalized report.
 
@@ -31,7 +32,44 @@ The output contains `coverage.json` (normalized data), `coverage/<module>/jacoco
 
 Coverage completeness is separate from test success. A failed, incomplete or cancelled test execution keeps that outcome; reporting cannot turn it into a passing run. Retained freshness describes completion time and does not verify today's source tree. Use `verification --run PATH` for current source/tool freshness.
 
-The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Exclusions through CLI settings remain a separate feature. `coverage-publish` sends retained report summaries to GitHub Checks without rerunning tests. Compatible reports can be combined with `coverage-aggregate` as described below.
+The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. `coverage-publish` sends retained report summaries to GitHub Checks without rerunning tests. Compatible reports can be combined with `coverage-aggregate` as described below.
+
+## Exclude classes
+
+Use repeatable class-name patterns when capturing JVM coverage:
+
+```sh
+kvik test --project /path/to/kvik.json --tools /path/to/tools.json \
+  --module library --target jvm --coverage \
+  --coverage-exclude 'example.generated.*' --coverage-exclude 'example.Model$*'
+```
+
+The patterns follow [JaCoCo class-name matching](https://www.jacoco.org/jacoco/trunk/doc/agent.html):
+`*` matches any number of characters and `?` matches one. Dotted and slash-separated
+package names are accepted; match nested classes with their JVM `$` names. Quote
+patterns so the shell does not expand wildcards or `$`. At most 100 unique patterns
+are accepted. The flag requires `--coverage`, also works with `verify --check test`,
+and applies to all production class roots in the selected test actions.
+
+Kvik applies the same policy to instrumentation and report analysis. Original
+JaCoCo XML omits excluded classes. Normalized JSON retains every source and marks
+executable lines belonging only to excluded classes as `excluded`. If included
+and excluded classes contribute instructions to the same line, only the included
+instructions determine its coverage. Comments and other non-executable lines keep
+their own classification. Missing debug information or incomplete execution stays
+unknown rather than becoming an exclusion.
+
+Excluded lines contribute neither covered nor executable counts. Excluding all
+executable lines does not satisfy a threshold, even a zero-percent threshold.
+Sonar XML omits excluded lines and records that loss of classification in its JSON
+sidecar; original JaCoCo exports preserve the already filtered producer report.
+
+Patterns are retained in the coverage specification and reproduction command.
+Changing them changes test and report action identities while allowing ordinary
+compilation reuse. Tests still execute freshly. Aggregation rejects different
+exclusion policies or contradictory excluded-line maps; it cannot silently merge
+an excluded line with a measured line. Historical reports without exclusions
+remain readable.
 
 ## Check a threshold
 

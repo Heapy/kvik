@@ -88,6 +88,13 @@ class CoverageSchemaTest(unittest.TestCase):
         for key in response:
             self.assertFalse(validator('coverageReportExport').is_valid({k: v for k, v in response.items() if k != key}), key)
 
+    def test_excluded_line_state_is_explicit(self):
+        value = report()
+        value['specification']['excludes'] = ['example.Generated*']
+        value['sources'][0]['lines'][1]['state'] = 'excluded'
+        validator('coverageReport').validate(value)
+        self.assertFalse(validator('coverageLine').is_valid(dict(number=1, state='EXCLUDED')))
+
     def test_line_and_text_bounds(self):
         for changes in (dict(number=0), dict(number=-1), dict(number=True), dict(number=2147483648), dict(state=None), dict(extra=True)):
             self.assertFalse(validator('coverageLine').is_valid({**dict(number=1, state='covered'), **changes}), changes)

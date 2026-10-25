@@ -183,7 +183,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val lock = try { DependencyLocks(content, kvik.resolution.NativePomParser()).loadLocked(snapshot.lockBytes, effective) }
         catch (failure: Exception) { throw CliFailure("KVIK_LOCK_INVALID", DiagnosticCategory.CONFIGURATION, failure.message ?: "Invalid dependency lock", ExitStatus.INVALID_CONFIGURATION) }
     val coverageTools = if (options.coverage) verifiedRuntimeJvmWorker().let { worker ->
-        JvmCoverageTools(JACOCO_VERSION, checkNotNull(worker.jacocoAgentIdentity), checkNotNull(worker.jacocoCliIdentity))
+        JvmCoverageTools(JACOCO_VERSION, checkNotNull(worker.jacocoAgentIdentity), checkNotNull(worker.jacocoCliIdentity), options.coverageExcludes)
     } else null
     val selectedTests = if (test && "jvm" in options.targets) options.modules.associateWith { id ->
         val module = snapshot.configuration.project.modules.singleOrNull { it.id == id } ?: error("Unknown module: $id")
@@ -215,7 +215,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         "--lock", lockPath, "--store", storePath, "--tools", toolsPath, "--runs", runsPath,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         (remotePath?.let { listOf("--remote-cache", it) } ?: emptyList()) +
-        (if (options.coverage) listOf("--coverage") else emptyList()) +
+        (if (options.coverage) listOf("--coverage") + options.coverageExcludes.flatMap { listOf("--coverage-exclude", it) } else emptyList()) +
         (if (options.project.offline) listOf("--offline") else emptyList()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +

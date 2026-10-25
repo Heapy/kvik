@@ -16,7 +16,7 @@ class CoverageExportSelection(val target: String, modules: Set<String>) {
 
 class CoverageConsumerExport internal constructor(
     val report: Digest, selection: CoverageExportSelection, val sourceStatus: VerificationStatus,
-    val outcome: String, diagnostics: List<String>, artifacts: Map<String, ByteArray>, val format: String = "sonar-generic",
+    val outcome: String, diagnostics: List<String>, artifacts: Map<String, ByteArray>, val format: String = "sonar-generic", excludedLines: Boolean = false,
 ) {
     val target = selection.target
     private val selectedModules = selection.modules
@@ -28,7 +28,7 @@ class CoverageConsumerExport internal constructor(
     val conversionLosses: List<String> = if (format == "jacoco-xml") emptyList() else listOf(
         "Only line coverage is exported; branch, function and instruction metrics are not represented.",
         "Source provenance, target identity and verification status cannot be represented by Sonar generic coverage XML and remain in export metadata.",
-    )
+    ) + if (excludedLines) listOf("Excluded executable lines are omitted from Sonar XML; retained JSON preserves their explicit state.") else emptyList()
     private val retainedArtifacts = artifacts.mapValues { (_, bytes) -> bytes.copyOf() }
     val artifacts: Map<String, ByteArray> get() = retainedArtifacts.mapValues { (_, bytes) -> bytes.copyOf() }
     val files: TreeManifest = TreeManifest(retainedArtifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
@@ -164,7 +164,8 @@ private fun finishExport(report: Digest, selection: CoverageExportSelection, sta
     val xml = try { sonarXml(sources) } catch (failure: CoverageXmlFailure) {
         return CoverageConsumerExport(report, selection, status, "incomplete", listOf(failure.message ?: "Cannot convert coverage XML"), emptyMap())
     }
-    return CoverageConsumerExport(report, selection, status, "exported", emptyList(), mapOf("coverage.xml" to xml))
+    return CoverageConsumerExport(report, selection, status, "exported", emptyList(), mapOf("coverage.xml" to xml),
+        excludedLines = sources.any { source -> source.lines.any { it.state == LineCoverageState.EXCLUDED } })
 }
 
 private class CoverageXmlFailure(message: String) : IllegalArgumentException(message)
@@ -186,7 +187,7 @@ private fun sonarXml(sources: List<ExportFile>): ByteArray {
         source.lines.forEach { line -> when (line.state) {
             LineCoverageState.COVERED -> append("    <lineToCover lineNumber=\"${line.number}\" covered=\"true\"/>\n")
             LineCoverageState.UNCOVERED -> append("    <lineToCover lineNumber=\"${line.number}\" covered=\"false\"/>\n")
-            LineCoverageState.NON_EXECUTABLE -> Unit
+            LineCoverageState.NON_EXECUTABLE, LineCoverageState.EXCLUDED -> Unit
             LineCoverageState.UNKNOWN -> throw CoverageXmlFailure("Unknown line coverage cannot be represented losslessly in Sonar XML.")
         } }
         append("  </file>\n")

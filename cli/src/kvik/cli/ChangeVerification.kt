@@ -254,7 +254,8 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
         for (group in groups) {
             val checks = group.checks
             if (!guard()) break
-            val groupOptions = options.copy(modules = group.modules, targets = group.targets, coverage = options.coverage && group.mode == ProjectMode.TEST)
+            val groupOptions = options.copy(modules = group.modules, targets = group.targets, coverage = options.coverage && group.mode == ProjectMode.TEST,
+                coverageExcludes = if (group.mode == ProjectMode.TEST) options.coverageExcludes else emptyList())
             try {
                 val groupTools = desired.mapValues { (target, identities) -> identities.filterKeys { name ->
                     name != "node" || group.mode == ProjectMode.TEST && target in group.targets

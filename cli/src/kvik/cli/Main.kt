@@ -76,7 +76,7 @@ private fun command(args: Array<String>) {
               Reads locked metadata from the existing store; no dependency downloads, builds or source updates.
             Evidence: verification --run PATH; explain --run PATH --action ACTION_ID (historical, read-only)
             Test reports: test-report --run PATH --output NEW_DIRECTORY [--format json|junit-xml] [--module ID] [--target TARGET] (no test execution)
-            Coverage: test --coverage --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
+            Coverage: test --coverage [--coverage-exclude CLASS_PATTERN ...] --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
             Coverage threshold: coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY
             Test aggregation: test-aggregate --run PATH ... [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--format json|junit-xml] --output NEW_DIRECTORY
             GitHub Checks: test-publish --run PATH ... --repository OWNER/REPO --sha SHA [--expect CHECK ...] [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY

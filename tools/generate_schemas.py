@@ -546,7 +546,7 @@ DEFS["jvmCoverageSpec"] = object_({
         "pattern": r"^[A-Za-z0-9_.$*?/]+(?![\s\S])"}, maxItems=100, uniqueItems=True),
 })
 DEFS["coverageLine"] = object_({"number": {"type": "integer", "minimum": 1, "maximum": 2147483647},
-    "state": enum("covered", "uncovered", "non_executable", "unknown")})
+    "state": enum("covered", "uncovered", "non_executable", "unknown", "excluded")})
 DEFS["sourceCoverage"] = object_({
     "source": ref("coverageSource"), "lineCount": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
     "lines": array(ref("coverageLine"), maxItems=1_000_000, uniqueItems=True), "complete": BOOL,
