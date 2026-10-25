@@ -2,7 +2,7 @@
 
 An experimental Kotlin Multiplatform build tool, distributed with its build plugins as sources and compiled into a cached **Kotlin/Native** executable. Invocations own their workers; repeated development work uses an explicit foreground session.
 
-The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `doctor`, `inspect`, `resolve`, `check-lock`, `build`, `test`, `verify`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `test-report`, `test-aggregate`, `coverage-report`, `coverage-check`, `coverage-aggregate`, `coverage-export`, `coverage-publish`, `explain`, `run-stats`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache, [remote JVM compilation cache](docs/remote-cache.md) and retained run results. [Foreground sessions](docs/foreground.md) retain project models and action graphs across reloads. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
+The launcher compiles Kvik and its local source plugin into one Kotlin/Native executable. Its current commands include `help`, `runtime-info`, `doctor`, `inspect`, `inspect-graph`, `resolve`, `check-lock`, `build`, `test`, `verify`, `run-script`, `inspect-script`, `resolve-script`, `check-script-lock`, `prepare-application`, `run-application`, `run-prepared`, `dev`, `verification`, `test-report`, `test-aggregate`, `coverage-report`, `coverage-check`, `coverage-aggregate`, `coverage-export`, `coverage-publish`, `explain`, `run-stats`, `packages versions`, `packages dependencies` and `dependencies`. Consumer commands connect the locked project graph to the JVM/Native adapters, local compilation cache, [remote JVM compilation cache](docs/remote-cache.md) and retained run results. [Foreground sessions](docs/foreground.md) retain project models and action graphs across reloads. See [PLAN.md](PLAN.md), [current status](docs/STATUS.md), [build command contract and limits](docs/evidence/k09-build-cli.md), [launcher evidence](docs/evidence/k14.md) and [v1 contracts](docs/decisions/0002-contracts.md).
 
 With tools matching the explicitly provisioned host lock:
 
@@ -39,6 +39,30 @@ through MCP. File inspection reads project declarations without expanding script
 annotations or imports, so a missing script cannot block it. Its configuration
 digest covers those declarations and resolver policy, as identified by
 `configurationScope: "declaration-and-resolver-policy"`.
+
+Use `inspect-graph --module library --target jvm --tools /absolute/tools.json`
+to inspect the planned build before execution. Select `--mode test`,
+`compile-tests`, `classpath-main`, `classpath-test`, `benchmark-smoke`,
+`benchmark-measurement`, `application`, `package`, `abi-dump`, `abi-check` or
+`documentation` for other graphs. Module and target selectors are repeatable;
+test mode also accepts the usual JVM coverage options.
+
+The versioned `graph-inspection` result lists action prerequisites, reverse
+`output.resultConsumers` links, terminal actions for requested checks, mandatory
+plugin contributions and declared script/SQLDelight/KSP generated-source roots.
+Each generated root is relative to its producer's output tree and carries its
+module, source set and configuration JSON pointer. A result consumer receives
+the producer's action result; it need not consume every file in that output tree.
+Recipes, actual output files and cache decisions remain unresolved until their
+prerequisites succeed. Compiler-plugin declarations remain available in `inspect`.
+
+Graph inspection checks the existing dependency lock against locally available
+metadata/artifacts and captures current inputs. It uses desired tool identities without
+checking compiler installations, creating a run, compiling or running generators.
+It does not write the local project or artifact cache. Kode selectors are supported;
+online source queries may cache provider metadata, while offline queries require
+previously cached source content. The JSON contract is `graphInspection` in
+[the v1 schemas](schemas/v1/contracts.json).
 
 Agents can query the project model, package/dependency versions, retained run
 results and foreground-session state through

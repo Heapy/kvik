@@ -82,9 +82,11 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             if (options.offline) arguments += "--offline"
         }
         val dependencyQuery = tool.name == "kvik_dependencies"
+        val graphQuery = tool.name == "kvik_inspect_graph"
+        if (graphQuery) arguments += listOf("--tools", projectPath(options.root, requireNotNull(options.build).tools))
         val configurationPlan = tool.name == "kvik_config_plan"
-        if (!tool.script && (dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build)) arguments += options.policy
-        if (!tool.script && (dependencyQuery || configurationPlan || tool.build || options.source != null && tool.project)) {
+        if (!tool.script && (graphQuery || dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build)) arguments += options.policy
+        if (!tool.script && (graphQuery || dependencyQuery || configurationPlan || tool.build || options.source != null && tool.project)) {
             if (tool.name !in setOf("kvik_package_versions", "kvik_package_dependencies")) options.lock?.let { arguments += listOf("--lock", it) }
             options.store?.let { arguments += listOf("--store", it) }
         }
@@ -92,7 +94,7 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             if (!dependencyQuery || "--available-versions" in command) options.queryCache?.let { arguments += listOf("--query-cache", it) }
             if (options.offline && "--offline" !in arguments) arguments += "--offline"
         }
-        if ((tool.build || configurationPlan || options.source != null && tool.project) && options.offline && "--offline" !in arguments) arguments += "--offline"
+        if ((graphQuery || tool.build || configurationPlan || options.source != null && tool.project) && options.offline && "--offline" !in arguments) arguments += "--offline"
         val prepared = if (tool.build && tool.script) prepareMcpScript(arguments, scriptArguments, options, id)
             else if (tool.build) prepareMcpBuild(arguments, options, id) else null
         val request = prepared?.first

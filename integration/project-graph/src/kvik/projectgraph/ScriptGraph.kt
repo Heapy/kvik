@@ -216,6 +216,8 @@ private class ScriptGraphBuilder(
                 else jvmScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
             }
         }
-        return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId))
+        return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId),
+            generatedSources = moduleGraph.generatedSources + if (generator == null) emptyList() else listOf(
+                GeneratedSourceRoot(runId, generator.module, generator.sourceSet, "script", "/scripts/${script.name}/generator", LogicalPath("generated"))))
     }
 }

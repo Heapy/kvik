@@ -34,7 +34,7 @@ private fun command(args: Array<String>) {
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, inspect-graph, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
             Tool diagnostics: doctor --tools PATH --target TARGET (repeatable) [--check build|test]; reads installed tools without launching or downloading them
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
@@ -86,6 +86,7 @@ private fun command(args: Array<String>) {
               Defaults to registry main snapshots; --project/--lock choose common logical paths, --configuration NAME=PATH/--dependency-lock NAME=PATH override them.
               Reads locked metadata from the existing store; no dependency downloads, builds or source updates.
             Evidence: verification --run PATH; explain --run PATH --action ACTION_ID (historical, read-only)
+            Action graph: inspect-graph --module ID --target NAME --tools PATH [--mode build|test|compile-tests|classpath-main|classpath-test|benchmark-smoke|benchmark-measurement|application|package|abi-dump|abi-check|documentation]
             Run statistics: run-stats --run PATH (historical action counts, timings and remote transfers; no execution)
             Test reports: test-report --run PATH --output NEW_DIRECTORY [--format json|junit-xml] [--module ID] [--target TARGET] (no test execution)
             Coverage: test --coverage [--coverage-exclude CLASS_PATTERN ...] --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
@@ -144,6 +145,7 @@ private fun command(args: Array<String>) {
         "verification" -> exitProcess(verificationCommand(args.drop(1)).code)
         "explain" -> println(explainCommand(args.drop(1)).canonical())
         "run-stats" -> println(runStatisticsCommand(args.drop(1)).canonical())
+        "inspect-graph" -> println(inspectGraphCommand(args.drop(1)).canonical())
         "test-report" -> println(testReportCommand(args.drop(1)).canonical())
         "coverage-report" -> println(coverageReportCommand(args.drop(1)).canonical())
         "coverage-check" -> exitProcess(coverageCheckCommand(args.drop(1)).code)

@@ -58,6 +58,20 @@ private class Contributor(id: String, private val add: (ProjectBuildContext, Pro
 }
 
 class BuildPluginsTest {
+    @Test fun compositionPreservesGeneratedSourceOriginsAlongsideContributedConsumers() {
+        val origin = GeneratedSourceRoot("main", "app", "main", "custom", "/modules/0", LogicalPath("generated"))
+        val provider = FixtureProvider(project = { _, _ -> pluginGraph().copy(generatedSources = listOf(origin)) })
+        val contributor = Contributor("extra") { _, graph ->
+            assertEquals(listOf(origin), graph.generatedSources)
+            listOf(pluginNode("consumer", setOf("main")))
+        }
+        val graph = composedProjectActionGraph(listOf(provider, contributor), pluginContext(), pluginRequest)
+        assertEquals(listOf(origin), graph.generatedSources)
+        val inspected = inspectActionGraph(graph).values.getValue("actions").arrayValue()
+        assertEquals(listOf("consumer".json()), inspected.single { it.objectValue().getValue("id") == "main".json() }
+            .objectValue().getValue("output").objectValue().getValue("resultConsumers").arrayValue())
+    }
+
     @Test fun impactSelectionRequiresAnExplicitProviderContractAndNoContributors() {
         assertTrue(supportsCoreChangeSelection(listOf(KotlinBuildPlugin())))
         assertFalse(supportsCoreChangeSelection(emptyList()))

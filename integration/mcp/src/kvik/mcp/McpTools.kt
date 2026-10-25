@@ -207,6 +207,15 @@ val mcpSessionControlTools: List<McpTool> = listOf(
 )
 
 /** Execution tools are advertised only when the foreground server was configured with pinned tools. */
+val mcpGraphTools: List<McpTool> = listOf(
+    McpTool("kvik_inspect_graph", "Inspect the planned action graph, prerequisite-result consumers, terminal checks and declared generated-source roots for selected modules and targets. Requires an existing lock and configured desired tools. Does not resolve action recipes, execute checks or predict output files/cache hits.",
+        listOf("inspect-graph"), required = setOf("modules", "targets"), arguments = listOf(
+            repeated("modules", "--module", 1), repeated("targets", "--target", 1),
+            text("mode", "--mode", choices = listOf("build", "test", "compile-tests", "classpath-main", "classpath-test", "benchmark-smoke",
+                "benchmark-measurement", "application", "package", "abi-dump", "abi-check", "documentation")),
+            switch("coverage", "--coverage"), repeated("coverageExcludes", "--coverage-exclude"))),
+)
+
 val mcpBuildTools: List<McpTool> = listOf(
     McpTool("kvik_build", "Build explicitly selected modules and targets using the configured pinned tools, dependency lock and cache. Returns committed verification and retained run paths. Compiler plugins and generators may execute project code.",
         listOf("build"), required = setOf("modules", "targets"), arguments = listOf(repeated("modules", "--module", 1), repeated("targets", "--target", 1)), build = true),

@@ -33,6 +33,7 @@ data class ProjectActionGraph(
     val terminalActions: Map<String, String>,
     /** Additional plugin actions must succeed before any requested check is complete. */
     val contributedActions: Set<String> = emptySet(),
+    val generatedSources: List<GeneratedSourceRoot> = emptyList(),
 )
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
@@ -110,6 +111,7 @@ private class Builder(
     private val selections = lock.selections.associateBy { it.request() }
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
+    private val generatedSources = linkedSetOf<GeneratedSourceRoot>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
     private val nativeMainNames = mutableMapOf<Pair<String, String>, String>()
     private val rootPublicationModules: Set<String> = if (request.mode == ProjectMode.PACKAGE &&
@@ -163,7 +165,7 @@ private class Builder(
                 val id = ensureDocumentation(module)
                 "$module:common:documentation" to id
             }
-            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals)
+            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, generatedSources = generatedSources.toList())
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
@@ -190,7 +192,7 @@ private class Builder(
                 terminals["$module:common:package"] = root
             }
         }
-        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap())
+        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList())
     }
 
     private fun ensureDocumentationStdlib(module: String, target: String): String {
@@ -665,6 +667,7 @@ private class Builder(
                     ScriptGraphRequest(script.name, generator = true))
                 // Shared prerequisites have the same IDs and declaration inputs in this graph.
                 for (node in graph.nodes) if (node.id !in nodes) nodes[node.id] = node
+                generatedSources += graph.generatedSources
             }
         }
 
@@ -723,6 +726,8 @@ private class Builder(
             sqlDelightAction(SqlDelightGeneration(module, settings, sql.map { it.path }, artifacts.map { it.path }, root),
                 merge(sql, artifacts, remapped), composition, tools.getValue("jvm"))
         }
+        generatedSources += GeneratedSourceRoot(id, module, settings.sourceSet, "sqldelight",
+            "/modules/${project.modules.indexOf(modules.getValue(module))}/sqlDelight", LogicalPath("generated/sqldelight/$module"))
         return id
     }
 
@@ -1101,6 +1106,9 @@ private class Builder(
                         moduleIds.map { modulePath(it, target, "main") } + artifacts.map { it.path }, ksp.map { it.path }, processors.map { it.path }, target = NativeTarget.require(target)),
                         merge(allTestSources, modules, artifacts, ksp, processors), composition, tools.getValue(target))
                 }
+                generatedSources += GeneratedSourceRoot(generationId(module, target), module, checkNotNull(target(module, target).test), "ksp",
+                    "/modules/${project.modules.indexOf(modules.getValue(module))}/targets/${modules.getValue(module).targets.indexOf(target(module, target))}/nativeTestSettings",
+                    LogicalPath("generated"))
             }
             val plugin = plugins(module, target, "test")
             require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }

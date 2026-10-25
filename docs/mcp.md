@@ -118,7 +118,7 @@ comes from declared source/resource paths and compiler-plugin inputs.
 `configurationScope: "declaration-and-resolver-policy"` identifies the scope of
 its configuration digest; it is not a digest of expanded script declarations.
 
-To enable execution tools, configure the server with the same pinned tools file
+To enable graph inspection and execution tools, configure the server with the same pinned tools file
 used by CLI builds:
 
 ```sh
@@ -127,11 +127,22 @@ used by CLI builds:
 
 | Additional tool | Inputs | Result |
 | --- | --- | --- |
+| `kvik_inspect_graph` | Nonempty `modules` and `targets`; optional `mode`, `coverage`, `coverageExcludes` | Planned actions, prerequisite-result consumers, terminal checks and generated-source roots; no execution |
 | `kvik_build` | Nonempty `modules` and `targets` arrays | Build result, verification record, diagnostics and retained output paths |
 | `kvik_test` | Nonempty `modules` and `targets` arrays; optional `coverage`, `coverageExcludes` | Fresh test execution with eligible compilation cache reuse, counts and retained output paths |
 | `kvik_verify` | Nonempty `modules` and `targets`; `since` baseline directories or `full: true`; optional `checks`, `planOnly`, `coverage`, `coverageExcludes` | Affected-check selection, omission reasons and execution results |
 | `kvik_inspect_script` | Exactly one of `name` or `file` | Script inputs, dependency/plugin origins, locked selections and prerequisite actions; no execution |
 | `kvik_run_script` | Exactly one of `name` or `file`; optional `arguments` array | Fresh script execution, committed verification and separate script output paths |
+
+`kvik_inspect_graph` returns the CLI `graph-inspection` contract. `mode` defaults
+to `build` and supports all project graph modes listed by CLI help. It needs a
+compatible existing lock and cached dependency metadata/artifacts. The graph is built by
+the configured source plugin without resolving action recipes or starting an
+executor. `output.resultConsumers` are direct recipients of prerequisite results,
+not per-file provenance. Output paths/digests and cache hits are not predicted.
+Generated roots identify script, SQLDelight and KSP declarations; their paths are
+producer-output-relative. The query also works with configured Kode selectors;
+offline source inspection requires cached content. It does not create run records.
 
 Execution tools run project code, including compiler plugins, generators and
 tests. They use the CLI executor, configured dependency lock, cache and resolver

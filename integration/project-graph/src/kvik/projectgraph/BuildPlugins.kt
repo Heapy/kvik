@@ -66,7 +66,7 @@ private fun compose(
     for (plugin in ordered.filter { it !== provider }) {
         val added = if (plugin is ProjectGraphContributor) {
             plugin.contribute(context, ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
-                expectedChecks.toSet(), terminals.toMap(), contributed.toSet()))
+                expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList()))
         } else {
             val authoring = context.effective.document.objectValue()
             val document = authoring["project"] ?: authoring["standaloneScript"] ?: error("Missing plugin authoring document")
@@ -76,7 +76,7 @@ private fun compose(
         contributed += added.map { it.id }
     }
     validateNodes(nodes)
-    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet())
+    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList())
 }
 
 private fun validateNodes(nodes: List<ActionNode>) {

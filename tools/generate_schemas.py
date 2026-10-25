@@ -1065,6 +1065,24 @@ DEFS["doctor"] = versioned({
 })
 
 
+GRAPH_MODES = ("build", "test", "compile-tests", "classpath-main", "classpath-test", "benchmark-smoke",
+    "benchmark-measurement", "application", "package", "abi-dump", "abi-check", "documentation")
+DEFS["graphInspection"] = versioned({
+    "kind": {"const": "graph-inspection"}, "mode": enum(*GRAPH_MODES),
+    "modules": array(ID, minItems=1, uniqueItems=True), "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
+    "toolTargets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True), "configurationPath": NONEMPTY,
+    "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"),
+    "toolIdentities": mapping(mapping(ref("digest"))), "execution": {"const": "not-requested"},
+    "actions": array(object_({"id": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "contributed": BOOL,
+        "output": object_({"contract": {"const": "tree-manifest"}, "state": {"const": "unresolved"},
+            "resultConsumers": array(NONEMPTY, uniqueItems=True)})}), maxItems=10000),
+    "checks": array(object_({"id": NONEMPTY, "terminalAction": NONEMPTY, "requiredContributions": array(NONEMPTY, uniqueItems=True)}), minItems=1),
+    "generatedSources": array(object_({"producer": NONEMPTY, "module": ID, "sourceSet": ID, "kind": NONEMPTY,
+        "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH}), uniqueItems=True),
+    "limitations": array(NONEMPTY), "source": ref("sourceReference"),
+}, optional=("source",))
+
+
 def main():
     directory = ROOT / "schemas/v1"
     directory.mkdir(parents=True, exist_ok=True)

@@ -79,6 +79,10 @@ class SqlDelightGraphTest {
         assertTrue(compile.classpath.size == 1)
         assertFalse(actions.getValue("data:jvm:main").inputs.files.any { it.path.value.endsWith(".sq") || it.path.value.startsWith("tools/") })
         val generation = SqlDelightGeneration.fromJson(actions.getValue("data:jvm:sqldelight").parameters)
+        val origin = graph.generatedSources.single { it.module == "data" }
+        assertEquals(generation.output, origin.outputRoot)
+        assertEquals(generation.settings.sourceSet, origin.sourceSet)
+        assertEquals(listOf(origin.outputRoot), actions.getValue(origin.producer).outputs)
         assertEquals(listOf(LogicalPath("data/sql/fixture/Tables.sq")), generation.sources)
         assertEquals(LogicalPath("tools/sqldelight-worker"), generation.worker)
         assertEquals(actions.getValue("data:jvm:sqldelight-worker").key(Sha256), actions.getValue("other:jvm:sqldelight-worker").key(Sha256))

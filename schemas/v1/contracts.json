@@ -14203,6 +14203,262 @@
         "checks"
       ],
       "additionalProperties": false
+    },
+    "graphInspection": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "graph-inspection"
+        },
+        "mode": {
+          "enum": [
+            "build",
+            "test",
+            "compile-tests",
+            "classpath-main",
+            "classpath-test",
+            "benchmark-smoke",
+            "benchmark-measurement",
+            "application",
+            "package",
+            "abi-dump",
+            "abi-check",
+            "documentation"
+          ]
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "toolTargets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "configurationPath": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "dependencyLock": {
+          "$ref": "#/$defs/digest"
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "toolIdentities": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        },
+        "execution": {
+          "const": "not-requested"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "contributed": {
+                "type": "boolean"
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "contract": {
+                    "const": "tree-manifest"
+                  },
+                  "state": {
+                    "const": "unresolved"
+                  },
+                  "resultConsumers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "contract",
+                  "state",
+                  "resultConsumers"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "dependencies",
+              "contributed",
+              "output"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10000
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "terminalAction": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "requiredContributions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "id",
+              "terminalAction",
+              "requiredContributions"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "generatedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "producer": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "module": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "sourceSet": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "kind": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "configurationPointer": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "outputRoot": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              }
+            },
+            "required": [
+              "producer",
+              "module",
+              "sourceSet",
+              "kind",
+              "configurationPointer",
+              "outputRoot"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "mode",
+        "modules",
+        "targets",
+        "toolTargets",
+        "configurationPath",
+        "inputSnapshot",
+        "configuration",
+        "dependencyLock",
+        "composition",
+        "toolIdentities",
+        "execution",
+        "actions",
+        "checks",
+        "generatedSources",
+        "limitations"
+      ],
+      "additionalProperties": false
     }
   }
 }
