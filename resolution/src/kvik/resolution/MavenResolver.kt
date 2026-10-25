@@ -250,7 +250,8 @@ class MavenResolver(
                     artifacts += LockedArtifact(c, "maven-$packaging-${variant.usage}", found.repository.id, url, Sha256.digest(bytes))
                 }
                 if (transitive) pom.dependencyEdges(variant).forEach {
-                    if (!excluded(it.coordinate)) edges += dependencyEdge(it.coordinate, expand = it.transitive, semantics = "pom-effective")
+                    if (!excluded(it.coordinate)) edges += dependencyEdge(it.coordinate, expand = it.transitive,
+                        semantics = "pom-effective", edgeExcludes = it.excludes)
                 }
             }
             // No capability conflict-resolution policy is implied by a version pin. Redirect
@@ -322,7 +323,12 @@ private fun atLeast(selected: String, required: String): Boolean {
     return true
 }
 
-private data class ModuleExclusion(val group: String, val module: String) {
+internal data class ModuleExclusion(val group: String, val module: String) {
+    init {
+        require(listOf(group, module).all { it == "*" || it.length in 1..256 && it.matches(Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")) }) {
+            "Unsupported dependency exclusion pattern"
+        }
+    }
     val key: String get() = "$group:$module"
     fun matches(coordinate: Coordinate): Boolean = (group == "*" || group == coordinate.group) && (module == "*" || module == coordinate.name)
 }
@@ -348,7 +354,6 @@ private fun dependency(value: JsonValue, constraint: Boolean = false): ModuleDep
         val rule = it.fields(setOf("group", "module"))
         val group = rule.string("group")
         val module = rule.string("module")
-        require(listOf(group, module).all { it == "*" || it.length in 1..256 && it.matches(Regex("[A-Za-z0-9_][A-Za-z0-9_.-]*")) }) { "Unsupported dependency exclusion pattern" }
         ModuleExclusion(group, module)
     }.toSet()
     return ModuleDependency(Coordinate(d.string("group"), d.string("module"), literal), platform, preferred, excludes)

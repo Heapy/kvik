@@ -239,7 +239,11 @@ class ResolutionTest {
                 assertEquals(setOf("root", "excluded", "ordinary", "middle", "leaf"), single.artifacts.map { it.coordinate.name }.toSet())
             }
         }
-        for (unsupported in listOf(all.replace("<artifactId>*", "<artifactId>leaf"), all.replace("<groupId>*", "<groupId>example"), all.replace("</exclusion>", "<unknown>*</unknown></exclusion>"))) {
+        for (selective in listOf(all.replace("<artifactId>*", "<artifactId>leaf"), all.replace("<groupId>*", "<groupId>example"))) {
+            assertEquals(listOf("excluded", "middle"), resolve(listOf("excluded"), base + component("excluded", dependency("middle", selective)))
+                .single().artifacts.map { it.coordinate.name })
+        }
+        for (unsupported in listOf(all.replace("<artifactId>*", "<artifactId>leaf*"), all.replace("<groupId>*", "<groupId>example?"), all.replace("</exclusion>", "<unknown>*</unknown></exclusion>"))) {
             assertFails { resolve(listOf("excluded"), base + component("excluded", dependency("middle", unsupported))) }
         }
         val managed = component("excluded", dependency("middle")).mapValues { (path, bytes) -> if (path.endsWith(".pom")) bytes.decodeToString()

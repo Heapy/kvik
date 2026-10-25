@@ -3,7 +3,8 @@ package kvik.resolution
 import kvik.core.Coordinate
 import kvik.core.VariantRequest
 
-internal data class PomDependency(val coordinate: Coordinate, val transitive: Boolean)
+internal data class PomDependency(val coordinate: Coordinate, val transitive: Boolean,
+                                  val excludes: Set<ModuleExclusion> = emptySet())
 
 /** Published POM dependency model only: never executes build/plugins or reads a local relativePath. */
 internal data class EffectivePom(
@@ -23,15 +24,11 @@ internal data class EffectivePom(
         if (scope in setOf("test", "provided") || optional == "true" || scope == "runtime" && request.usage != "java-runtime") null
         else {
             require("exclusions" !in management[dependencyKey(dependency)].orEmpty()) { "Managed POM exclusion merging is unsupported" }
-            val exclusions = effective["exclusions"]
-            val all = exclusions?.children?.isNotEmpty() == true
-            if (all) {
-                val exclusion = exclusions.children.singleOrNull()
-                require(exclusions.text.isEmpty() && exclusion?.name == "exclusion" && exclusion.text.isEmpty() &&
-                    exclusion.children.map { it.name }.toSet() == setOf("groupId", "artifactId") && exclusion.children.size == 2 &&
-                    exclusion.value("groupId") == "*" && exclusion.value("artifactId") == "*") { "Only literal wildcard-all POM exclusions are supported" }
-            } else require(exclusions == null || exclusions.text.isEmpty()) { "Invalid POM exclusions" }
-            PomDependency(coordinate(effective - "exclusions"), !all)
+            val exclusions = pomExclusions(effective["exclusions"])
+            val all = ModuleExclusion("*", "*") in exclusions
+            // Preserve the existing wildcard-all traversal and lock identities. Selective
+            // rules join the incoming path context, including across metadata redirects.
+            PomDependency(coordinate(effective - "exclusions"), !all, if (all) emptySet() else exclusions)
         }
     }
 
@@ -39,6 +36,20 @@ internal data class EffectivePom(
         require(dependency.scalar("scope") in setOf(null, "compile") && dependency.scalar("optional") in setOf(null, "false")) { "Unsupported platform POM management entry" }
         coordinate(dependency)
     }
+}
+
+private fun pomExclusions(node: PomNode?): Set<ModuleExclusion> {
+    if (node == null) return emptySet()
+    require(node.text.isEmpty() && node.children.size <= 64) { "Invalid or unbounded POM exclusions" }
+    val rules = node.children.map { exclusion ->
+        require(exclusion.name == "exclusion" && exclusion.text.isEmpty() &&
+            exclusion.children.map { it.name }.toSet() == setOf("groupId", "artifactId") && exclusion.children.size == 2) {
+            "POM exclusions require exactly groupId and artifactId"
+        }
+        ModuleExclusion(exclusion.value("groupId")!!, exclusion.value("artifactId")!!)
+    }
+    require(rules.distinct().size == rules.size) { "Duplicate POM exclusion" }
+    return rules.toSet()
 }
 
 private fun Map<String, PomNode>.scalar(name: String): String? = get(name)?.also {

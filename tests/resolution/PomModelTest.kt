@@ -126,10 +126,12 @@ class PomModelTest {
         assertEquals("jar", effectivePom(child, inheritedIdentity) { pom("parent", "<packaging>pom</packaging>") }.packaging)
     }
 
-    @Test fun unsupportedMergesAndSelectedExclusionsAreRejected() {
+    @Test fun selectedExclusionsAreParsedButUnsupportedMergesAreRejected() {
         val exclusions = "<exclusions><exclusion><groupId>x</groupId><artifactId>y</artifactId></exclusion></exclusions>"
         assertTrue(model("<dependencies>" + dep("b", "<version>1</version><scope>test</scope>$exclusions") + "</dependencies>", "").dependencies(runtime).isEmpty())
-        assertFails { model("<dependencies>" + dep("b", "<version>1</version>$exclusions") + "</dependencies>", "").dependencies(runtime) }
+        val selected = model("<dependencies>" + dep("b", "<version>1</version>$exclusions") + "</dependencies>", "").dependencyEdges(runtime).single()
+        assertTrue(selected.transitive)
+        assertEquals(setOf(ModuleExclusion("x", "y")), selected.excludes)
         assertFails { model("<dependencies>" + dep("b", "<version>1</version>").repeat(2) + "</dependencies>", "") }
         assertFails { model("<dependencyManagement><dependencies>" + dep("bom", "<scope>import</scope><type>pom</type><version>1</version>") + "</dependencies></dependencyManagement>", "") }
         assertFails { model("<properties><s>import</s></properties><dependencyManagement><dependencies>" + dep("bom", "<scope>\${s}</scope><type>pom</type><version>1</version>") + "</dependencies></dependencyManagement>", "") }

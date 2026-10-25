@@ -25,6 +25,24 @@ class ModuleExclusionsTest {
                     "url" to "${c.name}-${c.version}.jar".json(), "size" to digest.sizeBytes.json(), "sha256" to digest.hash.json())).json())).json())
             .canonical().encodeToByteArray())
     }
+    private fun pomComponent(name: String, dependencies: List<JsonValue> = emptyList()): Map<String, ByteArray> {
+        val c = coordinate(name)
+        val children = dependencies.joinToString("") { value ->
+            val fields = value.objectValue()
+            val rules = fields.getValue("excludes").arrayValue().joinToString("") { rule ->
+                val exclusion = rule.objectValue()
+                "<exclusion><groupId>${exclusion.getValue("group").stringValue()}</groupId>" +
+                    "<artifactId>${exclusion.getValue("module").stringValue()}</artifactId></exclusion>"
+            }
+            "<dependency><groupId>${fields.getValue("group").stringValue()}</groupId>" +
+                "<artifactId>${fields.getValue("module").stringValue()}</artifactId>" +
+                "<version>${fields.getValue("version").objectValue().getValue("requires").stringValue()}</version>" +
+                "<exclusions>$rules</exclusions></dependency>"
+        }
+        val pom = "<project><modelVersion>4.0.0</modelVersion><groupId>${c.group}</groupId>" +
+            "<artifactId>${c.name}</artifactId><version>${c.version}</version><dependencies>$children</dependencies></project>"
+        return mapOf(url(c, "pom") to pom.encodeToByteArray(), url(c, "jar") to name.encodeToByteArray())
+    }
     private class Network(val entries: Map<String, ByteArray>) : ArtifactTransport {
         val fetched = linkedMapOf<String, ByteArray>()
         override fun fetch(url: String): ByteArray = (entries[url] ?: throw MissingResource(url)).also { fetched[url] = it }
@@ -35,26 +53,30 @@ class ModuleExclusionsTest {
     }
 
     @Test fun moduleExclusionsArePathSpecificAcrossRootsAndDiamondsAndReplayMetadata() {
-        val entries = component("restricted", listOf(edge("middle", listOf(rule("blocked", "*"), rule("*", "drop"))))) +
-            component("ordinary", listOf(edge("middle"))) +
-            component("middle", listOf(edge("blocked:leaf:1"), edge("drop"), edge("keep"))) +
-            component("blocked:leaf:1") + component("drop") + component("keep")
-        val isolated = resolve(entries, listOf("restricted"))
-        assertEquals(setOf("restricted", "middle", "keep"), isolated.first.selections.single().artifacts.map { it.coordinate.name }.toSet())
-        assertFalse(isolated.second.fetched.keys.any { "/blocked/" in it || "/drop/" in it })
-        assertEquals(2, isolated.first.edges.count { it.kind == "excluded" && it.semantics == "metadata-exclusion" && it.exclusion == null })
-        assertTrue(isolated.first.selections.single().metadata.any { it.url.endsWith("restricted-1.module") })
-        assertEquals(isolated.first, resolve(isolated.second.fetched, listOf("restricted")).first)
-        for (order in listOf(listOf("restricted", "ordinary"), listOf("ordinary", "restricted"))) {
-            val graph = resolve(entries, order).first
-            val selections = graph.selections.associateBy { it.requested.name }
-            assertEquals(setOf("restricted", "middle", "keep"), selections.getValue("restricted").artifacts.map { it.coordinate.name }.toSet())
-            assertEquals(setOf("ordinary", "middle", "leaf", "drop", "keep"), selections.getValue("ordinary").artifacts.map { it.coordinate.name }.toSet())
-            assertEquals(2, graph.nodes.count { it.coordinate.name == "middle" })
-            assertEquals(graph.nodes.size, graph.nodes.map { it.id }.distinct().size)
-            val diamond = resolve(entries + component("root", order.map { edge(it) }), listOf("root")).first
-            assertEquals(setOf("root", "restricted", "ordinary", "middle", "leaf", "drop", "keep"), diamond.selections.single().artifacts.map { it.coordinate.name }.toSet())
-            graph.toJson()
+        for (pom in listOf(false, true)) {
+            fun published(name: String, dependencies: List<JsonValue> = emptyList()) =
+                if (pom) pomComponent(name, dependencies) else component(name, dependencies)
+            val entries = published("restricted", listOf(edge("middle", listOf(rule("blocked", "*"), rule("*", "drop"))))) +
+                published("ordinary", listOf(edge("middle"))) +
+                published("middle", listOf(edge("blocked:leaf:1"), edge("drop"), edge("keep"))) +
+                published("blocked:leaf:1") + published("drop") + published("keep")
+            val isolated = resolve(entries, listOf("restricted"))
+            assertEquals(setOf("restricted", "middle", "keep"), isolated.first.selections.single().artifacts.map { it.coordinate.name }.toSet())
+            assertFalse(isolated.second.fetched.keys.any { "/blocked/" in it || "/drop/" in it })
+            assertEquals(2, isolated.first.edges.count { it.kind == "excluded" && it.semantics == "metadata-exclusion" && it.exclusion == null })
+            assertTrue(isolated.first.selections.single().metadata.any { it.url.endsWith("restricted-1." + if (pom) "pom" else "module") })
+            assertEquals(isolated.first, resolve(isolated.second.fetched, listOf("restricted")).first)
+            for (order in listOf(listOf("restricted", "ordinary"), listOf("ordinary", "restricted"))) {
+                val graph = resolve(entries, order).first
+                val selections = graph.selections.associateBy { it.requested.name }
+                assertEquals(setOf("restricted", "middle", "keep"), selections.getValue("restricted").artifacts.map { it.coordinate.name }.toSet())
+                assertEquals(setOf("ordinary", "middle", "leaf", "drop", "keep"), selections.getValue("ordinary").artifacts.map { it.coordinate.name }.toSet())
+                assertEquals(2, graph.nodes.count { it.coordinate.name == "middle" })
+                assertEquals(graph.nodes.size, graph.nodes.map { it.id }.distinct().size)
+                val diamond = resolve(entries + published("root", order.map { edge(it) }), listOf("root")).first
+                assertEquals(setOf("root", "restricted", "ordinary", "middle", "leaf", "drop", "keep"), diamond.selections.single().artifacts.map { it.coordinate.name }.toSet())
+                graph.toJson()
+            }
         }
     }
 
@@ -64,12 +86,15 @@ class ModuleExclusionsTest {
             <dependency><groupId>example</groupId><artifactId>two</artifactId><version>1</version></dependency>
             <dependency><groupId>example</groupId><artifactId>keep</artifactId><version>1</version></dependency>
             </dependencies></project>""".encodeToByteArray()
-        val entries = component("root", listOf(edge("middle", listOf(rule("blocked", "*"))))) +
-            component("middle", listOf(edge("lower", listOf(rule("example", "two"))))) +
-            mapOf(url(coordinate("lower"), "pom") to pom, url(coordinate("lower"), "jar") to byteArrayOf(1)) + component("keep")
-        val graph = resolve(entries, listOf("root")).first
-        assertEquals(setOf("root", "middle", "lower", "keep"), graph.selections.single().artifacts.map { it.coordinate.name }.toSet())
-        assertEquals(setOf("blocked:one:1", "example:two:1"), graph.edges.filter { it.kind == "excluded" }.map { it.requirement.toString() }.toSet())
+        for (root in listOf(component("root", listOf(edge("middle", listOf(rule("blocked", "*"))))),
+                            pomComponent("root", listOf(edge("middle", listOf(rule("blocked", "*"))))))) {
+            val entries = root +
+                component("middle", listOf(edge("lower", listOf(rule("example", "two"))))) +
+                mapOf(url(coordinate("lower"), "pom") to pom, url(coordinate("lower"), "jar") to byteArrayOf(1)) + component("keep")
+            val graph = resolve(entries, listOf("root")).first
+            assertEquals(setOf("root", "middle", "lower", "keep"), graph.selections.single().artifacts.map { it.coordinate.name }.toSet())
+            assertEquals(setOf("blocked:one:1", "example:two:1"), graph.edges.filter { it.kind == "excluded" }.map { it.requirement.toString() }.toSet())
+        }
     }
 
     @Test fun allExclusionAppliesBelowIncomingDependencyAndStillVerifiesItsArtifact() {
@@ -126,12 +151,46 @@ class ModuleExclusionsTest {
         val hostEntries = component("host", listOf(edge("missing")))
         val hostDocument = parseJson(hostEntries.getValue(url(host, "module")).decodeToString()).objectValue()
         val ownership = hostDocument.getValue("component").objectValue() + mapOf("module" to alias.name.json(), "url" to "../../alias/1/alias-1.module".json())
-        val entries = component("root", listOf(edge("alias", listOf(rule("*", "*"))))) + hostEntries +
-            mapOf(url(alias, "module") to redirect, url(host, "module") to JsonValue.Object(hostDocument + ("component" to JsonValue.Object(ownership))).canonical().encodeToByteArray())
+        val rules = listOf(rule("example", "host"), rule("example", "missing"))
+        for (root in listOf(component("root", listOf(edge("alias", rules))), pomComponent("root", listOf(edge("alias", rules))))) {
+            val entries = root + hostEntries +
+                mapOf(url(alias, "module") to redirect, url(host, "module") to JsonValue.Object(hostDocument + ("component" to JsonValue.Object(ownership))).canonical().encodeToByteArray())
+            val graph = resolve(entries, listOf("root")).first
+            assertEquals(listOf("root", "host"), graph.selections.single().artifacts.map { it.coordinate.name })
+            assertEquals(3, graph.selections.single().metadata.size)
+            assertEquals(1, graph.edges.count { it.kind == "redirect" })
+        }
+    }
+
+    @Test fun pomExactRulesDoNotMatchSimilarNamesOrAnotherGroup() {
+        val entries = pomComponent("root", listOf(edge("middle", listOf(rule("example", "drop"))))) +
+            pomComponent("middle", listOf(edge("drop"), edge("drop-more"), edge("other:drop:1"))) +
+            pomComponent("drop-more") + pomComponent("other:drop:1")
         val graph = resolve(entries, listOf("root")).first
-        assertEquals(listOf("root", "host"), graph.selections.single().artifacts.map { it.coordinate.name })
-        assertEquals(3, graph.selections.single().metadata.size)
-        assertEquals(1, graph.edges.count { it.kind == "redirect" })
+        assertEquals(setOf("example:root:1", "example:middle:1", "example:drop-more:1", "other:drop:1"),
+            graph.selections.single().artifacts.map { it.coordinate.toString() }.toSet())
+        assertEquals("example:drop:1", graph.edges.single { it.kind == "excluded" }.requirement.toString())
+    }
+
+    @Test fun pomRulesExcludeDescendantsRatherThanTheNamedDependencyItself() {
+        val entries = pomComponent("root", listOf(edge("middle", listOf(rule("example", "middle"))))) +
+            pomComponent("middle", listOf(edge("keep"))) + pomComponent("keep")
+        assertEquals(listOf("root", "middle", "keep"), resolve(entries, listOf("root")).first.selections.single().artifacts.map { it.coordinate.name })
+    }
+
+    @Test fun pomRuleBoundsAndLiteralPatternsAreCheckedBeforeFetchingTheDependency() {
+        val invalid = listOf(listOf(rule("blocked*", "leaf")), listOf(rule("", "leaf")),
+            listOf(rule("example", "leaf?")), listOf(rule("\${group}", "leaf")),
+            List(65) { rule("group$it", "*") })
+        for (rules in invalid) {
+            val network = Network(pomComponent("root", listOf(edge("middle", rules))))
+            assertFails { MavenResolver(network, NativePomParser()).resolve(coordinate("root"), variant, listOf(repo)) }
+            assertFalse(network.fetched.keys.any { "/middle/" in it })
+        }
+        val first = List(33) { rule("group$it", "*") }
+        val second = List(32) { rule("group${it + 33}", "*") }
+        val entries = pomComponent("root", listOf(edge("middle", first))) + pomComponent("middle", listOf(edge("lower", second)))
+        assertTrue(assertFails { resolve(entries, listOf("root")) }.message.orEmpty().contains("exclusion rule bound"))
     }
 
     @Test fun malformedOrUnboundedExclusionsFailClosed() {
