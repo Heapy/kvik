@@ -59,6 +59,19 @@ private class Contributor(id: String, override val graphDependencies: Set<String
 }
 
 class BuildPluginsTest {
+    @Test fun scriptCompilationInputsReachContributorsAndTheComposedGraph() {
+        var observed = false
+        val consumer = Contributor("script-consumer") { _, graph ->
+            val inputs = graph.requireScriptCompilation("task").resolve(emptyMap())
+            assertEquals(listOf(LogicalPath("src/task.kt")), inputs.sources)
+            observed = true
+            emptyList()
+        }
+        val graph = composedScriptActionGraph(listOf(KotlinBuildPlugin(), consumer), pluginContext(), ScriptGraphRequest("task"))
+        assertTrue(observed)
+        assertEquals(listOf(LogicalPath("src/task.kt")), graph.requireScriptCompilation("task").resolve(emptyMap()).sources)
+    }
+
     @Test fun pluginsPublishArtifactsForLaterConsumersInProjectAndScriptGraphs() {
         val context = pluginContext()
         val output = fileOutput("assets.bin", "generated-data")

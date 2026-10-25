@@ -13614,6 +13614,13 @@
             "additionalProperties": false
           }
         },
+        "scriptCompilations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scriptCompilation"
+          },
+          "uniqueItems": true
+        },
         "requestedChecks": {
           "type": "array",
           "items": {
@@ -15274,6 +15281,13 @@
           },
           "uniqueItems": true
         },
+        "scriptCompilations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scriptCompilation"
+          },
+          "uniqueItems": true
+        },
         "artifacts": {
           "type": "array",
           "items": {
@@ -15560,6 +15574,76 @@
         "jar",
         "options",
         "outputs"
+      ],
+      "additionalProperties": false
+    },
+    "scriptCompilation": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "action": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "entryScript": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "uniqueItems": true
+        },
+        "sourceRoots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "inputPath": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              }
+            },
+            "required": [
+              "path",
+              "inputPath"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "script",
+        "target",
+        "action",
+        "entryScript",
+        "dependencies",
+        "sourceRoots"
       ],
       "additionalProperties": false
     }

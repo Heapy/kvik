@@ -38,10 +38,12 @@ data class ProjectActionGraph(
     val generatedResources: List<GeneratedResourceRoot> = emptyList(),
     val artifacts: List<ProjectArtifact> = emptyList(),
     val compilations: List<ProjectCompilation> = emptyList(),
+    val scriptCompilations: List<ScriptCompilation> = emptyList(),
 ) {
     init {
         validateProjectArtifacts(nodes, artifacts)
         validateProjectCompilations(nodes, compilations)
+        validateScriptCompilations(nodes, scriptCompilations)
     }
 }
 
@@ -124,6 +126,7 @@ private class Builder(
     private val nodes = linkedMapOf<String, ActionNode>()
     private val projectArtifacts = linkedSetOf<ProjectArtifact>()
     private val compilations = linkedMapOf<String, ProjectCompilation>()
+    private val scriptCompilations = linkedMapOf<String, ScriptCompilation>()
     private val generatedSources = linkedSetOf<GeneratedSourceRoot>()
     private val generatedResources = linkedSetOf<GeneratedResourceRoot>()
     private val testLaunches = linkedMapOf<String, TestLaunch>()
@@ -181,7 +184,7 @@ private class Builder(
                 val id = ensureDocumentation(module)
                 "$module:common:documentation" to id
             }
-            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList(), compilations = compilations.values.toList())
+            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList(), compilations = compilations.values.toList(), scriptCompilations = scriptCompilations.values.toList())
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
@@ -208,7 +211,7 @@ private class Builder(
                 terminals["$module:common:package"] = root
             }
         }
-        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList(), compilations = compilations.values.toList())
+        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList(), compilations = compilations.values.toList(), scriptCompilations = scriptCompilations.values.toList())
     }
 
     private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
@@ -739,6 +742,7 @@ private class Builder(
         for (node in graph.nodes) if (node.id !in nodes) nodes[node.id] = node
         projectArtifacts += graph.artifacts
         graph.compilations.forEach { compilations.getOrPut(it.actionId) { it } }
+        graph.scriptCompilations.forEach { scriptCompilations.getOrPut(it.actionId) { it } }
         generatedSources += graph.generatedSources
         generatedResources += graph.generatedResources
     }

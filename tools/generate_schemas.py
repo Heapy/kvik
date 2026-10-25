@@ -1013,6 +1013,9 @@ DEFS["fileInspectionResult"] = versioned({
 }, optional=("source",))
 
 DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
+DEFS["scriptCompilation"] = object_({"script": NONEMPTY, "target": NONEMPTY, "action": NONEMPTY,
+    "entryScript": nullable(PATH), "dependencies": array(NONEMPTY, uniqueItems=True),
+    "sourceRoots": array(object_({"path": PATH, "inputPath": PATH}), uniqueItems=True)})
 DEFS["scriptInspection"] = versioned({
     "source": ref("sourceReference"),
     "kind": {"const": "script-inspection"}, "script": SCRIPT_ID, "configurationPath": STRING,
@@ -1026,11 +1029,12 @@ DEFS["scriptInspection"] = versioned({
         "pathOptions": array(ref("pluginPathOption")), "outputs": array(PATH)}), maxItems=16),
     "lockedSelections": array(ref("scopedSelection"), maxItems=8192),
     "actions": array(object_({"id": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True)})),
+    "scriptCompilations": array(ref("scriptCompilation"), uniqueItems=True),
     "requestedChecks": array(ref("requestedCheck"), minItems=1, maxItems=1),
     "languageRuntime": object_({"path": STRING, "digest": ref("digest"), "classpathPosition": {"const": "after-declared-dependencies"}}),
     "entrypoint": object_({"requested": nullable(STRING), "status": enum("requires-compiled-script-metadata", "declared-kotlin-script")}),
     "execution": {"const": "not-requested"},
-}, optional=("source",))
+}, optional=("source", "scriptCompilations"))
 
 DEFS["scriptConfigurationInspection"] = versioned({
     **{key: DEFS["scriptInspection"]["properties"][key] for key in
@@ -1134,6 +1138,7 @@ DEFS["graphInspection"] = versioned({
         "action": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True),
         "sourceRoots": array(object_({"sourceSet": NONEMPTY, "directory": PATH, "inputPath": PATH,
             "common": BOOL, "dependsOn": array(NONEMPTY, uniqueItems=True)}), uniqueItems=True)}), uniqueItems=True),
+    "scriptCompilations": array(ref("scriptCompilation"), uniqueItems=True),
     "artifacts": array(object_({"module": NONEMPTY, "target": NONEMPTY, "compilation": NONEMPTY,
         "producer": NONEMPTY, "output": ref("outputArtifact")}), uniqueItems=True),
     "checks": array(object_({"id": NONEMPTY, "terminalAction": NONEMPTY, "requiredContributions": array(NONEMPTY, uniqueItems=True)}), minItems=1),
@@ -1143,7 +1148,7 @@ DEFS["graphInspection"] = versioned({
         "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH,
         "files": array(PATH, minItems=1, maxItems=10000, uniqueItems=True)}), uniqueItems=True),
     "limitations": array(NONEMPTY), "source": ref("sourceReference"),
-}, optional=("source", "generatedResources", "artifacts", "compilations"))
+}, optional=("source", "generatedResources", "artifacts", "compilations", "scriptCompilations"))
 
 
 DEFS["jvmAgentOption"] = object_({"kind": enum("literal", "input-file", "output-file"),

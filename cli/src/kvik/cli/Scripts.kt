@@ -229,6 +229,7 @@ private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: Prep
             ResolutionDomain.fromJson(it.objectValue().getValue("domain")).consumer == ResolutionConsumer.Script(file.scriptName)
         }.json(),
         "actions" to graph.nodes.map { obj("id" to it.id.json(), "dependencies" to it.dependencies.sorted().map(String::json).json()) }.json(),
+        "scriptCompilations" to graph.scriptCompilations.sortedWith(compareBy({ it.script }, { it.target })).map { it.toJson() }.json(),
         "requestedChecks" to graph.requestedChecks.sorted().map(String::json).json(),
         "languageRuntime" to obj("path" to worker.stdlib.json(), "digest" to stdlib.toJson(), "classpathPosition" to "after-declared-dependencies".json()),
         "entrypoint" to obj("requested" to ((expanded.declaration.entryScript?.value ?: expanded.declaration.mainClass)?.json() ?: JsonValue.Null),

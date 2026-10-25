@@ -287,3 +287,14 @@ failed or mismatched prerequisites and needs no output from this compilation.
 Views survive source-plugin composition and script prerequisite graphs.
 `inspect-graph` serializes declarations without executing recipes; classpath and
 generated-file contents remain lazy until their producers finish.
+
+`scriptCompilations` exposes the same input view for project and standalone
+scripts, including scripts used as generators. Use `requireScriptCompilation(name)`
+(JVM by default). Scripts keep their own identities rather than acquiring synthetic
+module/source-set identities. Each `sourceRoots` entry maps an authored file or
+directory `path` to its compiler `inputPath`; `entryScript` is the project-relative
+`.kts` entry path, or null for ordinary `.kt` programs. Resolved sources include
+captured script imports. Classpaths and compiler plugins follow the actual script
+recipe, including workspace module prerequisites. Nested generator views are
+retained once per script. Both `inspect-graph` and `inspect-script` expose these
+declarations without compiling or running the script.

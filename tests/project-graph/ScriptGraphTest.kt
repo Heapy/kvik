@@ -44,6 +44,56 @@ private const val scriptCompile = "script:task:jvm:compile"
 private const val scriptRun = "script:task:jvm:run"
 
 class ScriptGraphTest {
+    @Test fun publicScriptInputsResolveModuleClasspathWithoutCompilingTheScript() {
+        val spec = scriptSpec.copy(dependencies = listOf(ScriptDependencyReference.Module("helper"),
+            ScriptDependencyReference.External(Coordinate.parse("g:external:1"))))
+        val graph = scriptPlan(spec, scriptFiles("task.kt", "helper/src/Main.kt"), listOf(scriptModule("helper")))
+        val compilation = graph.requireScriptCompilation("task")
+        assertEquals(scriptCompile, compilation.actionId)
+        assertNull(compilation.entryScript)
+        assertEquals(listOf(ScriptSourceRoot(LogicalPath("task.kt"), LogicalPath("src/task.kt"))), compilation.sourceRoots)
+        assertEquals(setOf("helper:jvm:main"), compilation.dependencies)
+        assertFailsWith<IllegalArgumentException> { compilation.resolve(emptyMap()) }
+        val module = ActionResult("helper:jvm:main", scriptDigest("key"), ActionStatus.LOCAL_HIT,
+            TreeManifest(listOf(FileEntry(LogicalPath("classes/Helper.class"), scriptDigest("helper bytes")))), 0)
+        val inputs = compilation.resolve(mapOf(module.actionId to module))
+        assertEquals(listOf(LogicalPath("src/task.kt")), inputs.sources)
+        assertEquals(LogicalPath("modules/helper/jvm/main"), inputs.classpath.first())
+        assertEquals(setOf(scriptDigest("helper bytes"), scriptDigest("g:external:1")), inputs.classpathFiles().files.map { it.digest }.toSet())
+        assertEquals(listOf(scriptDigest("task.kt")), inputs.sourceFiles().files.map { it.digest })
+        assertEquals(graph.nodes.single { it.id == scriptCompile }.resolve(mapOf(module.actionId to module)).inputs, inputs.files)
+        assertFailsWith<IllegalArgumentException> { compilation.resolve(mapOf(module.actionId to module.copy(status = ActionStatus.FAILED, exitCode = 1))) }
+        assertFailsWith<IllegalArgumentException> { compilation.resolve(mapOf(module.actionId to module.copy(actionId = "other"))) }
+        assertFailsWith<IllegalArgumentException> { graph.copy(scriptCompilations = listOf(compilation, compilation)) }
+        assertFailsWith<IllegalArgumentException> { graph.copy(nodes = graph.nodes.filterNot { it.id == scriptCompile }) }
+        assertFailsWith<IllegalArgumentException> { graph.requireScriptCompilation("missing") }
+        assertEquals(listOf(compilation.toJson()), inspectActionGraph(graph).values.getValue("scriptCompilations").arrayValue())
+    }
+
+    @Test fun standaloneKotlinScriptInputsRetainImportsAndPublishedPlugin() {
+        val primary = LogicalPath("scripts/task.kts")
+        val plugin = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
+            setOf("jvm"), setOf("script"), emptyList(), emptyList())
+        val spec = ScriptSpec(listOf(LogicalPath("scripts")), entryScript = primary, compilerPlugins = listOf(plugin))
+        val config = parseStandaloneScriptConfiguration(obj("schemaVersion" to 1.json(), "name" to "task".json(),
+            "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(),
+            "script" to spec.toJson()))
+        val effective = effectiveConfiguration(config)
+        val graph = scriptActionGraph(effective, scriptLock(effective), scriptFiles(primary.value, "scripts/helper.kts"),
+            scriptDigest("runtime"), scriptTools, ScriptGraphRequest("task"))
+        assertTrue(graph.compilations.isEmpty())
+        val compilation = graph.requireScriptCompilation("task")
+        assertEquals(primary, compilation.entryScript)
+        assertTrue(compilation.dependencies.isEmpty())
+        assertEquals(listOf(ScriptSourceRoot(LogicalPath("scripts"), LogicalPath("src/scripts"))), compilation.sourceRoots)
+        val inputs = compilation.resolve(emptyMap())
+        assertEquals(setOf("src/scripts/task.kts", "src/scripts/helper.kts"), inputs.sources.map { it.value }.toSet())
+        assertTrue(inputs.commonSources.isEmpty())
+        assertEquals(1, inputs.plugins.size)
+        assertTrue(inputs.plugins.none { it in inputs.classpath })
+        assertEquals(graph.nodes.single { it.id == scriptCompile }.resolve(emptyMap()).inputs, inputs.files)
+    }
+
     @Test fun sourceDependenciesEnterBothLockDomainsAndCompilationWithoutChangingAuthoring() {
         val spec = ScriptSpec(listOf(LogicalPath("scripts")), entryScript = LogicalPath("scripts/task.kts"),
             dependencies = listOf(ScriptDependencyReference.External(Coordinate.parse("g:explicit:1"))))

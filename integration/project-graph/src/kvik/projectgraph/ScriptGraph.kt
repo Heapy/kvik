@@ -212,6 +212,9 @@ private class ScriptGraphBuilder(
             contributedActions = moduleGraph.contributedActions,
             artifacts = moduleGraph.artifacts.toList(),
             compilations = moduleGraph.compilations.toList(),
+            scriptCompilations = moduleGraph.scriptCompilations + ScriptCompilation(script.name, "jvm", compileId,
+                script.declaration.sources.map { ScriptSourceRoot(it, LogicalPath("src/${it.value}")) },
+                script.declaration.entryScript, compileEdges) { compilationInputs(compile.resolve(it)) },
             generatedSources = moduleGraph.generatedSources + if (generator == null || generator.resources.isNotEmpty()) emptyList() else listOf(
                 GeneratedSourceRoot(runId, generator.module, generator.sourceSet, "script", "/scripts/${script.name}/generator", LogicalPath("generated"))),
             generatedResources = moduleGraph.generatedResources + if (generator == null || generator.resources.isEmpty()) emptyList() else listOf(

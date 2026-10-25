@@ -14,6 +14,21 @@ def validator(name):
 
 
 class ScriptsSchemaTest(unittest.TestCase):
+    def test_script_compilation_views_use_script_identity_and_logical_paths(self):
+        view = dict(script='generate', target='jvm', action='script:generate:jvm:compile',
+                    entryScript='scripts/generate.kts', dependencies=['helper:jvm:main'],
+                    sourceRoots=[dict(path='scripts', inputPath='src/scripts')])
+        validator('scriptCompilation').validate(view)
+        validator('scriptCompilation').validate({**view, 'entryScript': None})
+        for change in [dict(module='fakeModule'), dict(entryScript='../generate.kts'),
+                       dict(sourceRoots=[dict(path='scripts', inputPath='/src/scripts')]),
+                       dict(dependencies=['helper:jvm:main', 'helper:jvm:main'])]:
+            self.assertFalse(validator('scriptCompilation').is_valid({**view, **change}), change)
+        for name in ('scriptInspection', 'graphInspection'):
+            self.assertEqual('#/$defs/scriptCompilation',
+                             SCHEMA['$defs'][name]['properties']['scriptCompilations']['items']['$ref'])
+            self.assertNotIn('scriptCompilations', SCHEMA['$defs'][name]['required'])
+
     def test_configuration_inspection_keeps_locked_inspection_requirements(self):
         configuration = SCHEMA['$defs']['scriptConfigurationInspection']
         self.assertEqual('script-configuration-inspection', configuration['properties']['kind']['const'])
