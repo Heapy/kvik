@@ -10,6 +10,23 @@ class TestLaunchesTest {
     private val resources = TestResources(768, setOf("database"), 2)
     private fun file(path: String, executable: Boolean = false) = FileEntry(LogicalPath(path), digest, executable)
 
+    @Test fun jsRetrySettingsRoundTripAndBindOnlyTestLaunches() {
+        for (target in KotlinJsTarget.entries) {
+            val selection = JsTestSelection("app", target, LogicalPath("tests.mjs"), maxRetries = 2)
+            assertEquals(selection, JsTestSelection.fromJson(selection.toJson()))
+            val launch = JsTestLaunch(selection)
+            val inputs = TreeManifest(listOf(file("tests.mjs")))
+            val tools = mapOf("node" to digest)
+            val action = launch.action(inputs, digest, tools)
+            launch.requireMatches(action)
+            val ordinary = JsTestLaunch(selection.copy(maxRetries = 0)).action(inputs, digest, tools)
+            assertFalse("maxRetries" in ordinary.parameters.values)
+            assertNotEquals(ordinary.key(Sha256), action.key(Sha256))
+            for (count in listOf(-1, 10)) assertFails { selection.copy(maxRetries = count) }
+            assertFails { JsTestSelection.fromJson(JsonValue.Object(selection.toJson().values + ("maxRetries" to 4294967296L.json()))) }
+        }
+    }
+
     @Test fun retriesRoundTripAndRejectInvalidBudgetsAndEngines() {
         val selection = JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("app.Test"), maxRetries = 2)
         assertEquals(selection, JvmTestSelection.fromJson(selection.toJson()))

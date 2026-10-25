@@ -143,7 +143,8 @@ DEFS["abiSettings"] = object_({"baseline": PATH})
 DEFS["target"]["properties"]["abi"] = ref("abiSettings")
 DEFS["jsTestSettings"] = object_({"filter": nullable({"type": "string", "minLength": 1, "maxLength": 4096,
     "pattern": r"^[^\u0000-\u001f\u007f-\u009f]*$(?![\s\S])"}),
-    "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000}}, optional=("filter", "timeoutMillis"))
+    "timeoutMillis": {"type": "integer", "minimum": 1, "maximum": 3600000},
+    "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("filter", "timeoutMillis", "maxRetries"))
 DEFS["target"]["properties"]["jsTestSettings"] = ref("jsTestSettings")
 DEFS["nativeFramework"] = object_({"baseName": {"type": "string", "minLength": 1, "maxLength": 128,
     "pattern": r"^[A-Za-z][A-Za-z0-9_]*$(?![\s\S])"}, "isStatic": BOOL}, optional=("isStatic",))
@@ -1127,7 +1128,8 @@ DEFS["testLaunch"] = {"oneOf": [
     test_launch("kvik-kotest-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
         "resources": ref("testResources"), "maxRetries": NATIVE_RETRIES}, optional=("resources", "maxRetries"))),
     test_launch("kvik-js-tests-v1", JS_TARGETS, object_({"module": NONEMPTY, "target": enum(*JS_TARGETS), "entryPoint": PATH,
-        "filter": DEFS["jsTestSettings"]["properties"]["filter"], "resources": ref("testResources")}, optional=("resources",))),
+        "filter": DEFS["jsTestSettings"]["properties"]["filter"], "resources": ref("testResources"),
+        "maxRetries": DEFS["jsTestSettings"]["properties"]["maxRetries"]}, optional=("resources", "maxRetries"))),
 ]}
 DEFS["graphInspection"] = versioned({
     "kind": {"const": "graph-inspection"}, "mode": enum(*GRAPH_MODES),

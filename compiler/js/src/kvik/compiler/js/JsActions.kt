@@ -109,19 +109,23 @@ fun jsCompileAction(compilation: JsCompilation, inputs: TreeManifest, compositio
         compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-data class JsTestSelection(val module: String, val target: KotlinJsTarget, val entryPoint: LogicalPath, val filter: String? = null, val resources: TestResources = TestResources()) {
+data class JsTestSelection(val module: String, val target: KotlinJsTarget, val entryPoint: LogicalPath, val filter: String? = null, val resources: TestResources = TestResources(), val maxRetries: Int = 0) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(entryPoint.value.endsWith(".mjs"))
+        require(maxRetries in 0..9) { "JS/Wasm test maxRetries must be an integer in 0..9" }
         require(filter == null || filter.length in 1..4096 && filter.none { it.isISOControl() }) { "Test filter must be a nonempty glob (* matches any characters)" }
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "target" to target.projectName.json(), "entryPoint" to entryPoint.value.json(), "filter" to (filter?.json() ?: JsonValue.Null)).let {
         if (resources == TestResources()) it else JsonValue.Object(it.values + ("resources" to resources.toJson()))
+    }.let {
+        if (maxRetries == 0) it else JsonValue.Object(it.values + ("maxRetries" to maxRetries.json()))
     }
     companion object {
-        fun fromJson(value: JsonValue): JsTestSelection = value.fields(setOf("module", "target", "entryPoint", "filter"), setOf("resources")).let {
+        fun fromJson(value: JsonValue): JsTestSelection = value.fields(setOf("module", "target", "entryPoint", "filter"), setOf("resources", "maxRetries")).let {
             JsTestSelection(it.getValue("module").stringValue(), KotlinJsTarget.require(it.getValue("target").stringValue()), LogicalPath(it.getValue("entryPoint").stringValue()),
-                it.getValue("filter").let { v -> if (v == JsonValue.Null) null else v.stringValue() }, it["resources"]?.let(TestResources::fromJson) ?: TestResources())
+                it.getValue("filter").let { v -> if (v == JsonValue.Null) null else v.stringValue() }, it["resources"]?.let(TestResources::fromJson) ?: TestResources(),
+                (it["maxRetries"]?.longValue() ?: 0).also { count -> require(count in 0L..9L) }.toInt())
         }
     }
 }

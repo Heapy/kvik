@@ -12,6 +12,13 @@ VALIDATOR = Draft202012Validator({**SCHEMA, "$ref": "#/$defs/target"})
 
 
 class ProjectSettingsSchemaTest(unittest.TestCase):
+    def test_js_retry_limits(self):
+        for target in ('js', 'wasmJs'):
+            for count in (0, 1, 9):
+                VALIDATOR.validate({**self.target(), 'name': target, 'jsTestSettings': {'maxRetries': count}})
+            for count in (-1, 10, True, '1', None, 1.5, 4294967296):
+                self.assertFalse(VALIDATOR.is_valid({**self.target(), 'name': target, 'jsTestSettings': {'maxRetries': count}}))
+
     def test_inspected_settings_distinguish_defaults_from_authored_origins(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/inspectedSetting'})
         default = dict(value=['junit'], source='default', origins=[])

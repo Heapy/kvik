@@ -39,6 +39,8 @@ class JsTestProgressExecutionTest {
             val host = object : ProcessHost {
                 override fun start(request: ProcessRequest): OwnedProcess {
                     launches++
+                    NativeFiles.writeNew(request.stdoutFile, byteArrayOf())
+                    NativeFiles.writeNew(request.stderrFile, byteArrayOf())
                     val directory = request.workingDirectory
                     val fields = parseJson(NativeFiles.read("$directory/request.json", 1024 * 1024).decodeToString()).objectValue()
                     val requestId = fields.getValue("requestId").stringValue()
@@ -89,7 +91,9 @@ class JsTestProgressExecutionTest {
                 assertEquals(expectedAction, result.status, "$target/$variant")
                 assertEquals(1, closes)
                 val invalid = variant in setOf("missing-progress", "corrupt-progress", "wrong-request", "wrong-selection", "oversize-progress")
-                assertEquals(if (invalid) emptyList() else listOf(test), report.tests, "$target/$variant")
+                assertEquals(if (invalid) emptyList() else listOf(test), report.tests.map { result ->
+                    result.copy(details = result.details!!.copy(attempts = result.details.attempts.map { it.copy(logs = emptyList()) }))
+                }, "$target/$variant")
                 when {
                     variant == "passed-final" || variant == "failed-final" -> {
                         assertTrue(report.counts.discoveryComplete)

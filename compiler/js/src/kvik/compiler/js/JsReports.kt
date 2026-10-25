@@ -2,7 +2,8 @@ package kvik.compiler.js
 
 import kvik.core.*
 
-data class JsTestReport(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus, val diagnostic: String? = null) {
+data class JsTestReport(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus, val diagnostic: String? = null,
+    internal val retryable: Boolean = false) {
     fun toJson(): JsonValue.Object = obj("tests" to tests.map { it.toJson() }.json(), "counts" to counts.toJson(), "status" to status.name.lowercase().json(), "diagnostic" to (diagnostic?.json() ?: JsonValue.Null))
 }
 
@@ -25,7 +26,8 @@ internal fun parseJsTestReport(value: JsonValue, requestId: String, selection: J
         "incomplete" -> VerificationStatus.INCOMPLETE.also { require(exitCode == 3 && counts.failed == 0 && (diagnostic != null || !counts.satisfiesExecution)) }
         else -> error("Unsupported Node report status")
     }
-    return JsTestReport(tests, counts, status, diagnostic)
+    return JsTestReport(tests, counts, status, diagnostic,
+        retryable = counts.discoveryComplete && counts.failed > 0 && diagnostic == null)
 }
 
 /** Recover only complete journal records after the process tree has stopped. A journal never proves completion. */

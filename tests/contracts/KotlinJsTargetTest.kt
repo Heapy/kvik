@@ -28,7 +28,7 @@ class KotlinJsTargetTest {
 
     @Test fun testSettingsHaveStableDefaultsAndAreTargetSpecific() {
         assertEquals(JsTestSettings(), JsTestSettings.fromJson(obj()))
-        val settings = JsTestSettings("example.*", 1_000)
+        val settings = JsTestSettings("example.*", 1_000, 2)
         assertEquals(settings, JsTestSettings.fromJson(settings.toJson()))
         for (target in KotlinJsTarget.entries) assertEquals(settings,
             parseProjectConfiguration(document(target.projectName, settings.toJson())).project.modules.single().targets.single().jsTestSettings)
@@ -38,6 +38,8 @@ class KotlinJsTargetTest {
         assertFails { JsTestSettings("") }
         assertFails { JsTestSettings("line\nbreak") }
         assertFails { JsTestSettings(timeoutMillis = 0) }
+        for (count in listOf(-1L, 10L, 4294967296L)) assertFails { JsTestSettings.fromJson(obj("maxRetries" to count.json())) }
+        assertFails { JsTestSettings(maxRetries = -1) }
         assertFails { JsTestSettings.fromJson(obj("engine" to "unimplemented".json())) }
     }
 

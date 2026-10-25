@@ -629,8 +629,14 @@ action's working directory and HOME remain available across attempts. Each
 attempt retains separate stdout/stderr logs. The action deadline and scheduler
 resource reservation cover discovery and all attempts. Cancellation, timeout,
 runner failures, incomplete reporting or changed test identities stop retries.
-Earlier failed attempts continue to make verification fail. JS/Wasm retries and
-JVM/Kotest retries are not yet supported.
+Earlier failed attempts continue to make verification fail.
+
+JS/Wasm Node tests accept `"jsTestSettings": {"maxRetries": 2}` with the same
+limit and strict failure policy. Every attempt starts a fresh Node process and
+reruns the selected scope; HOME and the working directory remain shared. Original
+reports, progress journals and stdout/stderr logs are retained separately for each
+attempt. The timeout covers all attempts, and changing the retry limit preserves
+compilation and linking cache entries. JVM/Kotest retries are not yet supported.
 
 
 ### JS and WasmJS

@@ -12,6 +12,54 @@ import kotlin.test.*
 import kotlin.time.TimeSource
 
 class JsTestProgressRealTest {
+    @Test fun realNodeRetriesResetMemoryAndRetainOriginalFailuresAndLogs() {
+        val node = checkNotNull(getenv("KVIK_JS_TEST_NODE")).toKString()
+        val guardian = checkNotNull(getenv("KVIK_JS_TEST_GUARDIAN")).toKString()
+        for (target in KotlinJsTarget.entries) {
+            val root = NativeRunDirectory("/private/tmp")
+            val store = NativeContentStore("${root.path}/store")
+            val body = """
+                describe('suite',()=>{
+                    it('flaky',()=>{
+                        if (globalThis.alreadyRan) throw Error('process memory was reused');
+                        globalThis.alreadyRan = true;
+                        if (existsSync('marker')) { console.log('RECOVERED'); return; }
+                        writeFileSync('marker','first failure');
+                        console.log('FIRST_FAILURE');
+                        throw Error('original failure');
+                    });
+                    it('sibling',()=>{});
+                });
+            """.trimIndent()
+            val source = "import {existsSync,writeFileSync} from 'node:fs';\n" +
+                if (target == KotlinJsTarget.JS) body else "export function startUnitTests(){$body}"
+            val digest = store.put(source.encodeToByteArray())
+            val selection = JsTestSelection("sample", target, LogicalPath("tests.mjs"), maxRetries = 2)
+            val action = jsTestAction(selection, TreeManifest(listOf(FileEntry(selection.entryPoint, digest))), digest, mapOf("node" to digest))
+            NativeProcessHost(guardian).use { host ->
+                val executor = JsCompilerExecutor(root.runId, root.path, host, store,
+                    JvmToolchainProvider { error("No compiler") }, NodeToolchainProvider { _, _ -> node })
+                executor.start(root.runId, "tests", action).use { running ->
+                    val start = TimeSource.Monotonic.markNow()
+                    while (running.poll() == null) { check(start.elapsedNow().inWholeSeconds < 15); usleep(10_000u) }
+                    val report = executor.observations.getValue("tests").tests!!
+                    assertEquals(VerificationStatus.FAILED, report.status)
+                    assertEquals(TestCounts(2, 2, 0, 0, true), report.counts)
+                    assertTrue(report.tests.all { it.details!!.attempts.size == 2 })
+                    val attempts = report.tests.single { it.id == "suite.flaky" }.details!!.attempts
+                    assertEquals(listOf(TestStatus.FAILED, TestStatus.PASSED), attempts.map { it.status })
+                    assertEquals("original failure", attempts.first().failure!!.message)
+                    for ((index, attempt) in attempts.withIndex()) {
+                        val log = attempt.logs.single { it.stream == TestLogStream.STDOUT }
+                        val bytes = NativeFiles.read("${root.path}/${log.path.value}", 1024)
+                        assertEquals(log.digest, Sha256.digest(bytes))
+                        assertContains(bytes.decodeToString(), if (index == 0) "FIRST_FAILURE" else "RECOVERED")
+                    }
+                }
+            }
+        }
+    }
+
     @Test fun realOwnedNodeRetainsCompletedTestsThroughInterruptionAndExport() {
         val node = checkNotNull(getenv("KVIK_JS_TEST_NODE")) { "Run tools/test_js_execution.py" }.toKString()
         val guardian = checkNotNull(getenv("KVIK_JS_TEST_GUARDIAN")).toKString()

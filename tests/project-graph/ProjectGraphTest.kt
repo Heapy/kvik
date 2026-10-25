@@ -845,6 +845,27 @@ class ProjectGraphTest {
         assertTrue(packaged.inputs.files.all { it.path.value.startsWith("classes/") })
     }
 
+    @Test fun jsRetriesPreserveCompilationAndLinkingIdentities() {
+        for (target in listOf("js", "wasmJs")) {
+            val modules = listOf(base, app).map { it.copy(targets = listOf(TargetSpec(target, "commonMain", "commonTest", emptyList()))) }
+            val document = configuration(*modules.toTypedArray()).document.canonical()
+            fun configured(count: Int) = parseProjectConfiguration(parseJson(document.replace("\"name\":\"$target\"",
+                "\"name\":\"$target\",\"jsTestSettings\":{\"maxRetries\":$count}")))
+            val before = configured(0)
+            val after = configured(2)
+            assertEquals(effectiveConfiguration(before).requests, effectiveConfiguration(after).requests)
+            val defaults = resolved(graph(before, request = request(ProjectMode.TEST, target)))
+            val retried = resolved(graph(after, request = request(ProjectMode.TEST, target)))
+            assertEquals(defaults.keys, retried.keys)
+            for ((id, action) in defaults) {
+                if (action.kind == ActionKind.TEST) {
+                    assertNotEquals(action.key(Sha256), retried.getValue(id).key(Sha256))
+                    assertEquals(2, JsTestSelection.fromJson(retried.getValue(id).parameters).maxRetries)
+                } else assertEquals(action, retried.getValue(id))
+            }
+        }
+    }
+
     @Test fun nodeApplicationsSeparateEntryLinkBundleAndRuntimeSettings() {
         for (target in listOf("js", "wasmJs")) {
             val base = module("app", listOf(external("g:library:1")))

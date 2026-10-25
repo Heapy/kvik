@@ -1178,6 +1178,12 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 3600000
+        },
+        "maxRetries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9,
+          "default": 0
         }
       },
       "required": [],
@@ -15064,6 +15070,12 @@
                 },
                 "resources": {
                   "$ref": "#/$defs/testResources"
+                },
+                "maxRetries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9,
+                  "default": 0
                 }
               },
               "required": [

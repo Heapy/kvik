@@ -1397,7 +1397,7 @@ private class Builder(
         val resources = resources(module, target, "main") + resources(module, target, "test") +
             runtimeDependencies.map { resources(it, target, "main") }.combinedResources()
         val launch = JsTestLaunch(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter,
-            target(module, target).testResources ?: TestResources()), settings.timeoutMillis)
+            target(module, target).testResources ?: TestResources(), settings.maxRetries), settings.timeoutMillis)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, setOf(linkId(module, target)) + resources.dependencies,
             launch.outputContract) { results ->

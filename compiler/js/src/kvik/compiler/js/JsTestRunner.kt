@@ -13,7 +13,7 @@ let ignoredDepth = 0;
 let diagnostic = null;
 // Append complete observations synchronously so process.exit, cancellation or a timeout
 // cannot erase tests which already finished. The final report alone establishes success.
-const progress = openSync('test-progress.jsonl', 'wx', 0o600);
+const progress = openSync(request.progressPath ?? 'test-progress.jsonl', 'wx', 0o600);
 let progressBytes = 0, sequence = 0;
 function retain(event) {
     const bytes = Buffer.from(JSON.stringify(event) + '\n');
@@ -93,6 +93,6 @@ const exitCode = status === 'passed' ? 0 : status === 'failed' ? 1 : 3;
 if (diagnostic === null && executed === 0) diagnostic = 'No selected tests executed';
 const report = {schemaVersion: 1, requestId: request.requestId, selection: request.selection, status, exitCode, tests: records,
     counts: {discovered: discoveryComplete ? selected.length : null, executed, failed, skipped, discoveryComplete: complete}, diagnostic};
-writeFileSync('output/test-results.json', JSON.stringify(report) + '\n', {flag: 'wx', mode: 0o600});
+writeFileSync(request.resultPath ?? 'output/test-results.json', JSON.stringify(report) + '\n', {flag: 'wx', mode: 0o600});
 process.exitCode = exitCode;
 """.trimIndent()

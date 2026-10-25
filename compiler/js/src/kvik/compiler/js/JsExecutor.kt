@@ -101,18 +101,30 @@ class JsCompilerExecutor(
             writeFile("$directory/request.json", obj("requestId" to reservation.runId.json(), "selection" to checkNotNull(selection).toJson()).canonical().encodeToByteArray())
             listOf(tools.executable, "--unhandled-rejections=strict", "$directory/runner.mjs", "$directory/request.json")
         }
-        val process = host.start(ProcessRequest(command, directory, action.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
-            "$directory/process.stdout", "$directory/process.stderr", action.timeoutMillis))
+        val started = kotlin.time.TimeSource.Monotonic.markNow()
+        var attempt = 1
+        var requestId = reservation.runId
+        var requestFile = "request.json"
+        var progressFile = "test-progress.jsonl"
+        var resultFile = "output/test-results.json"
+        var logPrefix = "process"
+        fun launch() = host.start(ProcessRequest(if (attempt == 1) command else command.dropLast(1) + "$directory/$requestFile",
+            directory, action.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
+            "$directory/$logPrefix.stdout", "$directory/$logPrefix.stderr", maxOf(1L, action.timeoutMillis - started.elapsedNow().inWholeMilliseconds)))
+        var process = launch()
         return object : RunningAction {
             private var result: ActionResult? = null
             private var cancelled = false
             private var closed = false
+            private var history: JsTestReport? = null
+            private val usage = mutableListOf<ProcessUsage>()
             override fun cancel() { if (result == null) { cancelled = true; process.cancel() } }
             override fun close() { if (!closed) { process.close(); closed = true } }
             override fun poll(): ActionResult? {
                 result?.let { return it }
                 check(!closed) { "JS/Wasm action is closed" }
-                val exit = process.poll() ?: return null
+                var exit = process.poll() ?: return null
+                exit.usage?.let { usage += it }
                 close() // No child may modify output while it is validated and captured.
                 var report: JsTestReport? = null
                 var diagnostics = emptyList<Diagnostic>()
@@ -140,7 +152,7 @@ class JsCompilerExecutor(
                             }
                         }
                         else -> {
-                            report = parseJsTestReport(parseJson(readFile("$directory/output/test-results.json", 64 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)), reservation.runId, checkNotNull(selection), exit.exitCode)
+                            report = parseJsTestReport(parseJson(readFile("$directory/$resultFile", 64 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true)), requestId, checkNotNull(selection), exit.exitCode)
                             if (report!!.status == VerificationStatus.PASSED) status = ActionStatus.EXECUTED
                             else failure = report!!.diagnostic ?: "JS/Wasm tests failed"
                         }
@@ -168,17 +180,60 @@ class JsCompilerExecutor(
                 if (selection != null && (report == null || status != ActionStatus.EXECUTED && report?.status == VerificationStatus.PASSED || status == ActionStatus.CANCELLED)) {
                     val verificationStatus = if (status == ActionStatus.CANCELLED) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE
                     report = try {
-                        parseJsTestProgress(readFile("$directory/test-progress.jsonl", 64 * 1024 * 1024), reservation.runId, selection, verificationStatus, failure)
+                        parseJsTestProgress(readFile("$directory/$progressFile", 64 * 1024 * 1024), requestId, selection, verificationStatus, failure)
                     } catch (error: Exception) {
                         failure = listOfNotNull(failure, "Invalid JS/Wasm test progress: ${error.message ?: "unreadable journal"}").joinToString("; ")
                         JsTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), verificationStatus, failure)
                     }
                 }
+                if (selection != null) {
+                    var round = checkNotNull(report)
+                    fun log(stream: String): ByteArray? = try { readFile("$directory/$logPrefix.$stream") }
+                        catch (error: Exception) {
+                            round = round.interruptedRetry("JS/Wasm test log unavailable: ${error.message}", round.status == VerificationStatus.CANCELLED)
+                            null
+                        }
+                    val stdout = log("stdout")
+                    val stderr = log("stderr")
+                    report = mergeJsTestAttempts(history, jsTestAttemptLogs(round, runDirectory,
+                        "$directory/$logPrefix.stdout", stdout, "$directory/$logPrefix.stderr", stderr))
+                    history = report
+                    if (report.retryable && attempt <= selection.maxRetries) {
+                        if (started.elapsedNow().inWholeMilliseconds >= action.timeoutMillis) {
+                            report = report.interruptedRetry("JS/Wasm retry budget exhausted")
+                            exit = ProcessResult(124, timedOut = true)
+                        } else {
+                            attempt++
+                            requestId = "${reservation.runId}-attempt-$attempt"
+                            requestFile = "request-$attempt.json"
+                            progressFile = "test-progress-$attempt.jsonl"
+                            resultFile = "test-results-$attempt.json"
+                            logPrefix = "process-$attempt"
+                            try {
+                                writeFile("$directory/$requestFile", obj("requestId" to requestId.json(), "selection" to selection.toJson(),
+                                    "progressPath" to progressFile.json(), "resultPath" to resultFile.json()).canonical().encodeToByteArray())
+                                process = launch()
+                                closed = false
+                                return null
+                            } catch (error: Exception) {
+                                report = report.interruptedRetry("JS/Wasm retry could not start: ${error.message}")
+                                exit = ProcessResult(1)
+                            }
+                        }
+                    }
+                    status = when (report.status) {
+                        VerificationStatus.PASSED -> ActionStatus.EXECUTED
+                        VerificationStatus.CANCELLED -> ActionStatus.CANCELLED
+                        else -> ActionStatus.FAILED
+                    }
+                    failure = report.diagnostic ?: if (status == ActionStatus.FAILED) "JS/Wasm tests failed" else null
+                    if (status != ActionStatus.EXECUTED) outputs = TreeManifest(emptyList())
+                }
                 if (failure != null) diagnostics = diagnostics + Diagnostic(
                     if (status == ActionStatus.CANCELLED) "KVIK_JS_CANCELLED" else if (selection != null) "KVIK_JS_TEST_RESULT" else "KVIK_JS_PROCESS_FAILED",
                     if (status == ActionStatus.CANCELLED) DiagnosticCategory.CANCELLATION else if (selection != null) DiagnosticCategory.TEST else DiagnosticCategory.INFRASTRUCTURE,
                     failure!!, actionId, compile?.module ?: selection!!.module, action.target)
-                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, failure, processUsage = listOfNotNull(exit.usage)).also {
+                return ActionResult(actionId, action.key(Sha256), status, outputs, exit.exitCode, failure, processUsage = usage.toList()).also {
                     result = it; observations[actionId] = JsActionObservation(it, diagnostics, report, directory)
                 }
             }
