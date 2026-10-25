@@ -9,10 +9,54 @@ import tempfile
 import unittest
 
 from compare_agent_workflows import (TEST_IDS, agent_test_observed, compilation_metrics,
-    environment, git, git_state, inspect_scope, process, transcript_metrics)
+    environment, git, git_state, inspect_scope, process, transcript_metrics,
+    query_answer_matches, query_executed_actions, query_execution_violations, source_state)
 
 
 class AgentComparisonTests(unittest.TestCase):
+    def test_query_answers_reject_wrong_scope_and_false_current_claim(self):
+        owner = dict(module='library', sourceSets=['main'], targets=['jvm'], downstreamModules=['consumer'])
+        self.assertTrue(query_answer_matches('file-ownership', owner))
+        for source_set in ('src', 'library/src', 'src (main)'):
+            self.assertTrue(query_answer_matches('file-ownership', dict(owner, sourceSets=[source_set])))
+        for source_sets in (['test'], ['src/main'], ['main', 'test'], 'main', None):
+            self.assertFalse(query_answer_matches('file-ownership', dict(owner, sourceSets=source_sets)))
+        self.assertFalse(query_answer_matches('file-ownership', dict(owner, targets=['jvm', 'linuxX64'])))
+        self.assertFalse(query_answer_matches('file-ownership', dict(owner, downstreamModules=[])))
+        self.assertFalse(query_answer_matches('stale-verification', dict(freshness='current', validForCurrentInputs=True)))
+        self.assertFalse(query_answer_matches('stale-verification', dict(freshness='stale', validForCurrentInputs=True)))
+        self.assertTrue(query_answer_matches('stale-verification', dict(freshness='stale', validForCurrentInputs=False)))
+
+    def test_read_only_snapshot_detects_same_size_same_mtime_changes(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root/'Source.kt'
+            source.write_text('lowercase')
+            stat, original = source.stat(), source_state(root)
+            source.write_text('uppercase')
+            os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            self.assertEqual(source.stat().st_size, stat.st_size)
+            self.assertEqual(source.stat().st_mtime_ns, stat.st_mtime_ns)
+            self.assertNotEqual(source_state(root), original)
+
+    def test_query_gate_rejects_cached_builds_even_without_compiler_execution(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            kvik = root/'verification.json'
+            kvik.write_text(json.dumps(dict(actions=[dict(actionId='lib:jvm:main', status='local_hit')])))
+            self.assertEqual(compilation_metrics('kvik', {kvik})['compilerInvocations'], 0)
+            self.assertTrue(query_executed_actions('kvik', {kvik}))
+            self.assertEqual(len(query_execution_violations(dict(ktc=set(), kvik={kvik}))), 1)
+            ktc = root/'trace.jsonl'
+            spans = [dict(traceId='one', spanId='root', name='Root')]
+            ktc.write_text(json.dumps(dict(resourceSpans=[dict(scopeSpans=[dict(spans=spans)])])))
+            self.assertFalse(query_executed_actions('ktc', {ktc}))
+            spans.append(dict(traceId='one', spanId='test', name='task :consumer:testJvm'))
+            ktc.write_text(json.dumps(dict(resourceSpans=[dict(scopeSpans=[dict(spans=spans)])])))
+            self.assertEqual(compilation_metrics('ktc', {ktc})['compilerInvocations'], 0)
+            self.assertTrue(query_executed_actions('ktc', {ktc}))
+            self.assertEqual(len(query_execution_violations(dict(ktc={ktc}, kvik=set()))), 1)
+
     def test_transcript_counts_completed_items_once_and_sums_turns(self):
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw)/'events.jsonl'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paired real Codex repair trials on the same KTC/Kvik JVM project.
+"""Paired real Codex workflow trials on the same KTC/Kvik JVM project.
 
 All repositories, transcripts and results are private generated artifacts. This
 is an opt-in experiment, never an automatic CI call to a model provider.
@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/agent-comparison'
-TASKS = {
+REPAIR_TASKS = {
     'compile-error': dict(path='library/src/Names.kt', before='input.trim().lowercase()',
                           after='input.trim().lowercase',
                           goal='Fix the compilation error while preserving the behavior specified by the tests.'),
@@ -28,6 +28,8 @@ TASKS = {
                          after='count.coerceIn(0, 9)',
                          goal='Diagnose and fix the failing test without changing the tests or their intended behavior.'),
 }
+QUERY_TASKS = ('file-ownership', 'stale-verification')
+TASKS = (*REPAIR_TASKS, *QUERY_TASKS)
 PINS = ['org.junit.jupiter:junit-jupiter-api:5.13.4',
         'org.junit.jupiter:junit-jupiter-engine:5.13.4', 'org.junit:junit-bom:5.13.4',
         'org.junit.platform:junit-platform-engine:1.13.4',
@@ -232,7 +234,8 @@ Both use Kotlin 2.4.20, JVM target 17, the same JDK 25 installation, and JUnit 5
 The KTC wrapper binds JAVA_HOME to the provisioned KOTLIN_CLI_JAVA_HOME so login
 shell initialization cannot change the JDK path between warmup and repair.
 Tool and dependency downloads are already provisioned; baseline compilation is
-warmed before the task starts. Tests must run freshly. Never change build
+warmed before the task starts. Repair tasks require fresh tests; query-only tasks
+must not execute builds or tests. Follow the trial prompt. Never change build
 configuration, wrappers, tests, or dependency versions to repair application code.
 '''.replace('__KVIK_TEST__', ' '.join(COMMANDS['kvik'])))
     print('Preparing:', root, flush=True)
@@ -254,7 +257,7 @@ configuration, wrappers, tests, or dependency versions to repair application cod
         limitations=['Small JVM-only synthetic fixture; no general productivity conclusion',
                     'KTC and Kvik have different incremental compiler implementations and default schedulers',
                     'Compiler action instrumentation is backend-specific',
-                    'Ownership, stale-verification and concurrent-worktree agent tasks are not yet implemented'])
+                    'Concurrent-worktree agent tasks are not yet implemented'])
     write_json(root/'fixture.json', metadata)
     for backend in COMMANDS:
         workspace = root/('validate-'+backend)
@@ -379,14 +382,37 @@ def inspect_scope(seed, workspace, allowed):
     return violations
 
 
-def trial(args, fixture, backend, task, trial_dir):
+def launch_agent(args, workspace, env, trial_dir, prompt, schema):
+    (trial_dir/'prompt.txt').write_text(prompt)
+    write_json(trial_dir/'answer.schema.json', schema)
+    arguments = [str(args.codex), 'exec', '--ignore-user-config', '--strict-config',
+        '--ephemeral', '--json', '--color', 'never', '--approve-for-me',
+        '-m', args.model, '-c', 'model_reasoning_effort='+json.dumps(args.effort),
+        '-c', 'sandbox_workspace_write.network_access=true', '-c', 'web_search="disabled"',
+        '-C', str(workspace), '--output-schema', str(trial_dir/'answer.schema.json'),
+        '-o', str(trial_dir/'answer.json')]
+    # Do not grant the parent repository: it contains other trials and answers.
+    for cache in args.writable_cache:
+        arguments += ['--add-dir', str(cache.resolve())]
+    return process([*arguments, '-'], workspace, env, trial_dir, 'agent',
+                   timeout=args.timeout, data=prompt.encode())
+
+
+def read_answer(trial_dir):
+    try:
+        return json.loads((trial_dir/'answer.json').read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def repair_trial(args, fixture, backend, task, trial_dir):
     trial_dir.mkdir()
     workspace = trial_dir/'workspace'
     root = args.fixture.resolve().parent
     env = environment(fixture['javaHome'], fixture['runtime'])
     clone(root/'seed', workspace, env, root/'blobs')
     check_tests(backend, workspace, env, trial_dir/'setup', 'warm')
-    mutation = TASKS[task]
+    mutation = REPAIR_TASKS[task]
     source = workspace/mutation['path']
     text = source.read_text()
     require(text.count(mutation['before']) == 1, 'Mutation must have exactly one target')
@@ -420,24 +446,11 @@ If blocked, stop and report the limitation; do not widen scope or claim an unver
 If macOS sandbox denies sysctl/process cleanup, request automatic escalation for the exact test command.
 Finish with the requested JSON response: completed is true only after the done command passes.
 '''
-    (trial_dir/'prompt.txt').write_text(prompt)
-    write_json(trial_dir/'answer.schema.json', ANSWER_SCHEMA)
-    arguments = [str(args.codex), 'exec', '--ignore-user-config', '--strict-config',
-        '--ephemeral', '--json', '--color', 'never', '--approve-for-me',
-        '-m', args.model, '-c', 'model_reasoning_effort='+json.dumps(args.effort),
-        '-c', 'sandbox_workspace_write.network_access=true', '-c', 'web_search="disabled"',
-        '-C', str(workspace), '--output-schema', str(trial_dir/'answer.schema.json'),
-        '-o', str(trial_dir/'answer.json')]
-    # Both trials have the same extra writable caches. Do not grant the whole
-    # parent repository: it contains the other trials and the reference answer.
-    for cache in args.writable_cache:
-        arguments += ['--add-dir', str(cache.resolve())]
-    arguments += ['-']
     before = instrumentation_files(backend, workspace)
     original_git = git_state(workspace, env)
     print('Agent started:', backend, task, trial_dir, flush=True)
     measured_start = time.monotonic()
-    agent = process(arguments, workspace, env, trial_dir, 'agent', timeout=args.timeout, data=prompt.encode())
+    agent = launch_agent(args, workspace, env, trial_dir, prompt, ANSWER_SCHEMA)
     measured_paths = instrumentation_files(backend, workspace)-before
     try:
         metrics = compilation_metrics(backend, measured_paths)
@@ -451,12 +464,7 @@ Finish with the requested JSON response: completed is true only after the done c
             (trial_dir/'candidate.diff').write_text(git(workspace, env, 'diff', task_commit, '--'))
         except subprocess.CalledProcessError:
             final_git = dict(error='Cannot compare candidate with the task commit')
-    answer = None
-    if (trial_dir/'answer.json').is_file():
-        try:
-            answer = json.loads((trial_dir/'answer.json').read_text())
-        except json.JSONDecodeError:
-            pass
+    answer = read_answer(trial_dir)
     violations = inspect_scope(root/'seed', workspace, mutation['path'])
     if final_git != original_git:
         violations.append('.git (HEAD, branch or staged entries changed)')
@@ -485,6 +493,176 @@ Finish with the requested JSON response: completed is true only after the done c
     return result
 
 
+def source_state(workspace):
+    """Content/mode snapshot; mtime is deliberately not a freshness signal."""
+    return {str(p.relative_to(workspace)): dict(sha256=digest(p), executable=p.stat().st_mode & 0o111)
+            if not p.is_symlink() else dict(symlink=os.readlink(p))
+            for p in workspace.rglob('*') if (p.is_file() or p.is_symlink())
+            and p.relative_to(workspace).parts[0] not in ('.git', '.kvik', 'build')}
+
+
+def query_schema(task):
+    properties = dict(ANSWER_SCHEMA['properties'])
+    if task == 'file-ownership':
+        properties.update(module=dict(type='string'), sourceSets=dict(type='array', items=dict(type='string')),
+            targets=dict(type='array', items=dict(type='string')),
+            downstreamModules=dict(type='array', items=dict(type='string')))
+    else:
+        properties.update(freshness=dict(type='string', enum=['current', 'stale', 'indeterminate']),
+                          validForCurrentInputs=dict(type='boolean'))
+    return dict(type='object', additionalProperties=False, properties=properties, required=list(properties))
+
+
+def query_answer_matches(task, answer):
+    if not isinstance(answer, dict):
+        return False
+    if task == 'file-ownership':
+        # KTC uses a conventional src directory; Kvik declares the logical name
+        # main explicitly. Both descriptions identify the same source set here.
+        source_sets = answer.get('sourceSets')
+        same_source_set = (isinstance(source_sets, list) and len(source_sets) == 1
+                           and source_sets[0] in ('main', 'src', 'library/src', 'src (main)'))
+        return (answer.get('module') == 'library' and same_source_set
+                and answer.get('targets') == ['jvm'] and answer.get('downstreamModules') == ['consumer'])
+    return answer.get('freshness') == 'stale' and answer.get('validForCurrentInputs') is False
+
+
+def query_executed_actions(backend, paths):
+    """Inspection logs are allowed; cached builds and fresh tests are not."""
+    if backend == 'kvik':
+        return bool(paths)  # Inspection/freshness queries do not create run records.
+    for path in paths:
+        for line in path.read_text().splitlines():
+            for resource in json.loads(line).get('resourceSpans', []):
+                for scope in resource.get('scopeSpans', []):
+                    for span in scope.get('spans', []):
+                        if span['name'].startswith('task '):
+                            return True
+    return False
+
+
+def query_execution_violations(records):
+    return [backend+': build/test actions invoked during a query-only task'
+            for backend, paths in records.items() if query_executed_actions(backend, paths)]
+
+
+def query_trial(args, fixture, backend, task, trial_dir):
+    trial_dir.mkdir()
+    root, workspace = args.fixture.resolve().parent, trial_dir/'workspace'
+    env = environment(fixture['javaHome'], fixture['runtime'])
+    clone(root/'seed', workspace, env, root/'blobs')
+    check_tests(backend, workspace, env, trial_dir/'setup', 'warm')
+    task_commit = git(workspace, env, 'rev-parse', 'HEAD')
+    original_records = {name: instrumentation_files(name, workspace) for name in COMMANDS}
+    old_records = original_records[backend]
+    if backend == 'kvik':
+        require(len(old_records) == 1, 'Expected a single baseline verification')
+        result_paths = [next(iter(old_records))]
+        protected = [p for p in result_paths[0].parent.rglob('*') if p.is_file()]
+    else:
+        result_paths = sorted(workspace.glob('build/reports/consumer/jvm/*.xml'))
+        protected = result_paths
+    reference = workspace/'.kvik/comparison-baseline.json'
+    write_json(reference, dict(commit=task_commit, status='passed', testIds=sorted(TEST_IDS),
+        command=COMMANDS[backend], results=[str(p.relative_to(workspace)) for p in result_paths]))
+    protected = {p: digest(p) for p in [*protected, reference]}
+    source = workspace/'library/src/Names.kt'
+    before_stat = source.stat()
+    original = source.read_text()
+    if task == 'file-ownership':
+        source.write_text(original+'\n// Pending review of name normalization.\n')
+        question = ('Identify the owning module, source sets and compilation targets for the changed file '
+                    'library/src/Names.kt, and all downstream modules whose checks may be affected. '
+                    'Use the selected build system\'s configuration or inspection commands.')
+    else:
+        require(original.count('lowercase()') == 1, 'Expected the baseline normalization implementation')
+        source.write_text(original.replace('lowercase()', 'uppercase()'))
+        os.utime(source, ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns))
+        require(source.stat().st_size == before_stat.st_size and source.stat().st_mtime_ns == before_stat.st_mtime_ns,
+                'Freshness mutation must preserve size and mtime')
+        question = ('Determine whether the retained passing test run in .kvik/comparison-baseline.json '
+                    'is current for the present project inputs. Report freshness and whether it verifies '
+                    'the current inputs. The baseline metadata records the Git commit that passed; '
+                    'consult the retained results and repository as needed. Do not rerun tests to answer.')
+    initial_sources, initial_git = source_state(workspace), git_state(workspace, env)
+    prompt = f'''Work in this isolated JVM fixture. This is a read-only query task.
+Task: {question}
+Use only {backend}'s model and commands, plus ordinary file/Git inspection. BUILDING.md documents the tools.
+Do not build, compile, execute tests, fix sources, or change configuration, wrappers, locks or reports.
+Do not commit, stage, switch branches, or change Git metadata. Build-tool inspection logs are allowed.
+Do not read or edit files outside this workspace except installed tools and provisioned dependency caches.
+No services or daemons. If blocked, report the limitation and do not claim completion.
+Return the requested JSON fields. completed means you established the answer from current project data.
+'''
+    print('Agent started:', backend, task, trial_dir, flush=True)
+    started = time.monotonic()
+    agent = launch_agent(args, workspace, env, trial_dir, prompt, query_schema(task))
+    answer = read_answer(trial_dir)
+    measured_records = {name: instrumentation_files(name, workspace)-old
+                        for name, old in original_records.items()}
+    measured_paths = measured_records[backend]
+    violations = []
+    if source_state(workspace) != initial_sources:
+        violations.append('Source/configuration files changed during a read-only task')
+    if git_state(workspace, env) != initial_git:
+        violations.append('Git HEAD, branch or staged entries changed')
+    if any(not p.is_file() or p.is_symlink() or digest(p) != expected for p, expected in protected.items()):
+        violations.append('Retained baseline results or metadata changed')
+    try:
+        metrics = compilation_metrics(backend, measured_paths)
+        violations.extend(query_execution_violations(measured_records))
+    except (ValueError, KeyError, OSError) as error:
+        metrics = dict(compilerInvocations=None, instrumentationError=str(error))
+        violations.append('Incomplete build/test instrumentation')
+    oracle_error, oracle_verified, native_freshness = None, False, None
+    try:
+        # Validate the oracle against the prepared configurations, not an answer
+        # from the agent or the build system being measured.
+        model = json.loads((root/'seed/kvik.json').read_text())
+        library = next(m for m in model['modules'] if m['id'] == 'library')
+        consumer = next(m for m in model['modules'] if m['id'] == 'consumer')
+        require(library['sourceSets'][0]['directories'] == ['library/src']
+                and library['sourceSets'][0]['name'] == 'main'
+                and [t['name'] for t in library['targets']] == ['jvm']
+                and consumer['sourceSets'][0]['dependencies'] == [dict(module='library')], 'Fixture oracle changed')
+        require('product: jvm/lib' in (root/'seed/library/module.yaml').read_text()
+                and '//library' in (root/'seed/consumer/module.yaml').read_text(), 'KTC fixture oracle changed')
+        if task == 'stale-verification':
+            require(source.read_text() != original, 'Inputs no longer differ from the passing baseline')
+            if backend == 'kvik':
+                query = process([fixture['runtime'], 'verification', '--run', result_paths[0].parent],
+                                workspace, env, trial_dir/'verification', 'freshness')
+                native_freshness = dict(process=query)
+                try:
+                    native_freshness['response'] = json.loads((trial_dir/'verification/freshness.stdout').read_text())
+                except ValueError:
+                    native_freshness['responseError'] = 'Invalid JSON'
+                # This observes Kvik's interface correctness; it is not the
+                # oracle for grading an agent that can independently inspect Git.
+            verifier = trial_dir/'verifier'
+            clone(root/'seed', verifier, env, root/'blobs')
+            shutil.copy2(source, verifier/'library/src/Names.kt')
+            fresh = check_tests(backend, verifier, env, trial_dir/'verification', 'test', expected_pass=False)
+            outcomes = observed_tests(backend, verifier, trial_dir/'verification', 'test')
+            require(fresh['exitCode'] != 0 and not fresh['timedOut'] and set(outcomes) == TEST_IDS
+                    and 'failed' in outcomes.values(), 'Changed inputs must refute the old passing test outcome')
+        oracle_verified = True
+    except (RuntimeError, ValueError, KeyError, ET.ParseError, OSError) as error:
+        oracle_error = str(error)
+    verified = oracle_verified and not violations and query_answer_matches(task, answer)
+    result = dict(backend=backend, task=task, fixtureCommit=fixture['fixtureCommit'], taskCommit=task_commit,
+        taskInputSha256=hashlib.sha256(json.dumps(initial_sources, sort_keys=True).encode()).hexdigest(),
+        model=args.model, effort=args.effort, agent=agent, answer=answer,
+        scopeViolations=violations, independentlyVerified=verified, verificationError=oracle_error,
+        nativeFreshnessObservation=native_freshness,
+        falseCompletionClaim=isinstance(answer, dict) and answer.get('completed') is True and not verified,
+        secondsToVerifiedResult=time.monotonic()-started if verified else None,
+        compilation=metrics, transcript=transcript_metrics(trial_dir/'agent.stdout'))
+    write_json(trial_dir/'result.json', result)
+    print('Agent finished:', backend, task, 'verified='+str(verified), 'seconds='+str(round(agent['seconds'], 3)), flush=True)
+    return result
+
+
 def run(args):
     require(args.trials > 0 and args.timeout > 0, 'Trial count and timeout must be positive')
     fixture = json.loads(args.fixture.read_text())
@@ -497,9 +675,11 @@ def run(args):
     require(digest(Path(fixture['javaHome'])/'release') == fixture['javaReleaseSha256'], 'JDK changed since preparation')
     args.codex = args.codex.resolve(strict=True)
     root = Path(tempfile.mkdtemp(prefix='trials-', dir=args.fixture.resolve().parent))
+    shutil.copyfile(Path(__file__), root/'harness.py')
     version = subprocess.run([args.codex, '--version'], capture_output=True, text=True, check=True).stdout.strip()
     write_json(root/'invocation.json', dict(model=args.model, effort=args.effort, codexVersion=version,
-        codexSha256=digest(args.codex), harnessSha256=digest(Path(__file__)), trials=args.trials,
+        codexSha256=digest(args.codex), harnessSha256=digest(root/'harness.py'),
+        harnessSource='harness.py', trials=args.trials,
         tasks=args.tasks, timeoutSeconds=args.timeout, fixture=str(args.fixture.resolve()),
         writableCaches=list(map(str, args.writable_cache))))
     results = []
@@ -508,11 +688,14 @@ def run(args):
             backends = ('ktc', 'kvik') if index % 2 == 0 else ('kvik', 'ktc')
             pair = []
             for backend in backends:
-                result = trial(args, fixture, backend, task, root/f'{index+1}-{task}-{backend}')
+                execute = query_trial if task in QUERY_TASKS else repair_trial
+                result = execute(args, fixture, backend, task, root/f'{index+1}-{task}-{backend}')
                 pair.append(result)
                 results.append(result)
                 write_json(root/'results.json', results)
             require(pair[0]['taskCommit'] == pair[1]['taskCommit'], 'Paired tasks must start at the same Git commit')
+            require(pair[0].get('taskInputSha256') == pair[1].get('taskInputSha256'),
+                    'Paired query tasks must start with identical source/configuration contents')
     print('Results:', root/'results.json', flush=True)
 
 

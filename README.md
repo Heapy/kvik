@@ -1217,7 +1217,7 @@ those K17 stage 5 questions still require controlled agent trials. Materializati
 and search timings are reported separately, without attributing query time to
 index construction. Filesystem allocation and OS page caches are not controlled.
 
-For real agent repair trials against KTC 0.13.0, prepare the shared two-module
+For real agent workflow trials against KTC 0.13.0, prepare the shared two-module
 JVM fixture and explicitly opt in to model calls:
 
 ```sh
@@ -1232,18 +1232,29 @@ python3 tools/compare_agent_workflows.py run \
 
 `run` invokes Codex with the same explicit model and effort for both backends
 (`gpt-6-sol`, `high` by default), an isolated workspace and a 15-minute deadline
-per task. It covers a compilation error and a failing boundary test. Both start
-from the same broken commit after warming an identical passing baseline, with
+per task. It covers a compilation error, a failing boundary test, file ownership
+and stale verification. Repair tasks start from the same broken commit after
+warming an identical passing baseline, with
 Kotlin 2.4.20, JDK 25, JVM release 17, JUnit 5.13.4 and matched Kotlin test
 dependencies. The generated KTC wrapper fixes the JDK path across login shells;
 its distribution pin remains unchanged. Each trial uses fresh project caches
-and provisioned shared tool/download caches. Trial order alternates.
+and provisioned shared tool/download caches. Trial order alternates. Use
+`--tasks file-ownership stale-verification` to select just the query tasks.
+
+Query tasks prohibit builds, test execution and source edits. Both receive the
+same changed source and passing baseline tied to a Git commit. The freshness
+case changes content while preserving file size and mtime. Ownership answers
+are checked against the prepared module/target declarations; stale answers are
+checked against changed inputs and a separate fresh test run that refutes the
+old passing result. Kvik's native freshness response is retained separately from
+that shared oracle. Executing either build system during a query invalidates the
+trial even if all compilation was cached.
 
 The harness retains prompts, JSONL transcripts, token usage, tool calls, returned
 command-output bytes, compiler invocation counts, diffs and independent test
 results under `.kvik/tests/agent-comparison/`. It validates all three test
 identities and tests candidate source in a separate clean checkout. Completion
-claims require observed passing agent tests as well as independent verification;
+claims for repairs require observed passing agent tests as well as independent verification;
 staging, commits, branch changes and out-of-scope file edits are rejected.
 KTC compiler counts include BTA entries that can become incremental no-ops;
 Kvik counts observed compiler child processes. These measure invocation overhead,
@@ -1251,8 +1262,8 @@ not equivalent amounts of compiler work. Returned log text can be truncated by
 Codex; full transcript bytes are a separate metric. macOS KTC process cleanup
 may need automatic sandbox escalation, whose time is included in the trial.
 
-This small JVM experiment does not yet cover ownership queries, stale-result
-diagnosis or concurrent-worktree agent tasks from K10, or the Kode/Git agent
+This small JVM experiment does not yet cover concurrent-worktree agent tasks
+from K10, or the Kode/Git agent
 comparison from K17. CI runs only the harness accounting/failure tests; model
 calls are manual and incur provider usage.
 
