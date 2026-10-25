@@ -1,0 +1,18 @@
+product: jvm/lib
+
+dependencies:
+  - //library
+
+test-dependencies:
+  - org.junit.jupiter:junit-jupiter-api:5.13.4
+
+settings:
+  kotlin:
+    version: 2.4.20
+  jvm:
+    release: 17
+    jdk:
+      version: 25
+      selectionMode: javaHome
+    test:
+      junitPlatformVersion: 1.13.4

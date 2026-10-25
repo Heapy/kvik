@@ -1217,6 +1217,45 @@ those K17 stage 5 questions still require controlled agent trials. Materializati
 and search timings are reported separately, without attributing query time to
 index construction. Filesystem allocation and OS page caches are not controlled.
 
+For real agent repair trials against KTC 0.13.0, prepare the shared two-module
+JVM fixture and explicitly opt in to model calls:
+
+```sh
+python3 tools/compare_agent_workflows.py prepare \
+  --ktc-wrapper .kvik/fixtures/kotaml/kotlin \
+  --runtime /absolute/kvik.kexe --tools /absolute/tools.json
+python3 tools/compare_agent_workflows.py run \
+  --fixture /absolute/printed/fixture.json --trials 2 \
+  --writable-cache "$HOME/Library/Caches/JetBrains/Kotlin" \
+  --writable-cache "$HOME/.konan"
+```
+
+`run` invokes Codex with the same explicit model and effort for both backends
+(`gpt-6-sol`, `high` by default), an isolated workspace and a 15-minute deadline
+per task. It covers a compilation error and a failing boundary test. Both start
+from the same broken commit after warming an identical passing baseline, with
+Kotlin 2.4.20, JDK 25, JVM release 17, JUnit 5.13.4 and matched Kotlin test
+dependencies. The generated KTC wrapper fixes the JDK path across login shells;
+its distribution pin remains unchanged. Each trial uses fresh project caches
+and provisioned shared tool/download caches. Trial order alternates.
+
+The harness retains prompts, JSONL transcripts, token usage, tool calls, returned
+command-output bytes, compiler invocation counts, diffs and independent test
+results under `.kvik/tests/agent-comparison/`. It validates all three test
+identities and tests candidate source in a separate clean checkout. Completion
+claims require observed passing agent tests as well as independent verification;
+staging, commits, branch changes and out-of-scope file edits are rejected.
+KTC compiler counts include BTA entries that can become incremental no-ops;
+Kvik counts observed compiler child processes. These measure invocation overhead,
+not equivalent amounts of compiler work. Returned log text can be truncated by
+Codex; full transcript bytes are a separate metric. macOS KTC process cleanup
+may need automatic sandbox escalation, whose time is included in the trial.
+
+This small JVM experiment does not yet cover ownership queries, stale-result
+diagnosis or concurrent-worktree agent tasks from K10, or the Kode/Git agent
+comparison from K17. CI runs only the harness accounting/failure tests; model
+calls are manual and incur provider usage.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).
