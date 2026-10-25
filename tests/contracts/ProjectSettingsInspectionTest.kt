@@ -34,6 +34,7 @@ class ProjectSettingsInspectionTest {
     @Test fun defaultsComeFromParsedSettingsAndNeverInventAuthoringLocations() {
         val values = projectSettingsInspection(configuration(), file)
         for ((key, expected) in mapOf("target:library:jvm:testSettings:parallelism" to 1.json(),
+            "target:library:jvm:testSettings:maxRetries" to 0.json(),
             "target:library:jvm:testSettings:engines" to listOf("junit".json()).json(),
             "target:library:jvm:testResources:memoryMiB" to 512.json(),
             "target:library:jvm:testResources:cpuSlots" to 1.json(),

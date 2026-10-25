@@ -33,7 +33,7 @@ internal class BuildSessionCache {
             "modules" to request.modules.sorted().map { it.json() }.json(), "targets" to request.targets.sorted().map { it.json() }.json(),
             "mode" to request.mode.name.json(), "tests" to JsonValue.Object(request.jvmTests.mapValues { (_, tests) ->
                 obj("classes" to tests.classes.map { it.json() }.json(), "engines" to tests.engines.map { it.json() }.json(),
-                    "coverage" to (tests.coverage?.toJson() ?: JsonValue.Null), "parallelism" to tests.parallelism.json()) })))
+                    "coverage" to (tests.coverage?.toJson() ?: JsonValue.Null), "parallelism" to tests.parallelism.json(), "maxRetries" to tests.maxRetries.json()) })))
         graphs[key]?.let { graphReused = true; return it }
         val graph = composedProjectActionGraph(plugins, ProjectBuildContext(effective, lock, snapshot, composition, tools), request)
         if (graphs.size == 3) graphs.remove(graphs.keys.first())

@@ -10,6 +10,16 @@ class TestLaunchesTest {
     private val resources = TestResources(768, setOf("database"), 2)
     private fun file(path: String, executable: Boolean = false) = FileEntry(LogicalPath(path), digest, executable)
 
+    @Test fun retriesRoundTripAndRejectInvalidBudgetsAndEngines() {
+        val selection = JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("app.Test"), maxRetries = 2)
+        assertEquals(selection, JvmTestSelection.fromJson(selection.toJson()))
+        assertEquals(2.json(), selection.toJson().values.getValue("maxRetries"))
+        assertFalse("maxRetries" in selection.copy(maxRetries = 0).toJson().values)
+        for (count in listOf(-1, 10)) assertFails { selection.copy(maxRetries = count) }
+        assertFails { selection.copy(engines = listOf("kotest")) }
+        assertFails { JvmTestSelection.fromJson(JsonValue.Object(selection.toJson().values + ("maxRetries" to 4294967296L.json()))) }
+    }
+
     @Test fun javaAgentsBindOrderedOptionsDeclaredInputsAndOutputs() {
         val options = mutableListOf(JvmAgentOption(JvmAgentOptionKind.LITERAL, "config="),
             JvmAgentOption(JvmAgentOptionKind.INPUT_FILE, "agent/config.txt"), JvmAgentOption(JvmAgentOptionKind.LITERAL, ",out="),

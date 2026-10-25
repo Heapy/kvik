@@ -48,8 +48,8 @@ def main():
     services.mkdir(parents=True)
     (services / 'org.junit.platform.engine.TestEngine').write_text('fixture.RetryEngine\n')
 
-    def invoke(label, selected, engine, expected):
-        request = dict(schemaVersion=1, requestId=label, module='fixture', target='jvm', classpath=['fixture'], testClasses=[selected], engines=[engine])
+    def invoke(label, selected, engine, expected, **settings):
+        request = dict(schemaVersion=1, requestId=label, module='fixture', target='jvm', classpath=['fixture'], testClasses=[selected], engines=[engine], **settings)
         (output / f'{label}.request.json').write_bytes(canonical(request))
         run([java, '-cp', os.pathsep.join(map(str, [worker, junit, stdlib, fixture])), 'kvik.jvm.TestWorker', output,
              f'{label}.request.json', f'{label}.result.json'], label, expected)
@@ -113,6 +113,35 @@ def main():
         test = result['tests'][0]
         assert test['status'] == status and [a['status'] for a in test['details']['attempts']] == ['failed', status]
         assert any(d['code'] == 'KVIK_TEST_RETRY_FAILURE' for d in result['diagnostics'])
+    default = invoke('retry-default', 'fixture.RetryTests', 'junit-jupiter', 1)
+    assert all(len(t['details']['attempts']) == 1 for t in default['tests'])
+    for parallelism in (1, 2):
+        retried = invoke('configured-retry-' + str(parallelism), 'fixture.RetryTests', 'junit-jupiter', 1,
+                         maxRetries=3, parallelism=parallelism)
+        assert retried['status'] == 'failed'
+        assert retried['testCounts'] == dict(discovered=3, executed=2, failed=0, skipped=1, discoveryComplete=True)
+        assert all(len(t['details']['attempts']) == 2 for t in retried['tests']), retried
+        flaky = next(t for t in retried['tests'] if t['details']['name'] == 'flaky()')
+        assert [a['status'] for a in flaky['details']['attempts']] == ['failed', 'passed']
+        assert flaky['details']['attempts'][0]['failure']['message'] == 'first attempt'
+        assert any(d['code'] == 'KVIK_TEST_RETRY_FAILURE' for d in retried['diagnostics'])
+    exhausted = invoke('retry-exhausted', 'fixture.RetryTests$AlwaysFail', 'junit-jupiter', 1, maxRetries=2)
+    assert exhausted['testCounts'] == dict(discovered=1, executed=1, failed=1, skipped=0, discoveryComplete=True)
+    assert [a['status'] for a in exhausted['tests'][0]['details']['attempts']] == ['failed'] * 3
+    disappeared = invoke('retry-disappeared', 'fixture.RetryTests$Disappearing', 'junit-jupiter', 1, maxRetries=2)
+    assert disappeared['testCounts']['discoveryComplete'] is False
+    assert len(disappeared['tests'][0]['details']['attempts']) == 1
+    dynamic = invoke('retry-dynamic', 'fixture.RetryTests$Dynamic', 'junit-jupiter', 1, maxRetries=1)
+    assert dynamic['testCounts'] == dict(discovered=1, executed=1, failed=0, skipped=0, discoveryComplete=True)
+    assert [a['status'] for a in dynamic['tests'][0]['details']['attempts']] == ['failed', 'passed']
+    container = invoke('retry-container', 'fixture.RetryTests$ContainerFailure', 'junit-jupiter', 1, maxRetries=2)
+    assert len(container['tests'][0]['details']['attempts']) == 1
+    assert any(d['code'] == 'KVIK_TEST_CONTAINER_FAILURE' for d in container['diagnostics'])
+    for retries in (-1, 10, 4294967296):
+        invalid = invoke('retry-invalid-' + str(retries), 'fixture.RetryTests', 'junit-jupiter', 1, maxRetries=retries)
+        assert invalid['tests'] == [] and any(d['code'] == 'KVIK_TEST_INFRASTRUCTURE' for d in invalid['diagnostics'])
+    unsupported = invoke('retry-engine', 'fixture.Retry', 'kotest', 1, maxRetries=1)
+    assert unsupported['tests'] == []
     limit = invoke('limit', 'fixture.Limit', 'kotest', 1)
     assert len(limit['tests'][0]['details']['attempts']) == 1000
     assert any(d['code'] == 'KVIK_TEST_ATTEMPT_LIMIT' for d in limit['diagnostics'])
@@ -120,7 +149,7 @@ def main():
          ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmReports.kt', ROOT / 'tests/jvm-native/ReportTest.kt',
          '-generate-test-runner', '-o', output / 'reports.kexe'], 'compile-native-reports')
     run([output / 'reports.kexe'], 'native-reports')
-    print(f'PASS: 11 real worker scenarios and Native report-parser tests ({output})', flush=True)
+    print(f'PASS: real worker reporting/retry scenarios and Native report-parser tests ({output})', flush=True)
 
 
 if __name__ == '__main__':

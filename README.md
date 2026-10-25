@@ -595,6 +595,21 @@ test action identity while preserving compilation and linking cache keys. Tests
 still execute on every requested invocation. See the runnable
 [scheduling fixture](tools/test_test_resources_cli.py).
 
+Set `testSettings.maxRetries` (0–9, default 0) to repeat the selected JVM/JUnit
+scope after leaf test failures. Each retry discovers a new plan in the same owned
+JVM, reruns all selected classes and lifecycle callbacks, and preserves every
+attempt, including passing siblings and skips. Retries stop after a round without
+leaf failures or when the limit is reached. Container failures, incomplete discovery
+and infrastructure errors stop retries. The action's timeout and resource budget
+cover all attempts; coverage includes execution from all attempts.
+
+The verification policy remains strict: any failed attempt makes the run fail,
+even if a later attempt passes. Unique test counts use identities, while reports
+retain all attempts and initial failures. Retries are opt-in and currently support
+only the `junit` engine on JVM. `inspect-graph` exposes the retry limit in test launch
+parameters; changing it does not invalidate compilation.
+
+
 ### JS and WasmJS
 
 Targets `js` and `wasmJs` support library compilation and `kotlin.test` execution

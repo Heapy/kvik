@@ -189,7 +189,7 @@ def main():
     app['sourceSets'].append(dict(name='test', directories=['tests'], resources=[], dependsOn=['main'],
         dependencies=[dict(coordinate='org.junit.jupiter:junit-jupiter-api:5.13.4')]))
     app['targets'][0]['test'] = 'test'
-    app['targets'][0]['testSettings'] = dict(classes=['sample.Tests'], engines=['junit'])
+    app['targets'][0]['testSettings'] = dict(classes=['sample.Tests'], engines=['junit'], maxRetries=2)
     config.write_text(json.dumps(document))
     invoke('resolve-tests', ['resolve', '--project', config, '--store', store])
     test_options = ['--project', config, '--tools', tools, '--store', store, '--offline', '--module', 'app', '--target', 'jvm']
@@ -198,6 +198,8 @@ def main():
         suffix = 'covered' if covered else 'ordinary'
         flags = ['--coverage'] if covered else []
         inspected = invoke('inspect-tests-' + suffix, ['inspect-graph', '--mode', 'test', *test_options, *flags])[0]
+        launch = next(a['testLaunch'] for a in inspected['actions'] if a['id'] == 'app:jvm:test')
+        assert launch['parameters']['maxRetries'] == 2, launch
         references = [a for a in inspected['artifacts'] if a['module'] == 'app' and a['compilation'] == 'test']
         kinds = {a['output']['kind'] for a in references}
         assert 'test-results' in kinds and ('coverage-results' in kinds) == covered, references
@@ -218,6 +220,7 @@ def main():
     failed = invoke('failed-tests', ['test', *test_options, '--coverage'], expected=1)[-1]['payload']
     failed_actions = {a['actionId']: a for a in failed['actions']}
     assert failed['status'] == 'failed' and failed['completedChecks'] == [], failed
+    assert len(failed['tests'][0]['details']['attempts']) == 3, failed
     assert failed_actions[report_action]['status'] == 'blocked', failed_actions
     run = project / '.kvik/runs' / failed['runId']
     original_record = (run / 'verification.json').read_bytes()
@@ -229,6 +232,15 @@ def main():
         if iteration:
             assert all(a['status'] == 'local_hit' for a in report_graph['results']), report_graph
         assert (run / 'verification.json').read_bytes() == original_record
+    test_source.write_text('package sample\nclass Tests { companion object { var attempts = 0 }; @org.junit.jupiter.api.Test fun flaky() { check(++attempts > 1) { "first attempt" } } }\n')
+    flaky = invoke('flaky-retry', ['test', *test_options], expected=1)[-1]['payload']
+    assert flaky['status'] == 'failed' and flaky['completedChecks'] == [], flaky
+    assert len(flaky['tests']) == 1 and flaky['tests'][0]['status'] == 'passed', flaky
+    assert [a['status'] for a in flaky['tests'][0]['details']['attempts']] == ['failed', 'passed'], flaky
+    exported = invoke('flaky-report', ['test-report', '--run', project / '.kvik/runs' / flaky['runId'],
+        '--output', root / 'flaky-report', '--store', store])[0]
+    assert exported['reportStatus'] == 'failed', exported
+    print('PASS configured retries preserve failed attempts and strict flaky policy in retained reports', flush=True)
     print('PASS semantic test/coverage artifacts, fresh tests, failed dependency blocking and retained report reuse', flush=True)
     print('PASS source plugin artifacts, cache reuse, scripts, invalidation and verification after plugin failure', flush=True)
 

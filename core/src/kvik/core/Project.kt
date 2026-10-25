@@ -44,8 +44,10 @@ data class SourceSet(
 )
 
 /** Exact JVM binary class names; an empty selection deliberately requests no discovery. */
-data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1) {
+data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1, val maxRetries: Int = 0) {
     init {
+        require(maxRetries in 0..9) { "JVM test maxRetries must be an integer in 0..9" }
+        require(maxRetries == 0 || engines == listOf("junit")) { "JVM test retries currently require only the junit engine" }
         require(parallelism in 1..1024) { "JVM test parallelism must be an integer in 1..1024" }
         require(parallelism == 1 || engines == listOf("junit")) { "Parallel JVM tests currently require only the junit engine" }
         require(classes.distinct().size == classes.size && classes.all {

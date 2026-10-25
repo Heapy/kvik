@@ -60,9 +60,12 @@ DEFS["jvmTestSettings"] = object_({
     "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*(?![\s\S])"}, uniqueItems=True),
     "engines": array(enum("junit", "kotest"), minItems=1, uniqueItems=True),
     "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
-}, optional=("engines", "parallelism"))
+    "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
+}, optional=("engines", "parallelism", "maxRetries"))
 DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"minimum": 2}}, "required": ["parallelism"]},
     "then": {"properties": {"engines": {"const": ["junit"]}}}}]
+DEFS["jvmTestSettings"]["allOf"].append({"if": {"properties": {"maxRetries": {"minimum": 1}}, "required": ["maxRetries"]},
+    "then": {"properties": {"engines": {"const": ["junit"]}}}})
 DEFS["nativeTestSettings"] = object_({"engine": {"const": "kotest"}, "kspVersion": {"const": "2.3.12"},
     "processor": {"const": "io.kotest:kotest-framework-symbol-processor:6.2.5"}})
 DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maximum": 3600000}
@@ -1106,7 +1109,8 @@ DEFS["testLaunch"] = {"oneOf": [
         "engines": array(enum("junit-jupiter", "kotest"), minItems=1, uniqueItems=True),
         "coverage": ref("jvmCoverageSpec"), "resources": ref("testResources"),
         "agents": array(ref("jvmTestAgent"), maxItems=16),
-        "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1}}, optional=("coverage", "resources", "agents", "parallelism"))),
+        "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
+        "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("coverage", "resources", "agents", "parallelism", "maxRetries"))),
     test_launch("kvik-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
         "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"}),
         "resources": ref("testResources")}, optional=("resources",))),

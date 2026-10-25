@@ -24,7 +24,7 @@ object TestWorker {
         var status = "incomplete"
         var exit = 3
         try {
-            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism"))
+            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism", "maxRetries"))
             request.requireVersion()
             requestId = request.getValue("requestId").stringValue()
             val module = request.getValue("module").stringValue()
@@ -40,6 +40,10 @@ object TestWorker {
                 require(it in 1L..1024L) { "Invalid JVM test parallelism" }
             }.toInt()
             require(parallelism == 1 || engineIds == setOf("junit-jupiter")) { "Parallel JVM tests require only junit-jupiter" }
+            val maxRetries = (request["maxRetries"]?.longValue() ?: 0).also {
+                require(it in 0L..9L) { "Invalid JVM test maxRetries" }
+            }.toInt()
+            require(maxRetries == 0 || engineIds == setOf("junit-jupiter")) { "JVM test retries require only junit-jupiter" }
             if (classes.isEmpty()) reject("KVIK_TEST_EMPTY_SELECTION", "No test classes were selected")
             // A test worker is a fresh JVM. Kotlin stdlib and kotlin-reflect must share its loader;
             // loading reflect only in a child loader breaks stdlib's ReflectionFactory discovery.
@@ -73,14 +77,18 @@ object TestWorker {
                         .configurationParameter("junit.jupiter.execution.parallel.config.fixed.max-pool-size", parallelism.toString())
                         .configurationParameter("junit.jupiter.execution.parallel.config.fixed.saturate", "true")
                         .build()
-                    val plan = launcher.discover(discovery)
+                    var plan = launcher.discover(discovery)
                     val identifiers = (plan.roots + plan.roots.flatMap { plan.getDescendants(it) }).associateBy { it.uniqueId }.toMutableMap()
                     val discovered = identifiers.filterValues { it.isTest }.toMutableMap()
+                    val roundDiscovered = discovered.keys.toMutableSet()
+                    val roundReported = mutableSetOf<String>()
                     val started = mutableMapOf<String, Long>()
                     val limited = mutableSetOf<String>()
                     var finished = false
                     val lock = Any()
                     fun record(identifier: TestIdentifier, state: TestStatus, throwable: Throwable? = null, skipReason: String? = null) {
+                        roundDiscovered += identifier.uniqueId
+                        roundReported += identifier.uniqueId
                         discovered[identifier.uniqueId] = identifier
                         identifiers[identifier.uniqueId] = identifier
                         val prior = tests[identifier.uniqueId]?.details?.attempts.orEmpty()
@@ -102,7 +110,10 @@ object TestWorker {
                     val listener = object : TestExecutionListener {
                         override fun dynamicTestRegistered(identifier: TestIdentifier) = synchronized(lock) {
                             identifiers[identifier.uniqueId] = identifier
-                            if (identifier.isTest) discovered[identifier.uniqueId] = identifier
+                            if (identifier.isTest) {
+                                discovered[identifier.uniqueId] = identifier
+                                roundDiscovered += identifier.uniqueId
+                            }
                         }
                         override fun executionStarted(identifier: TestIdentifier) = synchronized(lock) {
                             identifiers[identifier.uniqueId] = identifier
@@ -114,7 +125,7 @@ object TestWorker {
                             }
                         }
                         override fun executionSkipped(identifier: TestIdentifier, reason: String) = synchronized(lock) {
-                            val skipped = if (identifier.isTest) listOf(identifier) else plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in tests }
+                            val skipped = if (identifier.isTest) listOf(identifier) else plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in roundReported }
                             for (test in skipped) record(test, TestStatus.SKIPPED, skipReason = reason)
                         }
                         override fun executionFinished(identifier: TestIdentifier, result: TestExecutionResult) = synchronized(lock) {
@@ -130,7 +141,7 @@ object TestWorker {
                                 diagnostics += Diagnostic("KVIK_TEST_CONTAINER_ABORTED", DiagnosticCategory.TEST,
                                     reportText("${identifier.uniqueId}: ${result.throwable.orElse(null)?.message ?: "Container aborted"}"),
                                     module = module, target = target)
-                                for (test in plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in tests }) {
+                                for (test in plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in roundReported }) {
                                     record(test, TestStatus.SKIPPED, skipReason = result.throwable.orElse(null)?.message ?: "Container aborted")
                                 }
                             } else if (!identifier.isTest && result.status == TestExecutionResult.Status.FAILED) {
@@ -140,7 +151,28 @@ object TestWorker {
                         }
                         override fun testPlanExecutionFinished(testPlan: TestPlan) = synchronized(lock) { finished = true }
                     }
-                    launcher.execute(plan, listener)
+                    var complete = true
+                    for (round in 0..maxRetries) {
+                        if (round > 0) {
+                            // Retry the selected scope in this owned worker, with a new discovery plan.
+                            // Successful siblings run again too; unique IDs keep counts separate from attempts.
+                            plan = launcher.discover(discovery)
+                            val next = (plan.roots + plan.roots.flatMap { plan.getDescendants(it) }).associateBy { it.uniqueId }
+                            identifiers.putAll(next)
+                            val leaves = next.filterValues { it.isTest }
+                            discovered.putAll(leaves)
+                            roundDiscovered.clear()
+                            roundDiscovered.addAll(discovered.keys)
+                            roundReported.clear()
+                            finished = false
+                        }
+                        launcher.execute(plan, listener)
+                        val roundComplete = finished && started.isEmpty() && roundDiscovered == roundReported &&
+                            diagnostics.none { it.code == "KVIK_TEST_CONTAINER_ABORTED" }
+                        complete = complete && roundComplete
+                        // Do not retry incomplete discovery, container/lifecycle failures or infrastructure errors.
+                        if (!roundComplete || diagnostics.isNotEmpty() || roundReported.none { tests[it]?.status == TestStatus.FAILED }) break
+                    }
                     for (test in tests.values.filter { it.hasFailedAttempt && it.status != TestStatus.FAILED }) {
                         diagnostics += Diagnostic("KVIK_TEST_RETRY_FAILURE", DiagnosticCategory.TEST,
                             "Test had a failed attempt before its final ${test.status.name.lowercase()} result: ${reportText(test.id)}", module = module, target = target)
@@ -148,7 +180,7 @@ object TestWorker {
                     // An aborted factory can stop before registering all dynamic tests. Even when
                     // every observed leaf passed, the container did not complete its requested scope.
                     val containerAborted = diagnostics.any { it.code == "KVIK_TEST_CONTAINER_ABORTED" }
-                    val allDiscoveredReported = finished && !containerAborted && started.isEmpty() && discovered.keys == tests.keys
+                    val allDiscoveredReported = complete && !containerAborted && discovered.keys == tests.keys
                     counts = TestCounts(discovered.size, tests.values.count { it.status != TestStatus.SKIPPED },
                         tests.values.count { it.status == TestStatus.FAILED }, tests.values.count { it.status == TestStatus.SKIPPED }, allDiscoveredReported)
                     when {

@@ -140,6 +140,19 @@ class ProjectConfigurationTest {
         assertFalse(TestCounts(0, 0, 0, 0, true).satisfiesExecution)
     }
 
+    @Test fun configuredRetriesAreBoundedAndRestrictedToJunit() {
+        for (count in listOf(0, 1, 9)) {
+            val configured = parse(withSettings("""{"classes":["sample.Test"],"maxRetries":$count}"""))
+            assertEquals(count, configured.project.modules.single().targets.single().testSettings!!.maxRetries)
+        }
+        for (value in listOf("-1", "10", "4294967296", "true", "1.5", "null", "\"1\""))
+            assertFails { parse(withSettings("""{"classes":[],"maxRetries":$value}""")) }
+        for (engines in listOf(listOf("kotest"), listOf("junit", "kotest"))) {
+            assertFails { JvmTestSettings(emptyList(), engines, maxRetries = 1) }
+            assertEquals(0, JvmTestSettings(emptyList(), engines).maxRetries)
+        }
+    }
+
     @Test fun absentTestSettingsRemainBackwardsCompatible() {
         assertEquals(TargetSpec("jvm", "jvmMain", "jvmTest", emptyList()), parse().project.modules.single().targets.single())
         assertNull(parse(example.replace("\"test\":\"jvmTest\"", "\"test\":null")).project.modules.single().targets.single().testSettings)

@@ -42,7 +42,7 @@ fun projectSettingsInspection(configuration: ProjectConfiguration, file: Logical
             fun settings(name: String, value: JsonValue.Object) = tree("$key:$name", value,
                 declaration.values[name] as? JsonValue.Object, "$pointer/$name")
             target.testSettings?.let { settings("testSettings", obj("classes" to it.classes.map(String::json).json(),
-                "engines" to it.engines.map(String::json).json(), "parallelism" to it.parallelism.json())) }
+                "engines" to it.engines.map(String::json).json(), "parallelism" to it.parallelism.json(), "maxRetries" to it.maxRetries.json())) }
             if (target.test != null) (target.testResources ?: TestResources()).let {
                 settings("testResources", JsonValue.Object(it.toJson().values + ("cpuSlots" to it.cpuSlots.json())))
             }
