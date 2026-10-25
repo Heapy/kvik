@@ -36,27 +36,12 @@ internal fun sourceProjectOptions(args: List<String>): Pair<KodeProjectOptions?,
 
 internal fun inspectCommand(args: List<String>): JsonValue {
     val (source, remaining) = sourceProjectOptions(args)
-    val options = projectOptions(remaining, lockOptions = false)
+    val options = projectOptions(remaining, lockOptions = source != null)
     if (source == null) return inspectProject(options.project, options.resolverPolicy())
-    val configuration = LogicalPath(options.project)
     check(kvik_interrupt_install() == 0) { "Cannot install source inspection interruption handlers" }
     try {
-        fun checkpoint() {
-            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_SOURCE_CANCELLED", DiagnosticCategory.INFRASTRUCTURE,
-                "Source inspection cancelled", ExitStatus.CANCELLED)
+        return withPreparedSourceProject(source, options) { prepared ->
+            prepared.inspect(options.resolverPolicy()).also { sourceCheckpoint() }
         }
-        checkpoint()
-        val temporary = boundedEnvironment("TMPDIR", 4096) ?: "/tmp"
-        val pointer = realpath(temporary, null) ?: error("Cannot resolve temporary directory")
-        val parent = try { pointer.toKString() } finally { free(pointer) }
-        NativeFiles.ensureDirectory(parent, create = false)
-        val workspace = NativeFiles.tempDirectory(parent)
-        try {
-            return runtimeProcessHost().use { host ->
-                val provider = KodeSourceProvider(NativeKodeTransport(host, source.executable, source.home, workspace))
-                val resolved = provider.resolve(SourceSelector(source.project, source.revision), ::checkpoint)
-                inspectSourceProject(resolved, configuration, options.resolverPolicy(), ::checkpoint).also { checkpoint() }
-            }
-        } finally { NativeFiles.removeTree(workspace) }
     } finally { kvik_interrupt_restore() }
 }

@@ -25,6 +25,39 @@ messages. Closing stdin, terminating the server or losing its parent stops its
 owned processes, including active compilers and tests. There is no background
 service or listening socket.
 
+To work without a project checkout, configure the same Kode source selector as
+the CLI:
+
+```sh
+./kvik -- mcp --kode /absolute/path/to/kode --kode-home /absolute/path/to/store \
+  --source-project library --revision main --project nested/kvik.json \
+  --store /absolute/path/to/kvik-cache --tools /absolute/path/to/tools.json
+```
+
+Here `--project` is a logical path inside the revision; `--lock` is relative to
+that configuration's directory. Provider paths, tools, cache, remote-cache
+configuration and run output resolve against the server's working directory.
+Each call resolves the selector once and consumes that immutable revision.
+`main` can therefore select a different revision on a later call. Use an exact
+revision when inspection and execution must address the same contents. Inspect
+`source` and `sourceRoot` in inspection models, and `source.provenance` and
+`source.root` in validation and verification records.
+
+Source mode exposes inspection, configuration validation, retained-run/session
+queries and, with `--tools`, build/test execution. Local-only package/dependency
+queries and change-aware `kvik_verify` are not advertised in source mode.
+`--config-edits` and `--query-cache` are rejected there; use the CLI's explicit
+revision transaction workflow for source configuration changes. Session controls
+remain independently available with `--session-controls`.
+
+Source metadata may be cached. `--offline` requires an exact cached revision and
+all selected content and tools; it never starts Kode. A previous build can provide
+the content needed for offline inspection, validation and execution. Missing
+cached data returns an error, with no fallback to local files or a newer revision.
+Source builds retain their usual provider references and results after the MCP
+connection closes. Run output and caches must be separate from the provider
+store and executable, tool configuration and each other.
+
 The connection implements the [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and negotiates protocol version `2025-11-25` or `2025-06-18`. Initialize the
 connection, send `notifications/initialized`, then use `tools/list` and
@@ -274,8 +307,7 @@ store, and never execute package code. Online package queries may update the
 metadata query cache. Opt-in configuration planning may also populate the
 dependency store; configuration application replaces project and lock files.
 Per-request scratch files are removed after the owned
-process exits. Project queries and MCP builds currently address local projects;
-source-provider selectors remain available through the CLI. Session controls can
+process exits. Source mode exposes the supported subset described above. Session controls can
 address existing local or source-provider owners. Retained-run queries can inspect results from either local
 projects or source-provider builds.
 

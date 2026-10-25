@@ -21,8 +21,8 @@ internal fun mcpCommand(arguments: List<String>): Int {
         boundary = kvik_foreground_open()
         check(boundary != null) { "Cannot establish MCP stream ownership" }
         val queries = NativeMcpOperations(options).also { operations = it }
-        val session = McpSession(queries, mcpTools +
-            (if (options.build != null) mcpBuildTools else emptyList()) +
+        val session = McpSession(queries, mcpTools.filter { options.source == null || !it.project || it.name in setOf("kvik_inspect", "kvik_config_validate") } +
+            (if (options.build != null) mcpBuildTools.filter { options.source == null || it.name != "kvik_verify" } else emptyList()) +
             (if (options.configurationEdits) mcpConfigurationTools else emptyList()) +
             (if (options.sessionControls) mcpSessionControlTools else emptyList()))
         // A returned plan appears twice in a response (structured and text); this input budget

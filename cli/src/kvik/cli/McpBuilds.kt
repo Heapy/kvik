@@ -10,7 +10,7 @@ import kvik.runevidence.committedRunEvents
 import kvik.runevidence.verificationRecordFromJson
 
 internal data class McpBuildRequest(val directory: String, val options: BuildOptions, val operation: String,
-                                  val verification: ChangeVerificationOptions? = null) {
+                                  val verification: ChangeVerificationOptions? = null, val source: KodeProjectOptions? = null) {
     val stdout: String get() = "$directory/stdout.jsonl"
     val stderr: String get() = "$directory/stderr.log"
 }
@@ -24,24 +24,36 @@ internal fun prepareMcpBuild(arguments: List<String>, options: McpOptions, id: J
     val verification = if (arguments.first() == "verify") changeVerificationOptions(selectionArguments) else null
     val selected = verification?.build ?: buildOptions(selectionArguments)
     require(!selected.coverage || (arguments.first() == "test" || verification?.checks?.contains("test") == true) && selected.targets == setOf("jvm")) { "Coverage requires JVM-only tests" }
-    val project = readProject(selected.project.project)
-    val lock = projectPath(project.root, selected.project.lock)
-    val store = projectPath(project.root, selected.project.store)
-    val tools = projectPath(project.root, selected.tools)
-    val parent = projectPath(project.root, configured.runs)
+    val project = if (options.source == null) readProject(selected.project.project) else null
+    val root = project?.root ?: options.root
+    val lock = projectPath(root, selected.project.lock)
+    val store = projectPath(root, selected.project.store)
+    val tools = projectPath(root, selected.tools)
+    val parent = projectPath(root, configured.runs)
     val inputSelection = if (verification?.checks?.contains("abi-check") == true) SnapshotSelection.AbiCheck(selected.modules, selected.targets) else SnapshotSelection.Project
-    requireDisjointStore(project, store, lock, tools, inputSelection)
-    requireDisjointInputPath(project.root, project.path, projectInputPlan(project.configuration, inputSelection), parent,
-        listOf(lock, store, tools) + listOfNotNull(selected.remoteCache?.let { projectPath(project.root, it) }))
+    if (project != null) {
+        requireDisjointStore(project, store, lock, tools, inputSelection)
+        requireDisjointInputPath(root, project.path, projectInputPlan(project.configuration, inputSelection), parent,
+            listOf(lock, store, tools) + listOfNotNull(selected.remoteCache?.let { projectPath(root, it) }))
+    } else {
+        val source = requireNotNull(options.source)
+        LogicalPath(selected.project.project)
+        LogicalPath(selected.project.lock)
+        for (output in listOf(parent, store)) for (input in listOf(source.home, source.executable, tools) +
+            listOfNotNull(selected.remoteCache?.let { projectPath(root, it) })) {
+            require(!pathsPhysicallyOverlap(output, input)) { "MCP source output overlaps provider or tools: $input" }
+        }
+        require(!pathsPhysicallyOverlap(parent, store)) { "MCP run output overlaps source cache" }
+    }
     NativeFiles.ensureDirectory(parent)
     val directory = NativeRunDirectory(parent).path
     val command = arguments + listOf("--tools", tools, "--runs", "$directory/runs",
         "--jobs", selected.budget.maxParallel.toString(), "--memory-mib", selected.budget.memoryMiB.toString()) +
-        selected.remoteCache?.let { listOf("--remote-cache", projectPath(project.root, it)) }.orEmpty()
+        selected.remoteCache?.let { listOf("--remote-cache", projectPath(root, it)) }.orEmpty()
     NativeFiles.writeNew("$directory/request.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to id,
-        "command" to command.map { it.json() }.json()).canonical().encodeToByteArray())
+        "command" to (command + options.source?.arguments().orEmpty()).map { it.json() }.json()).canonical().encodeToByteArray())
     NativeFiles.syncDirectory(directory)
-    return McpBuildRequest(directory, selected, arguments.first(), verification) to command
+    return McpBuildRequest(directory, selected, arguments.first(), verification, options.source) to command
 }
 
 /** A zero exit code alone never establishes build success. Bind the response to the committed journal. */
@@ -71,6 +83,12 @@ internal fun mcpBuildResult(request: McpBuildRequest, process: ProcessResult, pr
         }
         val checks = request.options.modules.flatMap { module -> request.options.targets.map { "$module:$it:${request.operation}" } }.toSet()
         require(candidate.requestedChecks == checks) { "Run checks differ from the requested build scope" }
+        if (request.source != null) {
+            require(candidate.source?.provenance?.project == request.source.project &&
+                candidate.source?.root == request.options.project.project.substringBeforeLast('/', "")) {
+                "Run source differs from the requested project"
+            }
+        } else require(candidate.source == null) { "Local build returned a source-provider run" }
         val events = committedRunEvents(candidate, document("completion.json"), NativeFiles.read("$run/events.jsonl", 16 * 1024 * 1024))
         events.filter { it.type == "diagnostic" }.forEach { diagnostic(it.payload) }
         record = candidate

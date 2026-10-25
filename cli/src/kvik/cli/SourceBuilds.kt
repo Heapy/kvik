@@ -4,6 +4,7 @@ package kvik.cli
 import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.kodesource.*
+import kvik.locking.ResolverPolicy
 import kvik.projectsnapshot.*
 import kvik.execution.platform.*
 import kotlinx.cinterop.*
@@ -21,6 +22,9 @@ internal class PreparedSourceProject(
     val retention: KodeRetentionReference? = null,
     private val sourceStore: String? = null,
 ) {
+    fun inspect(policy: ResolverPolicy): JsonValue = inspectSourceProject(resolved, revisionPath(configuration.name), policy,
+        ::sourceCheckpoint) { entry -> read(entry, sourceStore, 4 * 1024 * 1024) }
+
     val project: ProjectFile by lazy {
         ProjectFile(configuration.root, configuration.name, configuration.bytes,
             parseProjectConfiguration(parseJson(configuration.bytes.decodeToString(throwOnInvalidSequence = true)))

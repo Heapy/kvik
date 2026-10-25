@@ -7,6 +7,7 @@ import kvik.core.*
 import kvik.locking.ResolverPolicy
 import kvik.locking.effectiveConfiguration
 import kvik.projectsnapshot.ResolvedSourceSnapshot
+import kvik.projectsnapshot.SourceFileEntry
 import kotlinx.cinterop.*
 import platform.posix.*
 
@@ -55,11 +56,14 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
 
 /** Declaration bytes and source ownership are bound to the same frozen revision. */
 internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: LogicalPath,
-                                 policy: ResolverPolicy, checkpoint: () -> Unit): JsonValue {
+                                 policy: ResolverPolicy, checkpoint: () -> Unit,
+                                 read: (SourceFileEntry) -> ByteArray = { entry ->
+                                     resolved.fetch(entry.blob, 4 * 1024 * 1024, checkpoint) ?: error("Source blob is unavailable")
+                                 }): JsonValue {
     val manifest = resolved.manifest
     val entry = manifest.files.singleOrNull { it.path == fileName } ?: error("Configuration is absent from revision: ${fileName.value}")
     require(entry.blob.sizeBytes <= 4 * 1024 * 1024) { "Project configuration exceeds 4 MiB" }
-    val bytes = resolved.fetch(entry.blob, 4 * 1024 * 1024, checkpoint) ?: error("Configuration blob is unavailable")
+    val bytes = read(entry)
     resolved.verify(entry.blob, bytes, checkpoint)
     val root = fileName.value.substringBeforeLast('/', "")
     val prefix = if (root.isEmpty()) "" else "$root/"
@@ -69,7 +73,7 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
             checkpoint()
             val source = sourceFiles[prefix + path.value] ?: error("Script source is absent from revision: ${path.value}")
             require(source.blob.sizeBytes <= 4 * 1024 * 1024) { "Script source exceeds 4 MiB" }
-            val data = resolved.fetch(source.blob, 4 * 1024 * 1024, checkpoint) ?: error("Script source is unavailable: ${path.value}")
+            val data = read(source)
             require(data.size.toLong() == source.blob.sizeBytes) { "Script source size mismatch" }
             resolved.verify(source.blob, data, checkpoint)
             data

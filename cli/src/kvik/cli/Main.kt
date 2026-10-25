@@ -42,6 +42,7 @@ private fun command(args: Array<String>) {
             Agent execution: add --tools PATH [--runs PATH] [--jobs N] [--memory-mib N] [--remote-cache PATH] to enable MCP build/test/verify tools
             Agent configuration: add --config-edits to enable MCP configuration planning and guarded application; validation is always available
             Agent session controls: add --session-controls to submit commands to existing foreground owners; session queries are always available
+            Agent source projects: add --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF; --project is a logical revision path
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline

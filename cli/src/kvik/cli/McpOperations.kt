@@ -10,21 +10,29 @@ import kotlin.time.TimeSource
 
 internal data class McpOptions(val project: String, val root: String, val lock: String?, val store: String?,
                                val queryCache: String?, val offline: Boolean, val policy: List<String>, val build: BuildOptions?,
-                               val configurationEdits: Boolean, val sessionControls: Boolean)
+                               val configurationEdits: Boolean, val sessionControls: Boolean, val source: KodeProjectOptions? = null)
 
 internal fun mcpOptions(arguments: List<String>): McpOptions {
     val buildFlags = setOf("--tools", "--runs", "--jobs", "--memory-mib", "--remote-cache")
-    val options = queryArguments(arguments, setOf("--project", "--lock", "--store", "--query-cache") + buildFlags,
+    val (source, remaining) = sourceProjectOptions(arguments)
+    val options = queryArguments(remaining, setOf("--project", "--lock", "--store", "--query-cache") + buildFlags,
         repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline", "--config-edits", "--session-controls"))
-    val project = readProject(options.values["--project"] ?: "kvik.json")
+    val projectName = options.values["--project"] ?: "kvik.json"
+    val project = if (source == null) readProject(projectName) else null
+    if (source != null) {
+        LogicalPath(projectName)
+        options.values["--lock"]?.let(::LogicalPath)
+        require("--config-edits" !in options.flags) { "MCP source configuration edits are not supported; use the CLI revision transaction workflow" }
+        require("--query-cache" !in options.values) { "Package queries are not available for MCP source projects" }
+    }
     val policy = options.repeats.flatMap { (flag, values) -> values.flatMap { listOf(flag, it) } }
     projectOptions(policy, lockOptions = false).resolverPolicy()
     require("--tools" in options.values || options.values.keys.none { it in buildFlags }) { "MCP execution settings require --tools" }
     val build = if ("--tools" in options.values) buildOptions(options.values.filterKeys { it in buildFlags }.flatMap { (key, value) -> listOf(key, value) } +
         (if ("--runs" in options.values) emptyList() else listOf("--runs", ".kvik/mcp-runs")) + listOf("--module", "mcp", "--target", "jvm")) else null
-    return McpOptions(project.path, project.root, options.values["--lock"], options.values["--store"], options.values["--query-cache"],
+    return McpOptions(project?.path ?: projectName, project?.root ?: currentDirectory(), options.values["--lock"], options.values["--store"], options.values["--query-cache"],
         "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", policy, build,
-        "--config-edits" in options.flags, "--session-controls" in options.flags)
+        "--config-edits" in options.flags, "--session-controls" in options.flags, source)
 }
 
 /** Each query owns a child of this foreground connection, keeping network and filesystem work cancellable. */
@@ -63,7 +71,7 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         val dependencyQuery = tool.name == "kvik_dependencies"
         val configurationPlan = tool.name == "kvik_config_plan"
         if (dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build) arguments += options.policy
-        if (dependencyQuery || configurationPlan || tool.build) {
+        if (dependencyQuery || configurationPlan || tool.build || options.source != null && tool.project) {
             options.lock?.let { arguments += listOf("--lock", it) }
             options.store?.let { arguments += listOf("--store", it) }
         }
@@ -71,12 +79,13 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             if (!dependencyQuery || "--available-versions" in command) options.queryCache?.let { arguments += listOf("--query-cache", it) }
             if (options.offline && "--offline" !in arguments) arguments += "--offline"
         }
-        if ((tool.build || configurationPlan) && options.offline) arguments += "--offline"
+        if ((tool.build || configurationPlan || options.source != null && tool.project) && options.offline) arguments += "--offline"
         val prepared = if (tool.build) prepareMcpBuild(arguments, options, id) else null
         val request = prepared?.first
         val directory = NativeFiles.tempDirectory(workspace())
         try {
-            val actualArguments = prepared?.second ?: mcpConfigurationArguments(tool, arguments, options, directory)
+            val actualArguments = (prepared?.second ?: mcpConfigurationArguments(tool, arguments, options, directory)) +
+                if (tool.project) options.source?.arguments().orEmpty() else emptyList()
             val owner = host ?: runtimeProcessHost().also { host = it }
             val commandLine = listOf("${runtimeDirectory()}/kvik.kexe") + actualArguments
             val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "TMPDIR" to directory,
