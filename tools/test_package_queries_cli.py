@@ -33,6 +33,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--fixture', type=Path, required=True,
                         help='The scoped project directory produced by test_package_queries.py')
+    parser.add_argument('--offline-only', action='store_true', help='Exercise lock/version queries using local metadata fixtures only')
     args = parser.parse_args()
     runtime = args.runtime.resolve(strict=True)
     fixture = args.fixture.resolve(strict=True)
@@ -84,6 +85,48 @@ def main():
     invoke('versions-offline-missing', [*versions, '--offline'], 3)
     assert snapshot(project) == before
     (work / 'project-after.json').write_text(json.dumps(snapshot(project), sort_keys=True))
+
+    available_command = ['dependencies', *selection, '--available-versions', '--offline', '--channel', 'stable', '--limit', '1']
+    missing = invoke('project-versions-missing', available_command, 3)
+    assert missing['domains'] == declared['domains']
+    assert missing['availableVersions']['totalPackages'] == 3
+    assert all(row['available']['freshness'] == 'missing' for row in missing['availableVersions']['packages'])
+    assert snapshot(project) == before
+    for flags in [['--channel', 'stable'], ['--package', 'example:main'], ['--refresh'], ['--cursor', 'invalid']]:
+        invoke('project-invalid-version-options-' + flags[0][2:], ['dependencies', *selection, '--offline', *flags], 2, query=False)
+
+    cache = project / '.kvik/package-queries'
+    (cache / 'observations').mkdir(parents=True)
+    (cache / 'blobs').mkdir()
+    (cache / 'package-query-cache.json').write_text(json.dumps(dict(schemaVersion=1, kind='package-query-cache')))
+    for artifact in ['main', 'tests', 'annotations']:
+        url = f'https://repo.maven.apache.org/maven2/example/{artifact}/maven-metadata.xml'
+        data = (f'<metadata><groupId>example</groupId><artifactId>{artifact}</artifactId><versioning><versions>'
+                '<version>13.0</version><version>23.0</version><version>24.0-RC1</version></versions></versioning></metadata>').encode()
+        digest = dict(hash=hashlib.sha256(data).hexdigest(), sizeBytes=len(data))
+        (cache / 'blobs' / f'{digest["hash"]}-{digest["sizeBytes"]}').write_bytes(data)
+        (cache / 'observations' / (hashlib.sha256(url.encode()).hexdigest() + '.json')).write_text(json.dumps(
+            dict(schemaVersion=1, url=url, observedAtEpochSeconds=1, status='found', digest=digest)))
+    before = snapshot(project)
+    available = invoke('project-versions-offline', available_command)
+    assert available['domains'] == declared['domains'] and available['freshness'] == 'fresh'
+    rows = available['availableVersions']['packages']
+    annotations = next(row for row in rows if row['available']['query']['coordinate'] == 'example:annotations')
+    assert annotations['lockedVersions'] == ['13.0', '23.0'] and len(annotations['domains']) == 4
+    assert all(row['available']['freshness'] == 'stale' and len(row['available']['sources']) == 1 for row in rows)
+    page = invoke('project-versions-next', [*available_command, '--package', 'example:annotations',
+        '--cursor', annotations['available']['page']['nextCursor']])
+    assert page['availableVersions']['packages'][0]['available']['versions'][0]['version'] == '23.0'
+    scoped = invoke('project-versions-main', [*available_command, '--compilation', 'main', '--package', 'example:annotations'])
+    assert scoped['availableVersions']['packages'][0]['lockedVersions'] == ['13.0']
+    invoke('project-versions-absent', [*available_command, '--package', 'example:absent'], 2, query=False)
+    invoke('project-versions-cursor-without-package', [*available_command, '--cursor', 'invalid'], 2, query=False)
+    invoke('project-versions-invalid-cursor', [*available_command, '--package', 'example:main', '--cursor', 'invalid'], 3)
+    invoke('project-versions-refresh-offline', [*available_command, '--refresh'], 2, query=False)
+    assert snapshot(project) == before and snapshot(fixture) == original
+    if args.offline_only:
+        print('PASS project dependency versions, scoped selections, pagination and offline no-write behavior:', work)
+        return
 
     config_bytes = (project / 'kvik.json').read_bytes()
     lock_bytes = (project / 'kvik.lock.json').read_bytes()

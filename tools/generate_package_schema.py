@@ -66,5 +66,7 @@ def result(kind,query,**payload):return obj(**base,kind={'const':kind},query=ref
 defs['versions']=result('package-versions','versionQuery',versions=arr(ref('version'),200),order={'const':'lexical-ascending'},classification={'const':'numeric-known-qualifiers-v1'},page=obj(limit={'type':'integer','minimum':1,'maximum':200},nextCursor=nullable(text),snapshot=nullable(ref('digest')),total=nullable(nonnegative)))
 defs['packageDependencies']=result('package-dependencies','packageQuery',graph=nullable(ref('graph')))
 defs['projectDependencies']=result('project-dependencies','projectQuery',configuration=nullable(ref('digest')),dependencyLock=nullable(ref('digest')),declarations=arr(ref('declaration'),16384),declarationsScope={'const':'all-project'},domains=arr(ref('scopedGraph'),256))
+defs['projectDependencies']['properties']['availableVersions']=obj(packageLimit={'const':32},totalPackages=nonnegative,
+    packages=arr(obj(lockedVersions=arr(text,262144),domains=arr(ref('domain'),256),available=ref('versions')),32))
 schema={'$schema':'https://json-schema.org/draft/2020-12/schema','$id':'https://kvik.dev/schemas/v1/packages.json','$defs':defs,'oneOf':[ref('versions'),ref('packageDependencies'),ref('projectDependencies')]}
 (ROOT/'schemas/v1/packages.json').write_text(json.dumps(schema,indent=2)+'\n')

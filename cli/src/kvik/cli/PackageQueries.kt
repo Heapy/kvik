@@ -20,7 +20,7 @@ internal fun printPackageQuery(value: JsonValue.Object): ExitStatus {
         fields["sources"] = emptyList<JsonValue>().json()
         when (fields.getValue("kind").stringValue()) {
             "package-dependencies" -> fields["graph"] = JsonValue.Null
-            "project-dependencies" -> { fields["domains"] = emptyList<JsonValue>().json(); fields["declarations"] = emptyList<JsonValue>().json() }
+            "project-dependencies" -> { fields["domains"] = emptyList<JsonValue>().json(); fields["declarations"] = emptyList<JsonValue>().json(); fields.remove("availableVersions") }
             "package-versions" -> fields["versions"] = emptyList<JsonValue>().json()
         }
         result = JsonValue.Object(fields)
@@ -110,8 +110,21 @@ private fun unchangedQueryProject(result: JsonValue.Object, project: ProjectFile
 }
 
 internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
-    val options = queryArguments(args, setOf("--project", "--store", "--lock", "--compilation", "--usage"),
-        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--script", "--target"), flags = setOf("--offline"))
+    val options = queryArguments(args, setOf("--project", "--store", "--lock", "--compilation", "--usage", "--query-cache", "--channel", "--limit", "--cursor"),
+        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--script", "--target", "--package"), flags = setOf("--offline", "--available-versions", "--refresh"))
+    val available = "--available-versions" in options.flags
+    require(available || options.values.keys.none { it in setOf("--query-cache", "--channel", "--limit", "--cursor") } && "--package" !in options.repeats && "--refresh" !in options.flags) {
+        "Version query options require --available-versions"
+    }
+    val offline = "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1"
+    require(!offline || "--refresh" !in options.flags) { "Refresh cannot be combined with offline" }
+    val channel = options.values["--channel"] ?: "all"
+    val limit = options.values["--limit"]?.let { it.toIntOrNull() ?: error("Invalid page limit") } ?: 50
+    require(channel in setOf("all", "stable", "prerelease") && limit in 1..200) { "Invalid version query channel/limit" }
+    val packages = options.repeats["--package"].orEmpty().map(PackageId::parse)
+    require(packages.size <= 32 && packages.distinct().size == packages.size) { "Select at most 32 distinct packages" }
+    val cursor = options.values["--cursor"]
+    require(cursor == null || packages.size == 1) { "A version cursor requires exactly one --package" }
     val projectFlags = buildList {
         options.values.filterKeys { it in setOf("--project", "--store", "--lock") }.forEach { (key, value) -> add(key); add(value) }
         options.repeats.filterKeys { it in setOf("--pin", "--scope-pin", "--exclude-metadata-edge") }.forEach { (key, values) -> values.forEach { add(key); add(it) } }
@@ -130,6 +143,18 @@ internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
     var result = queryProjectDependencies(project.path, lock, store, project.configuration, effective,
         { NativeFiles.ensureDirectory(lock.substringBeforeLast('/'), create = false); NativeFiles.read(lock, 16 * 1024 * 1024).also { observedLock = it } }, readOnly, NativePomParser(), Clock.System.now().epochSeconds,
         ProjectQueryFilter(options.repeats["--module"].orEmpty(), options.repeats["--target"].orEmpty(), options.values["--compilation"], options.values["--usage"], options.repeats["--script"].orEmpty()))
+    if (available) {
+        val cachePath = projectPath(project.root, options.values["--query-cache"] ?: ".kvik/package-queries")
+        cacheOutsideInput(cachePath, project.path); cacheOutsideInput(cachePath, lock)
+        val mode = if (offline) QueryMode.OFFLINE else if ("--refresh" in options.flags) QueryMode.REFRESH else QueryMode.CACHE
+        val cache = NativeQueryCache(cachePath, allowRepair = mode == QueryMode.REFRESH)
+        val network = if (offline) null else NativeHttpsTransport()
+        val now = Clock.System.now().epochSeconds
+        result = withAvailableVersions(result, effective, packages.toSet(), singleQuery = cursor != null) { id, repositories ->
+            queryVersions(project.path, id, repositories, QueryTransport(repositories, cache, network, mode, now),
+                NativeVersionXmlParser(), channel, limit, cursor)
+        }
+    }
     if (observedLock != null) {
         val unchanged = try { NativeFiles.read(lock, 16 * 1024 * 1024).contentEquals(observedLock) } catch (_: Exception) { false }
         if (!unchanged) result = JsonValue.Object(result.values + mapOf("status" to "incomplete".json(), "freshness" to "indeterminate".json(),

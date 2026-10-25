@@ -72,6 +72,8 @@ private fun command(args: Array<String>) {
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target TARGET --usage USAGE --project PATH (same targets as build)
             Query cache: --query-cache PATH [--refresh|--offline] --json
             Project graph: dependencies --project PATH [--lock PATH] [--store PATH] [--module ID] [--script NAME] [--target TARGET] [--compilation main|test|script] [--usage USAGE] --json
+              Add --available-versions [--channel all|stable|prerelease] [--limit N] [--query-cache PATH] [--refresh|--offline] to list versions beside locked selections
+              Narrow version queries with --package GROUP:ARTIFACT; continue its page with --cursor TOKEN
             Workspace graph: workspace dependencies --kode PATH --kode-home PATH --store PATH [--source-project NAME ...] [--at NAME=REV ...]
               Defaults to registry main snapshots; --project/--lock choose common logical paths, --configuration NAME=PATH/--dependency-lock NAME=PATH override them.
               Reads locked metadata from the existing store; no dependency downloads, builds or source updates.

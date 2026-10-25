@@ -1583,6 +1583,57 @@
             "$ref": "#/$defs/scopedGraph"
           },
           "maxItems": 256
+        },
+        "availableVersions": {
+          "type": "object",
+          "properties": {
+            "packageLimit": {
+              "const": 32
+            },
+            "totalPackages": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "packages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "lockedVersions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 4096
+                    },
+                    "maxItems": 262144
+                  },
+                  "domains": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/domain"
+                    },
+                    "maxItems": 256
+                  },
+                  "available": {
+                    "$ref": "#/$defs/versions"
+                  }
+                },
+                "required": [
+                  "lockedVersions",
+                  "domains",
+                  "available"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "packageLimit",
+            "totalPackages",
+            "packages"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

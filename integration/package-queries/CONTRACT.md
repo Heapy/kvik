@@ -16,6 +16,8 @@ kvik dependencies --project kvik.json --json
   [--lock PATH] [--store PATH] [--pin ...] [--scope-pin ...]
   [--module ID] [--target jvm|macosArm64] [--compilation main|test]
   [--usage java-api|java-runtime|kotlin-api|kotlin-runtime] [--offline]
+  [--available-versions [--package GROUP:ARTIFACT ...] [--channel all|stable|prerelease]
+    [--limit 1..200] [--cursor TOKEN] [--query-cache PATH] [--refresh]]
 ```
 
 Repositories come from the validated project in declared order. No implicit
@@ -48,6 +50,25 @@ agreement; it does not imply that locked versions are the latest available.
 Per-source records retain repository ID, URL, metadata/artifact role, observed
 digest/time when known, cache origin, freshness and failure status. A 404 is a
 repository observation; an absent offline cache entry is not evidence of a 404.
+
+`dependencies --available-versions` adds `availableVersions.packages` for the
+displayed locked graph, including transitive dependencies. Each entry retains
+its `lockedVersions`, contributing `domains` and a complete `available` version
+query envelope. Equal package/repository combinations are queried once; distinct
+script repository configurations remain separate. The outer freshness still
+describes locked inputs; each nested query reports repository observation
+freshness. Failed observations make the overall result incomplete without hiding
+the locked graph. Version availability does not establish upgrade compatibility.
+
+The request queries at most 32 package/repository combinations. A larger scope
+returns an incomplete result and `totalPackages`; narrow the scope or use repeated
+`--package` selectors. `--limit` bounds each version page (default 50). To continue
+one page, repeat the same query options with one `--package` and its nested
+`page.nextCursor` as `--cursor`. If that package has multiple repository
+configurations, narrow the module/script scope first. An unknown package selector
+is rejected. Ordinary `dependencies` remains a lock-only read; only the explicit
+flag enables repository queries and metadata caching. Offline queries write
+nothing, and neither mode changes configuration or dependency locks.
 
 ## Versions
 
