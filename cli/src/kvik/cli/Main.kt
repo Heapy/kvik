@@ -76,7 +76,7 @@ private fun command(args: Array<String>) {
             Prepared replay: run-prepared --run PATH --descriptor DIGEST_JSON (requires current successful preparation)
             Application mode requires one application module/target; r reloads, t runs fresh tests without changing app mode.
             Dev: dev [--mode library|application] [--control keys|jsonl|lines] (TTY defaults to immediate r/t/q/? keys) [--watch-ms 1000] [--initial build|test] plus build options
-            Sessions: session status|reconnect|events|control --session DIRECTORY; events accepts --cursor JSON --limit N [--follow]; control requires --request-id ID --command r|t|q|status|cancel [--operation ID] [--wait-ms N]
+            Sessions: session status|reconnect|attach|events|control --session DIRECTORY; attach streams JSONL controls/events and accepts --cursor JSON --limit N; events accepts --cursor JSON --limit N [--follow]; control requires --request-id ID --command r|t|q|status|cancel [--operation ID] [--wait-ms N]
             Packages: packages versions GROUP:ARTIFACT --project PATH [--channel all|stable|prerelease] [--limit N] [--cursor TOKEN]
             Package graph: packages dependencies GROUP:ARTIFACT:VERSION --target TARGET --usage USAGE --project PATH (same targets as build)
             Query cache: --query-cache PATH [--refresh|--offline] --json

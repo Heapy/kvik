@@ -2380,6 +2380,184 @@
         "chain"
       ],
       "additionalProperties": false
+    },
+    "sessionAttachControl": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "command": {
+              "const": "detach"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "command"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "const": 1
+            },
+            "sessionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[!-~]+(?![\\s\\S])"
+            },
+            "command": {
+              "enum": [
+                "r",
+                "t",
+                "q",
+                "status",
+                "cancel"
+              ]
+            },
+            "operationId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "sessionId",
+            "requestId",
+            "command"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "command": {
+                    "const": "cancel"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "operationId"
+                ],
+                "properties": {
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "operationId": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "sessionAttachFinished": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-attach-finished"
+        },
+        "reason": {
+          "enum": [
+            "detached",
+            "end-of-input",
+            "parent-exit",
+            "interrupted",
+            "input-error",
+            "input-limit",
+            "owner-exited",
+            "incomplete-journal",
+            "handoff-timeout",
+            "incomplete-input"
+          ]
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/sessionCursor"
+            }
+          ]
+        },
+        "pendingRequests": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "reason",
+        "nextCursor",
+        "pendingRequests"
+      ],
+      "additionalProperties": false
+    },
+    "sessionAttachDiagnostic": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-attach-diagnostic"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "sessionAttachOutput": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sessionReconnect"
+        },
+        {
+          "$ref": "#/$defs/sessionFollowEvents"
+        },
+        {
+          "$ref": "#/$defs/sessionControlResult"
+        },
+        {
+          "$ref": "#/$defs/sessionAttachFinished"
+        },
+        {
+          "$ref": "#/$defs/sessionAttachDiagnostic"
+        }
+      ]
     }
   }
 }

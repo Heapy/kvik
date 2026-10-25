@@ -4,10 +4,11 @@ import kvik.core.*
 import kvik.foreground.*
 
 internal fun sessionCommand(args: List<String>): ExitStatus {
-    val operation = args.firstOrNull() ?: error("Use session status|reconnect|events|control --session DIRECTORY")
-    require(operation in setOf("status", "reconnect", "events", "control")) { "Unsupported session operation" }
+    val operation = args.firstOrNull() ?: error("Use session status|reconnect|attach|events|control --session DIRECTORY")
+    require(operation in setOf("status", "reconnect", "attach", "events", "control")) { "Unsupported session operation" }
     val allowed = setOf("--session") + when (operation) {
         "events" -> setOf("--cursor", "--limit", "--follow")
+        "attach" -> setOf("--cursor", "--limit")
         "control" -> setOf("--command", "--request-id", "--operation", "--wait-ms")
         else -> emptySet()
     }
@@ -19,6 +20,9 @@ internal fun sessionCommand(args: List<String>): ExitStatus {
         options[flag] = if (flag == "--follow") "true" else args[index++]
     }
     val directory = projectPath(currentDirectory(), options["--session"] ?: error("--session is required"))
+    if (operation == "attach") return try {
+        attachSession(directory, options["--cursor"]?.let(::parseJson), options["--limit"]?.toInt() ?: 100)
+    } catch (failure: Exception) { throw RunStreamFailure("Session attach failed: ${failure.message}") }
     val result = when (operation) {
         "status" -> querySession(directory)
         "reconnect" -> reconnectSession(directory)
