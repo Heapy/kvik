@@ -178,7 +178,7 @@ def inspect_cache_events(path, actions, expected_status):
         payload = event['payload']
         if event['type'] == 'diagnostic' and payload['code'] == 'KVIK_CACHE_NOTICE':
             code = payload['message'].split(':', 1)[0]
-            require(code not in REMOTE_FAILURES, 'Remote lookup/publication failed or was skipped; no gate baseline can be issued')
+            require(code not in REMOTE_FAILURES, f'Remote lookup/publication failed or was skipped ({code}); no gate baseline can be issued')
         if event['type'] == 'action-cache-decision' and payload['actionId'] in COMPILES:
             name = payload['actionId']
             require(name not in decisions, 'Duplicate compilation cache decision')
@@ -278,6 +278,29 @@ def inspect_run(output, expected_status, composition):
                 tests=[dict(id=TEST_ID, module='consumer', target='jvm')])
 
 
+def cache_failure_summary(output):
+    """Only fixed event codes/action IDs and numeric HTTP status; never echo raw diagnostics."""
+    summary = []
+    try:
+        for path in sorted((output / 'runs').glob('*/events.jsonl')):
+            for raw in read(path).splitlines():
+                event = json.loads(raw)
+                payload = event.get('payload', {})
+                if event.get('type') == 'action-cache-decision' and payload.get('actionId') in COMPILES:
+                    decision = payload.get('decision')
+                    if decision in ('remote-hit', 'remote-miss', 'remote-error', 'local-hit', 'local-miss'):
+                        summary.append(payload['actionId'] + '=' + decision)
+                elif event.get('type') == 'diagnostic' and payload.get('code') == 'KVIK_CACHE_NOTICE':
+                    message = payload.get('message', '')
+                    code = message.split(':', 1)[0]
+                    if code in REMOTE_FAILURES:
+                        status = re.search(r'(?:returned|confirmation) status ([0-9]{3})\b', message)
+                        summary.append(code + (':HTTP-' + status.group(1) if status else ''))
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return ', '.join(summary[:12]) or 'no retained cache events'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     phases = parser.add_subparsers(dest='phase', required=True)
@@ -330,7 +353,7 @@ def main():
     result = run(command, args.timeout)
     require(token is None or token.encode() not in result.stdout + result.stderr, 'Credential appeared in runtime diagnostics')
     # Do not echo or persist raw subprocess output: diagnostics may contain credential-bearing input.
-    require(result.returncode == 0, f'Runtime test failed (exit {result.returncode}); inspect the retained run locally')
+    require(result.returncode == 0, f'Runtime test failed (exit {result.returncode}); {cache_failure_summary(output)}')
     observed = inspect_run(output, 'executed' if args.phase == 'writer' else 'remote_hit', inputs['composition'])
     if baseline is not None:
         require(observed == baseline['verification'], 'Reader verification identities, action keys/manifests or tests differ')

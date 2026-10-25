@@ -186,7 +186,15 @@ class HttpActionCache(
             if (status == 413) RemotePublication(false, CacheDiagnostic("remote-publish-skipped", "HTTP cache rejected archive size"), session.stats())
             else if (status !in 200..299) RemotePublication(false,
                 CacheDiagnostic("remote-publish-failed", "HTTP cache returned status $status"), session.stats())
-            else RemotePublication(true, stats = session.stats())
+            else {
+                // Some gateways return 2xx error pages without storing the entry. Confirm
+                // the opaque bytes before reporting successful remote publication.
+                val (confirmedStatus, confirmed) = session.request(action.key(Sha256))
+                if (confirmedStatus !in 200..299 || !confirmed.contentEquals(payload))
+                    RemotePublication(false, CacheDiagnostic("remote-publish-failed",
+                        "HTTP cache did not retain the uploaded entry (confirmation status $confirmedStatus)"), session.stats())
+                else RemotePublication(true, stats = session.stats())
+            }
         } catch (_: Exception) {
             checkpoint()
             RemotePublication(false, CacheDiagnostic("remote-publish-failed", "HTTP cache publication failed"), session.stats())

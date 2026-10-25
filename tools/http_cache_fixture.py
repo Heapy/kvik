@@ -14,6 +14,8 @@ class HttpCacheFixture:
         self.delay = 0
         self.redirect = None
         self.partial = False
+        self.discard_writes = False
+        self.alter_writes = False
         fixture = self
         authorization = 'Basic ' + base64.b64encode(('token-auth:' + token).encode()).decode()
 
@@ -44,7 +46,8 @@ class HttpCacheFixture:
                     else:
                         body = self.rfile.read(size)
                         if len(body) == size:
-                            fixture.entries[self.path] = body
+                            if not fixture.discard_writes:
+                                fixture.entries[self.path] = body + b'trailing' if fixture.alter_writes else body
                             status, data = 201, b''
                         else:
                             status, data = 400, b''

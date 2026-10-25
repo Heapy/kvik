@@ -110,6 +110,21 @@ class CrossMachineGateTests(unittest.TestCase):
                 with self.subTest(value=value), self.assertRaises(gate.GateError):
                     gate.remote_configuration(self.config_path, 'read')
 
+    def test_failure_summary_never_echoes_raw_diagnostics_or_unknown_action_ids(self):
+        journal = self.root / 'output/runs/run/events.jsonl'
+        journal.parent.mkdir(parents=True)
+        events = [
+            dict(type='action-cache-decision', payload=dict(actionId='library:jvm:main', decision='remote-miss')),
+            dict(type='diagnostic', payload=dict(code='KVIK_CACHE_NOTICE', message=
+                'remote-publish-failed: HTTP cache did not retain the uploaded entry (confirmation status 404) secret-value')),
+            dict(type='action-cache-decision', payload=dict(actionId='secret-value', decision='remote-hit')),
+            dict(type='diagnostic', payload=dict(code='PRIVATE', message='secret-value')),
+        ]
+        journal.write_text('\n'.join(json.dumps(event) for event in events))
+        summary = gate.cache_failure_summary(self.root / 'output')
+        self.assertEqual(summary, 'library:jvm:main=remote-miss, remote-publish-failed:HTTP-404')
+        self.assertNotIn('secret-value', summary)
+
     def test_http_provider_preserves_path_and_namespace_without_credentials(self):
         config = dict(self.config, provider='gradle-http', username='token-auth', url='https://cache.example/project/gradle/')
         gate.write_json(self.config_path, config)

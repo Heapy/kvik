@@ -18,7 +18,8 @@ internal fun httpChecks(operation: String, root: String, url: String, action: Ac
         "http-publish" -> {
             val result = client.publishRemote(action, ActionResult("fixture", action.key(Sha256), ActionStatus.EXECUTED, outputs, 0))
             println("PUBLISHED ${result.published} ${result.diagnostic?.code}")
-            check(requireNotNull(result.stats).requests == 1)
+            val requests = requireNotNull(result.stats).requests
+            check(requests in 1..2 && (!result.published || requests == 2))
         }
         "http-lookup" -> {
             val result = client.lookupRemote(action)

@@ -48,6 +48,12 @@ def check_http_cache(executable, parent):
         server.status = 413
         run('publish', 'PUBLISHED false remote-publish-skipped')
         server.status = None
+        server.discard_writes = True
+        run('publish', 'PUBLISHED false remote-publish-failed', 'unretained-2xx-write')
+        server.discard_writes = False
+        server.alter_writes = True
+        run('publish', 'PUBLISHED false remote-publish-failed', 'altered-2xx-write')
+        server.alter_writes = False
         server.delay = 3
         run('cancel', 'PASS HTTP cancellation')
         run('lookup', 'MISS remote-cache-lookup-failed')

@@ -166,10 +166,11 @@ def main():
                             if label == 'fallback':
                                 assert stats['uploadedBytes'] == stats['downloadedBytes'] == 0, item
                             elif http_server:
-                                assert stats['requests'] == 1, item
                                 if item['operation'] == 'publish':
-                                    assert stats['uploadedBytes'] > 0 and stats['downloadedBytes'] == 0, item
+                                    assert stats['requests'] == 2, item
+                                    assert stats['uploadedBytes'] > 0 and stats['downloadedBytes'] >= stats['uploadedBytes'], item
                                 else:
+                                    assert stats['requests'] == 1, item
                                     assert stats['uploadedBytes'] == 0, item
                                     assert (stats['downloadedBytes'] > 0) == (item['outcome'] == 'hit'), item
                             else:
