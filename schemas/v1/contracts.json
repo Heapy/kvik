@@ -13074,6 +13074,377 @@
           }
         }
       ]
+    },
+    "runStatistics": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "currentFreshness": {
+          "type": "null"
+        },
+        "requestedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "completedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "testCounts": {
+          "$ref": "#/$defs/testCounts"
+        },
+        "actions": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "startedOutcomes": {
+              "type": "object",
+              "properties": {
+                "executed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "local_hit": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "remote_hit": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "failed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "cancelled": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "blocked": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                }
+              },
+              "required": [
+                "executed",
+                "local_hit",
+                "remote_hit",
+                "failed",
+                "cancelled",
+                "blocked"
+              ],
+              "additionalProperties": false
+            },
+            "unstartedOutcomes": {
+              "type": "object",
+              "properties": {
+                "executed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "local_hit": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "remote_hit": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "failed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "cancelled": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "blocked": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                }
+              },
+              "required": [
+                "executed",
+                "local_hit",
+                "remote_hit",
+                "failed",
+                "cancelled",
+                "blocked"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "total",
+            "startedOutcomes",
+            "unstartedOutcomes"
+          ],
+          "additionalProperties": false
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "coverage": {
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable"
+              ]
+            },
+            "measuredActions": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "unmeasuredStartedActions": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "observedSchedulerNanos": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "summedActionNanos": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "observedBusyNanos": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "peakObservedActiveActions": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "coverage",
+            "measuredActions",
+            "unmeasuredStartedActions",
+            "observedSchedulerNanos",
+            "summedActionNanos",
+            "observedBusyNanos",
+            "peakObservedActiveActions"
+          ],
+          "additionalProperties": false
+        },
+        "remoteCache": {
+          "type": "object",
+          "properties": {
+            "coverage": {
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable"
+              ]
+            },
+            "recordedOperations": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "measuredOperations": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "lookupOperations": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "publicationOperations": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "measuredRequests": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "measuredUploadedBytes": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "measuredDownloadedBytes": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "summedMeasuredOperationNanos": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9223372036854775807
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "coverage",
+            "recordedOperations",
+            "measuredOperations",
+            "lookupOperations",
+            "publicationOperations",
+            "measuredRequests",
+            "measuredUploadedBytes",
+            "measuredDownloadedBytes",
+            "summedMeasuredOperationNanos"
+          ],
+          "additionalProperties": false
+        },
+        "slowestActions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "status": {
+                "enum": [
+                  "executed",
+                  "local_hit",
+                  "remote_hit",
+                  "failed",
+                  "cancelled",
+                  "blocked"
+                ]
+              },
+              "startedAfterNanos": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "durationNanos": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              }
+            },
+            "required": [
+              "actionId",
+              "status",
+              "startedAfterNanos",
+              "durationNanos"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 10
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runId",
+        "status",
+        "currentFreshness",
+        "requestedChecks",
+        "completedChecks",
+        "testCounts",
+        "actions",
+        "timing",
+        "remoteCache",
+        "slowestActions"
+      ],
+      "additionalProperties": false
     }
   }
 }

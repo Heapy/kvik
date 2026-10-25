@@ -998,6 +998,27 @@ DEFS["actionExplanation"]["allOf"] = [
 ]
 
 
+RUN_METRIC = {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}
+RUN_COUNT = {"type": "integer", "minimum": 0, "maximum": 2147483647}
+RUN_COVERAGE = enum("complete", "partial", "unavailable")
+RUN_OUTCOMES = object_({status: RUN_COUNT for status in ("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked")})
+DEFS["runStatistics"] = versioned({
+    "runId": NONEMPTY, "status": enum("passed", "failed", "incomplete", "cancelled"), "currentFreshness": {"type": "null"},
+    "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
+    "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "testCounts": ref("testCounts"),
+    "actions": object_({"total": RUN_COUNT, "startedOutcomes": RUN_OUTCOMES, "unstartedOutcomes": RUN_OUTCOMES}),
+    "timing": object_({"coverage": RUN_COVERAGE, "measuredActions": RUN_COUNT, "unmeasuredStartedActions": RUN_COUNT,
+        "observedSchedulerNanos": nullable(RUN_METRIC), "summedActionNanos": nullable(RUN_METRIC),
+        "observedBusyNanos": nullable(RUN_METRIC), "peakObservedActiveActions": nullable(RUN_COUNT)}),
+    "remoteCache": object_({"coverage": RUN_COVERAGE, "recordedOperations": RUN_COUNT, "measuredOperations": RUN_COUNT,
+        "lookupOperations": RUN_COUNT, "publicationOperations": RUN_COUNT, "measuredRequests": nullable(RUN_METRIC),
+        "measuredUploadedBytes": nullable(RUN_METRIC), "measuredDownloadedBytes": nullable(RUN_METRIC),
+        "summedMeasuredOperationNanos": nullable(RUN_METRIC)}),
+    "slowestActions": array(object_({"actionId": NONEMPTY, "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"),
+        "startedAfterNanos": RUN_METRIC, "durationNanos": RUN_METRIC}), maxItems=10),
+})
+
+
 def main():
     directory = ROOT / "schemas/v1"
     directory.mkdir(parents=True, exist_ok=True)
@@ -1012,6 +1033,9 @@ def main():
     explanation = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/explain.json",
         "$ref": "contracts.json#/$defs/actionExplanation"}
     (directory / "explain.json").write_text(json.dumps(explanation, indent=2) + "\n")
+    statistics = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/run-stats.json",
+        "$ref": "contracts.json#/$defs/runStatistics"}
+    (directory / "run-stats.json").write_text(json.dumps(statistics, indent=2) + "\n")
     coverage = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/coverage.json",
         "$ref": "contracts.json#/$defs/coverageReport"}
     (directory / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")

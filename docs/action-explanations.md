@@ -49,3 +49,32 @@ means no recorded remote operation, including older runs and local-only reuse.
 saved action record; the retained dependency list is not part of the action key.
 An unresolved action has null recipe and dependencies because these details were
 not retained.
+
+## Summarize a run
+
+`kvik run-stats --run PATH` returns a read-only JSON summary using
+[`schemas/v1/run-stats.json`](../schemas/v1/run-stats.json). It needs only the
+committed verification and event journal, with no project, tool installation,
+action recipes or artifact cache. A valid historical query exits zero even when
+the recorded run failed; damaged or incomplete records exit three.
+
+`actions.startedOutcomes` counts outcomes with an action-started event.
+`unstartedOutcomes` keeps shared results, blocked actions and failures before
+startup separate, so they do not inflate execution or cache-hit counts.
+Requested/completed checks and test counts retain their original scope.
+
+`timing.observedSchedulerNanos` ends at the latest measured action completion,
+relative to scheduler creation. `observedBusyNanos` is the union of measured
+action intervals, while `summedActionNanos` sums their durations and can exceed
+elapsed time. `peakObservedActiveActions` counts overlapping measured intervals;
+it describes scheduler activity, not CPU utilization or process count. These
+fields exclude bootstrap and other work outside the measured intervals. The ten
+slowest measured actions are listed in descending duration order.
+
+`remoteCache` totals measured lookup/publication requests, body bytes and
+operation durations. Operation durations can overlap and are not wall time.
+Both timing and transfer sections label measurement coverage as complete,
+partial or unavailable. Partial values cover only recorded measurements;
+unavailable totals are null. An old journal with no transfer records does not
+establish zero network traffic. This query does not check current freshness,
+infer avoided tests, or estimate hashing time or memory consumption.
