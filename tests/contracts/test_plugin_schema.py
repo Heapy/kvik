@@ -8,6 +8,20 @@ SCHEMA = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/contracts
 
 
 class PluginSchemaTest(unittest.TestCase):
+    def test_graph_artifact_references_keep_semantic_coordinates_and_output_shape(self):
+        definition = SCHEMA['$defs']['graphInspection']['properties']['artifacts']
+        validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **definition})
+        artifact = dict(module='app', target='jvm', compilation='main', producer='compile',
+                        output=dict(path='classes', kind='jvm-classes', shape='tree'))
+        validator.validate([artifact])
+        for change in [dict(module=''), dict(compilation=' '), dict(producer=''),
+                       dict(output=dict(path='../escape', kind='jvm-classes', shape='tree')),
+                       dict(output=dict(path='classes', kind='jvm-classes', shape='unknown'))]:
+            self.assertFalse(validator.is_valid([{**artifact, **change}]))
+        self.assertFalse(validator.is_valid([artifact, artifact]))
+        self.assertNotIn('artifacts', SCHEMA['$defs']['graphInspection']['required'])
+
+
     def test_inspection_exposes_plugin_inputs_separately_from_authored_project(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/inspection'})
         digest = dict(hash='a' * 64, sizeBytes=0)

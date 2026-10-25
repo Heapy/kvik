@@ -26,6 +26,42 @@ against declared shapes, including cached and deduplicated results. Mismatches
 fail the action and block consumers. The `inspect-graph` CLI/MCP query serializes
 these declarations without invoking any action resolver.
 
+`ProjectActionGraph.artifacts` adds semantic references to declared compiler,
+classpath, metadata, application and linker outputs. Providers register each
+`ProjectArtifact(module, target, compilation, producer, output)` when constructing
+its action. The graph rejects absent producers and undeclared outputs. Contributors
+and script prerequisite graphs retain these references.
+
+A contributor can consume classes without knowing the compiler action ID or path:
+
+```kotlin
+val classes = graph.requireArtifact("app", "jvm", "main", "jvm-classes")
+val bundle = ActionNode("my-plugin:bundle", setOf(classes.producer)) { results ->
+    jvmClasspathAction(
+        JvmClasspath("app", "main", listOf(LogicalPath("input/classes"))),
+        classes.manifest(results, LogicalPath("input/classes")),
+        context.composition, context.toolchains.getValue("jvm"),
+    )
+}
+```
+
+`findArtifacts(module, target, compilation, kind)` returns all matches;
+`requireArtifact(...)` rejects missing or ambiguous selections. Built-in kinds include
+`jvm-classes`, `klib`, `kotlin-metadata`, `platform-classpath`, `native-executable`,
+`native-framework`, `debug-symbols`, `web-modules` and `application-bundle`.
+Compilation is `main` or `test`; common metadata uses target `common`. Source roots
+and generated resources remain available through their separate project/graph
+contracts. Queries do not add actions: `platform-classpath` is available on a
+classpath graph and describes the compiler classpath. Custom providers can declare
+additional kinds and compilation names. `inspect-graph` exposes the same references
+in its `artifacts` array.
+
+`manifest` requires a successful result with the matching producer ID, selects only
+the referenced output, and preserves digests and executable bits when remapping.
+Empty trees are valid; absent file artifacts and incorrect file/tree shapes fail.
+Add the producer to the consumer's dependencies so the scheduler supplies its
+result. The manifest references CAS content; it does not read files or launch a build.
+
 `ProjectActionGraph.testLaunches` maps test action IDs to `JvmTestLaunch`,
 `NativeTestLaunch` or `JsTestLaunch`. Providers and contributors can inspect these
 settings before prerequisites run. Each launch uses the existing adapter to

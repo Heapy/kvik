@@ -124,6 +124,39 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun artifactsExposeCompilationAndLinkResultsAcrossTargets() {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
+            val config = configuration(*listOf(base, app).map { module -> module.copy(targets = module.targets
+                .filter { it.name == if (target == "jvm") "jvm" else "macosArm64" }.map { it.copy(name = target) }) }.toTypedArray())
+            val plan = graph(config, request = request(ProjectMode.COMPILE_TESTS, target))
+            val kind = if (target == "jvm") "jvm-classes" else "klib"
+            val main = plan.requireArtifact("app", target, "main", kind)
+            val test = plan.requireArtifact("app", target, "test", kind)
+            assertNotEquals(main.producer, test.producer)
+            assertEquals("base", plan.requireArtifact("base", target, "main", kind).module)
+            assertTrue(plan.findArtifacts("base", target, "test", kind).isEmpty())
+            val actions = resolved(plan)
+            for (artifact in listOf(main, test)) {
+                val action = actions.getValue(artifact.producer)
+                val result = ActionResult(artifact.producer, action.key(Sha256), ActionStatus.LOCAL_HIT, outputs(action, "classes"), 0)
+                assertTrue(artifact.manifest(mapOf(artifact.producer to result)).files.isNotEmpty())
+            }
+            if (target != "jvm") {
+                val linked = plan.requireArtifact("app", target, "test", if (target in listOf("js", "wasmJs")) "web-modules" else "native-executable")
+                assertContains(plan.nodes.single { it.id == linked.producer }.dependencies, test.producer)
+            }
+            assertEquals(plan.artifacts.size, inspectActionGraph(plan).values.getValue("artifacts").arrayValue().size)
+        }
+        val classpath = graph(request = request(ProjectMode.CLASSPATH_TEST))
+        assertEquals("platform-classpath", classpath.requireArtifact("app", "jvm", "test", "platform-classpath").output.kind)
+        assertTrue(graph().findArtifacts("app", "jvm", "main", "platform-classpath").isEmpty())
+        assertFails { graph().requireArtifact("app", "jvm", "test", "jvm-classes") }
+        val (config, files) = applicationFixture()
+        val application = graph(config, files, request(ProjectMode.APPLICATION, "macosArm64"))
+        assertEquals("native-executable", application.requireArtifact("app", "macosArm64", "main", "native-executable").output.kind)
+        assertEquals("application-bundle", application.requireArtifact("app", "macosArm64", "main", "application-bundle").output.kind)
+    }
+
     @Test fun generatedResourcesFeedRuntimeTestsPackagesAndApplicationsAcrossTargets() {
         fun config(target: String = "jvm", packaged: Boolean = false): ProjectConfiguration {
             val modules = listOf(base, app).map { module ->

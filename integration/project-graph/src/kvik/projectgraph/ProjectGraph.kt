@@ -36,7 +36,10 @@ data class ProjectActionGraph(
     val generatedSources: List<GeneratedSourceRoot> = emptyList(),
     val testLaunches: Map<String, TestLaunch> = emptyMap(),
     val generatedResources: List<GeneratedResourceRoot> = emptyList(),
-)
+    val artifacts: List<ProjectArtifact> = emptyList(),
+) {
+    init { validateProjectArtifacts(nodes, artifacts) }
+}
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
     if (request.mode == ProjectMode.DOCUMENTATION) request.modules.map { "$it:common:documentation" }.toSet() else request.modules.flatMap { module -> request.targets.map { target -> "$module:$target:${request.mode.checkScope()}" } +
@@ -115,6 +118,7 @@ private class Builder(
     private val selections = lock.selections.associateBy { it.request() }
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
+    private val projectArtifacts = linkedSetOf<ProjectArtifact>()
     private val generatedSources = linkedSetOf<GeneratedSourceRoot>()
     private val generatedResources = linkedSetOf<GeneratedResourceRoot>()
     private val testLaunches = linkedMapOf<String, TestLaunch>()
@@ -172,7 +176,7 @@ private class Builder(
                 val id = ensureDocumentation(module)
                 "$module:common:documentation" to id
             }
-            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList())
+            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList())
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
@@ -199,7 +203,7 @@ private class Builder(
                 terminals["$module:common:package"] = root
             }
         }
-        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList())
+        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList(), artifacts = projectArtifacts.toList())
     }
 
     private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
@@ -625,6 +629,11 @@ private class Builder(
     private fun classpathInputs(classpath: CompilationClasspath, target: String, results: Map<String, ActionResult>): TreeManifest =
         merge(classpath.modules.flatMap { remap(results, it, target, "main") }, classpath.artifacts)
 
+    private fun exposeArtifacts(module: String, target: String, compilation: String, producer: String) {
+        for (output in requireNotNull(nodes.getValue(producer).outputContract).artifacts)
+            projectArtifacts += ProjectArtifact(module, target, compilation, producer, output)
+    }
+
     private fun ensureClasspath(module: String, scope: String): String {
         val classpath = compilationClasspath(module, "jvm", scope)
         classpath.modules.forEach { ensureMain(it, "jvm") }
@@ -636,6 +645,7 @@ private class Builder(
             jvmClasspathAction(JvmClasspath(module, scope, classpathPaths(classpath, "jvm")),
                 classpathInputs(classpath, "jvm", results), composition, tools.getValue("jvm"))
         }
+        exposeArtifacts(module, "jvm", scope, id)
         return id
     }
 
@@ -709,6 +719,7 @@ private class Builder(
         val graph = scriptActionGraph(effective, lock, TreeManifest(files), composition, tools.getValue("jvm"),
             ScriptGraphRequest(script.name, generator = true), generatedInputs)
         for (node in graph.nodes) if (node.id !in nodes) nodes[node.id] = node
+        projectArtifacts += graph.artifacts
         generatedSources += graph.generatedSources
         generatedResources += graph.generatedResources
     }
@@ -838,6 +849,7 @@ private class Builder(
                 languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
                 timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
         }
+        exposeArtifacts(module, target, "main", id)
     }
 
     private fun publicationDependencies(module: String, target: String): List<LibraryDependency> {
@@ -992,6 +1004,7 @@ private class Builder(
                 warningsAsErrors = settings.any { it.warningsAsErrors }, plugins = plugin.map { it.path }, pluginApplications = workspace.applications, targets = spec.targets.map { it.name }.toSet()),
                 merge(sources, generated, dependencyFiles, artifacts, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
+        exposeArtifacts(module, "common", "main", id)
         return id
     }
 
@@ -1050,6 +1063,7 @@ private class Builder(
                 isStaticFramework = framework.isStatic), merge(libraries, artifacts), composition, tools.getValue(target),
                 timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
         }
+        exposeArtifacts(module, target, "main", id)
         return id
     }
 
@@ -1085,6 +1099,7 @@ private class Builder(
                     warningsAsErrors = options.warningsAsErrors, includedLibrary = modulePath(module, target, "main"), entryPoint = application.entryPoint, target = NativeTarget.require(target)),
                     merge(libraries, artifacts), composition, tools.getValue(target), timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
             }
+            exposeArtifacts(module, target, "main", linkId)
             nodes[id] = ActionNode(id, setOf(linkId) + resource.dependencies,
                 ActionOutputContract(treeOutput("application", "application-bundle"))) { results ->
                 validateResults(results, setOf(linkId) + resource.dependencies)
@@ -1099,6 +1114,7 @@ private class Builder(
                     merge(program, resource.resolve(results)), composition, tools.getValue(target))
             }
         }
+        exposeArtifacts(module, target, "main", id)
         return id
     }
 
@@ -1188,6 +1204,7 @@ private class Builder(
                     sourceFragments = nativeFragments(module, target, "test", generated.map { it.path }, sqlSources.map { it.path }, scriptSources), languageOptions = options.nativeLanguageOptions), inputs, composition, nativeTools(target, workspace.applications),
                     timeoutMillis = target(module, target).nativeTimeouts?.compileMillis ?: 180_000)
             }
+            exposeArtifacts(module, target, "test", compileId(module, target))
             if (NativeTarget.find(target) != null) {
                 val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
                 val runtimeArtifacts = artifactEntries(external(module, target, "test", "kotlin-runtime"), target)
@@ -1205,6 +1222,7 @@ private class Builder(
                         moduleName = options.nativeModuleName, warningsAsErrors = options.warningsAsErrors, includedLibrary = included.path, target = NativeTarget.require(target)), inputs, composition, tools.getValue(target),
                         timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
                 }
+                exposeArtifacts(module, target, "test", linkId(module, target))
             }
         } else require(selectedPlugins(module, target, "test").isEmpty()) { "Test compiler plugin selected without test compilation sources" }
         if (!execute) return when {
@@ -1287,6 +1305,7 @@ private class Builder(
                 warningsAsErrors = options.warningsAsErrors, plugins = plugins.map { it.path }, pluginApplications = workspace.applications),
                 merge(compiledSource.entries, artifacts, plugins, dependencyFiles, workspace.entries), composition, jsCompilerTools(target))
         }
+        exposeArtifacts(module, target, "test", compileId(module, target))
         val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
         nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges,
             ActionOutputContract(treeOutput("tests", "web-modules"))) { results ->
@@ -1303,6 +1322,7 @@ private class Builder(
                 output = LogicalPath("tests"), moduleName = testModuleName, includedLibrary = LogicalPath("tests.klib")),
                 merge(library, runtimeArtifacts, dependencyFiles), composition, jsCompilerTools(target))
         }
+        exposeArtifacts(module, target, "test", linkId(module, target))
         if (!execute) return linkId(module, target)
         val id = "$module:$target:test"
         val settings = target(module, target).jsTestSettings ?: JsTestSettings()

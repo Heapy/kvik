@@ -81,6 +81,14 @@ def main():
     info = invoke('info', ['runtime-info'])[0]
     assert {plugin['id'] for plugin in info['plugins']} >= {'kvik.kotlin', 'fixture.classpath'}
     invoke('resolve', ['resolve', '--project', config, '--store', store])
+    graph = invoke('inspect-graph', ['inspect-graph', '--mode', 'build', '--module', 'app', '--target', 'jvm',
+        '--project', config, '--tools', tools, '--store', store, '--offline'])[0]
+    classes = [artifact for artifact in graph['artifacts'] if artifact['module'] == 'app' and
+               artifact['target'] == 'jvm' and artifact['compilation'] == 'main' and artifact['output']['kind'] == 'jvm-classes']
+    assert len(classes) == 1, graph['artifacts']
+    consumer = next(action for action in graph['actions'] if action['id'] == PLUGIN_ACTION)
+    assert consumer['dependencies'] == [classes[0]['producer']], consumer
+    (root / 'graph.json').write_text(json.dumps(graph))
     inspection = invoke('inspect-script', ['inspect-script', 'task', '--project', config,
         '--tools', tools, '--store', store, '--offline'])[0]
     assert PLUGIN_ACTION in {action['id'] for action in inspection['actions']}, inspection['actions']

@@ -15157,6 +15157,42 @@
           },
           "maxItems": 10000
         },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "target": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "compilation": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "producer": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "output": {
+                "$ref": "#/$defs/outputArtifact"
+              }
+            },
+            "required": [
+              "module",
+              "target",
+              "compilation",
+              "producer",
+              "output"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
         "checks": {
           "type": "array",
           "items": {

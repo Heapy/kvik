@@ -1224,6 +1224,14 @@ duplicate action IDs, missing dependencies, cycles and missing requested termina
 are rejected. Existing `BuildPlugin.actions(project)` implementations remain
 supported as additive callbacks over the authoring document.
 
+Plugins can select compiled outputs with
+`graph.requireArtifact(module, target, compilation, kind)` or list matches with
+`findArtifacts(...)`. The returned `ProjectArtifact` provides the producer dependency,
+output contract and `manifest(results, destination)` for selecting and remapping
+files from successful predecessor results. This avoids depending on internal action
+IDs or output directory names. `inspect-graph` exposes the same references in
+`artifacts`; queries only cover actions already included in the requested graph.
+
 Build plugins can implement `ProjectInputContributor.projectInputs(configuration)` to
 return `BuildPluginInputs(files = ..., directories = ...)` with project-relative
 schema, template or data paths. This pure hook runs before capture and may use

@@ -210,6 +210,7 @@ private class ScriptGraphBuilder(
         }
         return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId),
             contributedActions = moduleGraph.contributedActions,
+            artifacts = moduleGraph.artifacts.toList(),
             generatedSources = moduleGraph.generatedSources + if (generator == null || generator.resources.isNotEmpty()) emptyList() else listOf(
                 GeneratedSourceRoot(runId, generator.module, generator.sourceSet, "script", "/scripts/${script.name}/generator", LogicalPath("generated"))),
             generatedResources = moduleGraph.generatedResources + if (generator == null || generator.resources.isEmpty()) emptyList() else listOf(

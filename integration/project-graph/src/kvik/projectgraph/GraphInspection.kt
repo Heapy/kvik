@@ -22,6 +22,8 @@ fun inspectActionGraph(graph: ProjectActionGraph): JsonValue.Object {
     val consumers = nodes.keys.associateWith { mutableListOf<String>() }
     for (node in nodes.values) for (producer in node.dependencies) consumers.getValue(producer).add(node.id)
     return obj(
+        "artifacts" to graph.artifacts.sortedWith(compareBy({ it.module }, { it.target }, { it.compilation },
+            { it.output.kind }, { it.producer }, { it.output.path.value })).map { it.toJson() }.json(),
         "actions" to nodes.values.sortedBy { it.id }.map { node -> obj(
             "id" to node.id.json(),
             "dependencies" to node.dependencies.sorted().map(String::json).json(),

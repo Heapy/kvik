@@ -59,6 +59,71 @@ private class Contributor(id: String, private val add: (ProjectBuildContext, Pro
 }
 
 class BuildPluginsTest {
+    @Test fun contributorsConsumeSemanticArtifactsAndScriptsRetainThem() {
+        val context = pluginContext()
+        var calls = 0
+        val plugin = Contributor("consumer") { _, graph ->
+            val classes = graph.requireArtifact("app", "jvm", "main", "jvm-classes")
+            calls++
+            listOf(ActionNode("consumer:bundle", setOf(classes.producer)) { results ->
+                jvmClasspathAction(JvmClasspath("app", "main", listOf(LogicalPath("input"))),
+                    classes.manifest(results, LogicalPath("input")), context.composition, context.toolchains.getValue("jvm"))
+            })
+        }
+        val graph = composedProjectActionGraph(listOf(KotlinBuildPlugin(), plugin), context, pluginRequest)
+        val classes = graph.requireArtifact("app", "jvm", "main", "jvm-classes")
+        val result = ActionResult(classes.producer, pluginDigest("compile"), ActionStatus.LOCAL_HIT,
+            TreeManifest(listOf(FileEntry(LogicalPath("classes/Main.class"), pluginDigest("bytecode")))), 0)
+        val bundle = graph.nodes.single { it.id == "consumer:bundle" }.resolve(mapOf(classes.producer to result))
+        assertEquals(listOf(LogicalPath("input/Main.class")), bundle.inputs.files.map { it.path })
+        assertEquals(1, calls)
+        // A named script keeps the semantic artifacts of its workspace prerequisites.
+        val document = context.effective.document.objectValue().getValue("project") as JsonValue.Object
+        val scriptProject = parseProjectConfiguration(JsonValue.Object(document.values + ("scripts" to obj("task" to obj(
+            "sources" to listOf("task.kt".json()).json(), "dependencies" to listOf(obj("module" to "app".json())).json())))))
+        val effective = effectiveConfiguration(scriptProject)
+        val script = composedScriptActionGraph(listOf(KotlinBuildPlugin(), plugin),
+            context.copy(effective = effective, lock = DependencyLock(effective.digest, emptyList())), ScriptGraphRequest("task"))
+        assertEquals(classes, script.requireArtifact("app", "jvm", "main", "jvm-classes"))
+        assertEquals(2, calls)
+    }
+
+    @Test fun artifactsRejectUndeclaredProducersAndAmbiguousQueries() {
+        val output = treeOutput("classes", "jvm-classes")
+        val artifact = ProjectArtifact("app", "jvm", "main", "compile", output)
+        val node = ActionNode("compile", emptySet(), { error("No recipe required for artifact lookup") }, ActionOutputContract(output))
+        val graph = pluginGraph(listOf(node), terminals = mapOf(pluginCheck to node.id)).copy(artifacts = listOf(artifact))
+        assertFails { graph.copy(artifacts = listOf(artifact, artifact)) }
+        assertFails { graph.copy(artifacts = listOf(artifact.copy(producer = "unknown"))) }
+        assertFails { graph.copy(artifacts = listOf(artifact.copy(output = treeOutput("other", "jvm-classes")))) }
+        val other = node.copy(id = "another")
+        val ambiguous = graph.copy(nodes = listOf(node, other), artifacts = listOf(artifact, artifact.copy(producer = other.id)))
+        assertEquals(2, ambiguous.findArtifacts("app", "jvm", "main", "jvm-classes").size)
+        assertFails { ambiguous.requireArtifact("app", "jvm", "main", "jvm-classes") }
+    }
+
+    @Test fun artifactManifestsSelectAndRemapOnlySuccessfulDeclaredOutputs() {
+        val artifact = ProjectArtifact("app", "jvm", "main", "compile", treeOutput("classes", "jvm-classes"))
+        val file = FileEntry(LogicalPath("classes/pkg/Main.class"), pluginDigest("bytecode"), executable = true)
+        fun result(files: List<FileEntry> = listOf(file), status: ActionStatus = ActionStatus.EXECUTED, id: String = "compile") =
+            mapOf("compile" to ActionResult(id, pluginDigest("action"), status, TreeManifest(files), if (status == ActionStatus.FAILED) 1 else 0))
+        val inputs = artifact.manifest(result(listOf(file, file.copy(path = LogicalPath("classes-other/Leak.class")),
+            file.copy(path = LogicalPath("plugins/schema.json")))), LogicalPath("dependencies/app"))
+        assertEquals(listOf(file.copy(path = LogicalPath("dependencies/app/pkg/Main.class"))), inputs.files)
+        assertTrue(artifact.manifest(result(emptyList())).files.isEmpty())
+        assertFails { artifact.manifest(emptyMap()) }
+        assertFails { artifact.manifest(result(status = ActionStatus.FAILED)) }
+        assertFails { artifact.manifest(result(id = "other")) }
+        assertFails { artifact.manifest(result(listOf(file.copy(path = LogicalPath("classes"))))) }
+        val library = artifact.copy(output = fileOutput("module.klib", "klib"))
+        assertFails { library.manifest(result(emptyList())) }
+        assertFails { library.manifest(result(listOf(file.copy(path = LogicalPath("module.klib/invalid"))))) }
+        val klib = file.copy(path = LogicalPath("module.klib"))
+        for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT))
+            assertEquals(listOf(klib.copy(path = LogicalPath("deps/app.klib"))),
+                library.manifest(result(listOf(klib), status), LogicalPath("deps/app.klib")).files)
+    }
+
     @Test fun instrumentationContributorsEnrichOrdinaryTestsWithoutReplacingTheirChecks() {
         val context = pluginContext()
         val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests")))

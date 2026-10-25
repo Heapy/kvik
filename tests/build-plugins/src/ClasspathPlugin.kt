@@ -11,13 +11,13 @@ class ClasspathPlugin : ProjectGraphContributor {
     override val configurationSchema = obj("type" to "object".json())
 
     override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> {
-        val compile = "app:jvm:main"
-        if (graph.nodes.none { it.id == compile }) return emptyList()
+        val artifact = graph.findArtifacts("app", "jvm", "main", "jvm-classes").singleOrNull() ?: return emptyList()
+        val compile = artifact.producer
         val bundle = ActionNode("fixture.classpath:bundle", setOf(compile)) { results ->
             require(context.snapshot.files.none { it.path.value == "other/resources/fail.txt" }) { "Fixture plugin failure" }
             val extra = context.snapshot.files.singleOrNull { it.path.value == "other/resources/input.txt" }
                 ?.copy(path = LogicalPath("classes/plugin-input.txt"))
-            val classes = TreeManifest(results.getValue(compile).outputs.files.filter { it.path.value.startsWith("classes/") } + listOfNotNull(extra))
+            val classes = TreeManifest(artifact.manifest(results, LogicalPath("classes")).files + listOfNotNull(extra))
             jvmClasspathAction(JvmClasspath("app", "main", listOf(LogicalPath("classes"))), classes,
                 context.composition, context.toolchains.getValue("jvm"))
         }
