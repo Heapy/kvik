@@ -42,7 +42,7 @@ class WildcardReviewTest {
         }
     }
 
-    @Test fun propertyBasedAndDuplicateExclusionsRemainUnsupported() {
+    @Test fun unresolvedPropertyAndDuplicateExclusionsRemainUnsupported() {
         for (exclusion in listOf(all.replace("<groupId>*", "<groupId>\${wild}"), all.replace("</exclusion>", "<groupId>*</groupId></exclusion>"), all.replace("</exclusions>", "<exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>"))) {
             assertFails { resolve(pom("root", edge("leaf", exclusion)) + pom("leaf"), "root") }
         }

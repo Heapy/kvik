@@ -55,6 +55,46 @@ class BomImportTest {
         }
     }
 
+    @Test fun exclusionPropertiesUseChildContextForInheritedDeclarations() {
+        val fields = "<version>1</version>" + exclusions("\${project.groupId}", "\${selected}")
+        for (managed in listOf(false, true)) {
+            val parentBody = "<packaging>pom</packaging><properties><selected>parent</selected></properties>" +
+                if (managed) management(dependency("b", fields)) else dependencies(dependency("b", fields))
+            val childBody = parent("p") + "<properties><selected>\${alias}</selected><alias>leaf</alias></properties>" +
+                if (managed) dependencies(dependency("b")) else ""
+            val result = effectivePom(c("root"), pom("root", childBody)) { pom("p", parentBody) }
+            assertEquals(setOf(ModuleExclusion("example", "leaf")), result.dependencyEdges(runtime).single().excludes)
+        }
+    }
+
+    @Test fun importedExclusionPropertiesStayInTheBomContext() {
+        val models = mapOf(
+            c("bom") to pom("bom", "<packaging>pom</packaging>" + management(bom("nested"))),
+            c("nested") to pom("nested", "<packaging>pom</packaging><properties><selected>*</selected></properties>" +
+                management(dependency("b", "<version>1</version>" + exclusions("\${pom.artifactId}", "\${selected}")))))
+        val root = pom("root", "<properties><selected>consumer</selected></properties>" + management(bom("bom")) + dependencies(dependency("b")))
+        assertEquals(setOf(ModuleExclusion("nested", "*")),
+            effectivePom(c("root"), root, models::getValue).dependencyEdges(runtime).single().excludes)
+    }
+
+    @Test fun exclusionPropertyExpansionRejectsUnknownCyclesProfilesBoundsAndInvalidPatterns() {
+        fun model(properties: String, expression: String = "\${selected}", extra: String = "") = effectivePom(c("root"),
+            pom("root", "<properties>$properties</properties>$extra" +
+                dependencies(dependency("b", "<version>1</version>" + exclusions("example", expression))))) { error("No fetch") }
+        for (properties in listOf("", "<selected>\${alias}</selected><alias>\${selected}</alias>",
+            "<selected>${"x".repeat(4097)}</selected>", "<selected>leaf*</selected>")) {
+            assertFails { model(properties).dependencyEdges(runtime) }
+        }
+        assertFails { model("", "\${env.HOME}").dependencyEdges(runtime) }
+        assertFails { model("<selected>leaf</selected>", extra =
+            "<profiles><profile><id>other</id><properties><selected>other</selected></properties></profile></profiles>").dependencyEdges(runtime) }
+        // Distinct expressions must not hide duplicate expanded rules.
+        val duplicate = exclusions("example", "\${selected}").replace("</exclusions>",
+            "<exclusion><groupId>example</groupId><artifactId>leaf</artifactId></exclusion></exclusions>")
+        assertFails { effectivePom(c("root"), pom("root", "<properties><selected>leaf</selected></properties>" +
+            dependencies(dependency("b", "<version>1</version>$duplicate")))) { error("No fetch") }.dependencyEdges(runtime) }
+    }
+
     @Test fun explicitAndInheritedManagementWinBeforeOrderedBomImports() {
         val models = mapOf(
             c("parent") to pom("parent", "<packaging>pom</packaging>" + management(dependency("parentManaged", "<version>2</version>"))),
@@ -144,7 +184,8 @@ class BomImportTest {
     @Test fun importedBomExclusionsStayPathLocalAndReplayOffline() {
         val repo = Repository("central", "https://example.test/maven")
         val rootPom = text("root", management(bom("bom")) + dependencies(dependency("b")))
-        val bomPom = text("bom", "<packaging>pom</packaging>" + management(dependency("b", "<version>1</version>" + exclusions("example", "leaf"))))
+        val bomPom = text("bom", "<packaging>pom</packaging><properties><excluded>leaf</excluded></properties>" +
+            management(dependency("b", "<version>1</version>" + exclusions("\${project.groupId}", "\${excluded}"))))
         val documents = mapOf("root" to rootPom, "bom" to bomPom,
             "b" to text("b", dependencies(dependency("leaf", "<version>1</version>"), dependency("keep", "<version>1</version>"))),
             "ordinary" to text("ordinary", dependencies(dependency("b", "<version>1</version>"))),

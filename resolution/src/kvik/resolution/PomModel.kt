@@ -199,7 +199,13 @@ private fun buildEffectivePom(coordinate: Coordinate, root: PomNode, parent: (Co
     fun expanded(entries: Collection<Map<String, PomNode>>): Map<String, Map<String, PomNode>> {
         val result = linkedMapOf<String, Map<String, PomNode>>()
         for (raw in entries) {
-            val fields = raw.mapValues { (name, field) -> if (name == "exclusions") field else field.copy(text = interpolate(field.text)) }
+            val fields = raw.mapValues { (name, field) ->
+                if (name == "exclusions") field.copy(children = field.children.map { exclusion ->
+                    exclusion.copy(children = exclusion.children.map { identity ->
+                        if (identity.name in setOf("groupId", "artifactId")) identity.copy(text = interpolate(identity.text)) else identity
+                    })
+                }) else field.copy(text = interpolate(field.text))
+            }
             val key = dependencyKey(fields)
             require(result.put(key, fields) == null) { "Ambiguous POM dependency identities after interpolation" }
         }
