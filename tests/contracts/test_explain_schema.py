@@ -57,5 +57,18 @@ class ExplanationSchemaTest(unittest.TestCase):
         self.assertEqual(module.DEFS, self.contracts['$defs'])
         self.assertEqual('contracts.json#/$defs/actionExplanation', json.loads((ROOT / 'schemas/v1/explain.json').read_text())['$ref'])
 
+    def test_action_timing_has_bounded_explicit_units(self):
+        validator = Draft202012Validator({**self.contracts, '$ref': '#/$defs/event'})
+        timing = dict(actionId='app:jvm:main', startedAfterNanos=12, durationNanos=34)
+        event = dict(schemaVersion=1, runId='run-example', sequence=3, type='action-timing', payload=timing)
+        validator.validate(event)
+        for key, value in [('durationNanos', -1), ('startedAfterNanos', -1), ('durationNanos', 2**63),
+                           ('durationNanos', 1.5), ('actionId', ''), ('extra', True)]:
+            changed = dict(event, payload={**timing, key: value})
+            self.assertTrue(list(validator.iter_errors(changed)), (key, value))
+        explained = self.fixture()
+        explained['timing'] = None
+        self.validator.validate(explained)
+
 
 if __name__ == '__main__': unittest.main()

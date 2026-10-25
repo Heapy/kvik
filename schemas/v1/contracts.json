@@ -9954,6 +9954,31 @@
       ],
       "additionalProperties": false
     },
+    "actionTiming": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "startedAfterNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "durationNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "actionId",
+        "startedAfterNanos",
+        "durationNanos"
+      ],
+      "additionalProperties": false
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -9973,6 +9998,7 @@
             "action-started",
             "action-finished",
             "action-cache-decision",
+            "action-timing",
             "diagnostic",
             "test-result",
             "run-finished",
@@ -10159,6 +10185,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/actionCacheDecision"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "action-timing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/actionTiming"
               }
             }
           }
@@ -12740,6 +12782,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/actionCacheDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/actionTiming"
             },
             {
               "type": "null"

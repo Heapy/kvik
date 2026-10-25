@@ -24,6 +24,12 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
     require(result.key != null || retained == null) { "Unresolved action unexpectedly has a resolved recipe" }
     val started = events.singleOrNull { it.type == "action-started" && it.payload.values["actionId"] == actionId.json() }
     val finished = events.single { it.type == "action-finished" && it.payload.values["actionId"] == actionId.json() }
+    val timings = events.filter { it.type == "action-timing" && it.payload.values["actionId"] == actionId.json() }
+    require(timings.size <= 1) { "Duplicate timing for action" }
+    val timing = timings.singleOrNull()?.let {
+        require(started != null && it.sequence > started.sequence && it.sequence < finished.sequence) { "Action timing differs from action order" }
+        ActionTiming.fromJson(it.payload)
+    }
     val decisions = events.filter { it.type == "action-cache-decision" && it.payload.values["actionId"] == actionId.json() }
     require(decisions.size <= 1) { "Duplicate cache decision for action" }
     val decision = decisions.singleOrNull()?.let { event ->
@@ -75,6 +81,7 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to record.runId.json(), "actionId" to actionId.json(),
         "currentFreshness" to JsonValue.Null,
         "result" to result.toJson(), "action" to (action?.toJson() ?: JsonValue.Null), "cacheDecision" to (decision ?: JsonValue.Null),
+        "timing" to (timing?.toJson() ?: JsonValue.Null),
         "dependencyEvidence" to (if (dependencies == null) "unavailable" else "unbound-retained").json(),
         "dependencies" to (dependencies?.map { results.getValue(it).toJson() }?.json() ?: JsonValue.Null),
         "reason" to obj("code" to code.json(), "message" to message.json(), "sharedWith" to (owner?.actionId?.json() ?: JsonValue.Null),

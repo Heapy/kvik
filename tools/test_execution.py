@@ -80,7 +80,7 @@ def main():
         events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
         assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
         assert len([event for event in events if event["type"] == "action-finished"]) == 6
-        assert {event["type"] for event in events} == {"action-started", "action-finished"}
+        assert {event["type"] for event in events} == {"action-started", "action-timing", "action-finished"}
         schema = json.loads((ROOT / "schemas/v1/contracts.json").read_text())
         validator = Draft202012Validator({**schema, "$ref": "#/$defs/event"})
         for event in events:

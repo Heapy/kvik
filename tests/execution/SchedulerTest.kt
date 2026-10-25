@@ -3,6 +3,8 @@ package kvik.execution.tests
 import kvik.core.*
 import kvik.execution.*
 import kotlin.test.*
+import kotlin.time.TestTimeSource
+import kotlin.time.Duration.Companion.nanoseconds
 
 private fun spec(name: String = "one", effect: Boolean = false): ActionSpec {
     val digest = Sha256.digest(byteArrayOf())
@@ -31,6 +33,59 @@ private class ManualExecutor : ActionExecutor {
 }
 
 class SchedulerTest {
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    @Test fun timingUsesRunLocalClockAndDoesNotDuplicateSharedWork() {
+        val clock = TestTimeSource()
+        val events = mutableListOf<RunEvent>()
+        val executor = ManualExecutor()
+        val nodes = listOf(ActionNode("a", emptySet()) { spec() }, ActionNode("b", emptySet()) { spec() },
+            ActionNode("c", emptySet()) { spec("independent") }, ActionNode("d", setOf("c")) { spec("dependent") })
+        SchedulerRun("timing", nodes, executor, ResourceBudget(2, 2), EventJournal { events += it }, timeSource = clock).use { run ->
+            clock += 10.nanoseconds
+            run.tick()
+            clock += 30.nanoseconds
+            executor.finish("a", ActionStatus.LOCAL_HIT)
+            run.tick()
+            clock += 20.nanoseconds
+            executor.finish("c", ActionStatus.FAILED)
+            assertTrue(run.tick())
+            assertEquals(ActionStatus.BLOCKED, run.results.getValue("d").status)
+        }
+        val timings = events.filter { it.type == "action-timing" }.map { ActionTiming.fromJson(it.payload) }
+        assertEquals(listOf(ActionTiming("a", 10, 30), ActionTiming("c", 10, 50)), timings)
+        for (timing in timings) {
+            val related = events.filter { it.payload.values["actionId"] == timing.actionId.json() }
+            assertEquals(listOf("action-started", "action-timing", "action-finished"), related.map { it.type })
+        }
+    }
+
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    @Test fun timingIncludesSynchronousStartupAndCleanupOnCancellation() {
+        val clock = TestTimeSource()
+        val events = mutableListOf<RunEvent>()
+        val action = spec()
+        val executor = object : ActionExecutor {
+            override fun resources(action: ActionSpec) = ResourceRequest(1)
+            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
+                clock += 7.nanoseconds
+                return object : RunningAction {
+                    var cancelled = false
+                    override fun poll() = if (cancelled) ActionResult(actionId, action.key(Sha256), ActionStatus.CANCELLED) else null
+                    override fun cancel() { cancelled = true }
+                    override fun close() { clock += 3.nanoseconds }
+                }
+            }
+        }
+        SchedulerRun("timing", listOf(ActionNode("a", emptySet()) { action }, ActionNode("b", emptySet()) { spec("pending") }),
+            executor, ResourceBudget(1, 1), EventJournal { events += it }, timeSource = clock).use { run ->
+            run.tick()
+            clock += 11.nanoseconds
+            run.cancel()
+            assertTrue(run.tick())
+        }
+        assertEquals(listOf(ActionTiming("a", 0, 21)), events.filter { it.type == "action-timing" }.map { ActionTiming.fromJson(it.payload) })
+    }
+
     @Test fun dependenciesDedupAndStableEvents() {
         val executor = ManualExecutor()
         val events = mutableListOf<RunEvent>()
@@ -44,7 +99,7 @@ class SchedulerTest {
         assertTrue(run.results.values.all { it.successful })
         assertEquals((1L..events.size.toLong()).toList(), events.map { it.sequence })
         assertEquals(listOf("a", "c"), events.filter { it.type == "action-started" }.map { it.payload.objectValue().getValue("actionId").stringValue() })
-        assertTrue(events.all { it.type in setOf("action-started", "action-finished") })
+        assertTrue(events.all { it.type in setOf("action-started", "action-timing", "action-finished") })
         val finished = events.filter { it.type == "action-finished" }.associateBy { it.payload.objectValue().getValue("actionId").stringValue() }
         assertEquals(run.results.keys, finished.keys)
         for (event in events.filter { it.type == "action-started" }) {

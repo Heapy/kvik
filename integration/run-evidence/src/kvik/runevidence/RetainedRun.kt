@@ -28,7 +28,14 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
     val finished = mutableSetOf<String>()
     val started = mutableSetOf<String>()
     val decisions = mutableSetOf<String>()
+    val timed = mutableSetOf<String>()
     for (event in events) when (event.type) {
+        "action-timing" -> {
+            val timing = ActionTiming.fromJson(event.payload)
+            require(timing.actionId in started && timing.actionId !in finished && timed.add(timing.actionId)) {
+                "Action timing requires one started, unfinished action"
+            }
+        }
         "action-cache-decision" -> {
             val fields = cacheDecisionFields(event.payload)
             val id = fields.getValue("actionId").stringValue()

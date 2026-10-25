@@ -1,6 +1,7 @@
 package kvik.execution
 
 import kvik.core.*
+import kotlin.time.TimeSource
 
 /** append must durably persist before returning; listeners may observe only persisted events. */
 fun interface EventJournal { fun append(event: RunEvent) }
@@ -16,11 +17,13 @@ class SchedulerRun(
     private val budget: ResourceBudget,
     private val journal: EventJournal,
     private val hasher: Hasher = Sha256,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
 ) : AutoCloseable {
+    private val timeOrigin = timeSource.markNow()
     private val nodes = nodes.sortedBy { it.id }.associate { it.id to it.copy(dependencies = it.dependencies.toSet()) }
     private val completed = mutableMapOf<String, ActionResult>()
     private data class Resolved(val spec: ActionSpec, val key: Digest, val resources: ResourceRequest)
-    private data class Active(val resolved: Resolved, val handle: RunningAction)
+    private data class Active(val resolved: Resolved, val handle: RunningAction, val startedAfterNanos: Long)
     private val resolved = mutableMapOf<String, Resolved>()
     private val active = mutableMapOf<String, Active>()
     private val owners = mutableMapOf<Digest, String>()
@@ -42,9 +45,10 @@ class SchedulerRun(
         journal.append(RunEvent(runId, ++sequence, type, payload))
     }
 
-    private fun complete(result: ActionResult) {
+    private fun complete(result: ActionResult, timing: ActionTiming? = null) {
         val snapshot = result.copy(outputs = TreeManifest(result.outputs.files.toList()))
         completed[result.actionId] = snapshot
+        if (timing != null) emit("action-timing", timing.toJson())
         emit("action-finished", snapshot.toJson() as JsonValue.Object)
     }
 
@@ -62,7 +66,8 @@ class SchedulerRun(
                 val checked = if (result.actionId != id || result.key != running.resolved.key) {
                     ActionResult(id, running.resolved.key, ActionStatus.FAILED, diagnostic = "Executor returned a mismatched action identity")
                 } else if (cancelled) result.copy(status = ActionStatus.CANCELLED) else result
-                complete(checked)
+                complete(checked, ActionTiming(id, running.startedAfterNanos,
+                    timeOrigin.elapsedNow().inWholeNanoseconds - running.startedAfterNanos))
             }
             for ((id, owner) in followers.entries.sortedBy { it.key }) {
                 val result = completed[owner] ?: continue
@@ -107,8 +112,9 @@ class SchedulerRun(
                 if (active.size >= budget.maxParallel || action.resources.memoryMiB > budget.memoryMiB - memory ||
                     action.resources.exclusive.any { it in exclusive }) continue
                 try {
+                    val startedAfterNanos = timeOrigin.elapsedNow().inWholeNanoseconds
                     val handle = executor.start(runId, id, action.spec)
-                    active[id] = Active(action, handle)
+                    active[id] = Active(action, handle, startedAfterNanos)
                     if (action.spec.cachePolicy != CachePolicy.NEVER) owners[action.key] = id
                     emit("action-started", obj("actionId" to id.json(), "key" to action.key.toJson()))
                 } catch (failure: Exception) {

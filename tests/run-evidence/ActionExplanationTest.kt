@@ -38,10 +38,37 @@ class ActionExplanationTest {
         val explanation = explainRetainedAction(record, validate(record, events(record)), "main", recipe())
         assertEquals("executed-cache-reason-unrecorded", reason(explanation))
         assertEquals(JsonValue.Null, explanation.values.getValue("cacheDecision"))
+        assertEquals(JsonValue.Null, explanation.values.getValue("timing"))
         assertEquals(action.toJson(), explanation.values.getValue("action"))
         assertEquals(JsonValue.Null, explanation.values.getValue("currentFreshness"))
         assertEquals("unbound-retained", explanation.values.getValue("dependencyEvidence").stringValue())
         assertEquals(emptyList(), explanation.values.getValue("dependencies").arrayValue())
+    }
+    @Test fun timingIsRetainedForSuccessReuseFailureAndCancellation() {
+        for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
+            val record = record(listOf(result(status = status)))
+            val timing = ActionTiming("main", 12, 34)
+            val journal = events(record).toMutableList().also { it.add(2, RunEvent(record.runId, 1, "action-timing", timing.toJson())) }
+                .mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+            val explained = explainRetainedAction(record, validate(record, journal), "main", recipe())
+            assertEquals(timing.toJson(), explained.values.getValue("timing"))
+            assertEquals(record.actions.single().toJson(), explained.values.getValue("result"))
+        }
+    }
+    @Test fun timingRejectsInvalidDurationsIdentitiesOrderingAndDuplicates() {
+        val record = record(listOf(result()))
+        val timing = ActionTiming("main", 12, 34).toJson()
+        fun journal(value: JsonValue.Object = timing, at: Int = 2, duplicate: Boolean = false) = events(record).toMutableList().also {
+            it.add(at, RunEvent(record.runId, 1, "action-timing", value))
+            if (duplicate) it.add(at, RunEvent(record.runId, 1, "action-timing", value))
+        }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+        for ((key, value) in listOf("actionId" to "unknown".json(), "durationNanos" to (-1).json(),
+            "startedAfterNanos" to (-1).json(), "durationNanos" to Long.MAX_VALUE.json(), "extra" to true.json())) {
+            assertFails { validate(record, journal(JsonValue.Object(timing.values + (key to value)))) }
+        }
+        assertFails { validate(record, journal(at = 1)) }
+        assertFails { validate(record, journal(at = 3)) }
+        assertFails { validate(record, journal(duplicate = true)) }
     }
     @Test fun reuseRequiredExecutionAndUnresolvedOutcomesAreDistinct() {
         for ((status, expected) in listOf(ActionStatus.LOCAL_HIT to "local-cache-hit", ActionStatus.REMOTE_HIT to "remote-cache-hit",

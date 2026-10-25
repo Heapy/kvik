@@ -52,6 +52,8 @@ def main():
             assert explained['currentFreshness'] is None
             decisions = [event['payload'] for event in journal_events if event['type'] == 'action-cache-decision' and event['payload']['actionId'] == result['actionId']]
             assert explained['cacheDecision'] == (decisions[0] if decisions else None)
+            timings = [event['payload'] for event in journal_events if event['type'] == 'action-timing' and event['payload']['actionId'] == result['actionId']]
+            assert explained['timing'] == (timings[0] if timings else None)
             if result['key'] is not None:
                 name = hashlib.sha256(result['actionId'].encode()).hexdigest() + '.json'
                 retained = json.loads((run / 'actions' / name).read_text())

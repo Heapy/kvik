@@ -798,7 +798,10 @@ DEFS["documentationReady"] = object_({"module": {**ID, "pattern": ID["pattern"] 
     "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
     "actionId": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:documentation$(?![\s\S])"},
     "directory": ACTIVATION_PATH, "index": ACTIVATION_PATH})
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
+DEFS["actionTiming"] = object_({"actionId": NONEMPTY,
+    "startedAfterNanos": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+    "durationNanos": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}})
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "action-timing", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
 DEFS["configurationEditOperation"] = {"oneOf": [
     object_({"op": {"const": "set-dependency"}, "module": ID, "sourceSet": ID, "dependency": ref("dependency")}),
     object_({"op": {"const": "set-dependency-version"}, "module": ID, "sourceSet": ID, "package": NONEMPTY, "version": NONEMPTY}),
@@ -867,6 +870,7 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "benchmark-ready": ref("benchmarkReady"),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-cache-decision": ref("actionCacheDecision"),
+    "action-timing": ref("actionTiming"),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),
     "run-finished": ref("verification"), "session-state": object_({"state": enum("idle", "building", "testing", "failed", "restarting", "stopping"), "runningSnapshot": nullable(ref("digest"))}),
     "application-prepared": object_({"directory": NONEMPTY, "descriptor": ref("digest"), "actionId": APPLICATION_CHECK}),
@@ -967,13 +971,14 @@ DEFS["scriptInspection"] = versioned({
 DEFS["actionExplanation"] = versioned({
     "runId": NONEMPTY, "actionId": NONEMPTY, "currentFreshness": {"type": "null"},
     "result": ref("actionResult"), "action": nullable(ref("action")), "cacheDecision": nullable(ref("actionCacheDecision")),
+    "timing": nullable(ref("actionTiming")),
     "dependencyEvidence": enum("unavailable", "unbound-retained"),
     "dependencies": nullable(array(ref("actionResult"))),
     "reason": object_({"code": enum("shared-within-run", "local-cache-hit", "remote-cache-hit", "blocked", "cancelled", "failed", "execution-required", "executed-cache-reason-unrecorded", "local-cache-miss", "local-cache-error", "remote-cache-miss", "remote-cache-error", "cache-unsupported"),
         "message": NONEMPTY, "sharedWith": nullable(NONEMPTY), "startedSequence": nullable({"type": "integer", "minimum": 1}),
         "finishedSequence": {"type": "integer", "minimum": 1}}),
     "actionDiagnostics": array(ref("diagnostic")), "runCacheNotices": array(ref("diagnostic")),
-})
+}, optional=("timing",))
 DEFS["actionExplanation"]["allOf"] = [
     {"if": {"properties": {"dependencyEvidence": {"const": "unavailable"}}},
      "then": {"properties": {"action": {"type": "null"}, "dependencies": {"type": "null"}}},
