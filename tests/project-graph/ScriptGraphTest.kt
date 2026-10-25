@@ -309,6 +309,36 @@ class ScriptGraphTest {
         }
     }
 
+    @Test fun multipleWorkspacePluginsKeepTheirOwnClosuresAndOrderedIdentities() {
+        val first = CompilerPluginSpec(module = "first", coordinate = null, targets = setOf("jvm"), scopes = setOf("script"),
+            options = listOf("text=first"), inputs = emptyList(), id = "fixture.first", compilerVersion = "2.4.20")
+        val second = first.copy(module = "second", id = "fixture.second", options = listOf("text=second"))
+        val shared = listOf(obj("module" to "shared".json()))
+        val modules = listOf(scriptModule("first", shared), scriptModule("second", shared), scriptModule("shared"))
+        for (kts in listOf(false, true)) {
+            val primary = LogicalPath(if (kts) "task.kts" else "task.kt")
+            val spec = ScriptSpec(listOf(primary), entryScript = primary.takeIf { kts }, compilerPlugins = listOf(first, second))
+            val files = scriptFiles(primary.value, "first/src/Plugin.kt", "second/src/Plugin.kt", "shared/src/Helper.kt")
+            val graph = scriptPlan(spec, files, modules)
+            assertEquals(setOf("first:jvm:main", "second:jvm:main", "shared:jvm:main"), graph.nodes.single { it.id == scriptCompile }.dependencies)
+            assertEquals(1, graph.nodes.count { it.id == "shared:jvm:main" })
+            val actions = scriptActions(graph)
+            val compile = actions.getValue(scriptCompile)
+            val applications = if (kts) KtsCompilation.fromJson(compile.parameters).pluginApplications else JvmCompilation.fromJson(compile.parameters).pluginApplications
+            assertEquals(listOf(first.id, second.id), applications.map { it.id })
+            for ((application, own, other) in listOf(Triple(applications[0], "first", "second"), Triple(applications[1], "second", "first"))) {
+                assertTrue(application.classpath.any { "/modules/$own/" in it.value })
+                assertTrue(application.classpath.any { "/modules/shared/" in it.value })
+                assertFalse(application.classpath.any { "/modules/$other/" in it.value })
+            }
+            for (module in listOf("first", "second", "shared"))
+                assertNotEquals(compile.key(Sha256), scriptActions(graph, "$module:jvm:main").getValue(scriptCompile).key(Sha256))
+            assertNotEquals(compile.key(Sha256), scriptActions(scriptPlan(spec.copy(compilerPlugins = listOf(second, first)), files, modules)).getValue(scriptCompile).key(Sha256))
+            assertFalse(actions.getValue(scriptRun).inputs.files.any { it.path.value.startsWith("plugins/") })
+            assertFails { scriptPlan(spec.copy(compilerPlugins = listOf(first, second.copy(id = first.id))), files, modules) }
+        }
+    }
+
     @Test fun standaloneCompanionHasNoImplicitWorkspaceOrSyntheticModule() {
         val configuration = parseStandaloneScriptConfiguration(obj("schemaVersion" to 1.json(), "name" to "task".json(),
             "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(), "script" to scriptSpec.toJson()))

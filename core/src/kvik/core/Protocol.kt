@@ -206,7 +206,8 @@ data class WorkerRequest(
     init {
         require(if (operation == "metadata-compile") metadataTargets.size >= 2 && metadataTargets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null } else metadataTargets.isEmpty()) { "Unsupported metadata target intersection" }
         require(requestId.isNotBlank() && operation in setOf("jvm-compile", "metadata-compile") && sources.isNotEmpty())
-        require(pluginApplications.size <= 1 && pluginClasspath.size <= 1) { "At most one workspace plugin and one pinned serialization plugin are supported" }
+        validateJvmPluginApplications(pluginApplications)
+        require(pluginClasspath.size <= 1) { "At most one pinned serialization plugin is supported" }
         require(pluginClasspath.isEmpty() || pluginApplications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
     }
     fun toJson(): JsonValue = obj(

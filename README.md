@@ -443,8 +443,12 @@ workspace module dependencies for helpers written as ordinary `.kt` files.
 `entryScript` and `mainClass` are mutually exclusive. A standalone
 `update.main.kts` uses `update.main.kvik.json` and `update.main.kvik.lock.json`.
 
-The adapter supports the same locked dependencies, compiler options and published
-or workspace compiler plugins as ordinary scripts. `resolve-script` reads
+Both `.kt` and `.kts` scripts support up to 16 workspace compiler plugins, optionally
+combined with the pinned serialization plugin. Workspace plugins run in declaration
+order, with distinct IDs, isolated classpaths and separate declared outputs. Changing
+any plugin's implementation, options or order invalidates script compilation.
+
+The adapter supports the same locked dependencies and compiler options as ordinary scripts. `resolve-script` reads
 `@file:DependsOn("group:artifact:version")` and `@file:Repository("https://host/path")`
 from the entry script and imported helpers into the same dependency lock. There
 is no need to repeat those dependencies in JSON. Added repositories apply only

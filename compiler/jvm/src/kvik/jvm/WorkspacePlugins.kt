@@ -112,31 +112,50 @@ internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>,
     PreparedWorkspacePlugin(application.id, classpath, options)
 }
 
-/** The private registrar forwards typed values directly, keeping the original loader alive through compilation. */
+internal fun workspacePluginBridgeId(plugins: List<PreparedWorkspacePlugin>): String =
+    plugins.singleOrNull()?.id ?: "kvik.workspace.composition"
+
 internal fun <T> withTypedWorkspacePlugin(plugin: PreparedWorkspacePlugin, compilerLoader: ClassLoader,
     workspace: Workspace, operation: (Path) -> T): T =
-    object : URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader) {
-        // The pinned compiler may publish its own providers (for example scripting).
-        // Only this application's validated classpath supplies workspace plugin services;
-        // classes still share the parent's compiler API identity.
-        override fun getResources(name: String): java.util.Enumeration<java.net.URL> = when (name) {
-            "META-INF/services/org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar",
-            "META-INF/services/org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor" -> findResources(name)
-            else -> super.getResources(name)
-        }
-    }.use { pluginLoader ->
-        val registrarType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar")
-        val processorType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor")
-        val registrars = ServiceLoader.load(registrarType, pluginLoader).toList()
-        val processors = ServiceLoader.load(processorType, pluginLoader).toList()
-        require(registrars.size == 1 && processors.size <= 1) { "Validated plugin services changed" }
-        val valueType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CliOptionValue")
-        val values = plugin.options.map { value -> valueType.getConstructor(String::class.java, String::class.java, String::class.java)
-            .newInstance(plugin.id, value.substringBefore('='), value.substringAfter('=')) }
-        val bridgeType = compilerLoader.loadClass("kvik.jvm.NativeTypedPlugin")
-        val worker = Path.of(PreparedWorkspacePlugin::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()
-        require(Path.of(bridgeType.protectionDomain.codeSource.location.toURI()).toRealPath() == worker) {
-            "Typed plugin adapter did not originate from the verified worker bundle"
+    withTypedWorkspacePlugins(listOf(plugin), compilerLoader, workspace, operation)
+
+/** Each plugin keeps its own loader; one bridge installs their registrars in declaration order. */
+internal fun <T> withTypedWorkspacePlugins(plugins: List<PreparedWorkspacePlugin>, compilerLoader: ClassLoader,
+    workspace: Workspace, operation: (Path) -> T): T {
+    require(plugins.size in 1..16 && plugins.map { it.id }.distinct().size == plugins.size)
+    val registrarType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar")
+    val processorType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor")
+    val valueType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CliOptionValue")
+    val bridgeType = compilerLoader.loadClass("kvik.jvm.NativeTypedPlugin")
+    val worker = Path.of(PreparedWorkspacePlugin::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()
+    require(Path.of(bridgeType.protectionDomain.codeSource.location.toURI()).toRealPath() == worker) {
+        "Typed plugin adapter did not originate from the verified worker bundle"
+    }
+    val registrars = mutableListOf<Any>()
+    val processors = mutableListOf<Any?>()
+    val options = mutableListOf<List<Any>>()
+    fun load(index: Int): T {
+        if (index < plugins.size) {
+            val plugin = plugins[index]
+            return object : URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader) {
+                // Services come only from this application; classes share the pinned parent API.
+                override fun getResources(name: String): java.util.Enumeration<java.net.URL> = when (name) {
+                    "META-INF/services/org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar",
+                    "META-INF/services/org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor" -> findResources(name)
+                    else -> super.getResources(name)
+                }
+            }.use { loader ->
+                val registrar = ServiceLoader.load(registrarType, loader).toList()
+                val processor = ServiceLoader.load(processorType, loader).toList()
+                require(registrar.size == 1 && processor.size <= 1) { "Validated plugin services changed" }
+                registrars += registrar.single()
+                processors += processor.singleOrNull()
+                options += plugin.options.map { value ->
+                    valueType.getConstructor(String::class.java, String::class.java, String::class.java)
+                        .newInstance(plugin.id, value.substringBefore('='), value.substringAfter('='))
+                }
+                load(index + 1)
+            }
         }
         val directory = Files.createTempDirectory(workspace.root, ".kvik-plugin-service-")
         var bound = false
@@ -144,12 +163,14 @@ internal fun <T> withTypedWorkspacePlugin(plugin: PreparedWorkspacePlugin, compi
             val descriptor = directory.resolve("META-INF/services/" + registrarType.name)
             Files.createDirectories(descriptor.parent)
             Files.writeString(descriptor, bridgeType.name + "\n")
-            bridgeType.getMethod("bind", registrarType, processorType, List::class.java)
-                .invoke(null, registrars.single(), processors.singleOrNull(), values)
+            bridgeType.getMethod("bindAll", List::class.java, List::class.java, List::class.java)
+                .invoke(null, registrars, processors, options)
             bound = true
-            operation(directory)
+            return operation(directory)
         } finally {
             try { if (bound) bridgeType.getMethod("clear").invoke(null) }
             finally { workspace.removeTree(directory) }
         }
     }
+    return load(0)
+}

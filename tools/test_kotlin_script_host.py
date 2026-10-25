@@ -216,6 +216,18 @@ println("EFFECT literal declarations")
     assert ordinary_result.stdout.decode().strip() == 'worker-transformed'
     print('PASS ordinary Kotlin compiler worker retains typed plugin behavior with scripting jars present', flush=True)
 
+    # Same provider class names, different IDs and configuration keys: loaders must stay isolated.
+    second_source = case / 'SecondPlugin.kt'
+    second_source.write_text((ROOT / 'tests/jvm-kts/Plugin.kt').read_text()
+        .replace('kvik.fixture.kts', 'kvik.fixture.second').replace('PLUGIN_MARKER', 'worker-transformed'))
+    second_plugin = case / 'second-plugin.jar'
+    process('compile-second-plugin', ['-cp', compiler_cp, 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect',
+        '-classpath', compiler_cp, '-d', second_plugin, second_source])
+    with zipfile.ZipFile(second_plugin, 'a') as jar:
+        for service, provider in [('CommandLineProcessor', 'Processor'), ('CompilerPluginRegistrar', 'Registrar')]:
+            jar.writestr('META-INF/services/org.jetbrains.kotlin.compiler.plugin.' + service, 'kvik.kts.fixture.' + provider)
+    second_application = {**application, 'id': 'kvik.fixture.second', 'classpath': ['input/second-plugin.jar'], 'options': ['text=both-transformed']}
+
     serialization = json.loads((ROOT / 'compiler/jvm/test-artifacts.lock.json').read_text())
     serialization['artifacts'] = [item for item in serialization['artifacts'] if item['coordinate'].split(':')[1] in {
         'kotlin-serialization-compiler-plugin-embeddable', 'kotlinx-serialization-core-jvm', 'kotlinx-serialization-json-jvm'}]
@@ -233,6 +245,7 @@ println("EFFECT literal declarations")
         (mixed / 'input').mkdir(parents=True)
         (mixed / 'output').mkdir()
         shutil.copy2(plugin, mixed / 'input/plugin.jar')
+        shutil.copy2(second_plugin, mixed / 'input/second-plugin.jar')
         shutil.copy2(cache / 'kotlin-stdlib-2.4.20.jar', mixed / 'input/stdlib.jar')
         runtime_paths = ['input/stdlib.jar']
         for coordinate, jar in serial_jars.items():
@@ -248,7 +261,8 @@ println("EFFECT literal declarations")
         body = 'println(Json.encodeToString(Payload.serializer(), Payload("PLUGIN_MARKER")))'
         (mixed / ('input/Main.' + extension)).write_text(declarations + (body if extension == 'kts' else 'fun main() { ' + body + ' }'))
         mixed_request = {**(worker_request if extension == 'kts' else ordinary_request),
-            'sources': ['input/Main.' + extension], 'classpath': runtime_paths, 'pluginClasspath': ['input/serialization.jar']}
+            'sources': ['input/Main.' + extension], 'classpath': runtime_paths, 'pluginClasspath': ['input/serialization.jar'],
+            'pluginApplications': [application, second_application]}
         (mixed / 'request.json').write_text(json.dumps(mixed_request))
         worker_class = 'kvik.jvm.KotlinScriptCompileWorker' if extension == 'kts' else 'kvik.jvm.CompilerWorkerKt'
         process('mixed-' + extension, ['-cp', bootstrap_cp, worker_class, mixed, 'request.json', 'result.json', cache, manifest])
@@ -262,8 +276,14 @@ println("EFFECT literal declarations")
                 'evaluate.json', 'evaluate-result.json', cache, manifest])
         else:
             evaluated = process('mixed-kt-run', ['-cp', ':'.join(map(str, [mixed / 'output/classes', *[mixed / p for p in runtime_paths]])), 'MainKt'])
-        assert json.loads(evaluated.stdout) == {'value': 'worker-transformed'}, evaluated.stdout
-    print('PASS workspace transformation and published serialization together for .kt and .kts', flush=True)
+        assert json.loads(evaluated.stdout) == {'value': 'both-transformed'}, evaluated.stdout
+        duplicate = case / ('duplicate-' + extension)
+        shutil.copytree(mixed / 'input', duplicate / 'input')
+        (duplicate / 'request.json').write_text(json.dumps({**mixed_request, 'pluginApplications': [application, application]}))
+        process('duplicate-' + extension, ['-cp', bootstrap_cp, worker_class, duplicate, 'request.json', 'result.json', cache, manifest], expected=1)
+        failure = json.loads((duplicate / 'result.json').read_text())
+        assert failure['status'] == 'infrastructure-error' and not (duplicate / 'output/classes').exists(), failure
+    print('PASS isolated ordered workspace plugins plus serialization for .kt/.kts; duplicate IDs refused', flush=True)
 
     _, failure = compile_script('annotation-cycle', {'main/Main.kts': '@file:Import("../helpers/Helper.kts")',
         'helpers/Helper.kts': '@file:Import("../main/Main.kts")'})

@@ -29,7 +29,7 @@ data class KtsCompilation(
             require(paths.distinct().size == paths.size && paths.none { ':' in it.value || ',' in it.value || it.value.any(Char::isISOControl) })
         }
         require(plugins.size <= 1 && plugins.all { it.value.endsWith(".jar") && it !in classpath })
-        require(pluginApplications.size <= 1) { "At most one workspace plugin is supported" }
+        validateJvmPluginApplications(pluginApplications)
         require(plugins.isEmpty() || pluginApplications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
         require(pluginApplications.all { plugin -> plugin.classpath.none { it in classpath } && plugin.outputs.none { pathsOverlap(it, output) } })
         require(jvmTarget in setOf(11, 17, 21, 25))

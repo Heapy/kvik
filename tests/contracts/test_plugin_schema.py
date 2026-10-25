@@ -75,6 +75,9 @@ class PluginSchemaTest(unittest.TestCase):
         validator.validate({**request, 'pluginApplications': [plugin]})
         combined = {**request, 'pluginClasspath': ['serialization.jar'], 'pluginApplications': [plugin]}
         validator.validate(combined)
+        validator.validate({**combined, 'pluginApplications': [plugin, {**plugin, 'id': 'example.second'}]})
+        validator.validate({**combined, 'pluginApplications': [{**plugin, 'id': f'plugin{i}'} for i in range(16)]})
+        self.assertFalse(validator.is_valid({**combined, 'pluginApplications': [{**plugin, 'id': f'plugin{i}'} for i in range(17)]}))
         self.assertFalse(validator.is_valid({**combined, 'pluginApplications': [{**plugin, 'id': 'org.jetbrains.kotlinx.serialization'}]}))
         self.assertFalse(validator.is_valid({**combined, 'pluginClasspath': ['serialization.jar', 'other.jar']}))
         self.assertFalse(validator.is_valid({**request, 'pluginApplications': [plugin, plugin]}))

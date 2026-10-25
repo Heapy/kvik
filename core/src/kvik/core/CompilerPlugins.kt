@@ -48,6 +48,16 @@ data class JvmPluginApplication(
 
 fun pathsOverlap(a: LogicalPath, b: LogicalPath): Boolean = a == b || a.value.startsWith(b.value + "/") || b.value.startsWith(a.value + "/")
 
+/** Composition order is significant; identities and output ownership must stay unambiguous. */
+fun validateJvmPluginApplications(applications: List<JvmPluginApplication>) {
+    require(applications.size <= 16) { "At most 16 workspace compiler plugins are supported" }
+    require(applications.map { it.id }.distinct().size == applications.size) { "Duplicate workspace compiler plugin ID" }
+    val outputs = applications.flatMap { it.outputs }
+    require(outputs.indices.all { i -> outputs.drop(i + 1).none { pathsOverlap(outputs[i], it) } }) {
+        "Overlapping compiler plugin output roots"
+    }
+}
+
 internal fun validatePluginOptions(options: List<String>, inputs: List<LogicalPath>, paths: List<PluginPathOption>, outputs: List<LogicalPath>) {
     require(options.all { '=' in it && it.substringBefore('=').matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && '\u0000' !in it }) { "Plugin options must be name=value" }
     require(inputs.distinct().size == inputs.size && outputs.distinct().size == outputs.size && paths.distinct().size == paths.size) { "Duplicate plugin path declaration" }

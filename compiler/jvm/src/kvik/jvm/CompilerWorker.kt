@@ -183,13 +183,13 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
             session.executeOperation(builder.build(), toolchains.createInProcessExecutionPolicy(), logger)
         }
         val result = if (typedWorkspacePlugin) {
-            val plugin = validatedWorkspacePlugins(request.pluginApplications,
+            val plugins = validatedWorkspacePlugins(request.pluginApplications,
                 // Keep original archive paths in alias checks after metadata extraction.
                 classpath + request.classpath.map(workspace::path), workspace, outputRoots,
-                toolchains.javaClass.classLoader, distribution.classpath).single()
-            withTypedWorkspacePlugin(plugin, toolchains.javaClass.classLoader, workspace) { service ->
+                toolchains.javaClass.classLoader, distribution.classpath)
+            withTypedWorkspacePlugins(plugins, toolchains.javaClass.classLoader, workspace) { service ->
                 builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
-                    publishedPlugins + CompilerPlugin(plugin.id, listOf(service), emptyList(), emptySet())
+                    publishedPlugins + CompilerPlugin(workspacePluginBridgeId(plugins), listOf(service), emptyList(), emptySet())
                 execute()
             }
         } else execute()

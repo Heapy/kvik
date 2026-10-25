@@ -11936,7 +11936,8 @@
           "items": {
             "$ref": "#/$defs/jvmPluginApplication"
           },
-          "maxItems": 1
+          "maxItems": 16,
+          "uniqueItems": true
         },
         "metadataTargets": {
           "type": "array",

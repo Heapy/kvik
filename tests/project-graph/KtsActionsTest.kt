@@ -36,6 +36,12 @@ class KtsActionsTest {
         assertFails { ktsCompileAction(value, inputs(primary.value, "plugin.jar"), identity, tools) }
         assertFails { value.copy(output = LogicalPath("generated/overlap")) }
         assertFalse(portableJvmCompilation(action))
+        val second = plugin.copy(id = "example.second", outputs = listOf(LogicalPath("second")),
+            pathOptions = listOf(PluginPathOption("output", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("second"))))
+        assertEquals(2, value.copy(pluginApplications = listOf(plugin, second)).pluginApplications.size)
+        assertFails { value.copy(pluginApplications = listOf(plugin, second.copy(id = plugin.id))) }
+        assertFails { value.copy(pluginApplications = listOf(plugin, plugin.copy(id = "example.second"))) }
+        assertFails { value.copy(pluginApplications = List(17) { second.copy(id = "plugin$it", outputs = emptyList(), pathOptions = emptyList()) }) }
     }
     @Test fun compileDeclarationsArePinnedAndExecutionIsAlwaysFresh() {
         assertFails { compilation.copy(declaredDependencies = listOf("g:a:LATEST")) }

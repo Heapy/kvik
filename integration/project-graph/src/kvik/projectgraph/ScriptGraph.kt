@@ -35,9 +35,10 @@ private class ScriptGraphBuilder(
     private val plugins = script.compilerPlugins.map { it.value }
     private val compileClosure = scriptDependencyClosure(project, script, DependencyUsage.COMPILE)
     private val runtimeClosure = scriptDependencyClosure(project, script, DependencyUsage.RUNTIME)
-    private val pluginModules = plugins.singleOrNull { it.module != null }?.module?.let {
+    private fun pluginModules(plugin: CompilerPluginSpec): List<String> = plugin.module?.let {
         listOf(it) + dependencyClosure(project, it, "jvm", "main", DependencyUsage.RUNTIME).modules
     } ?: emptyList()
+    private val pluginModules = plugins.flatMap(::pluginModules).distinct()
     private val moduleGraph: ProjectActionGraph
 
     init {
@@ -45,9 +46,10 @@ private class ScriptGraphBuilder(
         require(lock.configuration == effective.digest && selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Stale or mismatched script lock" }
         require(tools.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit")) { "Missing/incompatible JVM tools" }
         require(!options.multiplatform) { "Script sources do not declare common fragments" }
-        require(plugins.count { it.module != null } <= 1 && plugins.count { it.coordinate != null } <= 1) {
-            "Scripts support at most one workspace plugin and one published serialization plugin"
+        require(plugins.count { it.module != null } <= 16 && plugins.count { it.coordinate != null } <= 1) {
+            "Scripts support at most 16 workspace plugins and one published serialization plugin"
         }
+        require(plugins.mapNotNull { it.id }.let { it.distinct().size == it.size }) { "Duplicate script compiler plugin ID" }
         require(plugins.none { it.coordinate != null } || plugins.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
             "Workspace and published plugins cannot share the serialization plugin ID"
         }
@@ -137,7 +139,7 @@ private class ScriptGraphBuilder(
         val prefix = "plugins/${plugin.id!!}"
         val files = mutableListOf<FileEntry>()
         val classpath = mutableListOf<LogicalPath>()
-        for (module in pluginModules) {
+        for (module in pluginModules(plugin)) {
             val root = LogicalPath("$prefix/modules/$module/classes")
             classpath += root
             files += compiled(results, moduleId(module), root)
