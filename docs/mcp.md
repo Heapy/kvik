@@ -46,8 +46,8 @@ revision when inspection and execution must address the same contents. Inspect
 Source mode exposes inspection, configuration validation, retained-run/session
 queries and, with `--tools`, build/test execution. Local-only package/dependency
 queries and change-aware `kvik_verify` are not advertised in source mode.
-`--config-edits` and `--query-cache` are rejected there; use the CLI's explicit
-revision transaction workflow for source configuration changes. Session controls
+`--query-cache` is rejected there. `--config-edits` enables source configuration
+plans for explicit publication through Kode, as described below. Session controls
 remain independently available with `--session-controls`.
 
 Source metadata may be cached. `--offline` requires an exact cached revision and
@@ -174,7 +174,7 @@ Enable configuration planning and application independently of compiler tools:
 ./kvik -- mcp --project /absolute/path/to/kvik.json --config-edits
 ```
 
-This adds `kvik_config_plan` and `kvik_config_apply`. Planning accepts the same
+For local projects this adds `kvik_config_plan` and `kvik_config_apply`. Planning accepts the same
 [structured edit operations as the CLI](../README.md#configuration-changes),
 including dependencies, targets, source sets, catalog entries, profiles and scripts:
 
@@ -211,6 +211,24 @@ interrupted publication or receive `status: "unchanged"` after completion.
 Publication retains its recovery journal under `.kvik/configuration-edits`.
 Cancellation stops the worker; it does not roll back already published files.
 Retain the plan before applying it so that it can be retried after disconnect.
+
+With a Kode source selector, `--config-edits` exposes only `kvik_config_plan`.
+It accepts the same `edits` document and returns the CLI's
+`configuration-edit-source-plan`. Review `proposedConfiguration` and
+`transaction.operations`, which contain the exact configuration/lock writes and
+their original blob guards. Planning never creates a source revision or updates
+a reference. `source.provenance.revision` identifies the immutable base even when
+the server was configured with a moving reference.
+
+For a changed online plan, save `transaction.operations` as an operations file,
+then publish explicitly with `kode tx`: pass `transaction.base` as `--base`,
+`transaction.expectHead` as `--expect-head`, `transaction.intent` as `--intent`,
+the operations file as `--ops`, and choose the destination `--ref`. A concurrent
+head change rejects publication. The returned revision can then be selected for
+validation/build/test. An unchanged plan has `changed: false` and a null
+transaction. Offline planning only checks an existing compatible lock and returns
+`operation: "check-lock"` without a transaction; it does not prepare new dependency
+selections or publish changes. There is no source `kvik_config_apply` tool.
 
 Configuration application cannot overlap another application or build/test/verify
 request on the same connection. Queries remain available. Other connections and

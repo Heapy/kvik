@@ -23,7 +23,9 @@ internal fun mcpCommand(arguments: List<String>): Int {
         val queries = NativeMcpOperations(options).also { operations = it }
         val session = McpSession(queries, mcpTools.filter { options.source == null || !it.project || it.name in setOf("kvik_inspect", "kvik_config_validate") } +
             (if (options.build != null) mcpBuildTools.filter { options.source == null || it.name != "kvik_verify" } else emptyList()) +
-            (if (options.configurationEdits) mcpConfigurationTools else emptyList()) +
+            (if (options.configurationEdits) {
+                if (options.source == null) mcpConfigurationTools else mcpSourceConfigurationTools
+            } else emptyList()) +
             (if (options.sessionControls) mcpSessionControlTools else emptyList()))
         // A returned plan appears twice in a response (structured and text); this input budget
         // accepts its single structured copy plus the apply request envelope.

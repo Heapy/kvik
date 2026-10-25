@@ -120,7 +120,7 @@ def main():
         call(unsafe, 'kvik_build', common, failed=True)
         assert not (home/'requests').exists()
         unsafe.stop()
-        for extra in (['--config-edits'], ['--query-cache', str(root/'query-cache')]):
+        for extra in (['--query-cache', str(root/'query-cache')],):
             result = subprocess.run(command(revision, extra), env=env, input=b'', capture_output=True, timeout=15)
             assert result.returncode == 2 and not result.stdout, result
         for c in clients: c.stop()

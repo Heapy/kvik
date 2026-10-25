@@ -22,7 +22,6 @@ internal fun mcpOptions(arguments: List<String>): McpOptions {
     if (source != null) {
         LogicalPath(projectName)
         options.values["--lock"]?.let(::LogicalPath)
-        require("--config-edits" !in options.flags) { "MCP source configuration edits are not supported; use the CLI revision transaction workflow" }
         require("--query-cache" !in options.values) { "Package queries are not available for MCP source projects" }
     }
     val policy = options.repeats.flatMap { (flag, values) -> values.flatMap { listOf(flag, it) } }

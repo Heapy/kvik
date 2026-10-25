@@ -175,6 +175,14 @@ val mcpConfigurationTools: List<McpTool> = listOf(
             listOf("schemaVersion", "kind", "root", "project", "lock", "store", "policy", "edits", "effectiveConfiguration", "configuration", "dependencyLock"))), project = false, mutating = true),
 )
 
+/** Source publication stays an explicit provider transaction, separate from planning. */
+val mcpSourceConfigurationTools: List<McpTool> = listOf(
+    McpTool("kvik_config_plan", "Prepare a configuration-edit-source-plan for the configured source revision without publishing a revision. Pass CLI configurationEdits with schemaVersion=1 and 1..128 operations. Inspect proposedConfiguration and transaction.operations, then explicitly publish using Kode tx with the returned base, expectHead, intent and file guards. Resolution may populate caches. Offline mode only checks an existing compatible lock and returns no transaction; it cannot publish changes.",
+        listOf("config", "plan"), required = setOf("edits"), arguments = listOf(configurationDocument("edits", "--edits-json",
+            "CLI configurationEdits document, using the same operation payloads as local project plans.",
+            listOf("schemaVersion", "operations"))), openWorld = true),
+)
+
 /** Controls address an existing explicit foreground owner; the MCP connection does not own it. */
 val mcpSessionControlTools: List<McpTool> = listOf(
     McpTool("kvik_session_control", "Submit a command to an existing foreground session. Use a stable requestId for retries, distinct from the MCP request id. r rebuilds/reloads, t runs tests, q exits, status acknowledges current state, cancel requires an immutable operationId. Accepted acknowledgement confirms receipt, not operation completion; follow session events. Pending/busy/owner-exited and rejected acknowledgements return isError. Cancelling this MCP call stops only its submission/wait worker; an already submitted command may still execute.",
