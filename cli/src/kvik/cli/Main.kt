@@ -39,6 +39,7 @@ private fun command(args: Array<String>) {
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
             Agent queries: mcp --project PATH [--lock PATH] [--store PATH] [--query-cache PATH] [--offline] serves MCP over foreground stdio
+            Agent execution: add --tools PATH [--runs PATH] [--jobs N] [--memory-mib N] [--remote-cache PATH] to enable MCP build/test tools
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline

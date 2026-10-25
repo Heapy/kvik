@@ -25,8 +25,8 @@ class Client:
         self.process.stdin.write(b''.join(json.dumps(m, ensure_ascii=False).encode() + b'\n' for m in messages))
         self.process.stdin.flush()
 
-    def response(self):
-        deadline = time.monotonic() + 15
+    def response(self, timeout=15):
+        deadline = time.monotonic() + timeout
         while b'\n' not in self.buffer:
             remaining = deadline - time.monotonic()
             assert remaining > 0 and select.select([self.process.stdout], [], [], remaining)[0], 'MCP response timed out'

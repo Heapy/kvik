@@ -6,24 +6,33 @@ import kvik.core.*
 import kvik.mcp.*
 import kotlinx.cinterop.*
 import platform.posix.*
+import kotlin.time.TimeSource
 
 internal data class McpOptions(val project: String, val root: String, val lock: String?, val store: String?,
-                               val queryCache: String?, val offline: Boolean, val policy: List<String>)
+                               val queryCache: String?, val offline: Boolean, val policy: List<String>, val build: BuildOptions?)
 
 internal fun mcpOptions(arguments: List<String>): McpOptions {
-    val options = queryArguments(arguments, setOf("--project", "--lock", "--store", "--query-cache"),
+    val buildFlags = setOf("--tools", "--runs", "--jobs", "--memory-mib", "--remote-cache")
+    val options = queryArguments(arguments, setOf("--project", "--lock", "--store", "--query-cache") + buildFlags,
         repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline"))
     val project = readProject(options.values["--project"] ?: "kvik.json")
     val policy = options.repeats.flatMap { (flag, values) -> values.flatMap { listOf(flag, it) } }
     projectOptions(policy, lockOptions = false).resolverPolicy()
+    require("--tools" in options.values || options.values.keys.none { it in buildFlags }) { "MCP execution settings require --tools" }
+    val build = if ("--tools" in options.values) buildOptions(options.values.filterKeys { it in buildFlags }.flatMap { (key, value) -> listOf(key, value) } +
+        (if ("--runs" in options.values) emptyList() else listOf("--runs", ".kvik/mcp-runs")) + listOf("--module", "mcp", "--target", "jvm")) else null
     return McpOptions(project.path, project.root, options.values["--lock"], options.values["--store"], options.values["--query-cache"],
-        "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", policy)
+        "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", policy, build)
 }
 
 /** Each query owns a child of this foreground connection, keeping network and filesystem work cancellable. */
 internal class NativeMcpOperations(private val options: McpOptions) : McpOperations, AutoCloseable {
-    private data class Pending(val id: JsonValue, val directory: String, val process: OwnedProcess,
-                               var cancelled: Boolean = false, var failure: String? = null)
+    private data class Pending(val id: JsonValue, val directory: String, val process: OwnedProcess, val build: McpBuildRequest?,
+                               val progressToken: JsonValue?, var cancelled: Boolean = false, var failure: String? = null,
+                               var progress: Long = 0, var lastProgress: kotlin.time.TimeMark? = null) {
+        val stdout: String get() = build?.stdout ?: "$directory/stdout.json"
+        val stderr: String get() = build?.stderr ?: "$directory/stderr.log"
+    }
     private val pending = linkedMapOf<JsonValue, Pending>()
     private var host: ProcessHost? = null
     private var workspace: String? = null
@@ -38,14 +47,16 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         NativeFiles.tempDirectory(parent).also { workspace = it }
     }
 
-    override fun start(id: JsonValue, tool: McpTool, command: List<String>) {
+    override fun start(id: JsonValue, tool: McpTool, command: List<String>, progressToken: JsonValue?) {
         require(pending.size < 4) { "At most four MCP queries may run at once; retry after a query completes" }
         require(id !in pending) { "Request id is already active" }
+        require(progressToken == null || pending.values.none { it.progressToken == progressToken }) { "Progress token is already active" }
+        require(!tool.build || pending.values.none { it.build != null }) { "One build/test request may run at a time; retry when it completes" }
         val arguments = command.toMutableList()
         if (tool.project) arguments += listOf("--project", options.project)
         val dependencyQuery = tool.name == "kvik_dependencies"
-        if (dependencyQuery || tool.name == "kvik_inspect") arguments += options.policy
-        if (dependencyQuery) {
+        if (dependencyQuery || tool.name == "kvik_inspect" || tool.build) arguments += options.policy
+        if (dependencyQuery || tool.build) {
             options.lock?.let { arguments += listOf("--lock", it) }
             options.store?.let { arguments += listOf("--store", it) }
         }
@@ -53,15 +64,25 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             if (!dependencyQuery || "--available-versions" in command) options.queryCache?.let { arguments += listOf("--query-cache", it) }
             if (options.offline && "--offline" !in arguments) arguments += "--offline"
         }
+        if (tool.build && options.offline) arguments += "--offline"
+        val prepared = if (tool.build) prepareMcpBuild(arguments, options, id) else null
+        val actualArguments = prepared?.second ?: arguments
+        val request = prepared?.first
         val directory = NativeFiles.tempDirectory(workspace())
         try {
             val owner = host ?: runtimeProcessHost().also { host = it }
+            val commandLine = listOf("${runtimeDirectory()}/kvik.kexe") + actualArguments
             val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "TMPDIR" to directory,
-                "KVIK_BOOTSTRAP_OFFLINE" to if (options.offline) "1" else "0")
-            val process = owner.start(ProcessRequest(listOf("${runtimeDirectory()}/kvik.kexe") + arguments, options.root, environment,
-                "$directory/stdout.json", "$directory/stderr.log", 120_000))
-            pending[id] = Pending(id, directory, process)
-        } catch (failure: Exception) { NativeFiles.removeTree(directory); throw failure }
+                "KVIK_BOOTSTRAP_OFFLINE" to if (options.offline) "1" else "0") +
+                if (tool.build) remoteOperationEnvironment(options.root, commandLine) else emptyMap()
+            val process = owner.start(ProcessRequest(commandLine, options.root, environment,
+                request?.stdout ?: "$directory/stdout.json", request?.stderr ?: "$directory/stderr.log", if (tool.build) 30 * 60_000 else 120_000))
+            pending[id] = Pending(id, directory, process, request, progressToken)
+        } catch (failure: Exception) {
+            NativeFiles.removeTree(directory)
+            if (request != null) error("Cannot start build; request retained at ${request.directory}: ${failure.message}")
+            throw failure
+        }
     }
 
     override fun cancel(id: JsonValue) {
@@ -73,10 +94,19 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         for (state in pending.values.toList()) {
             // Admit one result per poll so the transport can budget even the largest legal response.
             if (isNotEmpty()) break
-            if (state.failure == null && listOf("stdout.json", "stderr.log").any {
-                    (NativeFiles.info("${state.directory}/$it")?.size ?: 0) > 16 * 1024 * 1024 }) {
+            if (state.failure == null && listOf(state.stdout, state.stderr).any {
+                    (NativeFiles.info(it)?.size ?: 0) > 16 * 1024 * 1024 }) {
                 state.failure = "Query output exceeds 16 MiB; narrow the query"
                 state.process.cancel()
+            }
+            if (state.build != null && state.progressToken != null && !state.cancelled &&
+                (state.lastProgress == null || state.lastProgress!!.elapsedNow().inWholeMilliseconds >= 5000)) {
+                state.lastProgress = TimeSource.Monotonic.markNow()
+                add(obj("jsonrpc" to "2.0".json(), "method" to "notifications/progress".json(), "params" to obj(
+                    "progressToken" to state.progressToken, "progress" to (state.progress++).json(),
+                    "message" to "${state.build.operation} in progress; request directory: ${state.build.directory}".json(),
+                    "_meta" to obj("kvik.dev/requestDirectory" to state.build.directory.json()))))
+                break
             }
             val completed = state.process.poll() ?: continue
             state.process.close()
@@ -84,13 +114,13 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             try {
                 if (state.cancelled) continue
                 val failure = state.failure ?: when {
-                    completed.timedOut -> "Query exceeded its 120-second timeout"
+                    completed.timedOut -> if (state.build != null) "Build exceeded its 30-minute timeout" else "Query exceeded its 120-second timeout"
                     completed.cancelled -> "Query was cancelled by its process owner"
                     completed.setupFailure != null -> "Cannot start query worker: ${completed.setupFailure}"
                     else -> null
                 }
-                val result = if (failure != null) mcpToolFailure(failure) else try {
-                    val value = parseJson(NativeFiles.read("${state.directory}/stdout.json", 16 * 1024 * 1024)
+                val result = if (state.build != null) mcpBuildResult(state.build, completed, failure) else if (failure != null) mcpToolFailure(failure) else try {
+                    val value = parseJson(NativeFiles.read(state.stdout, 16 * 1024 * 1024)
                         .decodeToString(throwOnInvalidSequence = true)) as? JsonValue.Object ?: error("Query returned no JSON object")
                     mcpToolResult(value, completed.exitCode != 0)
                 } catch (failure: Exception) { mcpToolFailure("Cannot read query result: ${failure.message}") }

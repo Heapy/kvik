@@ -21,7 +21,7 @@ internal fun mcpCommand(arguments: List<String>): Int {
         boundary = kvik_foreground_open()
         check(boundary != null) { "Cannot establish MCP stream ownership" }
         val queries = NativeMcpOperations(options).also { operations = it }
-        val session = McpSession(queries)
+        val session = McpSession(queries, mcpTools + if (options.build != null) mcpBuildTools else emptyList())
         val decoder = McpLines()
         val output = ArrayDeque<ByteArray>()
         var queuedBytes = 0
@@ -30,8 +30,12 @@ internal fun mcpCommand(arguments: List<String>): Int {
         var closingAt: kotlin.time.TimeMark? = null
         fun enqueue(message: JsonValue.Object) {
             var bytes = (message.canonical() + "\n").encodeToByteArray()
-            if (bytes.size > MCP_MAX_OUTPUT) bytes = (mcpSuccess(message.values.getValue("id"),
-                mcpToolFailure("MCP result exceeds 32 MiB; narrow the query")).canonical() + "\n").encodeToByteArray()
+            if (bytes.size > MCP_MAX_OUTPUT) {
+                val result = (message.values["result"] as? JsonValue.Object)?.values
+                val directory = ((result?.get("structuredContent") as? JsonValue.Object)?.values?.get("requestDirectory") as? JsonValue.StringValue)?.value
+                bytes = (mcpSuccess(message.values.getValue("id"), mcpToolFailure("MCP result exceeds 32 MiB; narrow the query" +
+                    (directory?.let { "; build output retained at $it" } ?: ""))).canonical() + "\n").encodeToByteArray()
+            }
             require(queuedBytes + bytes.size <= 128 * 1024 * 1024) { "MCP output queue exceeds limit" }
             output += bytes; queuedBytes += bytes.size
         }

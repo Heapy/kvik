@@ -1,4 +1,4 @@
-# MCP project, dependency and run queries
+# MCP project queries, builds and tests
 
 Start Kvik as an MCP stdio server for one local project:
 
@@ -22,7 +22,8 @@ An MCP client's server configuration can launch the source distribution directly
 The launcher uses the cached Kotlin/Native composition, building it when needed.
 Launcher diagnostics go to stderr. The native process reserves stdout for MCP
 messages. Closing stdin, terminating the server or losing its parent stops its
-owned query processes. There is no background service or listening socket.
+owned processes, including active compilers and tests. There is no background
+service or listening socket.
 
 The connection implements the [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and negotiates protocol version `2025-11-25` or `2025-06-18`. Initialize the
@@ -40,6 +41,59 @@ connection, send `notifications/initialized`, then use `tools/list` and
 | `kvik_run_stats` | `run` | Historical action counts, timings, CPU/memory observations and remote transfers |
 | `kvik_session_status` | `session` | Foreground state and current owner liveness |
 | `kvik_session_events` | `session`; optional `cursor`, `limit` | Paginated foreground events, completeness and owner liveness |
+
+To enable execution tools, configure the server with the same pinned tools file
+used by CLI builds:
+
+```sh
+./kvik -- mcp --project /absolute/path/to/kvik.json --tools /absolute/path/to/tools.json
+```
+
+| Additional tool | Inputs | Result |
+| --- | --- | --- |
+| `kvik_build` | Nonempty `modules` and `targets` arrays | Build result, verification record, diagnostics and retained output paths |
+| `kvik_test` | Nonempty `modules` and `targets` arrays; optional `coverage`, `coverageExcludes` | Fresh test execution with eligible compilation cache reuse, counts and retained output paths |
+
+These tools execute project code, including compiler plugins, generators and
+tests. They use the CLI executor, configured dependency lock, cache and resolver
+policy. Coverage is available for JVM-only test selections. Each call selects
+the cross product of its modules and targets. For example:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/call",
+  "params": {
+    "name": "kvik_test",
+    "arguments": {"modules": ["library"], "targets": ["jvm"]},
+    "_meta": {"progressToken": "test-library"}
+  }
+}
+```
+
+Build/test results have `kind: "mcp-build-result"`. `complete` means a committed
+run was read successfully; a complete run can still fail. `isError` is false
+only when the process exits successfully and the committed verification passes
+with current inputs at completion. Inspect `verification`, `diagnostics` and
+`diagnosticsTruncated` for details. A preflight failure may have no verification
+record or run directory. Use `kvik_verification` on `runDirectory` to check
+freshness after subsequent edits.
+
+The server retains `request.json`, stdout and stderr in `requestDirectory`, with
+the build run under its `runs` subdirectory. Result fields `stdout` and `stderr`
+are paths to these logs. The default parent is `.kvik/mcp-runs`; `--runs PATH`
+selects another project-relative or absolute parent. Output must be separate
+from project inputs, configuration, locks, tools and caches. Retained results
+remain after cancellation or connection closure and are not automatically pruned.
+
+Supply a unique string or integer `_meta.progressToken` to receive progress
+notifications. The initial notification includes the request directory at
+`params._meta["kvik.dev/requestDirectory"]`; subsequent notifications arrive
+approximately every five seconds. The progress counter is a heartbeat, not a
+completion percentage. `notifications/cancelled` stops the request's owned
+processes and suppresses its final response. The directory received in progress
+remains available for inspecting partial output.
 
 Repeated selectors and pins are arrays. `channel` is `all`, `stable` or
 `prerelease`; package query `limit` is 1–200. `kvik_dependencies` also accepts `offline`.
@@ -73,6 +127,9 @@ project-relative paths as their CLI counterparts. Repeated `--pin`, `--scope-pin
 and `--exclude-metadata-edge` options set the policy for project inspection and
 locked dependency queries, matching the policy used when resolving the lock.
 Package dependency queries use their own optional `pins` argument.
+With `--tools`, startup also accepts `--jobs`, `--memory-mib` and `--remote-cache`
+with their CLI meanings. Execution settings require `--tools`; individual tool
+calls cannot override the configured tools or output/cache paths.
 `--offline` at server startup
 (or the launcher's offline setting) prevents network queries for the whole
 connection; a tool's `offline: false` cannot override it. A tool can additionally
@@ -82,14 +139,17 @@ connection permits network access.
 Queries do not modify project configuration, locks or the dependency artifact
 store, and never execute package code. Online package queries may update the
 metadata query cache. Per-request scratch files are removed after the owned
-process exits. Project queries currently address local projects; builds,
+process exits. Project queries and MCP builds currently address local projects;
 mutations, source-provider selectors and session controls remain available
 through the CLI. Retained-run queries can inspect results from either local
 projects or source-provider builds.
 
-The server allows four concurrent queries, each with a 120-second timeout.
+The server allows four concurrent operations, with at most one build/test per
+connection. Queries have a 120-second timeout; builds and tests have a 30-minute
+timeout. Read-only queries remain available while a build or test is running.
 Excess calls return a tool error and can be retried when another call completes.
 Requests are limited to 1 MiB, child output to 16 MiB per stream, and complete
-MCP responses to 32 MiB. Oversized results return an error requesting a narrower
-query. Invalid framing or an oversized input closes the connection; malformed
+MCP responses to 32 MiB. Excess child output stops the operation. Oversized
+results return an error; build errors include the retained output directory.
+Invalid framing or an oversized input closes the connection; malformed
 JSON in a complete line receives a protocol error without losing the next line.

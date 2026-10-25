@@ -30,7 +30,8 @@ one source context.
 Agents can query the project model, package/dependency versions, retained run
 results and foreground-session state through
 [`kvik mcp --project PATH`](docs/mcp.md), a foreground MCP stdio server with
-cancellable read-only tools and structured CLI results.
+cancellable queries and structured CLI results. Add `--tools PATH` to enable
+build and test tools using the same executor, cache and retained run results.
 
 ### BSP project import and builds
 

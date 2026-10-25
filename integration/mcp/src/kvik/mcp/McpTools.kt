@@ -11,8 +11,8 @@ private fun text(name: String, flag: String, description: String = name, choices
         put("type", "string".json()); put("minLength", 1.json()); put("maxLength", 4096.json()); put("description", description.json())
         if (choices.isNotEmpty()) put("enum", choices.map { it.json() }.json())
     }))
-private fun repeated(name: String, flag: String) = Argument(name, flag,
-    obj("type" to "array".json(), "maxItems" to 32.json(), "uniqueItems" to true.json(),
+private fun repeated(name: String, flag: String, minimum: Int = 0) = Argument(name, flag,
+    obj("type" to "array".json(), "minItems" to minimum.json(), "maxItems" to 32.json(), "uniqueItems" to true.json(),
         "items" to text(name, flag).schema), repeated = true)
 private fun switch(name: String, flag: String) = Argument(name, flag, obj("type" to "boolean".json()), switch = true)
 private fun integer(name: String, flag: String, maximum: Int) = Argument(name, flag,
@@ -21,15 +21,15 @@ private fun integer(name: String, flag: String, maximum: Int) = Argument(name, f
 class McpTool internal constructor(val name: String, private val description: String, val command: List<String>,
                                   private val coordinate: String? = null, private val required: Set<String> = emptySet(),
                                   private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false,
-                                  val project: Boolean = true) {
+                                  val project: Boolean = true, val build: Boolean = false) {
     fun definition(): JsonValue.Object = obj("name" to name.json(), "description" to description.json(),
         "inputSchema" to obj("type" to "object".json(), "additionalProperties" to false.json(),
             "properties" to JsonValue.Object(buildMap {
                 coordinate?.let { put(it, text(it, "", if (it == "package") "Maven group:artifact" else "Maven group:artifact:version").schema) }
                 arguments.forEach { put(it.name, it.schema) }
             }), "required" to (required + listOfNotNull(coordinate)).sorted().map { it.json() }.json()),
-        "annotations" to obj("readOnlyHint" to true.json(), "destructiveHint" to false.json(),
-            "idempotentHint" to true.json(), "openWorldHint" to repositories.json()))
+        "annotations" to obj("readOnlyHint" to (!build).json(), "destructiveHint" to build.json(),
+            "idempotentHint" to (!build).json(), "openWorldHint" to (repositories || build).json()))
 
     /** Convert a closed, typed tool schema to argv; never accept raw CLI flags or a shell command. */
     fun command(arguments: Map<String, RpcValue>): List<String> {
@@ -52,7 +52,8 @@ class McpTool internal constructor(val name: String, private val description: St
                     }
                     spec.repeated -> {
                         val entries = raw.array().map(::value)
-                        require(entries.size <= 32 && entries.distinct().size == entries.size) { "${spec.name} requires at most 32 distinct values" }
+                        val minimum = spec.schema.values.getValue("minItems").longValue().toInt()
+                        require(entries.size in minimum..32 && entries.distinct().size == entries.size) { "${spec.name} requires $minimum..32 distinct values" }
                         entries.forEach { add(spec.flag); add(it) }
                     }
                     spec.schema.values["type"] == "integer".json() -> {
@@ -119,4 +120,13 @@ val mcpTools: List<McpTool> = listOf(
         listOf("session", "status"), required = setOf("session"), arguments = listOf(sessionDirectory), project = false),
     McpTool("kvik_session_events", "Read a bounded page of foreground session events. Continue with nextCursor; inspect ownerAlive, hasMore, pendingTail and status. An incomplete journal after owner exit returns isError.",
         listOf("session", "events"), required = setOf("session"), arguments = listOf(sessionDirectory, sessionCursor, integer("limit", "--limit", 256)), project = false),
+)
+
+/** Execution tools are advertised only when the foreground server was configured with pinned tools. */
+val mcpBuildTools: List<McpTool> = listOf(
+    McpTool("kvik_build", "Build explicitly selected modules and targets using the configured pinned tools, dependency lock and cache. Returns committed verification and retained run paths. Compiler plugins and generators may execute project code.",
+        listOf("build"), required = setOf("modules", "targets"), arguments = listOf(repeated("modules", "--module", 1), repeated("targets", "--target", 1)), build = true),
+    McpTool("kvik_test", "Run fresh tests for explicitly selected modules and targets, reusing eligible compilation outputs. Executes project code. Returns committed verification, counts, diagnostics and retained run paths; a cached compilation is not a test execution.",
+        listOf("test"), required = setOf("modules", "targets"), arguments = listOf(repeated("modules", "--module", 1), repeated("targets", "--target", 1),
+            switch("coverage", "--coverage"), repeated("coverageExcludes", "--coverage-exclude")), build = true),
 )

@@ -34,7 +34,7 @@ fun mcpToolFailure(message: String): JsonValue.Object = obj("content" to listOf(
 
 interface McpOperations {
     fun active(id: JsonValue): Boolean
-    fun start(id: JsonValue, tool: McpTool, command: List<String>)
+    fun start(id: JsonValue, tool: McpTool, command: List<String>, progressToken: JsonValue? = null)
     fun cancel(id: JsonValue)
 }
 
@@ -44,7 +44,7 @@ private fun RpcValue.requestId(): JsonValue? = when (this) {
     else -> null
 }
 
-class McpSession(private val operations: McpOperations) {
+class McpSession(private val operations: McpOperations, private val tools: List<McpTool> = mcpTools) {
     private var negotiated = false
     private var initialized = false
 
@@ -86,22 +86,30 @@ class McpSession(private val operations: McpOperations) {
                 negotiated = true
                 mcpSuccess(id, obj("protocolVersion" to (if (requested in setOf("2025-06-18", MCP_VERSION)) requested else MCP_VERSION).json(),
                     "capabilities" to obj("tools" to obj()), "serverInfo" to obj("name" to "kvik".json(), "version" to "0.1.0".json()),
-                    "instructions" to "Read-only project, package, retained-run and foreground-session queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims. Historical explanations and statistics do not assess current freshness.".json()))
+                    "instructions" to ("Project, package, retained-run and foreground-session queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims. Historical explanations and statistics do not assess current freshness." +
+                        if (tools.any { it.build }) " Build/test tools execute project code and retain results. Supply _meta.progressToken for progress and the request directory; only one build runs per connection." else " This connection exposes read-only tools.").json()))
             } catch (failure: Exception) { mcpError(id, -32602, failure.message ?: "Invalid initialization") }
         }
         if (!initialized) return mcpError(id, -32002, "Initialize and send notifications/initialized first")
         return when (method) {
             "tools/list" -> if ("cursor" in params) mcpError(id, -32602, "This fixed tool list has no continuation cursor")
-                else mcpSuccess(id, obj("tools" to mcpTools.map { it.definition() }.json()))
+                else mcpSuccess(id, obj("tools" to tools.map { it.definition() }.json()))
             "tools/call" -> {
                 val name = (params["name"] as? RpcValue.Text)?.value ?: return mcpError(id, -32602, "Missing tool name")
-                val tool = mcpTools.singleOrNull { it.name == name } ?: return mcpError(id, -32602, "Unknown tool: $name")
+                val tool = tools.singleOrNull { it.name == name } ?: return mcpError(id, -32602, "Unknown tool: $name")
                 val arguments = when (val value = params["arguments"]) {
                     null -> emptyMap()
                     is RpcValue.Object -> value.fields
                     else -> return mcpError(id, -32602, "Expected object tool arguments")
                 }
-                try { operations.start(id, tool, tool.command(arguments)); null }
+                val metadata = when (val value = params["_meta"]) {
+                    null -> emptyMap()
+                    is RpcValue.Object -> value.fields
+                    else -> return mcpError(id, -32602, "Expected object request metadata")
+                }
+                val token = metadata["progressToken"]?.let { it.requestId()
+                    ?: return mcpError(id, -32602, "Progress token must be a string or integer") }
+                try { operations.start(id, tool, tool.command(arguments), token); null }
                 catch (failure: Exception) { mcpSuccess(id, mcpToolFailure(failure.message ?: "Cannot execute query")) }
             }
             else -> mcpError(id, -32601, "Unsupported method: $method")
