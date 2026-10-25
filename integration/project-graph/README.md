@@ -43,6 +43,13 @@ The CLI/MCP `testLaunch` object serializes the same parameters. This is a declar
 of supported runner settings, not a general arbitrary instrumentation callback or
 test discovery result.
 
+`ProjectActionGraph.generatedResources` records resource generators separately
+from Kotlin source generators. Resource declarations name exact relative files,
+so runtime classpaths are available before generation. Consumers depend directly
+on the producers and use their verified file digests. Missing, extra, executable
+or overlapping outputs are rejected. Resource roots use the same module/scope
+mapping as static resources and survive provider/contributor composition.
+
 `kvik.projectgraph.projectActionGraph` has no filesystem, CAS, network, process or clock access. Its inputs are a validated `EffectiveConfiguration`, a dependency lock already verified by `DependencyLocks.loadLocked`, an immutable project-relative `TreeManifest` whose bytes are already in CAS, runtime composition identity, target toolchain identity maps, and an explicit selection:
 
 ```kotlin

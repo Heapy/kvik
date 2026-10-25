@@ -34,6 +34,11 @@ class ScriptGeneratorsTest {
     @Test fun declarationRoundTripAndBounds() {
         val script = generator()
         assertEquals(script, ScriptSpec.fromJson(script.toJson()))
+        val resource = script.copy(generator = script.generator!!.copy(resources = listOf(LogicalPath("META-INF/version.json"))))
+        assertEquals(resource, ScriptSpec.fromJson(resource.toJson()))
+        for (paths in listOf(listOf("file", "FILE"), listOf("dir", "dir/child"))) {
+            assertFails { script.generator!!.copy(resources = paths.map(::LogicalPath)) }
+        }
         assertFalse("generator" in script.copy(generator = null).toJson().values)
         assertFails { script.generator!!.copy(inputs = listOf(LogicalPath("schema"), LogicalPath("schema/child"))) }
         assertFails { script.generator!!.copy(inputs = listOf(LogicalPath("schema"), LogicalPath("SCHEMA"))) }

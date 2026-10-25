@@ -35,6 +35,7 @@ data class ProjectActionGraph(
     val contributedActions: Set<String> = emptySet(),
     val generatedSources: List<GeneratedSourceRoot> = emptyList(),
     val testLaunches: Map<String, TestLaunch> = emptyMap(),
+    val generatedResources: List<GeneratedResourceRoot> = emptyList(),
 )
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
@@ -113,6 +114,7 @@ private class Builder(
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
     private val generatedSources = linkedSetOf<GeneratedSourceRoot>()
+    private val generatedResources = linkedSetOf<GeneratedResourceRoot>()
     private val testLaunches = linkedMapOf<String, TestLaunch>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
     private val nativeMainNames = mutableMapOf<Pair<String, String>, String>()
@@ -167,7 +169,7 @@ private class Builder(
                 val id = ensureDocumentation(module)
                 "$module:common:documentation" to id
             }
-            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, generatedSources = generatedSources.toList())
+            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList())
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
@@ -194,7 +196,7 @@ private class Builder(
                 terminals["$module:common:package"] = root
             }
         }
-        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap())
+        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList())
     }
 
     private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
@@ -273,7 +275,7 @@ private class Builder(
         val nativeTarget = if (targets.all { NativeTarget.find(it) != null }) targets.intersect(request.targets).sorted().firstOrNull()
             ?: error("Native documentation metadata has no selected supporting target") else null
         val stdlibId = nativeTarget?.let { ensureDocumentationStdlib(module, it) }
-        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(stdlibId, sqlDelight) + generators.map(::generatorId)
+        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + (if (applyPlugin) pluginResourceDependencies(module, pluginTarget, "main") else emptySet()) + listOfNotNull(stdlibId, sqlDelight) + generators.map(::generatorId)
         val artifacts = documentationArtifacts(module, targets, includeStdlib = nativeTarget == null)
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
@@ -460,20 +462,14 @@ private class Builder(
         return fragments + NativeSourceFragment(terminal, generated, fragments.filter { it.name !in parents }.map { it.name })
     }
 
-    private fun resources(module: String, target: String, scope: String): List<FileEntry> {
-        val main = sourceSets(module, target, "main").map { it.name }.toSet()
-        val sets = sourceSets(module, target, scope).filter { scope == "main" || it.name !in main }
-        val selected = linkedMapOf<String, FileEntry>()
-        for (set in sets) for (directory in set.resources) {
-            require(files.none { it.path == directory }) { "Resource directory is a file: ${directory.value}" }
-            for (file in files.filter { it.path.value.startsWith(directory.value + "/") }) {
-                val relative = file.path.value.removePrefix(directory.value + "/")
-                require(relative !in selected) { "Ambiguous resource overlay: $module:$scope:$relative" }
-                selected[relative] = file.copy(path = LogicalPath("runtime/$module/$scope/$relative"))
-            }
+    private fun resources(module: String, target: String, scope: String): ResourceSelection =
+        moduleResources(project, files, module, target, scope).also { selection ->
+            selection.generators.forEach(::ensureScriptGenerator)
         }
-        return selected.values.sortedBy { it.path.value }
-    }
+
+    private fun pluginResourceDependencies(module: String, target: String, scope: String): Set<String> =
+        pluginModules(module, target, scope).flatMap { resources(it, "jvm", "main").dependencies }.toSet()
+
     private fun closure(module: String, target: String, scope: String, runtime: Boolean = false): DependencyClosure =
         dependencyClosure(project, module, target, scope, if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
 
@@ -535,7 +531,7 @@ private class Builder(
             if (resource.isNotEmpty()) {
                 val resourceRoot = LogicalPath("$prefix/modules/$producer/resources")
                 classpath += resourceRoot
-                entries += resource.map { it.copy(path = LogicalPath(resourceRoot.value + "/" + it.path.value.removePrefix("runtime/$producer/main/"))) }
+                entries += resource.resolve(results).map { it.copy(path = LogicalPath(resourceRoot.value + "/" + it.path.value.removePrefix("runtime/$producer/main/"))) }
             }
         }
         val domain = ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")
@@ -604,7 +600,7 @@ private class Builder(
             sql.sourceSet in commonSets(module) && sourceSets(module, target, "main").any { set -> set.name == sql.sourceSet }
         } == true
         val scriptCommon = scriptGenerators(project, module, sourceSets(module, target, scope).map { it.name }.toSet())
-            .any { it.declaration.generator!!.sourceSet in commonSets(module) }
+            .any { it.declaration.generator!!.resources.isEmpty() && it.declaration.generator!!.sourceSet in commonSets(module) }
         require(!it.multiplatform || sources.common.isNotEmpty() || generatedCommon || scriptCommon) { "Explicit multiplatform option requires common fragments" }
     }
 
@@ -650,13 +646,13 @@ private class Builder(
         }
         require((compileArtifacts + runtimeArtifacts).none { it.coordinate.group == "org.openjdk.jmh" && it.coordinate.version != "1.37" }) { "Mixed JMH versions are unsupported" }
         val artifacts = artifactEntries(runtimeArtifacts, "jvm")
-        val resourceFiles = runtimeModules.flatMap { resources(it, "jvm", "main") }
+        val resourceFiles = runtimeModules.map { resources(it, "jvm", "main") }.combinedResources()
         val classpath = runtimeModules.flatMap { producer ->
-            listOfNotNull(modulePath(producer, "jvm", "main"), LogicalPath("runtime/$producer/main").takeIf { root -> resourceFiles.any { it.path.value.startsWith(root.value + "/") } })
+            listOfNotNull(modulePath(producer, "jvm", "main"), LogicalPath("runtime/$producer/main").takeIf { root -> resourceFiles.paths.any { it.value.startsWith(root.value + "/") } })
         } + artifacts.map { it.path }
-        val edges = runtimeModules.map { mainId(it, "jvm") }.toSet()
+        val edges = runtimeModules.map { mainId(it, "jvm") }.toSet() + resourceFiles.dependencies
         val harnessId = "$module:jvm:benchmark-harness"
-        fun runtimeInputs(results: Map<String, ActionResult>) = merge(runtimeModules.flatMap { remap(results, it, "jvm", "main") }, resourceFiles, artifacts)
+        fun runtimeInputs(results: Map<String, ActionResult>) = merge(runtimeModules.flatMap { remap(results, it, "jvm", "main") }, resourceFiles.resolve(results), artifacts)
         nodes[harnessId] = ActionNode(harnessId, edges,
             ActionOutputContract(treeOutput("benchmark-harness", "benchmark-harness"))) { results ->
             validateResults(results, edges)
@@ -679,15 +675,17 @@ private class Builder(
     private fun generatorId(script: ExpandedScript) = "script:${script.name}:jvm:generate"
 
     private fun ensureScriptGenerators(module: String, sets: List<SourceSet>): List<ExpandedScript> =
-        scriptGenerators(project, module, sets.map { it.name }.toSet()).also { generators ->
-            for (script in generators) if (generatorId(script) !in nodes) {
-                val graph = scriptActionGraph(effective, lock, TreeManifest(files), composition, tools.getValue("jvm"),
-                    ScriptGraphRequest(script.name, generator = true))
-                // Shared prerequisites have the same IDs and declaration inputs in this graph.
-                for (node in graph.nodes) if (node.id !in nodes) nodes[node.id] = node
-                generatedSources += graph.generatedSources
-            }
-        }
+        scriptGenerators(project, module, sets.map { it.name }.toSet())
+            .filter { it.declaration.generator!!.resources.isEmpty() }.also { it.forEach(::ensureScriptGenerator) }
+
+    private fun ensureScriptGenerator(script: ExpandedScript) {
+        if (generatorId(script) in nodes) return
+        val graph = scriptActionGraph(effective, lock, TreeManifest(files), composition, tools.getValue("jvm"),
+            ScriptGraphRequest(script.name, generator = true))
+        for (node in graph.nodes) if (node.id !in nodes) nodes[node.id] = node
+        generatedSources += graph.generatedSources
+        generatedResources += graph.generatedResources
+    }
 
     private fun scriptGeneratorOutputs(generators: List<ExpandedScript>, results: Map<String, ActionResult>): Map<String, List<FileEntry>> =
         generators.groupBy { it.declaration.generator!!.sourceSet }.mapValues { (_, scripts) -> scripts.flatMap { script ->
@@ -789,7 +787,7 @@ private class Builder(
         val artifacts = compilationClasspath.artifacts
         val plugin = plugins(module, target, "main")
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
-        val edges = dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight) + generators.map(::generatorId)
+        val edges = resource.dependencies + dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, target, "main") + listOfNotNull(sqlDelight) + generators.map(::generatorId)
         nodes[id] = ActionNode(id, edges,
             ActionOutputContract(listOf(if (target == "jvm") treeOutput("classes", "jvm-classes") else fileOutput("module.klib", "klib")) + pluginOutputArtifacts(module, target, "main"))) { results ->
             validateResults(results, edges)
@@ -798,7 +796,7 @@ private class Builder(
             val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
             val scriptSources = scriptGeneratorOutputs(generators, results)
             val compiledSource = withScriptGenerators(module, withSqlDelight(module, source, generated), scriptSources)
-            val inputs = merge(compiledSource.entries, resource, compilerInputs.files, plugin, workspace.entries)
+            val inputs = merge(compiledSource.entries, resource.resolve(results), compilerInputs.files, plugin, workspace.entries)
             val classpath = classpathPaths(compilationClasspath, target)
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
@@ -869,7 +867,7 @@ private class Builder(
         require(target == "jvm" || resource.isEmpty()) { "KLIB publication does not yet support resources: $module" }
         val directModules = sourceSets(module, target, "main").flatMap { it.dependencies }.filterIsInstance<Dependency.Module>().map { it.module }.distinct()
         val packaged = directModules.map { ensurePackage(it, target) }.toSet()
-        val edges = packaged + mainId(module, target)
+        val edges = packaged + mainId(module, target) + resource.dependencies
         val selection = LibraryPackage(module, target, publication.coordinateFor(target), dependencies,
             if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null,
             rootCoordinate = if (module in rootPublicationModules) publication.coordinate else null)
@@ -879,7 +877,7 @@ private class Builder(
             val own = remap(results, module, target, "main")
             val prefix = modulePath(module, target, "main").value
             val compiled = own.map { it.copy(path = LogicalPath(if (target == "jvm") "classes" + it.path.value.removePrefix(prefix) else "module.klib")) }
-            val resources = resource.map { it.copy(path = LogicalPath("classes/" + it.path.value.removePrefix("runtime/$module/main/"))) }
+            val resources = resource.resolve(results).map { it.copy(path = LogicalPath("classes/" + it.path.value.removePrefix("runtime/$module/main/"))) }
             require(compiled.map { it.path }.toSet().intersect(resources.map { it.path }.toSet()).isEmpty()) {
                 "Library resource collides with compiled output: $module"
             }
@@ -947,7 +945,7 @@ private class Builder(
         val dependencies = commonPublicationDependencyClosure(project, module).modules
         val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight) + generators.map(::generatorId)
+        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + (if (applyPlugin) pluginResourceDependencies(module, pluginTarget, "main") else emptySet()) + listOfNotNull(sqlDelight) + generators.map(::generatorId)
         val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
         val plugin = if (applyPlugin) plugins(module, pluginTarget, "main") else emptyList()
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
@@ -1034,18 +1032,18 @@ private class Builder(
         runtimeDependencies.forEach { ensureMain(it, target) }
         val runtimeIds = listOf(module) + runtimeDependencies
         val artifacts = artifactEntries(external(module, target, "main", if (target == "jvm") "java-runtime" else "kotlin-runtime"), target)
-        val resource = runtimeIds.flatMap { resources(it, target, "main") }
+        val resource = runtimeIds.map { resources(it, target, "main") }.combinedResources()
         val id = "$module:$target:application"
         if (target == "jvm") {
-            val edges = runtimeIds.map { mainId(it, target) }.toSet()
+            val edges = runtimeIds.map { mainId(it, target) }.toSet() + resource.dependencies
             nodes[id] = ActionNode(id, edges,
                 ActionOutputContract(treeOutput("application", "application-bundle"))) { results ->
                 validateResults(results, edges)
                 val classes = runtimeIds.flatMap { remap(results, it, target, "main") }
                 val classpath = runtimeIds.flatMap { producer -> listOfNotNull(modulePath(producer, target, "main"),
-                    LogicalPath("runtime/$producer/main").takeIf { root -> resource.any { it.path.value.startsWith(root.value + "/") } }) } + artifacts.map { it.path }
+                    LogicalPath("runtime/$producer/main").takeIf { root -> resource.paths.any { it.value.startsWith(root.value + "/") } }) } + artifacts.map { it.path }
                 applicationBundleAction(ApplicationLaunch(module, target, application, classpath),
-                    merge(classes, resource, artifacts), composition, tools.getValue(target))
+                    merge(classes, resource.resolve(results), artifacts), composition, tools.getValue(target))
             }
         } else {
             val linkId = "$module:$target:application-link"
@@ -1060,9 +1058,9 @@ private class Builder(
                     warningsAsErrors = options.warningsAsErrors, includedLibrary = modulePath(module, target, "main"), entryPoint = application.entryPoint, target = NativeTarget.require(target)),
                     merge(libraries, artifacts), composition, tools.getValue(target), timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
             }
-            nodes[id] = ActionNode(id, setOf(linkId),
+            nodes[id] = ActionNode(id, setOf(linkId) + resource.dependencies,
                 ActionOutputContract(treeOutput("application", "application-bundle"))) { results ->
-                validateResults(results, setOf(linkId))
+                validateResults(results, setOf(linkId) + resource.dependencies)
                 val linked = results.getValue(linkId).outputs.files
                 require(linked.any { it.path.value == "application.kexe" && it.executable } && linked.all {
                     it.path.value == "application.kexe" || target == NativeTarget.MACOS_ARM64.projectName && it.path.value.startsWith("application.kexe.dSYM/")
@@ -1071,7 +1069,7 @@ private class Builder(
                 val executable = LogicalPath(prefix + "application.kexe")
                 val program = linked.map { it.copy(path = LogicalPath(prefix + it.path.value)) }
                 applicationBundleAction(ApplicationLaunch(module, target, application, executable = executable),
-                    merge(program, resource), composition, tools.getValue(target))
+                    merge(program, resource.resolve(results)), composition, tools.getValue(target))
             }
         }
         return id
@@ -1095,7 +1093,7 @@ private class Builder(
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val mainSets = sourceSets(module, target, "main").map { it.name }.toSet()
         val generators = ensureScriptGenerators(module, sourceSets(module, target, "test").filter { target != "jvm" || it.name !in mainSets })
-        val producerEdges = moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + generators.map(::generatorId)
+        val producerEdges = resource.dependencies + moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, target, "test") + generators.map(::generatorId)
         val sqlDelight = if (NativeTarget.find(target) != null) sqlDelightFor(module, target) else null
         val compileEdges = producerEdges + listOfNotNull(sqlDelight) + if (kotest == null) emptySet() else setOf(generationId(module, target))
         val hasTestCompile = NativeTarget.find(target) != null || source.paths.isNotEmpty() || generators.isNotEmpty()
@@ -1152,7 +1150,7 @@ private class Builder(
                 val sqlSources = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
                 val scriptSources = scriptGeneratorOutputs(generators, results)
                 val compiledSource = withScriptGenerators(module, withSqlDelight(module, source, sqlSources), scriptSources)
-                val inputs = merge(compiledSource.entries, resource, compilerInputs.files, plugin, workspace.entries, generated)
+                val inputs = merge(compiledSource.entries, resource.resolve(results), compilerInputs.files, plugin, workspace.entries, generated)
                 val classpath = classpathPaths(compilationClasspath, target)
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,
@@ -1189,8 +1187,8 @@ private class Builder(
         }
         val id = "$module:$target:test"
         val runtimeIds = listOf(module) + runtimeDependencies
-        val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(if (NativeTarget.find(target) != null) linkId(module, target) else compileId(module, target)) else emptySet()
-        val allResources = resource + runtimeDependencies.flatMap { resources(it, target, "main") }
+        val allResources = resource + runtimeDependencies.map { resources(it, target, "main") }.combinedResources()
+        val edges = allResources.dependencies + runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(if (NativeTarget.find(target) != null) linkId(module, target) else compileId(module, target)) else emptySet()
         val runtime = if (target == "jvm") artifactEntries(external(module, target, "test", "java-runtime"), target) else emptyList()
         val testSelection = request.jvmTests[module].takeIf { target == "jvm" }
         val coverage = testSelection?.coverage?.let { settings ->
@@ -1207,7 +1205,7 @@ private class Builder(
         }
         val testResources = target(module, target).testResources ?: TestResources()
         val launch = if (target == "jvm") {
-            fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.any { it.path.value.startsWith(prefix.value + "/") } }
+            fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.paths.any { it.value.startsWith(prefix.value + "/") } }
             val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                 runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
             JvmTestLaunch(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, testResources))
@@ -1220,8 +1218,8 @@ private class Builder(
             val inputs = if (target == "jvm") {
                 val dependencyFiles = runtimeIds.flatMap { remap(results, it, target, "main") }
                 val coverageSources = coverage?.sources?.map { FileEntry(it.inputPath, it.digest) } ?: emptyList()
-                merge(testFiles, dependencyFiles, allResources, runtime, coverageSources)
-            } else merge(testFiles, allResources)
+                merge(testFiles, dependencyFiles, allResources.resolve(results), runtime, coverageSources)
+            } else merge(testFiles, allResources.resolve(results))
             launch.action(inputs, composition, tools.getValue(target))
         }
         return id
@@ -1248,7 +1246,7 @@ private class Builder(
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val sqlDelight = sqlDelightFor(module, target)
         val generators = ensureScriptGenerators(module, sourceSets(module, target, "test"))
-        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight) + generators.map(::generatorId)
+        val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, target, "test") + listOfNotNull(sqlDelight) + generators.map(::generatorId)
         nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges,
             ActionOutputContract(listOf(fileOutput("tests.klib", "klib")) + pluginOutputArtifacts(module, target, "test"))) { results ->
             validateResults(results, compileEdges)
@@ -1282,17 +1280,17 @@ private class Builder(
         val id = "$module:$target:test"
         val settings = target(module, target).jsTestSettings ?: JsTestSettings()
         val resources = resources(module, target, "main") + resources(module, target, "test") +
-            runtimeDependencies.flatMap { resources(it, target, "main") }
+            runtimeDependencies.map { resources(it, target, "main") }.combinedResources()
         val launch = JsTestLaunch(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter,
             target(module, target).testResources ?: TestResources()), settings.timeoutMillis)
         testLaunches[id] = launch
-        nodes[id] = ActionNode(id, setOf(linkId(module, target)),
+        nodes[id] = ActionNode(id, setOf(linkId(module, target)) + resources.dependencies,
             ActionOutputContract(fileOutput("test-results.json", "test-results"))) { results ->
-            validateResults(results, setOf(linkId(module, target)))
+            validateResults(results, setOf(linkId(module, target)) + resources.dependencies)
             val linked = results.getValue(linkId(module, target)).outputs.files
             require(linked.isNotEmpty() && linked.all { it.path.value.startsWith("tests/") } &&
                 linked.any { it.path == LogicalPath("tests/$testModuleName.mjs") }) { "Missing JS/Wasm linked test module" }
-            launch.action(merge(linked, resources), composition, mapOf("node" to tools.getValue(target).getValue("node")))
+            launch.action(merge(linked, resources.resolve(results)), composition, mapOf("node" to tools.getValue(target).getValue("node")))
         }
         return id
     }

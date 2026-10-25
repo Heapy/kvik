@@ -90,20 +90,7 @@ private class ScriptGraphBuilder(
         }
         return result.values.sortedBy { it.path.value }
     }
-    private fun moduleResources(name: String): List<FileEntry> {
-        val module = project.modules.single { it.id == name }
-        val main = module.targets.single { it.name == "jvm" }.main
-        val selected = linkedMapOf<LogicalPath, FileEntry>()
-        for (source in sourceSetClosure(module, listOf(main))) for (root in source.resources) {
-            require(files.none { it.path == root }) { "Module resource root is a file: ${root.value}" }
-            for (file in files.filter { it.path.value.startsWith(root.value + "/") }) {
-                val path = LogicalPath("runtime/$name/main/" + file.path.value.removePrefix(root.value + "/"))
-                require(path !in selected) { "Ambiguous module resource overlay: ${path.value}" }
-                selected[path] = file.copy(path = path)
-            }
-        }
-        return selected.values.sortedBy { it.path.value }
-    }
+    private fun moduleResources(name: String) = moduleResources(project, files, name, "jvm", "main")
     private fun compiled(results: Map<String, ActionResult>, id: String, root: LogicalPath): List<FileEntry> {
         val result = results[id] ?: error("Missing script prerequisite: $id")
         require(result.actionId == id && result.successful) { "Unsuccessful/mismatched script prerequisite: $id" }
@@ -144,7 +131,7 @@ private class ScriptGraphBuilder(
             val root = LogicalPath("$prefix/modules/$module/classes")
             classpath += root
             files += compiled(results, moduleId(module), root)
-            val resources = moduleResources(module)
+            val resources = moduleResources(module).resolve(results)
             if (resources.isNotEmpty()) {
                 val resourceRoot = LogicalPath("$prefix/modules/$module/resources")
                 classpath += resourceRoot
@@ -175,7 +162,7 @@ private class ScriptGraphBuilder(
         val runtimeArtifacts = entries(artifacts(runtimeClosure.external, "java-runtime"))
         val compileId = "script:${script.name}:jvm:compile"
         val runId = "script:${script.name}:jvm:${if (generator == null) "run" else "generate"}"
-        val compileEdges = (compileClosure.modules + pluginModules).map(::moduleId).toSet()
+        val compileEdges = (compileClosure.modules + pluginModules).map(::moduleId).toSet() + pluginModules.flatMap { moduleResources(it).dependencies }
         val compile = ActionNode(compileId, compileEdges,
             ActionOutputContract(listOf(treeOutput("classes", "jvm-classes")) + compilerPluginOutputArtifacts(plugins))) { results ->
             validate(results, compileEdges)
@@ -194,13 +181,14 @@ private class ScriptGraphBuilder(
                 warningsAsErrors = options.warningsAsErrors, jdkRelease = options.jdkRelease, pluginApplications = plugin.applications, includeStandardLibrary = true),
                 inputs, composition, tools)
         }
-        val runEdges = runtimeClosure.modules.map(::moduleId).toSet() + compileId
+        val plannedResources = runtimeClosure.modules.map(::moduleResources).combinedResources()
+        val runEdges = runtimeClosure.modules.map(::moduleId).toSet() + compileId + plannedResources.dependencies
         val run = ActionNode(runId, runEdges,
-            ActionOutputContract(if (generator == null) emptyList() else listOf(treeOutput("generated", "generated-sources")))) { results ->
+            ActionOutputContract(if (generator == null) emptyList() else listOf(treeOutput("generated", if (generator.resources.isEmpty()) "generated-sources" else "generated-resources")))) { results ->
             validate(results, runEdges)
             val root = LogicalPath("scripts/${script.name}/classes")
             val classes = compiled(results, compileId, root) + runtimeClosure.modules.flatMap { compiled(results, moduleId(it), moduleRoot(it)) }
-            val moduleResources = runtimeClosure.modules.flatMap(::moduleResources)
+            val moduleResources = plannedResources.resolve(results)
             val classpath = listOf(root) + listOfNotNull(LogicalPath("scripts/${script.name}/resources").takeIf { resources.isNotEmpty() }) +
                 runtimeClosure.modules.flatMap { module -> listOfNotNull(moduleRoot(module), LogicalPath("runtime/$module/main").takeIf { p -> moduleResources.any { it.path.value.startsWith(p.value + "/") } }) } + runtimeArtifacts.map { it.path }
             val generatorInputs = if (generator == null) emptyList() else files.filter { entry ->
@@ -211,15 +199,17 @@ private class ScriptGraphBuilder(
             if (primary != null) {
                 val launch = KtsLaunch(script.name, root, classpath, arguments)
                 if (generator == null) ktsScriptAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
-                else ktsScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+                else ktsScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis, generator.resources)
             } else {
                 val launch = JvmScriptLaunch(script.name, root, classpath, script.declaration.mainClass, arguments)
                 if (generator == null) jvmScriptAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
-                else jvmScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+                else jvmScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis, generator.resources)
             }
         }
         return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId),
-            generatedSources = moduleGraph.generatedSources + if (generator == null) emptyList() else listOf(
-                GeneratedSourceRoot(runId, generator.module, generator.sourceSet, "script", "/scripts/${script.name}/generator", LogicalPath("generated"))))
+            generatedSources = moduleGraph.generatedSources + if (generator == null || generator.resources.isNotEmpty()) emptyList() else listOf(
+                GeneratedSourceRoot(runId, generator.module, generator.sourceSet, "script", "/scripts/${script.name}/generator", LogicalPath("generated"))),
+            generatedResources = moduleGraph.generatedResources + if (generator == null || generator.resources.isEmpty()) emptyList() else listOf(
+                GeneratedResourceRoot(runId, generator.module, generator.sourceSet, "/scripts/${script.name}/generator", LogicalPath("generated"), generator.resources.toList())))
     }
 }

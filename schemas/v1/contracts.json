@@ -2102,6 +2102,24 @@
             }
           },
           "maxItems": 256
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              {
+                "maxLength": 1024,
+                "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+              }
+            ]
+          },
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -2109,7 +2127,7 @@
         "sourceSet"
       ],
       "additionalProperties": false,
-      "description": "Attach a fresh script execution to a module source set. The script receives generated and inputs directories before configured arguments, and emits Kotlin .kt sources under generated. Native validation rejects overlapping inputs and module-level generator prerequisite cycles."
+      "description": "Attach a fresh script execution to a module source set. The script receives generated and inputs directories before configured arguments. With a nonempty resources list it must emit exactly those resource files; otherwise it emits Kotlin .kt sources. Native validation rejects overlapping paths and module-level generator prerequisite cycles."
     },
     "script": {
       "type": "object",
@@ -14783,6 +14801,56 @@
               "kind",
               "configurationPointer",
               "outputRoot"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
+        "generatedResources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "producer": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "module": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "sourceSet": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "configurationPointer": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "outputRoot": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                },
+                "minItems": 1,
+                "maxItems": 10000,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "producer",
+              "module",
+              "sourceSet",
+              "configurationPointer",
+              "outputRoot",
+              "files"
             ],
             "additionalProperties": false
           },

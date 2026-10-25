@@ -150,8 +150,11 @@ resource reservations. Runtime paths are staged-input-relative. A null launch
 means no declaration is available; it does not establish whether the action is
 a test. Discovery results and installed-tool availability remain unresolved.
 Generated roots identify script, SQLDelight and KSP declarations; their paths are
-producer-output-relative. The query also works with configured Kode selectors;
-offline source inspection requires cached content. It does not create run records.
+producer-output-relative.
+`generatedResources` separately lists resource-generator roots and exact relative
+file names. These are declarations; inspection does not execute generators.
+The query also works with configured Kode selectors; offline source inspection
+requires cached content. It does not create run records.
 
 Execution tools run project code, including compiler plugins, generators and
 tests. They use the CLI executor, configured dependency lock, cache and resolver

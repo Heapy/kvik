@@ -237,8 +237,9 @@ DEFS["scriptGenerator"] = object_({
     "module": SCRIPT_ID, "sourceSet": SCRIPT_ID,
     "inputs": array(SCRIPT_PATH, maxItems=256, uniqueItems=True),
     "arguments": array({"type": "string", "maxLength": 4096, "not": {"pattern": "\u0000"}}, maxItems=256),
-}, optional=("inputs", "arguments"))
-DEFS["scriptGenerator"]["description"] = "Attach a fresh script execution to a module source set. The script receives generated and inputs directories before configured arguments, and emits Kotlin .kt sources under generated. Native validation rejects overlapping inputs and module-level generator prerequisite cycles."
+    "resources": array(SCRIPT_PATH, maxItems=10000, uniqueItems=True),
+}, optional=("inputs", "arguments", "resources"))
+DEFS["scriptGenerator"]["description"] = "Attach a fresh script execution to a module source set. The script receives generated and inputs directories before configured arguments. With a nonempty resources list it must emit exactly those resource files; otherwise it emits Kotlin .kt sources. Native validation rejects overlapping paths and module-level generator prerequisite cycles."
 DEFS["script"] = object_({
     "sources": array(SCRIPT_PATH, minItems=1, maxItems=256, uniqueItems=True),
     "resources": array(SCRIPT_PATH, maxItems=256, uniqueItems=True),
@@ -1103,8 +1104,11 @@ DEFS["graphInspection"] = versioned({
     "checks": array(object_({"id": NONEMPTY, "terminalAction": NONEMPTY, "requiredContributions": array(NONEMPTY, uniqueItems=True)}), minItems=1),
     "generatedSources": array(object_({"producer": NONEMPTY, "module": ID, "sourceSet": ID, "kind": NONEMPTY,
         "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH}), uniqueItems=True),
+    "generatedResources": array(object_({"producer": NONEMPTY, "module": ID, "sourceSet": ID,
+        "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH,
+        "files": array(PATH, minItems=1, maxItems=10000, uniqueItems=True)}), uniqueItems=True),
     "limitations": array(NONEMPTY), "source": ref("sourceReference"),
-}, optional=("source",))
+}, optional=("source", "generatedResources"))
 
 
 def main():

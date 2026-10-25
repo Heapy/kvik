@@ -70,6 +70,9 @@ private fun graph(configuration: ProjectConfiguration = project, files: TreeMani
     return projectActionGraph(effective, lock(effective), files, composition, tools, request)
 }
 private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManifest(when(action.implementation) {
+    "kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1" -> action.parameters.values.getValue("resourceOutputs").arrayValue().map {
+        FileEntry(LogicalPath("generated/" + it.stringValue()), digest(salt))
+    }
     "kvik-js-compiler-v1" -> JsCompilation.fromJson(action.parameters).let { compilation ->
         if (compilation.includedLibrary == null) listOf(FileEntry(compilation.output, digest(salt))) +
             compilation.pluginApplications.flatMap { it.outputs }.map { FileEntry(LogicalPath(it.value + "/report.txt"), digest("report:$salt")) }
@@ -121,6 +124,48 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun generatedResourcesFeedRuntimeTestsPackagesAndApplicationsAcrossTargets() {
+        fun config(target: String = "jvm", packaged: Boolean = false): ProjectConfiguration {
+            val modules = listOf(base, app).map { module ->
+                module.copy(publication = if (packaged) LibraryPublicationSpec(Coordinate("fixture", module.id, "1")) else null,
+                    targets = module.targets.filter { it.name == if (target == "jvm") "jvm" else "macosArm64" }
+                        .map { it.copy(name = target, application = if (!packaged && module.id == "app" && KotlinJsTarget.find(target) == null)
+                            ApplicationSpec(if (target == "jvm") "fixture.MainKt" else "fixture.main") else null) })
+            }
+            val initial = configuration(*modules.toTypedArray())
+            fun script(module: String, sourceSet: String) = ScriptSpec(listOf(LogicalPath("scripts/Resources.kt")),
+                generator = ScriptGeneratorSpec(module, sourceSet, resources = listOf(LogicalPath("generated/version.json"))))
+            return parseProjectConfiguration(JsonValue.Object(initial.document.values + ("scripts" to obj(
+                "mainResources" to script("base", "commonMain").toJson(), "testResources" to script("app", "commonTest").toJson()))))
+        }
+        val files = TreeManifest(snapshot().files + FileEntry(LogicalPath("scripts/Resources.kt"), digest("script")))
+        val producer = "script:mainResources:jvm:generate"
+        val testProducer = "script:testResources:jvm:generate"
+        for (target in listOf("jvm", "macosArm64", "js", "wasmJs")) {
+            val plan = graph(config(target), files, request(ProjectMode.TEST, target))
+            val actions = resolved(plan)
+            val test = actions.getValue("app:$target:test")
+            assertContains(test.inputs.files.map { it.path.value }, "runtime/base/main/generated/version.json")
+            assertContains(test.inputs.files.map { it.path.value }, "runtime/app/test/generated/version.json")
+            assertTrue(plan.nodes.single { it.id == "app:$target:test" }.dependencies.containsAll(setOf(producer, testProducer)))
+            assertEquals(setOf(producer, testProducer), plan.generatedResources.map { it.producer }.toSet())
+            assertTrue(plan.generatedSources.isEmpty())
+            assertTrue(actions.getValue(producer).cachePolicy == CachePolicy.NEVER)
+            val original = test.key(Sha256)
+            assertNotEquals(original, resolved(plan, producer).getValue("app:$target:test").key(Sha256))
+            assertNotEquals(original, resolved(plan, testProducer).getValue("app:$target:test").key(Sha256))
+        }
+        for (target in listOf("jvm", "macosArm64")) {
+            val actions = resolved(graph(config(target), files, request(ProjectMode.APPLICATION, target)))
+            val application = actions.getValue("app:$target:application")
+            assertContains(application.inputs.files.map { it.path.value }, "runtime/base/main/generated/version.json")
+            assertFalse(testProducer in actions)
+        }
+        val packaged = resolved(graph(config(packaged = true), files, request(ProjectMode.PACKAGE)))
+        assertContains(packaged.getValue("base:jvm:package").inputs.files.map { it.path.value }, "classes/generated/version.json")
+        assertFails { graph(config("macosArm64", packaged = true), files, request(ProjectMode.PACKAGE, "macosArm64")) }
+    }
+
     @Test fun webDocumentationKeepsTargetPlatformsAndCommonDependencyMetadataSeparate() {
         fun web(value: ModuleSpec) = value.copy(
             sourceSets = value.sourceSets + listOf("js", "wasmJs").map { source("${it}Main", "${value.id}/$it", listOf("commonMain")) },
@@ -917,9 +962,14 @@ class ProjectGraphTest {
             "example.plugin", "2.4.20", listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
         val producer = module("producer", listOf(Dependency.Module("base"), Dependency.Module("runtime", DependencyScopeKind.RUNTIME), Dependency.External(Coordinate.parse("g:compiler-api:1"))))
         val runtime = module("runtime", listOf(Dependency.External(Coordinate.parse("g:private-runtime:1"))))
-        val project = configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin)))
+        val initial = configuration(base, producer, runtime, app.copy(compilerPlugins = listOf(plugin)))
+        val generator = ScriptSpec(listOf(LogicalPath("scripts/PluginResources.kt")), generator = ScriptGeneratorSpec(
+            "producer", "commonMain", resources = listOf(LogicalPath("META-INF/services/Generated"))))
+        val project = parseProjectConfiguration(JsonValue.Object(initial.document.values +
+            ("scripts" to obj("pluginResources" to generator.toJson()))))
         val extra = listOf("producer", "runtime").flatMap { id -> listOf("common/Common.kt", "jvm/Actual.kt", "resources/META-INF/services/Registrar").map { FileEntry(LogicalPath("$id/$it"), digest("$id/$it")) } }
-        val files = TreeManifest(snapshot().files + extra + FileEntry(LogicalPath("config.txt"), digest("config")))
+        val files = TreeManifest(snapshot().files + extra + FileEntry(LogicalPath("config.txt"), digest("config")) +
+            FileEntry(LogicalPath("scripts/PluginResources.kt"), digest("generator")))
         val effective = effectiveConfiguration(project, scopes = listOf(DependencyScope("app", "jvm", "test", "java-api"), DependencyScope("app", "jvm", "test", "java-runtime")))
         val host = effective.requests.filter { it.domain.purpose == "compiler-plugin" }
         assertTrue(host.isNotEmpty())
@@ -943,6 +993,9 @@ class ProjectGraphTest {
             assertNotEquals(action.key(Sha256), changed.getValue(id).key(Sha256))
             val node = graph.nodes.single { it.id == id }
             assertTrue("producer:jvm:main" in node.dependencies && "runtime:jvm:main" in node.dependencies)
+            assertContains(node.dependencies, "script:pluginResources:jvm:generate")
+            assertContains(action.inputs.files.map { it.path.value }, "plugins/example.plugin/modules/producer/resources/META-INF/services/Generated")
+            assertNotEquals(action.key(Sha256), resolved(graph, "script:pluginResources:jvm:generate").getValue(id).key(Sha256))
         }
         assertEquals(before.getValue("base:jvm:main"), changed.getValue("base:jvm:main"))
         assertTrue(before.getValue("app:jvm:test").inputs.files.none { it.path.value.startsWith("plugins/") })

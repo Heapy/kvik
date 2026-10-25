@@ -1,13 +1,15 @@
 package kvik.core
 
-/** A script producing Kotlin sources in a fresh `generated` directory for one source set. */
+/** Produces Kotlin sources, or the explicitly listed resource files, in `generated`. */
 data class ScriptGeneratorSpec(
     val module: String,
     val sourceSet: String,
     val inputs: List<LogicalPath> = emptyList(),
     val arguments: List<String> = emptyList(),
+    val resources: List<LogicalPath> = emptyList(),
 ) {
     init {
+        validateGeneratedResourcePaths(resources)
         require(listOf(module, sourceSet).all { it.length in 1..128 && it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) }) {
             "Script generator requires valid module and sourceSet identifiers"
         }
@@ -21,16 +23,26 @@ data class ScriptGeneratorSpec(
     }
 
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "sourceSet" to sourceSet.json(),
-        "inputs" to inputs.map { it.value.json() }.json(), "arguments" to arguments.map { it.json() }.json())
+        "inputs" to inputs.map { it.value.json() }.json(), "arguments" to arguments.map { it.json() }.json()).let {
+        if (resources.isEmpty()) it else JsonValue.Object(it.values + ("resources" to resources.map { path -> path.value.json() }.json()))
+    }
 
     companion object {
         fun fromJson(value: JsonValue): ScriptGeneratorSpec {
-            val fields = value.fields(setOf("module", "sourceSet"), setOf("inputs", "arguments"))
+            val fields = value.fields(setOf("module", "sourceSet"), setOf("inputs", "arguments", "resources"))
             return ScriptGeneratorSpec(fields.getValue("module").stringValue(), fields.getValue("sourceSet").stringValue(),
                 fields["inputs"]?.arrayValue()?.map { LogicalPath(it.stringValue()) } ?: emptyList(),
-                fields["arguments"]?.arrayValue()?.map(JsonValue::stringValue) ?: emptyList())
+                fields["arguments"]?.arrayValue()?.map(JsonValue::stringValue) ?: emptyList(),
+                fields["resources"]?.arrayValue()?.map { LogicalPath(it.stringValue()) } ?: emptyList())
         }
     }
+}
+
+fun validateGeneratedResourcePaths(paths: List<LogicalPath>) {
+    require(paths.size <= 10_000 && paths.all { it.value.length <= 1024 && it.value.none(Char::isISOControl) }) { "Generated resource paths exceed bounds" }
+    val normalized = paths.map { LogicalPath(it.value.lowercase()) }
+    require(normalized.distinct().size == paths.size) { "Duplicate generated resource path" }
+    TreeManifest(normalized.map { FileEntry(it, Digest("0".repeat(64), 0)) })
 }
 
 /** The caller supplies the compilation's source-set closure, including common ancestors. */

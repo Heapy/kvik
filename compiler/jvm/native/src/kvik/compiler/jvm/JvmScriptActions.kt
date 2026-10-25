@@ -48,11 +48,18 @@ fun jvmScriptAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: 
 
 /** Fresh generation with captured Kotlin outputs; arbitrary script effects are not cacheable. */
 fun jvmScriptGeneratorAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: Digest,
-                            toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long): ActionSpec {
+                            toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long,
+                            resourceOutputs: List<LogicalPath> = emptyList()): ActionSpec {
     validateScriptGeneratorLayout(launch.arguments, inputs)
     return jvmScriptAction(launch, inputs, composition, toolchains, environment, timeoutMillis).copy(
         implementation = "kvik-jvm-script-generator-v1", kind = ActionKind.GENERATE,
-        outputs = listOf(LogicalPath("generated")))
+        outputs = listOf(LogicalPath("generated")), parameters = generatorParameters(launch.toJson(), resourceOutputs))
+}
+
+internal fun generatorParameters(launch: JsonValue.Object, resources: List<LogicalPath>): JsonValue.Object {
+    validateGeneratedResourcePaths(resources)
+    return if (resources.isEmpty()) launch else JsonValue.Object(launch.values +
+        ("resourceOutputs" to resources.map { it.value.json() }.json()))
 }
 
 internal fun validateScriptGeneratorLayout(arguments: List<String>, inputs: TreeManifest) {

@@ -17,6 +17,7 @@ fun inspectActionGraph(graph: ProjectActionGraph): JsonValue.Object {
     require(graph.requestedChecks.isNotEmpty() && graph.terminalActions.keys == graph.requestedChecks &&
         graph.terminalActions.values.all { it in nodes } && graph.contributedActions.all { it in nodes }) { "Invalid check endpoints" }
     require(graph.generatedSources.all { it.producer in nodes }) { "Unknown generated source producer" }
+    require(graph.generatedResources.all { it.producer in nodes }) { "Unknown generated resource producer" }
     require(graph.testLaunches.keys.all { it in nodes }) { "Unknown test launch action" }
     val consumers = nodes.keys.associateWith { mutableListOf<String>() }
     for (node in nodes.values) for (producer in node.dependencies) consumers.getValue(producer).add(node.id)
@@ -37,6 +38,11 @@ fun inspectActionGraph(graph: ProjectActionGraph): JsonValue.Object {
             obj("producer" to source.producer.json(), "module" to source.module.json(), "sourceSet" to source.sourceSet.json(),
                 "kind" to source.kind.json(), "configurationPointer" to source.configurationPointer.json(),
                 "outputRoot" to source.outputRoot.value.json())
+        }.json(),
+        "generatedResources" to graph.generatedResources.distinct().sortedWith(compareBy({ it.producer }, { it.module }, { it.sourceSet })).map { resource ->
+            obj("producer" to resource.producer.json(), "module" to resource.module.json(), "sourceSet" to resource.sourceSet.json(),
+                "configurationPointer" to resource.configurationPointer.json(), "outputRoot" to resource.outputRoot.value.json(),
+                "files" to resource.files.sortedBy { it.value }.map { it.value.json() }.json())
         }.json(),
     )
 }

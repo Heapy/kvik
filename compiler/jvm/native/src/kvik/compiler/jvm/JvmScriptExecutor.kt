@@ -67,15 +67,17 @@ class JvmScriptExecutor(
         require(action.implementation in setOf("kvik-jvm-script-v1", "kvik-kotlin-script-v1",
             "kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1")) { "Unsupported script implementation" }
         val generator = action.implementation in setOf("kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1")
+        val resourceOutputs = if (generator) action.parameters.values["resourceOutputs"]?.arrayValue()?.map { LogicalPath(it.stringValue()) }.orEmpty() else emptyList()
+        val parameters = if (generator) JsonValue.Object(action.parameters.values - "resourceOutputs") else action.parameters
         // Reconstruct into independent collections before accepting an action or retaining its key.
         val script = if (action.implementation in setOf("kvik-kotlin-script-v1", "kvik-kotlin-script-generator-v1"))
-            KtsLaunch.fromJson(parseJson(action.parameters.canonical())) else null
+            KtsLaunch.fromJson(parseJson(parameters.canonical())) else null
         val launch = script?.let { JvmScriptLaunch(it.name, it.bundle, it.classpath, arguments = it.arguments) }
-            ?: JvmScriptLaunch.fromJson(parseJson(action.parameters.canonical()))
+            ?: JvmScriptLaunch.fromJson(parseJson(parameters.canonical()))
         val expected = when {
-            script != null && generator -> ktsScriptGeneratorAction(script, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
+            script != null && generator -> ktsScriptGeneratorAction(script, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis, resourceOutputs)
             script != null -> ktsScriptAction(script, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
-            generator -> jvmScriptGeneratorAction(launch, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
+            generator -> jvmScriptGeneratorAction(launch, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis, resourceOutputs)
             else -> jvmScriptAction(launch, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
         }
         require(action == expected) { "Script action does not match its typed launch" }
@@ -217,7 +219,7 @@ class JvmScriptExecutor(
                     var outputs = TreeManifest(emptyList())
                     if (generator && status == ActionStatus.EXECUTED) {
                         try {
-                            outputs = captureScriptGeneratorOutputs(checkNotNull(directory), expected.inputs, content)
+                            outputs = captureScriptGeneratorOutputs(checkNotNull(directory), expected.inputs, content, resourceOutputs)
                         } catch (failure: Exception) {
                             status = ActionStatus.FAILED
                             diagnostics = diagnostics + diagnostic("KVIK_SCRIPT_GENERATOR_OUTPUT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
@@ -269,7 +271,7 @@ class JvmScriptExecutor(
 }
 
 /** Called after owned cleanup. This detects changed staged inputs, not arbitrary external effects. */
-private fun captureScriptGeneratorOutputs(directory: String, inputs: TreeManifest, content: ContentStore): TreeManifest {
+private fun captureScriptGeneratorOutputs(directory: String, inputs: TreeManifest, content: ContentStore, resourceOutputs: List<LogicalPath>): TreeManifest {
     val root = "$directory/input"
     NativeFiles.ensureDirectory(root, create = false)
     val declared = inputs.files.associateBy { it.path.value }
@@ -321,8 +323,8 @@ private fun captureScriptGeneratorOutputs(directory: String, inputs: TreeManifes
                 }
                 NativeFiles.regular(info) -> {
                     size += info.size
-                    require(++fileCount <= 10000 && name.endsWith(".kt") && info.mode and 73 == 0 &&
-                        info.size in 0..8L * 1024 * 1024 && size <= 64L * 1024 * 1024) { "Invalid or oversized generated Kotlin output" }
+                    require(++fileCount <= 10000 && (resourceOutputs.isNotEmpty() || name.endsWith(".kt")) && info.mode and 73 == 0 &&
+                        info.size in 0..8L * 1024 * 1024 && size <= 64L * 1024 * 1024) { "Invalid or oversized generated output" }
                 }
                 else -> error("Generated Kotlin output is a symlink or special file")
             }
@@ -330,6 +332,7 @@ private fun captureScriptGeneratorOutputs(directory: String, inputs: TreeManifes
     }
     validateOutputs(generated, 0)
     val captured = NativeOutputTrees(content).capture(generated)
+    require(resourceOutputs.isEmpty() || captured.files.map { it.path }.toSet() == resourceOutputs.toSet()) { "Generated resources differ from declared files" }
     return TreeManifest(captured.files.map { it.copy(path = LogicalPath("generated/${it.path.value}")) })
 }
 

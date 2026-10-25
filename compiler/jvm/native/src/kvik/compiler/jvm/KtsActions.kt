@@ -123,11 +123,12 @@ fun ktsScriptAction(launch: KtsLaunch, inputs: TreeManifest, composition: Digest
 
 /** The compiled script runs freshly; only validated generated Kotlin files become outputs. */
 fun ktsScriptGeneratorAction(launch: KtsLaunch, inputs: TreeManifest, composition: Digest,
-                            toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long): ActionSpec {
+                            toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long,
+                            resourceOutputs: List<LogicalPath> = emptyList()): ActionSpec {
     validateScriptGeneratorLayout(launch.arguments, inputs)
     return ktsScriptAction(launch, inputs, composition, toolchains, environment, timeoutMillis).copy(
         implementation = "kvik-kotlin-script-generator-v1", kind = ActionKind.GENERATE,
-        outputs = listOf(LogicalPath("generated")))
+        outputs = listOf(LogicalPath("generated")), parameters = generatorParameters(launch.toJson(), resourceOutputs))
 }
 
 private fun List<LogicalPath>.ktsPaths() = map { it.value.json() }.json()
