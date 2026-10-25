@@ -8,12 +8,14 @@ are private protocol fixtures, not claims of additional actual test executions.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import http.server
 import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -74,14 +76,38 @@ def unchanged_snapshot(roots):
     return result
 
 
-def committed_fixture(original, destination, status):
+def log_references(record):
+    logs = {}
+    for test in record['tests']:
+        for attempt in (test.get('details') or {}).get('attempts', []):
+            for log in attempt['logs']:
+                previous = logs.setdefault(log['path'], log['digest'])
+                assert previous == log['digest'], 'Conflicting fixture log identities'
+    return logs
+
+
+def committed_fixture(original, destination, status, mutate=None):
     destination.mkdir(parents=True)
     record = read_json(original / 'verification.json')
     events = [json.loads(line) for line in (original / 'events.jsonl').read_bytes().splitlines()]
     assert record['status'] == 'passed' and events[-1]['payload'] == record
+    for path, identity in log_references(record).items():
+        data = (original / path).read_bytes()
+        assert digest(data) == identity
+        copied = destination / path
+        copied.parent.mkdir(parents=True, exist_ok=True)
+        copied.write_bytes(data)
+    if mutate:
+        mutate(record)
     record['status'] = status
     if status == 'cancelled':
         record['completedChecks'] = []
+    if mutate:
+        tests = {(t['module'], t['target'], t['id']): t for t in record['tests']}
+        for event in events:
+            if event['type'] == 'test-result':
+                prior = event['payload']
+                event['payload'] = tests[(prior['module'], prior['target'], prior['id'])]
     events[-1]['payload'] = record
     verification = encoded(record)
     journal = b''.join(encoded(event) + b'\n' for event in events)
@@ -127,6 +153,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for run in scenario['runs']:
                 for name in ('verification.json', 'completion.json', 'events.jsonl'):
                     assert (output / 'runs' / run.name / name).read_bytes() == (run / name).read_bytes()
+                for path, identity in log_references(read_json(run / 'verification.json')).items():
+                    retained = output / 'runs' / run.name / path
+                    assert retained.read_bytes() == (run / path).read_bytes()
+                    assert digest(retained.read_bytes()) == identity
             server.requests.append({'scenario': scenario['label'], 'path': self.path, 'request': request})
             mode = scenario['mode']
             if mode == 'drop':
@@ -163,6 +193,7 @@ def run(args):
     assert len(originals) >= 2, 'Need two retained scopes for matrix publication'
     records = [read_json(path / 'verification.json') for path in originals]
     assert all(record['status'] == 'passed' for record in records)
+    assert all(log_references(record) for record in records), 'Fixture must exercise retained logs'
     expected = sorted({check for record in records for check in record['requestedChecks'] if check.endswith(':test')})
     assert len(expected) >= 2
     before = unchanged_snapshot(originals)
@@ -246,24 +277,75 @@ def run(args):
         print(f'{label}: {source} -> {outcome}', flush=True)
         return output
 
+    def rejects_log(label, change=None, mutate=None):
+        source = committed_fixture(originals[0], case / label / 'source' / originals[0].name, 'passed', mutate)
+        if change:
+            change(source)
+        output = case / label / 'rejected-publication'
+        command = [str(args.runtime), 'test-publish', '--run', str(source), '--repository', REPOSITORY,
+                   '--sha', SHA, '--api-url', f'http://127.0.0.1:{server.server_port}', '--token-env', TOKEN_ENV,
+                   '--output', str(output)]
+        previous = len(server.requests)
+        completed = subprocess.run(command, env=env, capture_output=True, timeout=60, check=False)
+        assert completed.returncode == 3, (label, completed.returncode)
+        assert len(server.requests) == previous and not output.exists(), 'Invalid logs reached publication'
+        assert b'KVIK_TEST_PUBLISH_FAILED' in completed.stderr + completed.stdout
+        no_secret()
+        print(f'{label}: rejected before HTTP', flush=True)
+
     try:
         invoke('single-success')
         invoke('matrix-success', runs=originals, checks=expected)
         for status in ('failed', 'cancelled'):
             fixture = committed_fixture(originals[0], case / 'synthetic-status-fixtures' / status / originals[0].name, status)
             invoke(f'source-{status}', runs=[fixture], source=status)
+        def repeated_attempt(record):
+            attempts = record['tests'][0]['details']['attempts']
+            attempts.append({**copy.deepcopy(attempts[0]), 'number': 2})
+        repeated = committed_fixture(originals[0], case / 'synthetic-repeated-attempt' / originals[0].name,
+                                     'passed', repeated_attempt)
+        repeated_output = invoke('shared-attempt-logs', runs=[repeated])
+        retained_run = repeated_output / 'runs' / repeated.name
+        assert {p.relative_to(retained_run).as_posix() for p in retained_run.rglob('*') if p.is_file()} == {
+            'verification.json', 'completion.json', 'events.jsonl', *log_references(read_json(repeated / 'verification.json'))}
         missing = 'missing:macosArm64:test'
         assert missing not in expected
         missing_output = invoke('missing-matrix', runs=originals, checks=[*expected, missing], source='incomplete')
         assert read_json(missing_output / 'aggregate.json')['missingChecks'] == [missing]
         rejected = invoke('forbidden', mode='forbidden', outcome='rejected', http=403)
-        retried = invoke('explicit-retry')
+        retried = invoke('explicit-retry', runs=[rejected / 'runs' / originals[0].name])
         assert (rejected / 'request.json').read_bytes() == (retried / 'request.json').read_bytes()
         assert (rejected / 'aggregate.json').read_bytes() == (retried / 'aggregate.json').read_bytes()
         invoke('server-error', mode='server-error', outcome='unknown', http=500)
         invoke('dropped-response', mode='drop', outcome='unknown', http=None)
         invoke('redirect', mode='redirect', outcome='unknown', http=307)
         invoke('mismatched-response', mode='mismatch', outcome='unknown', http=201)
+        # After source removal, the rejected publication's copied run is sufficient for retry.
+        disposable = committed_fixture(originals[0], case / 'disposable-source' / originals[0].name, 'passed')
+        retained = invoke('retained-before-removal', mode='forbidden', runs=[disposable], outcome='rejected', http=403)
+        shutil.rmtree(disposable)
+        invoke('retry-after-source-removal', runs=[retained / 'runs' / originals[0].name])
+        log_path = next(iter(log_references(records[0])))
+        rejects_log('missing-log', lambda run: (run / log_path).unlink())
+        rejects_log('corrupt-log', lambda run: (run / log_path).write_bytes(b'changed'))
+        def symbolic_log(run):
+            path = run / log_path
+            path.unlink()
+            path.symlink_to(originals[0] / log_path)
+        rejects_log('symlink-log', symbolic_log)
+        def symbolic_parent(run):
+            parent = (run / log_path).parent
+            shutil.rmtree(parent)
+            parent.symlink_to((originals[0] / log_path).parent, target_is_directory=True)
+        rejects_log('symlink-log-parent', symbolic_parent)
+        def conflicting(record):
+            logs = record['tests'][0]['details']['attempts'][0]['logs']
+            logs[1]['path'] = logs[0]['path']
+            logs[1]['digest'] = dict(hash='0' * 64, sizeBytes=logs[0]['digest']['sizeBytes'])
+        rejects_log('conflicting-log', mutate=conflicting)
+        def excessive(record):
+            record['tests'][0]['details']['attempts'][0]['logs'][0]['digest']['sizeBytes'] = 64 * 1024 * 1024 + 1
+        rejects_log('oversized-log', mutate=excessive)
         no_secret()
         write_json(case / 'summary.json', {'scenarios': results, 'requests': len(server.requests),
                                          'originalsUnchanged': True, 'syntheticSourceStatuses': ['failed', 'cancelled']})
