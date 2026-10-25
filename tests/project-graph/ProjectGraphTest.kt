@@ -42,7 +42,8 @@ private fun configuration(vararg modules: ModuleSpec): ProjectConfiguration {
                 t.nativeTimeouts.compileMillis?.let { put("compileMillis", it.json()) }; t.nativeTimeouts.linkMillis?.let { put("linkMillis", it.json()) }
             }))) } }.json(),
             "compilerPlugins" to m.compilerPlugins.map { p -> JsonValue.Object(mapOf("targets" to strings(p.targets), "scopes" to strings(p.scopes), "options" to strings(p.options), "inputs" to paths(p.inputs)) +
-                if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json(), "id" to p.id!!.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs))) }.json()).let { value -> if (m.documentation == null) value else JsonValue.Object(value.values + ("documentation" to m.documentation.toJson())) }.let { value -> if (m.publication == null) value else JsonValue.Object(value.objectValue() + ("publication" to obj("coordinate" to m.publication.coordinate.toString().json()))) } }.json()))
+                (if (p.coordinate != null) mapOf("coordinate" to p.coordinate.toString().json()) else mapOf("module" to p.module!!.json())) +
+                (p.id?.let { mapOf("id" to it.json(), "compilerVersion" to p.compilerVersion!!.json(), "pathOptions" to p.pathOptions.map { it.toJson() }.json(), "outputs" to paths(p.outputs)) } ?: emptyMap())) }.json()).let { value -> if (m.documentation == null) value else JsonValue.Object(value.values + ("documentation" to m.documentation.toJson())) }.let { value -> if (m.publication == null) value else JsonValue.Object(value.objectValue() + ("publication" to obj("coordinate" to m.publication.coordinate.toString().json()))) } }.json()))
 }
 private val base = module("base", listOf(external("g:stdlib:1")))
 private val app = module("app", listOf(Dependency.Module("base"), external("g:library:1")))
@@ -1314,6 +1315,50 @@ class ProjectGraphTest {
             assertTrue(actions.getValue("app:$target:test").inputs.files.none { it.path.value.startsWith("plugins/") })
             assertFails { plan(listOf(workspace.copy(id = "org.jetbrains.kotlinx.serialization"), serialization)) }
             assertFails { plan(listOf(workspace, second.copy(id = workspace.id))) }
+        }
+    }
+
+    @Test fun publishedPluginsUseLockedHostClosuresWithoutProducerModules() {
+        val plugin = CompilerPluginSpec(null, Coordinate.parse("g:library:1"), setOf("jvm", "macosArm64", "js", "wasmJs"),
+            setOf("main", "test"), listOf("text=published"), listOf(LogicalPath("config.txt")), "example.published", "2.4.20",
+            listOf(PluginPathOption("input", PluginPathKind.INPUT_FILE, LogicalPath("config.txt")),
+                PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("report"))), listOf(LogicalPath("report")))
+        fun web(module: ModuleSpec) = module.copy(targets = module.targets + listOf("js", "wasmJs").map {
+            TargetSpec(it, "commonMain", "commonTest", emptyList())
+        })
+        val inputs = TreeManifest(snapshot().files + FileEntry(LogicalPath("config.txt"), digest("config")))
+        for (target in plugin.targets) {
+            fun plan(selected: CompilerPluginSpec = plugin, changedJar: Boolean = false, files: TreeManifest = inputs): ProjectActionGraph {
+                val effective = effectiveConfiguration(configuration(web(base), web(app).copy(compilerPlugins = listOf(selected))))
+                val pinned = lock(effective).let { original -> if (!changedJar) original else original.copy(selections = original.selections.map {
+                    if (it.domain.purpose != "compiler-plugin") it else it.copy(selection = it.selection.copy(artifacts = it.artifacts.map { artifact ->
+                        artifact.copy(digest = digest("changed:" + artifact.coordinate))
+                    }))
+                }) }
+                return projectActionGraph(effective, pinned, files, composition, tools, request(ProjectMode.TEST, target))
+            }
+            val graph = plan()
+            val actions = resolved(graph)
+            assertContains(projectToolTargets(configuration(web(base), web(app).copy(compilerPlugins = listOf(plugin))).project,
+                request(ProjectMode.TEST, target)), "jvm")
+            for (id in listOf("app:$target:main", "app:$target:test-compile")) {
+                val action = actions.getValue(id)
+                val application = action.parameters.objectValue().getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson).single()
+                assertEquals(plugin.id, application.id)
+                assertEquals(2, application.classpath.size) // Root JAR and its runtime-only helper.
+                assertTrue(application.classpath.all { it.value.startsWith("plugins/${plugin.id}/deps/") })
+                assertTrue(application.classpath.all { path -> action.inputs.files.any { it.path == path } })
+                assertEquals(plugin.options, application.options)
+                assertEquals(listOf(LogicalPath("plugins/${plugin.id}/report")), application.outputs)
+                assertTrue(graph.nodes.single { it.id == id }.dependencies.none { it.startsWith("producer:") })
+                assertNotEquals(action.key(Sha256), resolved(plan(changedJar = true)).getValue(id).key(Sha256))
+                assertNotEquals(action.key(Sha256), resolved(plan(plugin.copy(options = listOf("text=changed")))).getValue(id).key(Sha256))
+                assertNotEquals(action.key(Sha256), resolved(plan(files = TreeManifest(inputs.files.map {
+                    if (it.path.value == "config.txt") it.copy(digest = digest("changed")) else it
+                }))).getValue(id).key(Sha256))
+            }
+            assertTrue(actions.getValue("app:$target:test").inputs.files.none { it.path.value.startsWith("plugins/") })
+            assertEquals(actions.getValue("base:$target:main").key(Sha256), resolved(plan(changedJar = true)).getValue("base:$target:main").key(Sha256))
         }
     }
 

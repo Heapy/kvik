@@ -1474,6 +1474,27 @@
         },
         {
           "required": [
+            "coordinate",
+            "id",
+            "compilerVersion"
+          ],
+          "not": {
+            "required": [
+              "module"
+            ]
+          },
+          "properties": {
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*="
+              }
+            }
+          }
+        },
+        {
+          "required": [
             "coordinate"
           ],
           "not": {
@@ -2086,6 +2107,27 @@
               "minItems": 1,
               "maxItems": 1
             },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*="
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "coordinate",
+            "id",
+            "compilerVersion"
+          ],
+          "not": {
+            "required": [
+              "module"
+            ]
+          },
+          "properties": {
             "options": {
               "type": "array",
               "items": {

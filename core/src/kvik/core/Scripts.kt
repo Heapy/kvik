@@ -274,6 +274,7 @@ private fun validateScriptDeclarations(dependencies: List<ScriptDependencyRefere
 private fun scriptPluginJson(plugin: CompilerPluginSpec): JsonValue = JsonValue.Object(linkedMapOf(
     "targets" to plugin.targets.sorted().map { it.json() }.json(), "scopes" to plugin.scopes.sorted().map { it.json() }.json(),
     "options" to plugin.options.map { it.json() }.json(), "inputs" to plugin.inputs.map { it.value.json() }.json(),
-) + (plugin.module?.let { mapOf("module" to it.json(), "id" to plugin.id!!.json(), "compilerVersion" to plugin.compilerVersion!!.json(),
+) + (plugin.module?.let { mapOf("module" to it.json()) } ?: mapOf("coordinate" to plugin.coordinate!!.toString().json())) +
+    (plugin.id?.let { mapOf("id" to it.json(), "compilerVersion" to plugin.compilerVersion!!.json(),
     "pathOptions" to plugin.pathOptions.map { option -> option.toJson() }.json(), "outputs" to plugin.outputs.map { path -> path.value.json() }.json()) }
-    ?: mapOf("coordinate" to plugin.coordinate!!.toString().json())))
+    ?: emptyMap()))

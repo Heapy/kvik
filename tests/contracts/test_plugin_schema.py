@@ -50,6 +50,13 @@ class PluginSchemaTest(unittest.TestCase):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/compilerPlugin'})
         workspace = dict(module='producer', id='example.plugin', compilerVersion='2.4.20', targets=['jvm'], scopes=['main', 'test'], options=['message=a=b'], inputs=[])
         validator.validate(workspace)
+        published = {k: v for k, v in workspace.items() if k != 'module'} | dict(coordinate='example:plugin:1')
+        validator.validate(published)
+        validator.validate({**published, 'inputs': ['schema.json'], 'outputs': ['report'], 'pathOptions': [
+            dict(name='schema', kind='input-file', path='schema.json'), dict(name='report', kind='output-directory', path='report')]})
+        for change in [dict(module='producer'), dict(compilerVersion='2.4.10'), dict(options=['missing'])]:
+            self.assertFalse(validator.is_valid({**published, **change}))
+        self.assertFalse(validator.is_valid({k: v for k, v in published.items() if k != 'compilerVersion'}))
         validator.validate(dict(coordinate='org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20', targets=['jvm'], scopes=['main'], options=[], inputs=[]))
         for targets in [['macosArm64'], ['linuxX64'], ['js'], ['wasmJs'], ['jvm', 'macosArm64', 'linuxX64', 'js', 'wasmJs']]:
             for scopes in [['main'], ['test'], ['main', 'test']]:
@@ -61,7 +68,8 @@ class PluginSchemaTest(unittest.TestCase):
 
     def test_script_plugins_stay_jvm_only(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/scriptCompilerPlugin'})
-        for reference in [dict(module='producer', id='example.plugin', compilerVersion='2.4.20'), dict(coordinate='g:plugin:1')]:
+        for reference in [dict(module='producer', id='example.plugin', compilerVersion='2.4.20'), dict(coordinate='g:plugin:1'),
+                          dict(coordinate='g:plugin:1', id='example.plugin', compilerVersion='2.4.20')]:
             plugin = dict(**reference, targets=['jvm'], scopes=['script'], options=[], inputs=[])
             validator.validate(plugin)
             for targets in [['macosArm64'], ['linuxX64'], ['js'], ['wasmJs'], ['jvm', 'macosArm64', 'linuxX64', 'js', 'wasmJs']]:

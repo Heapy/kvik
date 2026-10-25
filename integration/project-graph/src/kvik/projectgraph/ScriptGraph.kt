@@ -46,11 +46,11 @@ private class ScriptGraphBuilder(
         require(lock.configuration == effective.digest && selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Stale or mismatched script lock" }
         require(tools.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit")) { "Missing/incompatible JVM tools" }
         require(!options.multiplatform) { "Script sources do not declare common fragments" }
-        require(plugins.count { it.module != null } <= 16 && plugins.count { it.coordinate != null } <= 1) {
-            "Scripts support at most 16 workspace plugins and one published serialization plugin"
+        require(plugins.count { it.id != null } <= 16 && plugins.count { it.id == null } <= 1) {
+            "Scripts support at most 16 explicit compiler plugins and one serialization shorthand"
         }
         require(plugins.mapNotNull { it.id }.let { it.distinct().size == it.size }) { "Duplicate script compiler plugin ID" }
-        require(plugins.none { it.coordinate != null } || plugins.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
+        require(plugins.none { it.id == null } || plugins.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
             "Workspace and published plugins cannot share the serialization plugin ID"
         }
         for (usage in listOf("java-api", "java-runtime")) require(ResolutionDomain.script(script.name, usage) in authorized) { "Unauthorized script dependency scope: $usage" }
@@ -117,7 +117,7 @@ private class ScriptGraphBuilder(
         return PluginInputs(inputs.flatMap { it.files }, inputs.flatMap { it.published }, inputs.flatMap { it.applications })
     }
     private fun pluginInputs(results: Map<String, ActionResult>, plugin: CompilerPluginSpec): PluginInputs {
-        plugin.coordinate?.let { coordinate ->
+        plugin.coordinate?.takeIf { plugin.id == null }?.let { coordinate ->
             val supported = Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")
             require(coordinate.group == supported.group && coordinate.name == supported.name) {
                 "Unsupported published script compiler plugin $coordinate; supported coordinate: $supported"
@@ -150,10 +150,11 @@ private class ScriptGraphBuilder(
                 files += resources.map { it.copy(path = LogicalPath(resourceRoot.value + "/" + it.path.value.removePrefix("runtime/$module/main/"))) }
             }
         }
-        val runtime = dependencyClosure(project, plugin.module!!, "jvm", "main", DependencyUsage.RUNTIME)
-        val artifacts = artifacts(runtime.external, "java-runtime", true)
+        val roots = plugin.coordinate?.let { listOf(it) }
+            ?: dependencyClosure(project, plugin.module!!, "jvm", "main", DependencyUsage.RUNTIME).external
+        val artifacts = artifacts(roots, "java-runtime", true)
         require(artifacts.none { it.coordinate.group == "org.jetbrains.kotlin" && it.coordinate.name in setOf("kotlin-compiler", "kotlin-compiler-embeddable") &&
-            (it.coordinate.name != "kotlin-compiler-embeddable" || it.coordinate.version != plugin.compilerVersion) }) { "Workspace plugin compiler API differs from pinned compiler" }
+            (it.coordinate.name != "kotlin-compiler-embeddable" || it.coordinate.version != plugin.compilerVersion) }) { "Compiler plugin API differs from pinned compiler" }
         for (entry in entries(artifacts, "$prefix/deps")) { files += entry; classpath += entry.path }
         fun input(path: LogicalPath) = LogicalPath("plugin-inputs/${plugin.id}/${path.value}")
         fun output(path: LogicalPath) = LogicalPath("plugins/${plugin.id}/${path.value}")

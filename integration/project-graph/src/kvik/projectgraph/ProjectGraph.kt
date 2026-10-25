@@ -81,8 +81,9 @@ fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<
             if (runtime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE)
         dependencies.modules.forEach { visit(it, target, "main", false) }
         if (scope == "test") visit(module, target, "main", false)
-        spec.compilerPlugins.filter { it.module != null && it.appliesTo(target, scope) }.forEach {
-            visit(it.module!!, "jvm", "main", true)
+        spec.compilerPlugins.filter { it.id != null && it.appliesTo(target, scope) }.forEach {
+            targets += "jvm"
+            it.module?.let { producer -> visit(producer, "jvm", "main", true) }
         }
     }
     for (module in request.modules) for (target in request.targets) {
@@ -517,22 +518,22 @@ private class Builder(
     private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
         modules.getValue(module).compilerPlugins.filter { it.appliesTo(target, scope) }.distinct()
             .also { selected ->
-                require(selected.count { it.module != null } <= 16 && selected.count { it.coordinate != null } <= 1) {
-                    "Compilations support at most 16 workspace plugins and one published serialization plugin"
+                require(selected.count { it.id != null } <= 16 && selected.count { it.id == null } <= 1) {
+                    "Compilations support at most 16 explicit compiler plugins and one serialization shorthand"
                 }
                 require(selected.mapNotNull { it.id }.let { it.distinct().size == it.size }) { "Duplicate compiler plugin ID" }
-                require(selected.none { it.coordinate != null } || selected.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
+                require(selected.none { it.id == null } || selected.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
                     "Workspace and published plugins cannot share the serialization plugin ID"
                 }
             }
     private fun plugins(module: String, target: String, scope: String,
                         applied: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): List<FileEntry> {
-        val selected = applied.filter { it.module == null }
+        val selected = applied.filter { it.id == null }
         require(selected.all { it.options.isEmpty() && it.inputs.isEmpty() }) { "Serialization plugin options/extra inputs are unsupported" }
         val roots = selected.map { it.coordinate!! }.distinct()
         require(roots.size <= 1) { "Multiple compiler plugins are unsupported" }
         return roots.flatMap { coordinate ->
-            require(coordinate == Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")) { "Only pinned serialization compiler plugin 2.4.20 is supported" }
+            require(coordinate == Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")) { "Published compiler plugins require an id and compilerVersion=2.4.20; only pinned serialization supports the shorthand" }
             val artifacts = locked(coordinate, ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")).artifacts
             require(artifacts.size == 1 && artifacts.single().coordinate == coordinate) { "Unsupported serialization plugin closure/pin" }
             artifactEntries(artifacts, "jvm", true)
@@ -547,7 +548,7 @@ private class Builder(
     private data class WorkspacePlugin(val entries: List<FileEntry>, val applications: List<JvmPluginApplication>)
     private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>,
                                 selected: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): WorkspacePlugin {
-        val inputs = selected.filter { it.module != null }.map { workspacePlugin(module, target, scope, results, it) }
+        val inputs = selected.filter { it.id != null }.map { workspacePlugin(module, target, scope, results, it) }
         return WorkspacePlugin(inputs.flatMap { it.entries }, inputs.flatMap { it.applications })
     }
     private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>,
@@ -568,9 +569,10 @@ private class Builder(
             }
         }
         val domain = ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")
-        val artifacts = closure(plugin.module!!, "jvm", "main", true).external.flatMap { locked(it, domain).artifacts }.distinctBy { artifactPath(it, true) }
+        val roots = plugin.coordinate?.let { listOf(it) } ?: closure(plugin.module!!, "jvm", "main", true).external
+        val artifacts = roots.flatMap { locked(it, domain).artifacts }.distinctBy { artifactPath(it, true) }
         require(artifacts.none { it.coordinate.group == "org.jetbrains.kotlin" && it.coordinate.name in setOf("kotlin-compiler", "kotlin-compiler-embeddable") &&
-            (it.coordinate.name != "kotlin-compiler-embeddable" || it.coordinate.version != plugin.compilerVersion) }) { "Workspace plugin compiler API differs from the pinned embeddable compiler" }
+            (it.coordinate.name != "kotlin-compiler-embeddable" || it.coordinate.version != plugin.compilerVersion) }) { "Compiler plugin API differs from the pinned embeddable compiler" }
         for (artifact in artifactEntries(artifacts, "jvm", true)) {
             val entry = artifact.copy(path = LogicalPath("$prefix/deps/${artifact.path.value.substringAfterLast('/')}"))
             entries += entry; classpath += entry.path

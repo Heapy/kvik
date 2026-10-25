@@ -1,4 +1,4 @@
-# Workspace compiler plugins
+# Compiler plugins from modules and Maven
 
 A module can reference a compiler plugin implemented by another module in the
 same project. Kvik builds the plugin and its prerequisites before compiling the
@@ -37,7 +37,7 @@ together. Select both `main` and `test` when the transformation is required in
 both the production library and test executable. A `main`-only workspace plugin
 is not implicitly loaded by Native test compilation. JS/Wasm test compilation
 also recompiles production sources and automatically inherits main-scoped plugins.
-A separate, different test plugin cannot be combined with an inherited main plugin.
+Main and test plugins can be combined when their IDs and output roots are distinct.
 
 Plugin classes, runtime helpers and resources are isolated from the consumer's
 ordinary dependency classpath. A Native build with a workspace plugin also
@@ -62,9 +62,9 @@ After changing configuration, resolve the lock explicitly, then build or test:
   --tools /absolute/project/tools.json --module app --target macosArm64
 ```
 
-A compilation accepts up to 16 workspace compiler plugins with distinct IDs and
+A compilation accepts up to 16 explicitly described compiler plugins with distinct IDs and
 Kotlin 2.4.20, on JVM, macosArm64, `js` and `wasmJs`. Each plugin uses an isolated
-classpath; workspace plugins are installed in declaration order. Shared producer
+classpath; explicit plugins are installed in declaration order. Shared producer
 dependencies are built once, and each plugin keeps its own options and outputs.
 A compilation can also apply the published
 `org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20`
@@ -77,3 +77,35 @@ JS/Wasm uses the JVM-hosted compiler and requires a plugin compatible with that
 backend. Source-free JS/Wasm links do not load the plugin. Project scripts can use workspace plugins with
 `targets: ["jvm"]` and `scopes: ["script"]`; see the
 [script contract](decisions/k12-scripts.md).
+
+Published plugins use the same `id`, `compilerVersion`, `options`, `inputs`,
+`pathOptions` and `outputs` contract. Replace `module` with a pinned Maven
+`coordinate`, for example:
+
+```json
+{
+  "coordinate": "org.jetbrains.kotlin:kotlin-allopen-compiler-plugin-embeddable:2.4.20",
+  "id": "org.jetbrains.kotlin.allopen",
+  "compilerVersion": "2.4.20",
+  "targets": ["jvm"],
+  "scopes": ["main", "test"],
+  "options": ["annotation=example.Open"],
+  "inputs": []
+}
+```
+
+Resolve explicitly after changing the declaration. The lock pins the plugin and
+its JVM runtime dependency closure separately from consumer dependencies. Plugin
+JARs are materialized in an isolated classpath and loaded only by the owned compiler
+worker. Their contents, options and declared inputs participate in compilation
+caching. Explicit published plugins can be mixed with workspace plugins; the
+16-plugin limit applies to their combined count. The existing serialization
+declaration without `id`/`compilerVersion` remains a supported shorthand.
+
+Use `targets: ["jvm"]` and `scopes: ["script"]` in a script declaration or shared
+dependency profile. Both project scripts and standalone `.kt`/`.kts` scripts use
+the same locked plugin mechanism. A plugin must expose exactly one K2 registrar,
+at most one command-line processor and the declared plugin ID, and must be
+compatible with Kotlin 2.4.20 and the selected backend. JVM-only plugins do not
+gain Native/JS/Wasm compatibility by being published. Explicit Native plugin
+declarations select `main` and `test` independently, as workspace plugins do.

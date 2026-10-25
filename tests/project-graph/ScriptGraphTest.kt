@@ -339,6 +339,35 @@ class ScriptGraphTest {
         }
     }
 
+    @Test fun publishedScriptPluginsKeepDescriptorsAndSeparateLockedInputs() {
+        val first = CompilerPluginSpec(null, Coordinate.parse("g:first:1"), setOf("jvm"), setOf("script"),
+            listOf("text=first"), listOf(LogicalPath("config.txt")), "fixture.first", "2.4.20",
+            listOf(PluginPathOption("config", PluginPathKind.INPUT_FILE, LogicalPath("config.txt"))))
+        val second = first.copy(coordinate = Coordinate.parse("g:second:1"), id = "fixture.second")
+        for (kts in listOf(false, true)) {
+            val primary = LogicalPath(if (kts) "task.kts" else "task.kt")
+            val spec = ScriptSpec(listOf(primary), entryScript = primary.takeIf { kts }, compilerPlugins = listOf(first, second))
+            val config = parseStandaloneScriptConfiguration(obj("schemaVersion" to 1.json(), "name" to "task".json(),
+                "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(), "script" to spec.toJson()))
+            val effective = effectiveConfiguration(config)
+            val files = scriptFiles(primary.value, "config.txt")
+            val graph = scriptActionGraph(effective, scriptLock(effective), files, scriptDigest("runtime"), scriptTools, ScriptGraphRequest("task"))
+            val actions = scriptActions(graph)
+            val compile = actions.getValue(scriptCompile)
+            val applications = compile.parameters.objectValue().getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
+            assertEquals(listOf(first.id, second.id), applications.map { it.id })
+            assertTrue(graph.nodes.single { it.id == scriptCompile }.dependencies.isEmpty())
+            applications.forEach { plugin ->
+                assertTrue(plugin.classpath.all { it.value.startsWith("plugins/${plugin.id}/deps/") })
+                assertTrue(plugin.classpath.all { path -> compile.inputs.files.any { it.path == path } })
+                assertEquals(listOf("text=first"), plugin.options)
+                assertEquals(listOf(LogicalPath("plugin-inputs/${plugin.id}/config.txt")), plugin.inputs)
+            }
+            assertFalse(actions.getValue(scriptRun).inputs.files.any { it.path.value.startsWith("plugins/") })
+            assertFails { scriptPlan(spec.copy(compilerPlugins = listOf(first, second.copy(id = first.id))), files) }
+        }
+    }
+
     @Test fun standaloneCompanionHasNoImplicitWorkspaceOrSyntheticModule() {
         val configuration = parseStandaloneScriptConfiguration(obj("schemaVersion" to 1.json(), "name" to "task".json(),
             "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(), "script" to scriptSpec.toJson()))

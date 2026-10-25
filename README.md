@@ -443,8 +443,9 @@ workspace module dependencies for helpers written as ordinary `.kt` files.
 `entryScript` and `mainClass` are mutually exclusive. A standalone
 `update.main.kts` uses `update.main.kvik.json` and `update.main.kvik.lock.json`.
 
-Both `.kt` and `.kts` scripts support up to 16 workspace compiler plugins, optionally
-combined with the pinned serialization plugin. Workspace plugins run in declaration
+Both `.kt` and `.kts` scripts support up to 16 workspace or explicitly described
+[Maven compiler plugins](docs/workspace-compiler-plugins.md), optionally combined
+with the pinned serialization shorthand. Explicit plugins run in declaration
 order, with distinct IDs, isolated classpaths and separate declared outputs. Changing
 any plugin's implementation, options or order invalidates script compilation.
 
