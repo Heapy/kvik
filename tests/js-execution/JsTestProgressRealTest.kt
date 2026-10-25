@@ -15,7 +15,7 @@ class JsTestProgressRealTest {
     @Test fun realNodeRetriesResetMemoryAndRetainOriginalFailuresAndLogs() {
         val node = checkNotNull(getenv("KVIK_JS_TEST_NODE")).toKString()
         val guardian = checkNotNull(getenv("KVIK_JS_TEST_GUARDIAN")).toKString()
-        for (target in KotlinJsTarget.entries) {
+        for (target in KotlinJsTarget.entries) for (corrupt in listOf(false, true)) {
             val root = NativeRunDirectory("/private/tmp")
             val store = NativeContentStore("${root.path}/store")
             val body = """
@@ -23,15 +23,17 @@ class JsTestProgressRealTest {
                     it('flaky',()=>{
                         if (globalThis.alreadyRan) throw Error('process memory was reused');
                         globalThis.alreadyRan = true;
-                        if (existsSync('marker')) { console.log('RECOVERED'); return; }
+                        if (existsSync('marker')) { console.log('RECOVERED'); globalThis.recovered = true; return; }
                         writeFileSync('marker','first failure');
                         console.log('FIRST_FAILURE');
                         throw Error('original failure');
                     });
-                    it('sibling',()=>{});
+                    it('sibling',()=>{
+                        ${if (corrupt) "if (globalThis.recovered) { appendFileSync('test-progress-2.jsonl', 'invalid\\n'); process.exit(0); }" else ""}
+                    });
                 });
             """.trimIndent()
-            val source = "import {existsSync,writeFileSync} from 'node:fs';\n" +
+            val source = "import {existsSync,writeFileSync,appendFileSync} from 'node:fs';\n" +
                 if (target == KotlinJsTarget.JS) body else "export function startUnitTests(){$body}"
             val digest = store.put(source.encodeToByteArray())
             val selection = JsTestSelection("sample", target, LogicalPath("tests.mjs"), maxRetries = 2)
@@ -44,8 +46,9 @@ class JsTestProgressRealTest {
                     while (running.poll() == null) { check(start.elapsedNow().inWholeSeconds < 15); usleep(10_000u) }
                     val report = executor.observations.getValue("tests").tests!!
                     assertEquals(VerificationStatus.FAILED, report.status)
-                    assertEquals(TestCounts(2, 2, 0, 0, true), report.counts)
-                    assertTrue(report.tests.all { it.details!!.attempts.size == 2 })
+                    assertEquals(TestCounts(if (corrupt) null else 2, 2, 0, 0, !corrupt), report.counts)
+                    assertEquals(if (corrupt) 1 else 2, report.tests.single { it.id == "suite.sibling" }.details!!.attempts.size)
+                    if (corrupt) assertContains(assertNotNull(report.diagnostic), "test progress record 2")
                     val attempts = report.tests.single { it.id == "suite.flaky" }.details!!.attempts
                     assertEquals(listOf(TestStatus.FAILED, TestStatus.PASSED), attempts.map { it.status })
                     assertEquals("original failure", attempts.first().failure!!.message)
@@ -63,7 +66,8 @@ class JsTestProgressRealTest {
     @Test fun realOwnedNodeRetainsCompletedTestsThroughInterruptionAndExport() {
         val node = checkNotNull(getenv("KVIK_JS_TEST_NODE")) { "Run tools/test_js_execution.py" }.toKString()
         val guardian = checkNotNull(getenv("KVIK_JS_TEST_GUARDIAN")).toKString()
-        for (target in KotlinJsTarget.entries) for (variant in listOf("passed", "timeout", "timeout-failed", "cancel-failed", "exit-zero")) {
+        for (target in KotlinJsTarget.entries) for (variant in listOf("passed", "timeout", "timeout-failed", "cancel-failed", "exit-zero",
+            "corrupt", "corrupt-failed", "cancel-corrupt-failed")) {
             val root = NativeRunDirectory("/private/tmp")
             val store = NativeContentStore("${root.path}/store")
             val failed = variant.endsWith("failed")
@@ -74,16 +78,17 @@ class JsTestProgressRealTest {
                     xit('skipped',()=>{throw Error('must not execute')});
                     ${if (failed) "it('failed',()=>{throw Error('retained failure')});" else ""}
                     it('last',()=>{
+                        ${if ("corrupt" in variant) "appendFileSync('test-progress.jsonl', Buffer.from([255,10]));" else ""}
                         writeFileSync('ready','ready');
                         ${when (variant) {
                             "passed" -> "return;"
-                            "exit-zero" -> "process.exit(0);"
+                            "exit-zero", "corrupt", "corrupt-failed" -> "process.exit(0);"
                             else -> "return new Promise(()=>setInterval(()=>{},1000));"
                         }}
                     });
                 });
             """.trimIndent()
-            val source = "import {writeFileSync} from 'node:fs';\n" +
+            val source = "import {writeFileSync,appendFileSync} from 'node:fs';\n" +
                 if (target == KotlinJsTarget.JS) body else "export function startUnitTests(){$body}"
             val digest = store.put(source.encodeToByteArray())
             val selection = JsTestSelection("sample", target, LogicalPath("tests.mjs"))
@@ -133,6 +138,7 @@ class JsTestProgressRealTest {
                     assertEquals(variant == "passed", report.counts.discoveryComplete)
                     assertEquals(if (failed) 1 else 0, report.counts.failed)
                     assertEquals(1, report.counts.skipped)
+                    if ("corrupt" in variant) assertContains(assertNotNull(report.diagnostic), "test progress record")
                     if (variant != "passed") assertTrue(report.tests.none { it.id == "partial.last" })
                     val evidence = aggregateRunEvidence(root.runId, setOf(check), mapOf(check to check), mapOf(check to emptySet()),
                         listOf(observed.result), mapOf(check to TestObservation(report.tests, report.counts, report.status)),

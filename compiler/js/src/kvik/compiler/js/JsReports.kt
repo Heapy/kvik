@@ -35,44 +35,70 @@ internal fun parseJsTestProgress(bytes: ByteArray, requestId: String, selection:
     status: VerificationStatus, diagnostic: String?): JsTestReport {
     require(status == VerificationStatus.CANCELLED || status == VerificationStatus.INCOMPLETE)
     require(bytes.size <= 64 * 1024 * 1024) { "Oversized Node test progress" }
-    val end = bytes.indexOfLast { it == 10.toByte() }
-    require(end >= 0) { "Missing Node test progress header" }
-    // A killed writer can leave half a UTF-8 code point in the final, uncommitted line.
-    val lines = bytes.decodeToString(0, end + 1, throwOnInvalidSequence = true).splitToSequence('\n').iterator()
-    val header = parseJson(lines.next()).fields(setOf("schemaVersion", "kind", "requestId", "selection"))
+    var start = 0
+    fun line(end: Int): JsonValue = parseJson(bytes.decodeToString(start, end, throwOnInvalidSequence = true))
+    val headerEnd = bytes.indexOf(10.toByte())
+    require(headerEnd >= 0) { "Missing Node test progress header" }
+    val header = line(headerEnd).fields(setOf("schemaVersion", "kind", "requestId", "selection"))
     header.requireVersion()
     require(header.getValue("kind").stringValue() == "js-test-progress") { "Invalid Node progress kind" }
     require(header.getValue("requestId").stringValue() == requestId && JsTestSelection.fromJson(header.getValue("selection")) == selection) { "Node progress/request mismatch" }
+    start = headerEnd + 1
     var discovered: Int? = null
     val tests = mutableListOf<TestResult>()
+    val identities = mutableSetOf<String>()
+    val pattern = jsTestFilter(selection)
     var sequence = 0
-    while (lines.hasNext()) {
-        val line = lines.next()
-        if (!lines.hasNext()) { require(line.isEmpty()); break }
-        require(sequence <= 100000) { "Too many Node progress records" }
-        if (sequence == 0) {
-            val event = parseJson(line).fields(setOf("sequence", "kind", "count"))
-            require(event.getValue("sequence").longValue() == 0L && event.getValue("kind").stringValue() == "discovered") { "Missing Node progress discovery" }
-            discovered = event.getValue("count").longValue().also { require(it in 0..100000L) }.toInt()
-        } else {
-            val event = parseJson(line).fields(setOf("sequence", "kind", "test"))
-            require(event.getValue("sequence").longValue() == sequence.toLong() && event.getValue("kind").stringValue() == "test-result") { "Invalid Node progress sequence" }
-            require(tests.size < checkNotNull(discovered)) { "Node progress exceeds discovery count" }
-            tests += TestResult.fromJson(event.getValue("test"))
+    var problem = diagnostic
+    // Decode committed lines independently: corrupt UTF-8 in a later record must not erase
+    // earlier observations. A killed writer's unfinished final line is never decoded.
+    for (end in start until bytes.size) {
+        if (bytes[end] != 10.toByte()) continue
+        try {
+            require(sequence <= 100000) { "Too many Node progress records" }
+            if (sequence == 0) {
+                val event = line(end).fields(setOf("sequence", "kind", "count"))
+                require(event.getValue("sequence").longValue() == 0L && event.getValue("kind").stringValue() == "discovered") { "Missing Node progress discovery" }
+                discovered = event.getValue("count").longValue().also { require(it in 0..100000L) }.toInt()
+            } else {
+                val event = line(end).fields(setOf("sequence", "kind", "test"))
+                require(event.getValue("sequence").longValue() == sequence.toLong() && event.getValue("kind").stringValue() == "test-result") { "Invalid Node progress sequence" }
+                require(tests.size < checkNotNull(discovered)) { "Node progress exceeds discovery count" }
+                val test = TestResult.fromJson(event.getValue("test"))
+                validateJsTest(test, selection, pattern)
+                require(identities.add(test.id)) { "Duplicate Node test identity" }
+                tests += test
+            }
+            sequence++
+            start = end + 1
+        } catch (failure: Exception) {
+            val message = "Invalid JS/Wasm test progress record $sequence: ${failure.message ?: "invalid record"}"
+            problem = boundedJsDiagnostic(listOfNotNull(diagnostic, message).joinToString("; "))
+            break // Never resume after a corrupt record, even if later records look valid.
         }
-        sequence++
     }
-    validateJsTests(tests, selection)
     val counts = TestCounts(discovered, tests.count { it.status != TestStatus.SKIPPED }, tests.count { it.status == TestStatus.FAILED }, tests.count { it.status == TestStatus.SKIPPED }, false)
     val recoveredStatus = if (status == VerificationStatus.INCOMPLETE && counts.failed > 0) VerificationStatus.FAILED else status
-    return JsTestReport(tests, counts, recoveredStatus, diagnostic)
+    return JsTestReport(tests, counts, recoveredStatus, problem)
+}
+
+private fun boundedJsDiagnostic(value: String): String = value.take(TEST_STACK_TRACE_LIMIT).let {
+    if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it
+}
+
+private fun jsTestFilter(selection: JsTestSelection): Regex? =
+    selection.filter?.let { Regex("^" + it.split('*').joinToString(".*") { part -> Regex.escape(part) } + "$") }
+
+private fun validateJsTest(test: TestResult, selection: JsTestSelection, pattern: Regex?) {
+    require(test.module == selection.module && test.target == selection.target.projectName) { "Node reported a different test scope" }
+    require(pattern == null || pattern.matches(test.id)) { "Node reported an unselected test" }
+    require(test.details?.attempts?.singleOrNull()?.let { it.number == 1 && it.status == test.status && it.logs.isEmpty() } == true) { "Invalid Node test attempt" }
 }
 
 private fun validateJsTests(tests: List<TestResult>, selection: JsTestSelection) {
-    require(tests.size <= 100000 && tests.all { it.module == selection.module && it.target == selection.target.projectName } && tests.map { it.id }.distinct().size == tests.size)
-    val pattern = selection.filter?.let { Regex("^" + it.split('*').joinToString(".*") { part -> Regex.escape(part) } + "$") }
-    require(tests.all { pattern == null || pattern.matches(it.id) }) { "Node reported an unselected test" }
-    require(tests.all { test -> test.details?.attempts?.singleOrNull()?.let { it.number == 1 && it.status == test.status && it.logs.isEmpty() } == true }) { "Invalid Node test attempt" }
+    require(tests.size <= 100000 && tests.map { it.id }.distinct().size == tests.size)
+    val pattern = jsTestFilter(selection)
+    tests.forEach { validateJsTest(it, selection, pattern) }
 }
 
 internal fun jsCompilerDiagnostics(text: String, module: String, actionId: String, target: KotlinJsTarget): List<Diagnostic> {

@@ -11,7 +11,7 @@ import platform.posix.usleep
 class JsRetryExecutionTest {
     @Test fun freshAttemptsRetainFailuresAndStopAtProcessOrReportingFailures() {
         for (target in KotlinJsTarget.entries) for (variant in listOf("pass", "recover", "exhaust", "partial", "timeout", "cancel",
-            "start-failure", "missing-log", "identity-change", "runner-failure")) exercise(target, variant)
+            "start-failure", "missing-log", "identity-change", "runner-failure", "corrupt-progress")) exercise(target, variant)
     }
 
     private fun exercise(target: KotlinJsTarget, variant: String) {
@@ -56,8 +56,9 @@ class JsRetryExecutionTest {
                         val events = listOf(obj("schemaVersion" to 1.json(), "kind" to "js-test-progress".json(), "requestId" to token.json(), "selection" to selection.toJson()),
                             obj("sequence" to 0.json(), "kind" to "discovered".json(), "count" to 2.json()),
                             obj("sequence" to 1.json(), "kind" to "test-result".json(), "test" to tests.first().toJson()))
-                        NativeFiles.writeNew("$directory/$progress", events.joinToString("\n", postfix = "\n") { it.canonical() }.encodeToByteArray())
-                        if (!(round == 2 && variant == "partial")) NativeFiles.writeNew("$directory/$result", obj(
+                        val tail = if (round == 2 && variant == "corrupt-progress") "invalid\n" else ""
+                        NativeFiles.writeNew("$directory/$progress", (events.joinToString("\n", postfix = "\n") { it.canonical() } + tail).encodeToByteArray())
+                        if (!(round == 2 && variant in setOf("partial", "corrupt-progress"))) NativeFiles.writeNew("$directory/$result", obj(
                             "schemaVersion" to 1.json(), "requestId" to token.json(), "selection" to selection.toJson(),
                             "status" to (if (failed) "failed" else "passed").json(), "exitCode" to exit.json(),
                             "tests" to tests.map { it.toJson() }.json(), "counts" to TestCounts(2, 2, if (failed) 1 else 0, 0, true).toJson(),
@@ -93,7 +94,12 @@ class JsRetryExecutionTest {
             assertTrue(report.tests.all { it.details!!.attempts.size == 2 })
             assertEquals(listOf(TestStatus.FAILED, TestStatus.PASSED), report.tests.single { it.id == "flaky" }.details!!.attempts.map { it.status })
         }
-        if (variant in setOf("partial", "timeout", "cancel", "start-failure", "missing-log", "identity-change")) assertFalse(report.counts.discoveryComplete)
+        if (variant in setOf("partial", "timeout", "cancel", "start-failure", "missing-log", "identity-change", "corrupt-progress")) assertFalse(report.counts.discoveryComplete)
+        if (variant == "corrupt-progress") {
+            assertEquals(listOf(TestStatus.FAILED, TestStatus.PASSED), report.tests.single { it.id == "flaky" }.details!!.attempts.map { it.status })
+            assertEquals(1, report.tests.single { it.id == "sibling" }.details!!.attempts.size)
+            assertContains(assertNotNull(report.diagnostic), "test progress record 2")
+        }
         for (test in report.tests) {
             val attempts = test.details!!.attempts
             assertEquals(attempts.size, attempts.flatMap { it.logs }.filter { it.stream == TestLogStream.STDOUT }.map { it.path }.distinct().size)

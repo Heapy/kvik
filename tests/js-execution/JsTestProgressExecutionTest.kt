@@ -13,7 +13,7 @@ class JsTestProgressExecutionTest {
     @Test fun interruptedTestsRecoverOnlyValidProgressAfterProcessClosure() {
         for (target in KotlinJsTarget.entries) for (variant in listOf(
             "timeout", "cancel", "process-cancel", "crash", "crash-zero", "failed-before-timeout", "failed-before-cancel",
-            "missing-progress", "corrupt-progress", "wrong-request", "wrong-selection", "oversize-progress",
+            "missing-progress", "corrupt-progress", "failed-corrupt-progress", "failed-corrupt-cancel", "wrong-request", "wrong-selection", "oversize-progress",
             "final-malformed", "final-exit-mismatch", "passed-final-before-timeout", "passed-final-before-cancel",
             "passed-final-extra-output", "passed-final", "failed-final",
         )) {
@@ -61,7 +61,7 @@ class JsTestProgressExecutionTest {
                                 )
                                 val bytes = when (variant) {
                                     "oversize-progress" -> ByteArray(64 * 1024 * 1024 + 1)
-                                    "corrupt-progress" -> (records.joinToString("\n") { it.canonical() } + "\ninvalid\n").encodeToByteArray()
+                                    "corrupt-progress", "failed-corrupt-progress", "failed-corrupt-cancel" -> (records.joinToString("\n") { it.canonical() } + "\ninvalid\n").encodeToByteArray()
                                     else -> (records.joinToString("\n") { it.canonical() } + "\n").encodeToByteArray() + byteArrayOf(0xE2.toByte(), 0x82.toByte())
                                 }
                                 NativeFiles.writeNew("$directory/test-progress.jsonl", bytes)
@@ -90,7 +90,7 @@ class JsTestProgressExecutionTest {
                 val expectedAction = when { variant == "passed-final" -> ActionStatus.EXECUTED; cancelled -> ActionStatus.CANCELLED; else -> ActionStatus.FAILED }
                 assertEquals(expectedAction, result.status, "$target/$variant")
                 assertEquals(1, closes)
-                val invalid = variant in setOf("missing-progress", "corrupt-progress", "wrong-request", "wrong-selection", "oversize-progress")
+                val invalid = variant in setOf("missing-progress", "wrong-request", "wrong-selection", "oversize-progress")
                 assertEquals(if (invalid) emptyList() else listOf(test), report.tests.map { result ->
                     result.copy(details = result.details!!.copy(attempts = result.details.attempts.map { it.copy(logs = emptyList()) }))
                 }, "$target/$variant")
@@ -109,7 +109,7 @@ class JsTestProgressExecutionTest {
                 }
                 assertEquals(when { cancelled -> VerificationStatus.CANCELLED; failed -> VerificationStatus.FAILED; variant == "passed-final" -> VerificationStatus.PASSED; else -> VerificationStatus.INCOMPLETE }, report.status, "$target/$variant")
                 if (timedOut) assertContains(assertNotNull(result.diagnostic), "timed out")
-                if (invalid) assertContains(assertNotNull(result.diagnostic), "test progress")
+                if (invalid || "corrupt" in variant) assertContains(assertNotNull(result.diagnostic), "test progress")
                 assertEquals(result, running.poll())
             }
             assertEquals(1, closes)

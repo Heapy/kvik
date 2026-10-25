@@ -160,31 +160,75 @@ class JsAdapterTest {
         assertEquals(TestCounts(null, 0, 0, 0, false), header.counts)
         val discovery = parseJsTestProgress(journal(lines.take(2)), "run", selection, VerificationStatus.INCOMPLETE, "exit")
         assertEquals(TestCounts(1, 0, 0, 0, false), discovery.counts)
-        assertFails { parseJsTestProgress(complete + byteArrayOf(0xFF.toByte(), 10), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+        val corrupt = parseJsTestProgress(complete + byteArrayOf(0xFF.toByte(), 10), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+        assertEquals(parsed.tests, corrupt.tests)
+        assertFalse(corrupt.counts.discoveryComplete)
+        assertContains(assertNotNull(corrupt.diagnostic), "Invalid JS/Wasm test progress record 2")
         assertFails { parseJsTestProgress(lines.first().canonical().encodeToByteArray(), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
     }
 
-    @Test fun corruptProgressRejectsEveryObservation() {
+    @Test fun corruptProgressRejectsForeignHeadersAndRetainsOnlyValidatedPrefix() {
         val (selection, value) = report()
         val test = value.values.getValue("tests").arrayValue().single() as JsonValue.Object
         val lines = progress(selection, listOf(test))
         fun changed(index: Int, key: String, value: JsonValue): List<JsonValue> = lines.mapIndexed { i, line ->
             if (i == index) JsonValue.Object((line as JsonValue.Object).values + (key to value)) else line
         }
-        val bad = listOf(
-            emptyList(), lines.drop(1), listOf(lines[0], lines[2]), lines + lines[2],
+        val badHeaders = listOf(
+            emptyList(), lines.drop(1),
             changed(0, "requestId", "other".json()), changed(0, "schemaVersion", 2.json()), changed(0, "kind", "other".json()),
             changed(0, "selection", selection.copy(filter = "other.*").toJson()),
+        )
+        for (records in badHeaders) assertFails { parseJsTestProgress(journal(records), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+        val badEvents = listOf(
+            listOf(lines[0], lines[2]),
             changed(1, "count", (-1).json()), changed(1, "count", 100001.json()), changed(1, "count", 0.json()),
             changed(1, "sequence", 1.json()), changed(2, "sequence", 3.json()), changed(2, "kind", "discovered".json()),
-            progress(selection, listOf(test, test)),
             progress(selection, listOf(JsonValue.Object(test.values + ("id" to "unselected.test".json())))),
             progress(selection, listOf(JsonValue.Object(test.values + ("module" to "other".json())))),
             progress(selection, listOf(JsonValue.Object(test.values - "details")))
         )
-        for (records in bad) assertFails { parseJsTestProgress(journal(records), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+        for (records in badEvents) {
+            val result = parseJsTestProgress(journal(records), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+            assertTrue(result.tests.isEmpty())
+            assertEquals(VerificationStatus.INCOMPLETE, result.status)
+            assertContains(assertNotNull(result.diagnostic), "test progress record")
+        }
+        for (records in listOf(lines + lines[2], progress(selection, listOf(test, test)))) {
+            val result = parseJsTestProgress(journal(records), "run", selection, VerificationStatus.INCOMPLETE, "exit")
+            assertEquals(listOf(TestResult.fromJson(test)), result.tests)
+            assertFalse(result.counts.discoveryComplete)
+            assertContains(assertNotNull(result.diagnostic), "test progress record 2")
+        }
         assertFails { parseJsTestProgress(journal(lines), "run", selection, VerificationStatus.PASSED, null) }
         assertFails { parseJsTestProgress(ByteArray(64 * 1024 * 1024 + 1), "run", selection, VerificationStatus.INCOMPLETE, "exit") }
+    }
+
+    @Test fun corruptRecordsCannotEraseFailuresOrAdmitLaterUnvalidatedTests() {
+        val (selection, value) = report(TestStatus.FAILED)
+        val test = value.values.getValue("tests").arrayValue().single() as JsonValue.Object
+        val later = JsonValue.Object(test.values + ("id" to "suite.later".json()))
+        val prefix = progress(selection, listOf(test), 4)
+        val missingDetails = JsonValue.Object(test.values - "details")
+        val log = TestLogReference(TestLogStream.STDOUT, LogicalPath("foreign/stdout"), Sha256.digest(byteArrayOf()))
+        val withLogs = TestResult.fromJson(test).let { it.copy(details = it.details!!.let { details ->
+            details.copy(attempts = details.attempts.map { attempt -> attempt.copy(logs = listOf(log)) })
+        }) }.toJson()
+        for (invalid in listOf(test, missingDetails, withLogs,
+            JsonValue.Object(test.values + ("id" to "unselected".json())),
+            JsonValue.Object(test.values + ("target" to "wasmJs".json())))) {
+            val records = prefix + listOf(
+                obj("sequence" to 2.json(), "kind" to "test-result".json(), "test" to invalid),
+                obj("sequence" to 3.json(), "kind" to "test-result".json(), "test" to later))
+            for (status in listOf(VerificationStatus.INCOMPLETE, VerificationStatus.CANCELLED)) {
+                val parsed = parseJsTestProgress(journal(records), "run", selection, status, "process stopped")
+                assertEquals(listOf(TestResult.fromJson(test)), parsed.tests)
+                assertEquals(TestCounts(4, 1, 1, 0, false), parsed.counts)
+                assertEquals(if (status == VerificationStatus.CANCELLED) status else VerificationStatus.FAILED, parsed.status)
+                assertContains(assertNotNull(parsed.diagnostic), "process stopped; Invalid JS/Wasm test progress record 2")
+                assertFalse(parsed.retryable)
+            }
+        }
     }
 
     @Test fun wasmLinkSuppressesOnlyTheKnownCompilerMainCall() {
