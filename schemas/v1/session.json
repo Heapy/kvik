@@ -2248,6 +2248,111 @@
         "nextCursor"
       ],
       "additionalProperties": false
+    },
+    "sessionFollowEvents": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-follow-events"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ownerAlive": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          },
+          "maxItems": 256
+        },
+        "pendingTail": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "$ref": "#/$defs/sessionCursor"
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "sessionId",
+        "ownerAlive",
+        "events",
+        "pendingTail",
+        "status",
+        "hasMore",
+        "nextCursor",
+        "directory"
+      ],
+      "additionalProperties": false
+    },
+    "sessionReconnect": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "session-reconnect"
+        },
+        "ownerAlive": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/sessionState"
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "attached",
+            "restarting",
+            "owner-exited"
+          ]
+        },
+        "chain": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ownerAlive",
+        "state",
+        "directory",
+        "status",
+        "chain"
+      ],
+      "additionalProperties": false
     }
   }
 }

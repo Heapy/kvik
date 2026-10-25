@@ -173,8 +173,10 @@ val mcpTools: List<McpTool> = listOf(
         listOf("run-stats"), required = setOf("run"), arguments = listOf(retainedRun), project = false),
     McpTool("kvik_session_status", "Read a foreground session's state and owner liveness. Reading retained state does not restart or keep a session alive.",
         listOf("session", "status"), required = setOf("session"), arguments = listOf(sessionDirectory), project = false),
-    McpTool("kvik_session_events", "Read a bounded page of foreground session events. Continue with nextCursor; inspect ownerAlive, hasMore, pendingTail and status. An incomplete journal after owner exit returns isError.",
-        listOf("session", "events"), required = setOf("session"), arguments = listOf(sessionDirectory, sessionCursor, integer("limit", "--limit", 256)), project = false),
+    McpTool("kvik_session_reconnect", "Find the latest published session through up to 64 reciprocal runtime handoffs. attached means an observed live owner; restarting means the successor has not published its state; owner-exited retains the final state. Never starts or keeps an owner alive. Controls must explicitly use the returned directory.",
+        listOf("session", "reconnect"), required = setOf("session"), arguments = listOf(sessionDirectory), project = false),
+    McpTool("kvik_session_events", "Read a bounded page of foreground session events. With follow=true, keep the original session directory and pass nextCursor to drain successive runtime handoffs in order. This is pagination, not a blocking stream. Continue polling after hasMore=false while the owner runs or restarts. Inspect ownerAlive, hasMore, pendingTail and status. An incomplete journal after owner exit returns isError.",
+        listOf("session", "events"), required = setOf("session"), arguments = listOf(sessionDirectory, sessionCursor, integer("limit", "--limit", 256), switch("follow", "--follow")), project = false),
 )
 
 /** Configuration changes are opt-in independently of build execution. */

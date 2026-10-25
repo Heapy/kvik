@@ -138,7 +138,7 @@ def main():
             c.request('initialize', {}, error=-32600)
             tools = c.request('tools/list')['tools']
             assert {t['name'] for t in tools} == {'kvik_inspect', 'kvik_config_validate', 'kvik_dependencies', 'kvik_package_versions', 'kvik_package_dependencies',
-                                                'kvik_verification', 'kvik_explain', 'kvik_run_stats', 'kvik_session_status', 'kvik_session_events'}
+                                                'kvik_verification', 'kvik_explain', 'kvik_run_stats', 'kvik_session_status', 'kvik_session_reconnect', 'kvik_session_events'}
             for tool in tools:
                 jsonschema.Draft202012Validator.check_schema(tool['inputSchema'])
                 assert tool['annotations']['readOnlyHint'] is True

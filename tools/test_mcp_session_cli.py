@@ -150,6 +150,10 @@ class PassingTests { @Test fun slow() {
         c = client()
         current = c.tool('kvik_session_status', dict(session=str(owner.directory)))
         assert current['ownerAlive'] and current['state']['activeOperationId'] == operation_id
+        reconnected = c.tool('kvik_session_reconnect', dict(session=str(owner.directory)))
+        assert reconnected['status'] == 'attached' and reconnected['directory'] == str(owner.directory)
+        followed = c.tool('kvik_session_events', dict(session=str(owner.directory), follow=True, limit=1))
+        assert followed['kind'] == 'session-follow-events' and followed['events'][0]['type'] == 'session-started'
         cancelled = call(c, owner, 'cancel-test', 'cancel', operation=operation_id)
         assert cancelled['reply']['outcome']['status'] == 'accepted'
         owner.wait('operation-finished', lambda e: e['payload']['operationId'] == operation_id and e['payload']['cancelled'])
@@ -159,6 +163,7 @@ class PassingTests { @Test fun slow() {
         owner.process.stdin.close()
         assert owner.process.wait(timeout=15) == 0
         assert not c.tool('kvik_session_status', dict(session=str(owner.directory)))['ownerAlive']
+        assert c.tool('kvik_session_reconnect', dict(session=str(owner.directory)))['status'] == 'owner-exited'
         assert call(c, owner, 'reload-1', 'r') == reload
         assert call(c, owner, 'after-exit', 't', failed=True)['status'] == 'owner-exited'
         assert c.tool('kvik_session_events', dict(session=str(owner.directory)))['events']

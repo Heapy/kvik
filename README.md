@@ -1236,7 +1236,9 @@ or agent can query it without taking over the owner's stdin:
 
 ```sh
 kvik session status --session /project/.kvik/sessions/SESSION
+kvik session reconnect --session /project/.kvik/sessions/SESSION
 kvik session events --session /project/.kvik/sessions/SESSION --limit 100
+kvik session events --follow --session /project/.kvik/sessions/SESSION --limit 100
 kvik session control --session /project/.kvik/sessions/SESSION --request-id test-1 --command t
 kvik session control --session /project/.kvik/sessions/SESSION --request-id cancel-1 --command cancel --operation OPERATION_ID
 ```
@@ -1245,8 +1247,27 @@ Pass `nextCursor` as JSON to `session events --cursor` for subsequent pages.
 Only complete journal records advance the cursor; reads and page sizes are
 bounded. Status and event queries remain available after exit. `ownerAlive`
 is a lock observation at query time; the saved state may describe the last
-observation before a crash. Runtime recomposition exposes `nextSessionDirectory`;
-clients explicitly reconnect to that new directory with a new event cursor.
+observation before a crash.
+
+`session reconnect` follows published runtime handoffs and returns the latest
+`directory`, `state`, `ownerAlive` and the visited `chain`. Its status is `attached`
+when an owner is observed, `restarting` when a successor has not published its
+state, or `owner-exited` when no owner or successor remains. A failed successor
+startup can leave `restarting`; the query never creates or recovers an owner.
+Handoffs must link back to their predecessor and stay in the same session root.
+Queries traverse at most 64 sessions; use a newer anchor for longer chains.
+
+`session events --follow` returns one bounded `session-follow-events` page. Keep
+the original `--session` directory and pass each returned `nextCursor` unchanged.
+It drains each old journal before advancing the cursor to the successor, whose
+event sequence starts at one. The response's `directory` identifies the journal
+read by that page; `ownerAlive` describes that journal's owner, while reconnect
+reports the latest owner. `nextCursor` can identify the next session. An incomplete tail
+blocks advancement. `hasMore=false` means no further events were observed at that
+moment; poll again while the session is running or restarting. MCP provides
+`kvik_session_reconnect` and the equivalent `follow` option on `kvik_session_events`.
+Control requests are never forwarded automatically: use the directory returned
+by reconnect and reconcile earlier acknowledgements before issuing new commands.
 
 Control commands are `r`, `t`, `q`, `status` and `cancel`. Each request requires an
 ID: repeating the same ID and command retrieves its original acknowledgement,
