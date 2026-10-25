@@ -9,12 +9,15 @@ import platform.posix.*
 import kotlin.time.TimeSource
 
 fun main() {
-    val verifier = InstalledToolchainVerifier()
+    val verifiers = (1..3).associateWith { InstalledToolchainVerifier(parallelism = it) }
     while (true) {
         val line = readlnOrNull() ?: break
         val start = TimeSource.Monotonic.markNow()
         val result = try {
             val request = parseJson(line).objectValue()
+            val parallelism = request["parallelism"]?.longValue() ?: 3L
+            require(parallelism in 1L..3L)
+            val verifier = verifiers.getValue(parallelism.toInt())
             val response = when (request.getValue("op").stringValue()) {
                 "inventory" -> {
                     val limits = request["limits"]?.objectValue()

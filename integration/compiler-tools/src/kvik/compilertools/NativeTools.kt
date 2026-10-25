@@ -24,6 +24,7 @@ class InstalledNativeToolchainProvider(
     toolRoots: Map<ToolComponent, String>,
     private val konanDataRoot: String,
     private val target: NativeTarget = NativeTarget.MACOS_ARM64,
+    private val verificationParallelism: Int = 3,
 ) : NativeToolchainProvider {
     private val toolRoots = toolRoots.toMap()
 
@@ -42,7 +43,7 @@ class InstalledNativeToolchainProvider(
         val platformComponent = if (apple) appleSdkComponent(target) else ToolComponent.SYSTEM
         val consumed = setOf(ToolComponent.JDK, ToolComponent.KOTLIN_NATIVE, ToolComponent.LLVM, ToolComponent.LIBFFI,
             platformComponent, if (apple) ToolComponent.XCODE_TOOLCHAIN else ToolComponent.NATIVE_TOOLCHAIN)
-        val installed = InstalledToolchainVerifier().verifySelected(trustedToolLock, toolRoots, consumed, checkpoint)
+        val installed = InstalledToolchainVerifier(parallelism = verificationParallelism).verifySelected(trustedToolLock, toolRoots, consumed, checkpoint)
         val native = installed[ToolComponent.KOTLIN_NATIVE]
         val jdk = installed[ToolComponent.JDK]
         val llvm = installed[ToolComponent.LLVM]

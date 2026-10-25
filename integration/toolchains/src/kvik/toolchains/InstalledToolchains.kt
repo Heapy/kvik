@@ -44,8 +44,9 @@ class VerifiedToolchains internal constructor(
     operator fun get(component: ToolComponent): VerifiedToolComponent = components.getValue(component)
 }
 
-/** No memoization: each call re-reads every regular file in the requested installations. */
-class InstalledToolchainVerifier(private val limits: InventoryLimits = InventoryLimits()) {
+/** Each call re-reads all consumed bytes, with at most three invocation-owned component readers. */
+class InstalledToolchainVerifier(private val limits: InventoryLimits = InventoryLimits(), private val parallelism: Int = 3) {
+    init { require(parallelism in 1..3) }
     fun verify(lockJson: String, roots: Map<ToolComponent, String>, checkpoint: () -> Unit = {}): VerifiedToolchains =
         verifySelected(lockJson, roots, roots.keys, checkpoint)
 
@@ -59,17 +60,18 @@ class InstalledToolchainVerifier(private val limits: InventoryLimits = Inventory
         checkpoint()
         require(paths.keys == lock.components.keys) { "Explicit roots for all declared tool components are required" }
         require(selected.isNotEmpty() && lock.components.keys.containsAll(selected)) { "Selected tool components must be declared" }
-        val verified = mutableMapOf<ToolComponent, VerifiedToolComponent>()
-        for (component in lock.components.keys.filter { it in selected }) {
+        val componentsInOrder = lock.components.keys.filter { it in selected }
+        val verified = parallelToolChecks(componentsInOrder.size, parallelism, checkpoint) { index, workerCheckpoint ->
+            val component = componentsInOrder[index]
             val sdkComponent = component in setOf(ToolComponent.SDK, ToolComponent.IOS_SDK, ToolComponent.IOS_SIMULATOR_SDK)
-            val captured = captureInventory(paths.getValue(component), limits, sdkComponent, checkpoint)
+            val captured = captureInventory(paths.getValue(component), limits, sdkComponent, workerCheckpoint)
             require(captured.summary.digest == lock.components.getValue(component)) { "Tool inventory mismatch: ${component.lockName}; expected ${lock.components.getValue(component)}, actual ${captured.summary.digest}" }
             if (sdkComponent) {
                 val settings = captured.sdkSettings ?: throw ToolchainVerificationFailure("Unsupported SDK host data: regular SDKSettings.json is required")
                 validateSdkSettings(component, settings, lock.host.sdk)
             }
-            verified[component] = VerifiedToolComponent(captured.root, captured.summary)
-        }
+            component to VerifiedToolComponent(captured.root, captured.summary)
+        }.toMap()
         checkpoint()
         return VerifiedToolchains(lock.host, lock.kotlinVersion, verified)
     }

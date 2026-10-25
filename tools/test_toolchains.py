@@ -139,6 +139,8 @@ def main():
             query = {'op': 'verify', 'lock': lock, 'roots': roots}
             result = request(query)
             assert result['value']['components']['jdk']['root'] == roots['jdk']
+            for parallelism in (1, 2):
+                assert request(dict(query, parallelism=parallelism))['value'] == result['value']
             passed('All six verified roots and inventory SHA+canonical length returned; SDK version derived from verified bytes')
 
             jdk_query = {'op': 'verify-jdk', 'lock': lock, 'root': roots['jdk']}

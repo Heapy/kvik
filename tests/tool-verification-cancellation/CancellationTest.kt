@@ -142,7 +142,7 @@ class CancellationTest {
 
     @Test fun installedInventoryVerificationCancellationPropagatesAndRecovers() = fixture { root ->
         val (roots, lock) = installations(root)
-        val verifier = InstalledToolchainVerifier()
+        val verifier = InstalledToolchainVerifier(parallelism = 1)
         cancelAtRepresentativeBoundaries { checkpoint -> verifier.verify(lock, roots, checkpoint) }
         cancelAtRepresentativeBoundaries { checkpoint -> verifier.verifyJdk(lock, roots.getValue(ToolComponent.JDK), checkpoint) }
     }
@@ -169,7 +169,7 @@ class CancellationTest {
         val verified = InstalledToolchainVerifier().verify(lock, roots)
         val target = if (verified.host.os == "Darwin") NativeTarget.MACOS_ARM64 else NativeTarget.LINUX_X64
         val identities = nativeIdentities(verified, target)
-        val provider = InstalledNativeToolchainProvider(lock, roots, "$root/data", target)
+        val provider = InstalledNativeToolchainProvider(lock, roots, "$root/data", target, verificationParallelism = 1)
         val expected = provider.verified(identities)
         cancelAtRepresentativeBoundaries { checkpoint -> provider.verified(identities, checkpoint) }
         assertEquals(expected, provider.verified(identities))
@@ -241,7 +241,7 @@ class CancellationTest {
     @Test fun selectedIosSdkDoesNotInspectUnusedSdkRootsButStillRequiresExactDeclaration() = fixture { root ->
         if (nativeHost().first != "Darwin") return@fixture
         val (roots, lock) = appleInstallations(root)
-        val verifier = InstalledToolchainVerifier()
+        val verifier = InstalledToolchainVerifier(parallelism = 1)
         val selected = toolComponentsFor("Darwin", "arm64") - ToolComponent.SDK + ToolComponent.IOS_SDK
         val expected = verifier.verifySelected(lock, roots, selected)[ToolComponent.IOS_SDK].digest
         NativeFiles.removeTree(roots.getValue(ToolComponent.SDK))
