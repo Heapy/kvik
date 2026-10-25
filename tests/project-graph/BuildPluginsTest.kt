@@ -124,6 +124,24 @@ class BuildPluginsTest {
                 library.manifest(result(listOf(klib), status), LogicalPath("deps/app.klib")).files)
     }
 
+    @Test fun providerTestLaunchesExposeArtifactsWithLegacyNodeConstructor() {
+        val context = pluginContext()
+        val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), emptyList()))
+        val provider = FixtureProvider(project = { _, _ ->
+            pluginGraph(listOf(ActionNode("main", emptySet()) {
+                launch.action(TreeManifest(emptyList()), pluginComposition, context.toolchains.getValue("jvm"))
+            })).copy(testLaunches = mapOf("main" to launch))
+        })
+        val graph = composedProjectActionGraph(listOf(provider), context, pluginRequest)
+        val artifact = graph.requireArtifact("app", "jvm", "test", "test-results")
+        assertEquals(launch.outputContract.artifacts.single(), artifact.output)
+        assertEquals(listOf(artifact.output), graph.nodes.single().outputContract!!.artifacts)
+        val report = FileEntry(artifact.output.path, pluginDigest("test results"))
+        val result = ActionResult(artifact.producer, pluginDigest("tests"), ActionStatus.EXECUTED, TreeManifest(listOf(report)), 0)
+        assertEquals(listOf(report), artifact.manifest(mapOf(artifact.producer to result)).files)
+        assertFails { artifact.manifest(mapOf(artifact.producer to result.copy(status = ActionStatus.FAILED, exitCode = 1))) }
+    }
+
     @Test fun instrumentationContributorsEnrichOrdinaryTestsWithoutReplacingTheirChecks() {
         val context = pluginContext()
         val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests")))
@@ -139,7 +157,12 @@ class BuildPluginsTest {
                 override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> =
                     if (name == "a") listOf(pluginNode("agent-build")) else emptyList()
                 override fun instrumentTests(context: ProjectBuildContext, graph: ProjectActionGraph): List<JvmTestInstrumentation> {
-                    if (name == "z") assertEquals(listOf("a"), (graph.testLaunches.getValue("main") as JvmTestLaunch).selection.agents.map { it.id })
+                    if (name == "z") {
+                        assertEquals(listOf("a"), (graph.testLaunches.getValue("main") as JvmTestLaunch).selection.agents.map { it.id })
+                        assertEquals(LogicalPath("instrumentation/a/report.bin"),
+                            graph.requireArtifact("app", "jvm", "test", "test-instrumentation").output.path)
+                    }
+                    assertEquals("main", graph.requireArtifact("app", "jvm", "test", "test-results").producer)
                     return listOf(JvmTestInstrumentation(actionId, listOf(JvmTestAgent(name, agentFile.path,
                         outputs = listOf(LogicalPath("instrumentation/$name/report.bin")))), dependencies) { results ->
                         assertEquals(dependencies, results.keys)
@@ -157,6 +180,9 @@ class BuildPluginsTest {
         val action = node.resolve(mapOf("agent-build" to prerequisite))
         val instrumented = graph.testLaunches.getValue("main") as JvmTestLaunch
         assertEquals(listOf("a", "z"), instrumented.selection.agents.map { it.id })
+        assertEquals(setOf("instrumentation/a/report.bin", "instrumentation/z/report.bin"),
+            graph.findArtifacts("app", "jvm", "test", "test-instrumentation").map { it.output.path.value }.toSet())
+        assertEquals(3, inspectActionGraph(graph).values.getValue("artifacts").arrayValue().size)
         assertEquals(launch.selection.classes, instrumented.selection.classes)
         assertEquals(launch.selection.classpath, instrumented.selection.classpath)
         instrumented.requireMatches(action)

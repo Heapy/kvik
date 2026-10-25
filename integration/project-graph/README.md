@@ -62,6 +62,22 @@ Empty trees are valid; absent file artifacts and incorrect file/tree shapes fail
 Add the producer to the consumer's dependencies so the scheduler supplies its
 result. The manifest references CAS content; it does not read files or launch a build.
 
+Test execution publishes `test-results` through the same artifact lookup for JVM,
+Native, JS and Wasm. JVM launches with coverage additionally expose
+`coverage-execution` (JaCoCo binary data) and `coverage-results` (capture status and
+specification). These captures are inputs to coverage analysis, not normalized line
+coverage. Instrumentation plugins add `test-instrumentation` artifacts; subsequent
+contributors see their declared outputs. There is no test-result artifact in a
+compile-only graph. All test launches expose `outputContract`, including custom
+providers using the legacy action-node constructor.
+
+A graph consumer adds the report producer as a dependency and selects its manifest
+with the same API as compiled classes. Tests still execute on every request;
+transformations can cache their own outputs by captured input content. Ordinary
+consumers are blocked after failed tests, and `manifest` rejects failed results.
+Use retained `test-report` and coverage commands to transform failed or incomplete
+runs without rerunning tests; those commands preserve the source outcome.
+
 `ProjectActionGraph.testLaunches` maps test action IDs to `JvmTestLaunch`,
 `NativeTestLaunch` or `JsTestLaunch`. Providers and contributors can inspect these
 settings before prerequisites run. Each launch uses the existing adapter to

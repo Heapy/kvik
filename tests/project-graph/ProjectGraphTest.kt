@@ -124,6 +124,30 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun testArtifactsExposeReportsAndCoverageOnlyForRequestedTestExecutions() {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
+            val config = configuration(*listOf(base, app).map { module -> module.copy(targets = module.targets
+                .filter { it.name == if (target == "jvm") "jvm" else "macosArm64" }.map { it.copy(name = target) }) }.toTypedArray())
+            val plan = graph(config, request = request(ProjectMode.TEST, target))
+            val report = plan.requireArtifact("app", target, "test", "test-results")
+            assertEquals(plan.terminalActions.getValue("app:$target:test"), report.producer)
+            assertEquals(ArtifactShape.FILE, report.output.shape)
+            assertTrue(graph(config, request = request(ProjectMode.COMPILE_TESTS, target))
+                .findArtifacts("app", target, "test", "test-results").isEmpty())
+            assertTrue(plan.findArtifacts("base", target, "test", "test-results").isEmpty())
+            assertTrue(plan.findArtifacts("app", target, "test", "coverage-results").isEmpty())
+        }
+        val selection = request(ProjectMode.TEST).copy(jvmTests = mapOf("app" to JvmTests(listOf("fixture.Tests"),
+            coverage = JvmCoverageTools(JACOCO_VERSION, digest("agent"), digest("reporter")))))
+        val covered = graph(request = selection)
+        val test = covered.requireArtifact("app", "jvm", "test", "test-results")
+        for (kind in listOf("coverage-results", "coverage-execution")) {
+            val artifact = covered.requireArtifact("app", "jvm", "test", kind)
+            assertEquals(test.producer, artifact.producer)
+            assertEquals(ArtifactShape.FILE, artifact.output.shape)
+        }
+    }
+
     @Test fun artifactsExposeCompilationAndLinkResultsAcrossTargets() {
         for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
             val config = configuration(*listOf(base, app).map { module -> module.copy(targets = module.targets

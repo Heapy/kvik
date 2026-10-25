@@ -1231,6 +1231,9 @@ output contract and `manifest(results, destination)` for selecting and remapping
 files from successful predecessor results. This avoids depending on internal action
 IDs or output directory names. `inspect-graph` exposes the same references in
 `artifacts`; queries only cover actions already included in the requested graph.
+Test graphs also expose `test-results`, JVM coverage captures and declared
+instrumentation outputs. These can feed dependent plugin actions after successful
+tests; retained report commands handle failed and incomplete runs.
 
 Build plugins can implement `ProjectInputContributor.projectInputs(configuration)` to
 return `BuildPluginInputs(files = ..., directories = ...)` with project-relative

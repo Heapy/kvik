@@ -54,6 +54,8 @@ class TestLaunchesTest {
         for ((launch, tools) in cases) {
             val action = launch.action(inputs, digest, tools)
             launch.requireMatches(action)
+            launch.outputContract.requireMatches(action)
+            assertEquals("test-results", launch.outputContract.artifacts.single().kind)
             val description = launch.toJson().values
             assertEquals(action.implementation.json(), description.getValue("implementation"))
             assertEquals(action.target.json(), description.getValue("target"))

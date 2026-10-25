@@ -25,6 +25,17 @@ class ClasspathPlugin : ProjectGraphContributor {
             val original = graph.nodes.single { it.id == compile }
             ActionNode("fixture.classpath:compile", original.dependencies, original.resolve)
         } else null
-        return listOfNotNull(bundle, extraCompile)
+        val reports = graph.artifacts.filter { it.module == "app" && it.target == "jvm" && it.compilation == "test" &&
+            it.output.kind in setOf("test-results", "coverage-results", "coverage-execution", "test-instrumentation") }
+        val reportBundle = reports.takeIf { it.isNotEmpty() }?.let {
+            ActionNode("fixture.classpath:reports", reports.map { it.producer }.toSet()) { results ->
+                val inputs = TreeManifest(reports.flatMap { report ->
+                    report.manifest(results, LogicalPath("reports/${report.output.path.value}")).files
+                })
+                jvmClasspathAction(JvmClasspath("app", "test", listOf(LogicalPath("reports"))), inputs,
+                    context.composition, context.toolchains.getValue("jvm"))
+            }
+        }
+        return listOfNotNull(bundle, extraCompile, reportBundle)
     }
 }

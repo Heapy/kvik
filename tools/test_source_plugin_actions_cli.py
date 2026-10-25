@@ -156,6 +156,54 @@ def main():
         return json.loads((project / '.kvik/runs' / remote_record['runId'] / 'actions' / filename).read_text())['action']
     assert recorded_action('app:jvm:main')['cachePolicy'] == 'remote'
     assert recorded_action('fixture.classpath:compile')['cachePolicy'] == 'local'
+    # A source plugin consumes test and coverage captures through semantic references.
+    tests = project / 'tests'
+    tests.mkdir()
+    test_source = tests / 'Tests.kt'
+    test_source.write_text('package sample\nclass Tests { @org.junit.jupiter.api.Test fun answerTest() { check(answer() == 43) } }\n')
+    app = document['modules'][0]
+    app['sourceSets'].append(dict(name='test', directories=['tests'], resources=[], dependsOn=['main'],
+        dependencies=[dict(coordinate='org.junit.jupiter:junit-jupiter-api:5.13.4')]))
+    app['targets'][0]['test'] = 'test'
+    app['targets'][0]['testSettings'] = dict(classes=['sample.Tests'], engines=['junit'])
+    config.write_text(json.dumps(document))
+    invoke('resolve-tests', ['resolve', '--project', config, '--store', store])
+    test_options = ['--project', config, '--tools', tools, '--store', store, '--offline', '--module', 'app', '--target', 'jvm']
+    report_action = 'fixture.classpath:reports'
+    for covered in (False, True):
+        suffix = 'covered' if covered else 'ordinary'
+        flags = ['--coverage'] if covered else []
+        inspected = invoke('inspect-tests-' + suffix, ['inspect-graph', '--mode', 'test', *test_options, *flags])[0]
+        references = [a for a in inspected['artifacts'] if a['module'] == 'app' and a['compilation'] == 'test']
+        kinds = {a['output']['kind'] for a in references}
+        assert 'test-results' in kinds and ('coverage-results' in kinds) == covered, references
+        for iteration in range(2):
+            tested = invoke(f'tests-{suffix}-{iteration}', ['test', *test_options, *flags])[-1]['payload']
+            actions = {a['actionId']: a for a in tested['actions']}
+            assert tested['status'] == 'passed' and actions['app:jvm:test']['status'] == 'executed', tested
+            packaged = actions[report_action]
+            assert packaged['status'] in ('executed', 'local_hit'), packaged
+            paths = {f['path'] for f in packaged['outputs']['files']}
+            assert 'classpath/input/reports/test-results.json' in paths, paths
+            assert ('classpath/input/reports/coverage.exec' in paths) == covered, paths
+            assert ('classpath/input/reports/coverage-result.json' in paths) == covered, paths
+    # Retained reporting still accepts failed tests; ordinary graph dependents stay blocked.
+    test_source.write_text(test_source.read_text().replace('== 43', '== 42'))
+    failed = invoke('failed-tests', ['test', *test_options, '--coverage'], expected=1)[-1]['payload']
+    failed_actions = {a['actionId']: a for a in failed['actions']}
+    assert failed['status'] == 'failed' and failed['completedChecks'] == [], failed
+    assert failed_actions[report_action]['status'] == 'blocked', failed_actions
+    run = project / '.kvik/runs' / failed['runId']
+    original_record = (run / 'verification.json').read_bytes()
+    for iteration in range(2):
+        output = root / f'failed-test-report-{iteration}'
+        report = invoke(f'failed-test-report-{iteration}', ['test-report', '--run', run, '--output', output, '--store', store])[0]
+        assert report['reportStatus'] == 'failed', report
+        report_graph = json.loads((output / 'graph.json').read_bytes())
+        if iteration:
+            assert all(a['status'] == 'local_hit' for a in report_graph['results']), report_graph
+        assert (run / 'verification.json').read_bytes() == original_record
+    print('PASS semantic test/coverage artifacts, fresh tests, failed dependency blocking and retained report reuse', flush=True)
     print('PASS source plugin artifacts, cache reuse, scripts, invalidation and verification after plugin failure', flush=True)
 
 

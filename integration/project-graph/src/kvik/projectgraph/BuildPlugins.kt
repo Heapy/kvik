@@ -73,6 +73,11 @@ private fun compose(
     val launches = supplied.testLaunches.toMutableMap()
     require(launches.keys.all { id -> supplied.nodes.any { it.id == id } }) { "Unknown test launch action" }
     val nodes = supplied.nodes.map { guardedNode(it, context.composition, contribution = it.id in supplied.contributedActions, launch = launches[it.id]) }.toMutableList()
+    val artifacts = supplied.artifacts.toMutableSet()
+    fun exposeTestArtifacts(id: String, launch: TestLaunch) {
+        artifacts += launch.outputContract.artifacts.map { ProjectArtifact(launch.module, launch.target, "test", id, it) }
+    }
+    launches.forEach { (id, launch) -> exposeTestArtifacts(id, launch) }
     val contributed = supplied.contributedActions.toMutableSet()
     require(contributed.all { id -> nodes.any { it.id == id } }) { "Unknown contributed action" }
     validateNodes(nodes)
@@ -80,7 +85,7 @@ private fun compose(
     for (plugin in ordered.filter { it !== provider }) {
         val added = if (plugin is ProjectGraphContributor) {
             plugin.contribute(prepared, ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
-                expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList(), supplied.artifacts.toList()))
+                expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList(), artifacts.toList()))
         } else {
             val authoring = context.effective.document.objectValue()
             val document = authoring["project"] ?: authoring["standaloneScript"] ?: error("Missing plugin authoring document")
@@ -90,7 +95,7 @@ private fun compose(
         contributed += added.map { it.id }
         if (plugin is ProjectTestInstrumentationContributor) {
             val graph = ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals.toMap(), contributed.toSet(),
-                supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList(), supplied.artifacts.toList())
+                supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList(), artifacts.toList())
             for (instrumentation in plugin.instrumentTests(prepared, graph)) {
                 val index = nodes.indexOfFirst { it.id == instrumentation.actionId }
                 require(index >= 0) { "Unknown instrumentation action: ${instrumentation.actionId}" }
@@ -98,11 +103,12 @@ private fun compose(
                 val (node, instrumented) = instrumentJvmTest(nodes[index], launch, instrumentation)
                 launches[node.id] = instrumented
                 nodes[index] = guardedNode(node, context.composition, contribution = node.id in contributed, launch = instrumented)
+                exposeTestArtifacts(node.id, instrumented)
             }
         }
     }
     validateNodes(nodes)
-    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches, supplied.generatedResources.toList(), supplied.artifacts.toList())
+    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches, supplied.generatedResources.toList(), artifacts.toList())
 }
 
 private fun validateNodes(nodes: List<ActionNode>) {
@@ -112,9 +118,10 @@ private fun validateNodes(nodes: List<ActionNode>) {
 }
 
 private fun guardedNode(node: ActionNode, composition: Digest, contribution: Boolean, launch: TestLaunch? = null): ActionNode =
-    node.copy(dependencies = node.dependencies.toSet(), resolve = { results ->
+    node.copy(dependencies = node.dependencies.toSet(), outputContract = node.outputContract ?: launch?.outputContract, resolve = { results ->
         val action = node.resolve(results)
         node.outputContract?.requireMatches(action)
+        launch?.outputContract?.requireMatches(action)
         launch?.requireMatches(action)
         require(action.composition == composition) { "Build plugin action uses a different source composition: ${node.id}" }
         require(!contribution || action.cachePolicy != CachePolicy.REMOTE) {

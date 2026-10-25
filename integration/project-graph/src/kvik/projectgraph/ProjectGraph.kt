@@ -1257,7 +1257,7 @@ private class Builder(
         } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, edges,
-            if (launch is JvmTestLaunch) launch.outputContract else ActionOutputContract(fileOutput("test-results.json", "test-results"))) { results ->
+            launch.outputContract) { results ->
             validateResults(results, edges)
             val testFiles = if (hasTestCompile) remap(results, module, target, "test") else emptyList()
             val inputs = if (target == "jvm") {
@@ -1267,6 +1267,7 @@ private class Builder(
             } else merge(testFiles, allResources.resolve(results))
             launch.action(inputs, composition, tools.getValue(target))
         }
+        exposeArtifacts(module, target, "test", id)
         return id
     }
 
@@ -1332,13 +1333,14 @@ private class Builder(
             target(module, target).testResources ?: TestResources()), settings.timeoutMillis)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, setOf(linkId(module, target)) + resources.dependencies,
-            ActionOutputContract(fileOutput("test-results.json", "test-results"))) { results ->
+            launch.outputContract) { results ->
             validateResults(results, setOf(linkId(module, target)) + resources.dependencies)
             val linked = results.getValue(linkId(module, target)).outputs.files
             require(linked.isNotEmpty() && linked.all { it.path.value.startsWith("tests/") } &&
                 linked.any { it.path == LogicalPath("tests/$testModuleName.mjs") }) { "Missing JS/Wasm linked test module" }
             launch.action(merge(linked, resources.resolve(results)), composition, mapOf("node" to tools.getValue(target).getValue("node")))
         }
+        exposeArtifacts(module, target, "test", id)
         return id
     }
 }

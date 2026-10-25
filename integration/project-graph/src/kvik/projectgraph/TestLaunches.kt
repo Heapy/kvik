@@ -15,6 +15,7 @@ sealed interface TestLaunch {
     val timeoutMillis: Long
     val resources: TestResources
     val parameters: JsonValue.Object
+    val outputContract: ActionOutputContract
     fun action(inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>): ActionSpec
     fun requireMatches(action: ActionSpec) {
         require(action == this.action(action.inputs, action.composition, action.toolchains)) { "Test action differs from its declared launch settings" }
@@ -34,7 +35,7 @@ class JvmTestLaunch(selection: JvmTestSelection, override val timeoutMillis: Lon
     override val implementation = "kvik-jvm-tests-v1"
     override val resources get() = selection.resources
     override val parameters get() = selection.toJson()
-    val outputContract get() = ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) +
+    override val outputContract get() = ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) +
         (if (selection.coverage == null) emptyList() else listOf(fileOutput("coverage.exec", "coverage-execution"),
             fileOutput("coverage-result.json", "coverage-results"))) +
         selection.agents.flatMap { agent -> agent.outputs.map { fileOutput(it.value, "test-instrumentation") } })
@@ -54,6 +55,7 @@ class NativeTestLaunch(
         require(!kotest || filter == null) { "Kotest Native filtering is unsupported" }
         require(filter == null || filter.matches(Regex("[A-Za-z0-9_.*]+"))) { "Unsupported test filter" }
     }
+    override val outputContract get() = ActionOutputContract(fileOutput("test-results.json", "test-results"))
     override val target get() = nativeTarget.projectName
     override val implementation get() = if (kotest) "kvik-kotest-native-tests-v1" else "kvik-native-tests-v1"
     override val parameters get() = JsonValue.Object(
@@ -69,6 +71,7 @@ class JsTestLaunch(selection: JsTestSelection, override val timeoutMillis: Long 
     val selection = JsTestSelection.fromJson(selection.toJson())
     init { require(timeoutMillis > 0) }
     override val module get() = selection.module
+    override val outputContract get() = ActionOutputContract(fileOutput("test-results.json", "test-results"))
     override val target get() = selection.target.projectName
     override val implementation = "kvik-js-tests-v1"
     override val resources get() = selection.resources
