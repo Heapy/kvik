@@ -1069,6 +1069,26 @@ GRAPH_MODES = ("build", "test", "compile-tests", "classpath-main", "classpath-te
     "benchmark-measurement", "application", "package", "abi-dump", "abi-check", "documentation")
 DEFS["outputArtifact"] = object_({"path": PATH, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
     "shape": enum("file", "tree", "file-or-tree")})
+
+def test_launch(implementation, targets, parameters):
+    return object_({"implementation": {"const": implementation}, "module": NONEMPTY, "target": enum(*targets),
+        "parameters": parameters, "timeoutMillis": {**INT, "minimum": 1}, "cachePolicy": {"const": "never"},
+        "resources": ref("testResources")})
+
+DEFS["testLaunch"] = {"oneOf": [
+    test_launch("kvik-jvm-tests-v1", ("jvm",), object_({"module": NONEMPTY,
+        "classpath": array(PATH, minItems=1, uniqueItems=True),
+        "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_.$]*(?![\s\S])"}, uniqueItems=True),
+        "engines": array(enum("junit-jupiter", "kotest"), minItems=1, uniqueItems=True),
+        "coverage": ref("jvmCoverageSpec"), "resources": ref("testResources")}, optional=("coverage", "resources"))),
+    test_launch("kvik-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
+        "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"}),
+        "resources": ref("testResources")}, optional=("resources",))),
+    test_launch("kvik-kotest-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
+        "resources": ref("testResources")}, optional=("resources",))),
+    test_launch("kvik-js-tests-v1", JS_TARGETS, object_({"module": NONEMPTY, "target": enum(*JS_TARGETS), "entryPoint": PATH,
+        "filter": DEFS["jsTestSettings"]["properties"]["filter"], "resources": ref("testResources")}, optional=("resources",))),
+]}
 DEFS["graphInspection"] = versioned({
     "kind": {"const": "graph-inspection"}, "mode": enum(*GRAPH_MODES),
     "modules": array(ID, minItems=1, uniqueItems=True), "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
@@ -1076,9 +1096,10 @@ DEFS["graphInspection"] = versioned({
     "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"),
     "toolIdentities": mapping(mapping(ref("digest"))), "execution": {"const": "not-requested"},
     "actions": array(object_({"id": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "contributed": BOOL,
+        "testLaunch": nullable(ref("testLaunch")),
         "output": object_({"contract": {"const": "tree-manifest"}, "state": {"const": "unresolved"},
             "declaredArtifacts": nullable(array(ref("outputArtifact"), uniqueItems=True)),
-            "resultConsumers": array(NONEMPTY, uniqueItems=True)}, optional=("declaredArtifacts",))}), maxItems=10000),
+            "resultConsumers": array(NONEMPTY, uniqueItems=True)}, optional=("declaredArtifacts",))}, optional=("testLaunch",)), maxItems=10000),
     "checks": array(object_({"id": NONEMPTY, "terminalAction": NONEMPTY, "requiredContributions": array(NONEMPTY, uniqueItems=True)}), minItems=1),
     "generatedSources": array(object_({"producer": NONEMPTY, "module": ID, "sourceSet": ID, "kind": NONEMPTY,
         "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH}), uniqueItems=True),

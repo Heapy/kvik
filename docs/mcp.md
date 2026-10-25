@@ -143,6 +143,12 @@ not per-file provenance. `output.declaredArtifacts` describes each known root's
 path, kind and file/tree shape; `null` means the provider supplied no contract,
 while an empty list means it declared no outputs. Actual files/digests and cache
 hits are not predicted.
+`testLaunch` exposes declared runner settings before execution, including ordered
+JVM classpaths, class/engine selections, coverage class/source roots and tool
+digests, Native executable paths, JS/Wasm entry points and filters, timeouts and
+resource reservations. Runtime paths are staged-input-relative. A null launch
+means no declaration is available; it does not establish whether the action is
+a test. Discovery results and installed-tool availability remain unresolved.
 Generated roots identify script, SQLDelight and KSP declarations; their paths are
 producer-output-relative. The query also works with configured Kode selectors;
 offline source inspection requires cached content. It does not create run records.

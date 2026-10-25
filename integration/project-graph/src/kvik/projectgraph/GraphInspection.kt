@@ -17,6 +17,7 @@ fun inspectActionGraph(graph: ProjectActionGraph): JsonValue.Object {
     require(graph.requestedChecks.isNotEmpty() && graph.terminalActions.keys == graph.requestedChecks &&
         graph.terminalActions.values.all { it in nodes } && graph.contributedActions.all { it in nodes }) { "Invalid check endpoints" }
     require(graph.generatedSources.all { it.producer in nodes }) { "Unknown generated source producer" }
+    require(graph.testLaunches.keys.all { it in nodes }) { "Unknown test launch action" }
     val consumers = nodes.keys.associateWith { mutableListOf<String>() }
     for (node in nodes.values) for (producer in node.dependencies) consumers.getValue(producer).add(node.id)
     return obj(
@@ -24,6 +25,7 @@ fun inspectActionGraph(graph: ProjectActionGraph): JsonValue.Object {
             "id" to node.id.json(),
             "dependencies" to node.dependencies.sorted().map(String::json).json(),
             "contributed" to (node.id in graph.contributedActions).json(),
+            "testLaunch" to (graph.testLaunches[node.id]?.toJson() ?: JsonValue.Null),
             "output" to obj("contract" to "tree-manifest".json(), "state" to "unresolved".json(),
                 "declaredArtifacts" to (node.outputContract?.toJson() ?: JsonValue.Null),
                 "resultConsumers" to consumers.getValue(node.id).sorted().map(String::json).json()),

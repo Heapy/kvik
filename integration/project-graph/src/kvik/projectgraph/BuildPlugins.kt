@@ -58,7 +58,9 @@ private fun compose(
     }
     val terminals = supplied.terminalActions.toMap()
     require(terminals.values.distinct().size == terminals.size) { "A terminal action cannot satisfy multiple checks" }
-    val nodes = supplied.nodes.map { guardedNode(it, context.composition, contribution = it.id in supplied.contributedActions) }.toMutableList()
+    val launches = supplied.testLaunches.toMap()
+    require(launches.keys.all { id -> supplied.nodes.any { it.id == id } }) { "Unknown test launch action" }
+    val nodes = supplied.nodes.map { guardedNode(it, context.composition, contribution = it.id in supplied.contributedActions, launch = launches[it.id]) }.toMutableList()
     val contributed = supplied.contributedActions.toMutableSet()
     require(contributed.all { id -> nodes.any { it.id == id } }) { "Unknown contributed action" }
     validateNodes(nodes)
@@ -66,7 +68,7 @@ private fun compose(
     for (plugin in ordered.filter { it !== provider }) {
         val added = if (plugin is ProjectGraphContributor) {
             plugin.contribute(context, ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
-                expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList()))
+                expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(), launches.toMap()))
         } else {
             val authoring = context.effective.document.objectValue()
             val document = authoring["project"] ?: authoring["standaloneScript"] ?: error("Missing plugin authoring document")
@@ -76,7 +78,7 @@ private fun compose(
         contributed += added.map { it.id }
     }
     validateNodes(nodes)
-    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList())
+    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches)
 }
 
 private fun validateNodes(nodes: List<ActionNode>) {
@@ -85,10 +87,11 @@ private fun validateNodes(nodes: List<ActionNode>) {
     validateGraph(nodes.associate { it.id to it.dependencies })
 }
 
-private fun guardedNode(node: ActionNode, composition: Digest, contribution: Boolean): ActionNode =
+private fun guardedNode(node: ActionNode, composition: Digest, contribution: Boolean, launch: TestLaunch? = null): ActionNode =
     node.copy(dependencies = node.dependencies.toSet(), resolve = { results ->
         val action = node.resolve(results)
         node.outputContract?.requireMatches(action)
+        launch?.requireMatches(action)
         require(action.composition == composition) { "Build plugin action uses a different source composition: ${node.id}" }
         require(!contribution || action.cachePolicy != CachePolicy.REMOTE) {
             "Contributed build plugin actions cannot use remote caching: ${node.id}"

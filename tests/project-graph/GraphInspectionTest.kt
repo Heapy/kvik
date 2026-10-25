@@ -1,9 +1,20 @@
 package kvik.projectgraph
 
 import kvik.core.*
+import kvik.compiler.jvm.*
 import kotlin.test.*
 
 class GraphInspectionTest {
+    @Test fun launchesAreInspectedWithoutResolvingAnyAction() {
+        val launch = JvmTestLaunch(JvmTestSelection("library", listOf(LogicalPath("runtime/classes")), listOf("fixture.Tests")))
+        val graph = ProjectActionGraph(listOf(node("test")), setOf("library:jvm:test"), mapOf("library:jvm:test" to "test"),
+            testLaunches = mapOf("test" to launch))
+        val action = inspectActionGraph(graph).values.getValue("actions").arrayValue().single().objectValue()
+        assertEquals(launch.toJson(), action.getValue("testLaunch"))
+        assertEquals(JsonValue.Null, inspectActionGraph(graph.copy(testLaunches = emptyMap())).values.getValue("actions")
+            .arrayValue().single().objectValue().getValue("testLaunch"))
+        assertFailsWith<IllegalArgumentException> { inspectActionGraph(graph.copy(testLaunches = mapOf("missing" to launch))) }
+    }
     @Test fun declaredArtifactsAreAvailableWithoutResolvingAndAbsentMetadataStaysUnknown() {
         val compile = ActionNode("compile", emptySet(), ActionOutputContract(treeOutput("classes", "jvm-classes"))) { error("Must not resolve") }
         val run = ActionNode("run", setOf("compile"), ActionOutputContract()) { error("Must not resolve") }

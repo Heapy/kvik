@@ -34,6 +34,7 @@ data class ProjectActionGraph(
     /** Additional plugin actions must succeed before any requested check is complete. */
     val contributedActions: Set<String> = emptySet(),
     val generatedSources: List<GeneratedSourceRoot> = emptyList(),
+    val testLaunches: Map<String, TestLaunch> = emptyMap(),
 )
 
 fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
@@ -112,6 +113,7 @@ private class Builder(
     private val authorized = effective.document.objectValue().getValue("domains").arrayValue().map(ResolutionDomain::fromJson).toSet()
     private val nodes = linkedMapOf<String, ActionNode>()
     private val generatedSources = linkedSetOf<GeneratedSourceRoot>()
+    private val testLaunches = linkedMapOf<String, TestLaunch>()
     private val mainSources = mutableMapOf<Pair<String, String>, Sources>()
     private val nativeMainNames = mutableMapOf<Pair<String, String>, String>()
     private val rootPublicationModules: Set<String> = if (request.mode == ProjectMode.PACKAGE &&
@@ -192,7 +194,7 @@ private class Builder(
                 terminals["$module:common:package"] = root
             }
         }
-        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList())
+        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap())
     }
 
     private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
@@ -1190,34 +1192,37 @@ private class Builder(
         val edges = runtimeIds.map { mainId(it, target) }.toSet() + if (hasTestCompile) setOf(if (NativeTarget.find(target) != null) linkId(module, target) else compileId(module, target)) else emptySet()
         val allResources = resource + runtimeDependencies.flatMap { resources(it, target, "main") }
         val runtime = if (target == "jvm") artifactEntries(external(module, target, "test", "java-runtime"), target) else emptyList()
-        val testSelection = request.jvmTests[module]
-        if (target == "jvm") JvmTestSelection(module, listOf(LogicalPath("validated-placeholder")), testSelection!!.classes, testSelection.engines)
+        val testSelection = request.jvmTests[module].takeIf { target == "jvm" }
+        val coverage = testSelection?.coverage?.let { settings ->
+            val sources = runtimeIds.flatMap { producer ->
+                sourceSets(producer, target, "main").flatMap { set -> set.directories.flatMap { directory ->
+                    files.filter { it.path.value.startsWith(directory.value + "/") }.map { file ->
+                        CoverageSource(producer, set.name, file.path, file.digest)
+                    }
+                } }
+            }.sortedWith(compareBy({ it.module }, { it.path.value }, { it.sourceSet }))
+            require(sources.map { it.module to it.path }.distinct().size == sources.size) { "Ambiguous production coverage source ownership" }
+            JvmCoverageSpec(settings.version, settings.agent, settings.reporter,
+                runtimeIds.map { CoverageClassRoot(it, modulePath(it, target, "main")) }, sources, settings.excludes)
+        }
+        val testResources = target(module, target).testResources ?: TestResources()
+        val launch = if (target == "jvm") {
+            fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.any { it.path.value.startsWith(prefix.value + "/") } }
+            val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
+                runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
+            JvmTestLaunch(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, testResources))
+        } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources)
+        testLaunches[id] = launch
         nodes[id] = ActionNode(id, edges,
-            ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) + if (testSelection?.coverage == null) emptyList() else listOf(fileOutput("coverage.exec", "coverage-execution"), fileOutput("coverage-result.json", "coverage-results")))) { results ->
+            ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) + if (coverage == null) emptyList() else listOf(fileOutput("coverage.exec", "coverage-execution"), fileOutput("coverage-result.json", "coverage-results")))) { results ->
             validateResults(results, edges)
             val testFiles = if (hasTestCompile) remap(results, module, target, "test") else emptyList()
-            if (target == "jvm") {
+            val inputs = if (target == "jvm") {
                 val dependencyFiles = runtimeIds.flatMap { remap(results, it, target, "main") }
-                val coverage = testSelection!!.coverage?.let { settings ->
-                    val sources = runtimeIds.flatMap { producer ->
-                        sourceSets(producer, target, "main").flatMap { set -> set.directories.flatMap { directory ->
-                            files.filter { it.path.value.startsWith(directory.value + "/") }.map { file ->
-                                CoverageSource(producer, set.name, file.path, file.digest)
-                            }
-                        } }
-                    }.sortedWith(compareBy({ it.module }, { it.path.value }, { it.sourceSet }))
-                    require(sources.map { it.module to it.path }.distinct().size == sources.size) { "Ambiguous production coverage source ownership" }
-                    JvmCoverageSpec(settings.version, settings.agent, settings.reporter,
-                        runtimeIds.map { CoverageClassRoot(it, modulePath(it, target, "main")) }, sources, settings.excludes)
-                }
                 val coverageSources = coverage?.sources?.map { FileEntry(it.inputPath, it.digest) } ?: emptyList()
-                val inputs = merge(testFiles, dependencyFiles, allResources, runtime, coverageSources)
-                fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.any { it.path.value.startsWith(prefix.value + "/") } }
-                val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
-                    runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
-                jvmTestAction(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, target(module, target).testResources ?: TestResources()), inputs, composition, tools.getValue(target))
-            } else if (kotest != null) kotestNativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target), resources = target(module, target).testResources ?: TestResources())
-            else nativeTestAction(module, modulePath(module, target, "test"), merge(testFiles, allResources), composition, tools.getValue(target), target = NativeTarget.require(target), resources = target(module, target).testResources ?: TestResources())
+                merge(testFiles, dependencyFiles, allResources, runtime, coverageSources)
+            } else merge(testFiles, allResources)
+            launch.action(inputs, composition, tools.getValue(target))
         }
         return id
     }
@@ -1278,14 +1283,16 @@ private class Builder(
         val settings = target(module, target).jsTestSettings ?: JsTestSettings()
         val resources = resources(module, target, "main") + resources(module, target, "test") +
             runtimeDependencies.flatMap { resources(it, target, "main") }
+        val launch = JsTestLaunch(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter,
+            target(module, target).testResources ?: TestResources()), settings.timeoutMillis)
+        testLaunches[id] = launch
         nodes[id] = ActionNode(id, setOf(linkId(module, target)),
             ActionOutputContract(fileOutput("test-results.json", "test-results"))) { results ->
             validateResults(results, setOf(linkId(module, target)))
             val linked = results.getValue(linkId(module, target)).outputs.files
             require(linked.isNotEmpty() && linked.all { it.path.value.startsWith("tests/") } &&
                 linked.any { it.path == LogicalPath("tests/$testModuleName.mjs") }) { "Missing JS/Wasm linked test module" }
-            jsTestAction(JsTestSelection(module, jsTarget, LogicalPath("tests/$testModuleName.mjs"), settings.filter, target(module, target).testResources ?: TestResources()),
-                merge(linked, resources), composition, mapOf("node" to tools.getValue(target).getValue("node")), settings.timeoutMillis)
+            launch.action(merge(linked, resources), composition, mapOf("node" to tools.getValue(target).getValue("node")))
         }
         return id
     }

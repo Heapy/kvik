@@ -92,6 +92,11 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
     for (node in graph.nodes) {
         assertNotNull(node.outputContract, "Missing built-in output contract: ${node.id}")
         val action = node.resolve(results.filterKeys { it in node.dependencies })
+        if (action.kind == ActionKind.TEST) {
+            val launch = assertNotNull(graph.testLaunches[node.id], "Missing test launch: ${node.id}")
+            launch.requireMatches(action)
+            assertEquals(action.parameters, launch.parameters)
+        } else assertFalse(node.id in graph.testLaunches)
         actions[node.id] = action
         results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED, outputs(action, node.id + if(node.id == changed) "changed" else ""), 0)
     }
@@ -1211,6 +1216,11 @@ class ProjectGraphTest {
                 val output = if (action.kind == ActionKind.COMPILE) TreeManifest(listOf(FileEntry(
                     LogicalPath("classes/${node.id.replace(':', '/')}/Example.class"), digest(node.id)))) else outputs(action, node.id)
                 results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED, output, 0)
+                if (action.kind == ActionKind.TEST) {
+                    val launch = assertIs<JvmTestLaunch>(plan.testLaunches[node.id])
+                    launch.requireMatches(action)
+                    assertEquals(action.parameters, launch.parameters)
+                }
                 node.id to action
             }
         }

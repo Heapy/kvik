@@ -62,6 +62,14 @@ decisions remain unresolved until execution. A declared root may produce no file
 The scheduler rejects a recipe whose roots disagree with its contract and rejects
 successful results with incompatible file/tree paths, including cache hits.
 
+Test actions also expose `testLaunch`: runner implementation, target, timeout,
+resource reservations and the adapter's typed parameters. JVM parameters contain
+the ordered runtime classpath, selected classes/engines and optional JaCoCo
+instrumentation settings; Native and JS/Wasm describe executable or entry-point
+paths and supported filters. Paths are relative to staged action inputs.
+`null` means no launch contract was supplied. Inspection does not discover test
+cases or confirm that runtime artifacts are available.
+
 Graph inspection checks the existing dependency lock against locally available
 metadata/artifacts and captures current inputs. It uses desired tool identities without
 checking compiler installations, creating a run, compiling or running generators.

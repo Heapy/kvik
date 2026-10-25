@@ -1,6 +1,7 @@
 package kvik.projectgraph
 
 import kvik.core.*
+import kvik.compiler.jvm.*
 import kvik.locking.*
 import kvik.plugins.kotlin.KotlinBuildPlugin
 import kotlin.test.*
@@ -58,6 +59,26 @@ private class Contributor(id: String, private val add: (ProjectBuildContext, Pro
 }
 
 class BuildPluginsTest {
+    @Test fun providerLaunchesReachContributorsAndRejectConflictingRecipes() {
+        val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests")))
+        val context = pluginContext()
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("classes/Tests.class"), pluginDigest("class"))))
+        fun provider(drift: Boolean = false) = FixtureProvider(project = { _, _ ->
+            pluginGraph(listOf(ActionNode("main", emptySet()) {
+                val action = launch.action(inputs, pluginComposition, context.toolchains.getValue("jvm"))
+                if (drift) action.copy(timeoutMillis = 1) else action
+            })).copy(testLaunches = mapOf("main" to launch))
+        })
+        val contributor = Contributor("observer") { _, graph ->
+            assertSame(launch, graph.testLaunches.getValue("main"))
+            emptyList()
+        }
+        val graph = composedProjectActionGraph(listOf(provider(), contributor), context, pluginRequest)
+        assertSame(launch, graph.testLaunches.getValue("main"))
+        launch.requireMatches(graph.nodes.single().resolve(emptyMap()))
+        val invalid = composedProjectActionGraph(listOf(provider(true)), context, pluginRequest)
+        assertFailsWith<IllegalArgumentException> { invalid.nodes.single().resolve(emptyMap()) }
+    }
     @Test fun compositionPreservesGeneratedSourceOriginsAlongsideContributedConsumers() {
         val origin = GeneratedSourceRoot("main", "app", "main", "custom", "/modules/0", LogicalPath("generated"))
         val provider = FixtureProvider(project = { _, _ -> pluginGraph().copy(generatedSources = listOf(origin)) })

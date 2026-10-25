@@ -25,6 +25,10 @@ def main():
     parent = ROOT/'.kvik/tests/graph-inspection'; parent.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
     print('Fixture:', root, flush=True)
+    tool_document = json.loads(tools.read_text())
+    # Inspection needs only a desired identity; a missing executable must never be launched.
+    tool_document['node'] = dict(root=str(root/'unused-node'), identity=dict(hash='a'*64, sizeBytes=1))
+    tools = root/'tools.json'; tools.write_text(json.dumps(tool_document))
     project = root/'project'; project.mkdir()
     scratch = root/'scratch'; scratch.mkdir()
     store = root/'store'
@@ -59,7 +63,15 @@ def main():
             target['testSettings'] = dict(classes=['fixture.Tests'])
             target['abi'] = dict(baseline='api/library.api')
         targets = [target]
-        if native: targets.append(dict(name='macosArm64', main='main', test=None, compilerOptions=[]))
+        if native:
+            targets.append(dict(name='macosArm64', main='main', test='test' if test else None, compilerOptions=[]))
+            for target_name in ('js', 'wasmJs'):
+                web = dict(name=target_name, main='main', test='test' if test else None, compilerOptions=[])
+                if test: web['jsTestSettings'] = dict(filter='fixture*', timeoutMillis=33000)
+                targets.append(web)
+        if test:
+            for value in targets:
+                value['testResources'] = dict(memoryMiB=640, cpuSlots=2, exclusiveResources=['database'])
         return dict(id=name, sourceSets=sets, targets=targets, compilerPlugins=[])
 
     try:
@@ -101,6 +113,13 @@ def main():
                 assert nodes['library:jvm:main']['output']['declaredArtifacts'] == [dict(path='classes', kind='jvm-classes', shape='tree')]
             if mode == 'test':
                 assert nodes['library:jvm:test']['output']['declaredArtifacts'] == [dict(path='test-results.json', kind='test-results', shape='file')]
+                launch = nodes['library:jvm:test']['testLaunch']
+                assert launch['parameters']['classes'] == ['fixture.Tests']
+                assert launch['parameters']['engines'] == ['junit-jupiter']
+                assert launch['parameters']['classpath'] == ['modules/library/jvm/test', 'modules/library/jvm/main']
+                assert launch['cachePolicy'] == 'never' and launch['timeoutMillis'] == 60000
+                assert launch['resources'] == dict(memoryMiB=640, cpuSlots=2, exclusiveResources=['database'])
+            assert all(node['testLaunch'] is None for id, node in nodes.items() if id != 'library:jvm:test')
 
             assert len(value['checks']) == 1
             assert value['checks'][0]['terminalAction'] in nodes
@@ -124,6 +143,26 @@ def main():
             dict(path='module.klib', kind='klib', shape='file')]
 
         assert 'script:generate:jvm:generate' in next(n for n in native['actions'] if n['id'] == 'library:macosArm64:main')['dependencies']
+        covered = command(runtime, ['inspect-graph', *base, '--tools', tools, '--module', 'library', '--target', 'jvm', '--mode', 'test', '--coverage', '--coverage-exclude', 'generated.*'])
+        validator.validate(covered)
+        assert covered == local.tool('kvik_inspect_graph', dict(modules=['library'], targets=['jvm'], mode='test', coverage=True, coverageExcludes=['generated.*']))
+        coverage = next(n for n in covered['actions'] if n['id'] == 'library:jvm:test')['testLaunch']['parameters']['coverage']
+        assert coverage['engine'] == 'jacoco' and coverage['excludes'] == ['generated.*']
+        assert coverage['classDirectories'] == [dict(module='library', path='modules/library/jvm/main')]
+        assert [s['path'] for s in coverage['sources']] == ['library/src/Main.kt']
+        for target in ('macosArm64', 'js', 'wasmJs'):
+            value = command(runtime, ['inspect-graph', *base, '--tools', tools, '--module', 'library', '--target', target, '--mode', 'test'])
+            validator.validate(value)
+            assert value == local.tool('kvik_inspect_graph', dict(modules=['library'], targets=[target], mode='test'))
+            launch = next(n for n in value['actions'] if n['id'] == f'library:{target}:test')['testLaunch']
+            assert launch['target'] == target and launch['resources']['cpuSlots'] == 2
+            if target == 'macosArm64':
+                assert launch['implementation'] == 'kvik-native-tests-v1'
+                assert launch['parameters']['executable'] == 'modules/library/macosArm64/test/tests.kexe'
+            else:
+                assert launch['implementation'] == 'kvik-js-tests-v1' and launch['timeoutMillis'] == 33000
+                assert launch['parameters']['filter'] == 'fixture*'
+                assert launch['parameters']['entryPoint'] == 'tests/_kvik_test_library.mjs'
         for flags in (['--mode', 'unknown'], ['--runs', 'forbidden'], ['--mode', 'build', '--mode', 'test'], ['--module', 'unknown'], ['--coverage']):
             command(runtime, ['inspect-graph', *base, '--tools', tools, '--module', 'library', '--target', 'jvm', *flags], failed=True)
         local.tool('kvik_inspect_graph', dict(modules=['missing'], targets=['jvm']), failed=True)

@@ -14231,6 +14231,315 @@
       ],
       "additionalProperties": false
     },
+    "testLaunch": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "implementation": {
+              "const": "kvik-jvm-tests-v1"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "target": {
+              "enum": [
+                "jvm"
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "module": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "classpath": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "classes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_$][A-Za-z0-9_.$]*(?![\\s\\S])"
+                  },
+                  "uniqueItems": true
+                },
+                "engines": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "junit-jupiter",
+                      "kotest"
+                    ]
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "coverage": {
+                  "$ref": "#/$defs/jvmCoverageSpec"
+                },
+                "resources": {
+                  "$ref": "#/$defs/testResources"
+                }
+              },
+              "required": [
+                "module",
+                "classpath",
+                "classes",
+                "engines"
+              ],
+              "additionalProperties": false
+            },
+            "timeoutMillis": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "cachePolicy": {
+              "const": "never"
+            },
+            "resources": {
+              "$ref": "#/$defs/testResources"
+            }
+          },
+          "required": [
+            "implementation",
+            "module",
+            "target",
+            "parameters",
+            "timeoutMillis",
+            "cachePolicy",
+            "resources"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "implementation": {
+              "const": "kvik-native-tests-v1"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "target": {
+              "enum": [
+                "macosArm64",
+                "linuxX64"
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "module": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "executable": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                },
+                "filter": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_.*]+(?![\\s\\S])"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "resources": {
+                  "$ref": "#/$defs/testResources"
+                }
+              },
+              "required": [
+                "module",
+                "executable",
+                "filter"
+              ],
+              "additionalProperties": false
+            },
+            "timeoutMillis": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "cachePolicy": {
+              "const": "never"
+            },
+            "resources": {
+              "$ref": "#/$defs/testResources"
+            }
+          },
+          "required": [
+            "implementation",
+            "module",
+            "target",
+            "parameters",
+            "timeoutMillis",
+            "cachePolicy",
+            "resources"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "implementation": {
+              "const": "kvik-kotest-native-tests-v1"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "target": {
+              "enum": [
+                "macosArm64",
+                "linuxX64"
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "module": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "executable": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                },
+                "resources": {
+                  "$ref": "#/$defs/testResources"
+                }
+              },
+              "required": [
+                "module",
+                "executable"
+              ],
+              "additionalProperties": false
+            },
+            "timeoutMillis": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "cachePolicy": {
+              "const": "never"
+            },
+            "resources": {
+              "$ref": "#/$defs/testResources"
+            }
+          },
+          "required": [
+            "implementation",
+            "module",
+            "target",
+            "parameters",
+            "timeoutMillis",
+            "cachePolicy",
+            "resources"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "implementation": {
+              "const": "kvik-js-tests-v1"
+            },
+            "module": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "target": {
+              "enum": [
+                "js",
+                "wasmJs"
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "module": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "target": {
+                  "enum": [
+                    "js",
+                    "wasmJs"
+                  ]
+                },
+                "entryPoint": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                },
+                "filter": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$(?![\\s\\S])"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "resources": {
+                  "$ref": "#/$defs/testResources"
+                }
+              },
+              "required": [
+                "module",
+                "target",
+                "entryPoint",
+                "filter"
+              ],
+              "additionalProperties": false
+            },
+            "timeoutMillis": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "cachePolicy": {
+              "const": "never"
+            },
+            "resources": {
+              "$ref": "#/$defs/testResources"
+            }
+          },
+          "required": [
+            "implementation",
+            "module",
+            "target",
+            "parameters",
+            "timeoutMillis",
+            "cachePolicy",
+            "resources"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "graphInspection": {
       "type": "object",
       "properties": {
@@ -14344,6 +14653,16 @@
               },
               "contributed": {
                 "type": "boolean"
+              },
+              "testLaunch": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/testLaunch"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "output": {
                 "type": "object",

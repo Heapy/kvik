@@ -26,6 +26,23 @@ against declared shapes, including cached and deduplicated results. Mismatches
 fail the action and block consumers. The `inspect-graph` CLI/MCP query serializes
 these declarations without invoking any action resolver.
 
+`ProjectActionGraph.testLaunches` maps test action IDs to `JvmTestLaunch`,
+`NativeTestLaunch` or `JsTestLaunch`. Providers and contributors can inspect these
+settings before prerequisites run. Each launch uses the existing adapter to
+create its action via `action(inputs, composition, toolchains)`. Composition
+rejects resolved recipes that disagree with a declared launch. Launch constructors
+snapshot caller collections; paths describe staged runtime inputs, not host paths.
+
+`JvmTestLaunch.selection` exposes the ordered runtime classpath, selected classes,
+engines and `JvmCoverageSpec` instrumentation settings. Coverage includes pinned
+agent/reporter identities, production class roots, source digests and exclusions;
+the adapter still validates these against actual inputs during resolution.
+Native launches expose their executable and runner; JS/Wasm launches expose their
+entry point and filter. All launches expose timeout and scheduler resources.
+The CLI/MCP `testLaunch` object serializes the same parameters. This is a declaration
+of supported runner settings, not a general arbitrary instrumentation callback or
+test discovery result.
+
 `kvik.projectgraph.projectActionGraph` has no filesystem, CAS, network, process or clock access. Its inputs are a validated `EffectiveConfiguration`, a dependency lock already verified by `DependencyLocks.loadLocked`, an immutable project-relative `TreeManifest` whose bytes are already in CAS, runtime composition identity, target toolchain identity maps, and an explicit selection:
 
 ```kotlin
