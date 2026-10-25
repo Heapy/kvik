@@ -59,7 +59,10 @@ DEFS["sourceSet"] = object_({"name": ID, "directories": array(PATH), "resources"
 DEFS["jvmTestSettings"] = object_({
     "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*(?![\s\S])"}, uniqueItems=True),
     "engines": array(enum("junit", "kotest"), minItems=1, uniqueItems=True),
-}, optional=("engines",))
+    "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
+}, optional=("engines", "parallelism"))
+DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"minimum": 2}}, "required": ["parallelism"]},
+    "then": {"properties": {"engines": {"const": ["junit"]}}}}]
 DEFS["nativeTestSettings"] = object_({"engine": {"const": "kotest"}, "kspVersion": {"const": "2.3.12"},
     "processor": {"const": "io.kotest:kotest-framework-symbol-processor:6.2.5"}})
 DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maximum": 3600000}
@@ -1081,7 +1084,9 @@ DEFS["testLaunch"] = {"oneOf": [
         "classpath": array(PATH, minItems=1, uniqueItems=True),
         "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_.$]*(?![\s\S])"}, uniqueItems=True),
         "engines": array(enum("junit-jupiter", "kotest"), minItems=1, uniqueItems=True),
-        "coverage": ref("jvmCoverageSpec"), "resources": ref("testResources")}, optional=("coverage", "resources"))),
+        "coverage": ref("jvmCoverageSpec"), "resources": ref("testResources"),
+        "agents": array(ref("jvmTestAgent"), maxItems=16),
+        "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1}}, optional=("coverage", "resources", "agents", "parallelism"))),
     test_launch("kvik-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
         "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"}),
         "resources": ref("testResources")}, optional=("resources",))),
@@ -1109,6 +1114,16 @@ DEFS["graphInspection"] = versioned({
         "files": array(PATH, minItems=1, maxItems=10000, uniqueItems=True)}), uniqueItems=True),
     "limitations": array(NONEMPTY), "source": ref("sourceReference"),
 }, optional=("source", "generatedResources"))
+
+
+DEFS["jvmAgentOption"] = object_({"kind": enum("literal", "input-file", "output-file"),
+    "value": {"type": "string", "maxLength": 4096, "pattern": r"^[^\u0000-\u001f\u007f-\u009f]*(?![\s\S])"}})
+DEFS["jvmAgentOption"]["allOf"] = [{"if": {"properties": {"kind": enum("input-file", "output-file")}},
+    "then": {"properties": {"value": PATH}}}]
+DEFS["jvmTestAgent"] = object_({"id": {"type": "string", "pattern": r"^[a-z][a-z0-9-]{0,63}(?![\s\S])"},
+    "jar": {"allOf": [PATH, {"pattern": r"^[^=]*\.jar(?![\s\S])"}]},
+    "options": array(ref("jvmAgentOption"), maxItems=256),
+    "outputs": array({"allOf": [PATH, {"pattern": "^instrumentation/[a-z][a-z0-9-]{0,63}/"}]}, maxItems=256, uniqueItems=True)})
 
 
 def main():

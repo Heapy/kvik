@@ -535,8 +535,28 @@ These settings apply to JVM, Native (including Kotest), JS and WasmJS tests.
 action reservations cannot exceed `--jobs`: with `--jobs 4`, two tests reserving
 two slots each may run together. A request larger than `--jobs` fails before test
 launch; increase that budget or lower the declared test concurrency. CPU slots
-reserve scheduler capacity; they do not limit OS threads or configure a test
-framework. Match reservations to the concurrency configured in the tests.
+reserve scheduler capacity; they do not limit arbitrary OS threads. For JVM
+JUnit tests, set `testSettings.parallelism` to configure a bounded worker pool:
+
+```json
+"testSettings": {"classes": ["example.Tests"], "parallelism": 2},
+"testResources": {"cpuSlots": 2}
+```
+
+`parallelism` defaults to 1, accepts integers from 1 to 1024 and must not exceed
+`testResources.cpuSlots`. Values above 1 currently require only the `junit`
+engine. JUnit methods and classes may then run concurrently, subject to JUnit's
+lifecycle, ordering, execution annotations and resource locks. Kvik configures
+both fixed parallelism and maximum pool size to the declared value; tests that
+block waiting for more peers than that budget can time out. Explicit test-created
+threads and other frameworks require their own concurrency configuration.
+See [JUnit parallel execution](https://docs.junit.org/5.13.1/user-guide/index.html#writing-tests-parallel-execution).
+
+Changing parallelism changes test action identity, while compilation remains
+reusable. `inspect-graph` exposes the effective value in the test launch contract
+(non-default values appear in `parameters.parallelism`). Tests still execute
+freshly. The scheduler accounts for the full `cpuSlots` reservation across all
+concurrent test processes.
 `memoryMiB` defaults to 512 and is a scheduler reservation, not a process heap
 limit; requests exceeding the run's memory budget fail before test launch.
 `exclusiveResources` defaults to an empty list. Names must be unique, start with

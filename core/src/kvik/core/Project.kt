@@ -44,8 +44,10 @@ data class SourceSet(
 )
 
 /** Exact JVM binary class names; an empty selection deliberately requests no discovery. */
-data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit")) {
+data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1) {
     init {
+        require(parallelism in 1..1024) { "JVM test parallelism must be an integer in 1..1024" }
+        require(parallelism == 1 || engines == listOf("junit")) { "Parallel JVM tests currently require only the junit engine" }
         require(classes.distinct().size == classes.size && classes.all {
             it.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*"))
         }) { "JVM test classes must be unique qualified binary names" }
@@ -97,6 +99,9 @@ data class TargetSpec(
             "nativeFramework requires an iOS library target without application settings"
         }
         require(testSettings == null || name == "jvm" && test != null) { "testSettings requires a JVM target with a test source set" }
+        require((testSettings?.parallelism ?: 1) <= (testResources?.cpuSlots ?: 1)) {
+            "JVM test parallelism must not exceed testResources.cpuSlots"
+        }
         require(testResources == null || test != null) { "testResources requires a test source set" }
         require(testCompilerOptions == null || test != null) { "testCompilerOptions requires a test source set" }
         require(nativeTestSettings == null || NativeTarget.find(name) != null && test != null) { "nativeTestSettings requires a supported Native target with a test source set" }

@@ -86,8 +86,11 @@ private fun parseModule(value: JsonValue): ModuleSpec {
         require(main in names && (test == null || test in names)) { "Unknown compilation source set in $id:$name" }
         require(test != main) { "Main and test source sets must differ in $id:$name" }
         val settings = entry["testSettings"]?.let { value ->
-            val selection = value.fields(setOf("classes"), setOf("engines"))
-            JvmTestSettings(selection.getValue("classes").strings(), selection["engines"]?.strings() ?: listOf("junit"))
+            val selection = value.fields(setOf("classes"), setOf("engines", "parallelism"))
+            JvmTestSettings(selection.getValue("classes").strings(), selection["engines"]?.strings() ?: listOf("junit"),
+                (selection["parallelism"]?.longValue() ?: 1).also {
+                    require(it in 1L..1024L) { "JVM test parallelism must be an integer in 1..1024" }
+                }.toInt())
         }
         val nativeSettings = entry["nativeTestSettings"]?.let { value ->
             val selection = value.fields(setOf("engine", "kspVersion", "processor"))

@@ -160,13 +160,15 @@ fun jvmMetadataCompileAction(compilation: JvmMetadataCompilation, inputs: TreeMa
         workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources(), val agents: List<JvmTestAgent> = emptyList()) {
+data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources(), val agents: List<JvmTestAgent> = emptyList(), val parallelism: Int = 1) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(classpath.isNotEmpty()) { "Test runtime classpath must be nonempty" }
         require(classpath.distinct().size == classpath.size && classes.distinct().size == classes.size)
         require(classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_.$]*")) })
         require(engines.isNotEmpty() && engines.distinct().size == engines.size && engines.all { it in setOf("junit-jupiter", "kotest") })
+        require(parallelism in 1..1024 && parallelism <= resources.cpuSlots) { "JVM test parallelism must be in 1..1024 and not exceed reserved CPU slots" }
+        require(parallelism == 1 || engines == listOf("junit-jupiter")) { "Parallel JVM tests currently require only the junit-jupiter engine" }
         require(agents.size <= 16 && agents.map { it.id }.distinct().size == agents.size) { "Duplicate or too many test agents" }
         require(agents.flatMap { it.outputs }.size <= 256) { "Too many test instrumentation outputs" }
     }
@@ -174,13 +176,15 @@ data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>
         "classes" to classes.map { it.json() }.json(), "engines" to engines.map { it.json() }.json()).let {
             val measured = if (coverage == null) it else JsonValue.Object(it.values + ("coverage" to coverage.toJson()))
             val scheduled = if (resources == TestResources()) measured else JsonValue.Object(measured.values + ("resources" to resources.toJson()))
-            if (agents.isEmpty()) scheduled else JsonValue.Object(scheduled.values + ("agents" to agents.map { it.toJson() }.json()))
+            val instrumented = if (agents.isEmpty()) scheduled else JsonValue.Object(scheduled.values + ("agents" to agents.map { it.toJson() }.json()))
+            if (parallelism == 1) instrumented else JsonValue.Object(instrumented.values + ("parallelism" to parallelism.json()))
         }
     companion object {
         fun fromJson(value: JsonValue): JvmTestSelection {
-            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources", "agents"))
+            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources", "agents", "parallelism"))
             return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson), d["resources"]?.let(TestResources::fromJson) ?: TestResources(),
-                d["agents"]?.arrayValue()?.map(JvmTestAgent::fromJson).orEmpty())
+                d["agents"]?.arrayValue()?.map(JvmTestAgent::fromJson).orEmpty(),
+                (d["parallelism"]?.longValue() ?: 1).also { require(it in 1L..1024L) { "Invalid JVM test parallelism" } }.toInt())
         }
     }
 }

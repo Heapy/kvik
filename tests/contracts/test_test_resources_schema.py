@@ -31,6 +31,16 @@ class TestResourcesSchemaTest(unittest.TestCase):
             self.assertFalse(VALIDATOR.is_valid(self.target(name, testResources={})))
             self.assertFalse(VALIDATOR.is_valid({**self.target(name, testResources={}), 'test': None}))
 
+    def test_junit_parallelism(self):
+        for parallelism in (1, 2, 1024):
+            VALIDATOR.validate(self.target(testSettings=dict(classes=['example.Tests'], parallelism=parallelism),
+                                           testResources=dict(cpuSlots=parallelism)))
+        for parallelism in (0, 1025, 4294967297, True, '2', 1.5, None):
+            self.assertFalse(VALIDATOR.is_valid(self.target(testSettings=dict(classes=['example.Tests'], parallelism=parallelism))))
+        for engines in (['kotest'], ['junit', 'kotest']):
+            self.assertFalse(VALIDATOR.is_valid(self.target(testSettings=dict(classes=['example.Tests'], engines=engines, parallelism=2))))
+        VALIDATOR.validate(self.target(testSettings=dict(classes=['example.Tests'], engines=['kotest'], parallelism=1)))
+
     def test_invalid_resources_are_rejected(self):
         invalid = [None, [], True, 1, {'typo': 1}]
         invalid += [{'memoryMiB': value} for value in [None, True, '512', 1.5, [], {}, 0, -1, 1048577]]

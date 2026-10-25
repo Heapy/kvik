@@ -24,7 +24,7 @@ object TestWorker {
         var status = "incomplete"
         var exit = 3
         try {
-            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"))
+            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism"))
             request.requireVersion()
             requestId = request.getValue("requestId").stringValue()
             val module = request.getValue("module").stringValue()
@@ -36,6 +36,10 @@ object TestWorker {
             require(classes.distinct().size == classes.size && classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_.$]*")) })
             val engineIds = request.getValue("engines").arrayValue().map { it.stringValue() }.toSet()
             require(engineIds.isNotEmpty() && engineIds.all { it in setOf("junit-jupiter", "kotest") })
+            val parallelism = (request["parallelism"]?.longValue() ?: 1).also {
+                require(it in 1L..1024L) { "Invalid JVM test parallelism" }
+            }.toInt()
+            require(parallelism == 1 || engineIds == setOf("junit-jupiter")) { "Parallel JVM tests require only junit-jupiter" }
             if (classes.isEmpty()) reject("KVIK_TEST_EMPTY_SELECTION", "No test classes were selected")
             // A test worker is a fresh JVM. Kotlin stdlib and kotlin-reflect must share its loader;
             // loading reflect only in a child loader breaks stdlib's ReflectionFactory discovery.
@@ -60,7 +64,15 @@ object TestWorker {
                         .addTestEngines(*engines.toTypedArray()).build()
                     val launcher = LauncherFactory.create(config)
                     val discovery = LauncherDiscoveryRequestBuilder.request().enableImplicitConfigurationParameters(false)
-                        .selectors(classes.map(::selectClass)).configurationParameter("junit.jupiter.execution.parallel.enabled", "false").build()
+                        .selectors(classes.map(::selectClass))
+                        .configurationParameter("junit.jupiter.execution.parallel.enabled", (parallelism > 1).toString())
+                        .configurationParameter("junit.jupiter.execution.parallel.mode.default", "concurrent")
+                        .configurationParameter("junit.jupiter.execution.parallel.mode.classes.default", "concurrent")
+                        .configurationParameter("junit.jupiter.execution.parallel.config.strategy", "fixed")
+                        .configurationParameter("junit.jupiter.execution.parallel.config.fixed.parallelism", parallelism.toString())
+                        .configurationParameter("junit.jupiter.execution.parallel.config.fixed.max-pool-size", parallelism.toString())
+                        .configurationParameter("junit.jupiter.execution.parallel.config.fixed.saturate", "true")
+                        .build()
                     val plan = launcher.discover(discovery)
                     val identifiers = (plan.roots + plan.roots.flatMap { plan.getDescendants(it) }).associateBy { it.uniqueId }.toMutableMap()
                     val discovered = identifiers.filterValues { it.isTest }.toMutableMap()
