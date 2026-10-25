@@ -76,6 +76,19 @@ def main():
         jsonschema.Draft202012Validator.check_schema(definition['inputSchema'])
         whole = local.tool('kvik_inspect')
         assert 'file' not in whole and len(whole['files']) > 1
+        jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/inspection'}).validate(whole)
+        effective_bytes = json.dumps(whole['effectiveConfiguration'], sort_keys=True, separators=(',', ':')).encode()
+        assert whole['configuration'] == dict(hash=hashlib.sha256(effective_bytes).hexdigest(), sizeBytes=len(effective_bytes))
+        settings = whole['settings']
+        inherited = settings['target:library:jvm:test:compilerOptions']
+        assert inherited == dict(value=['-jvm-target=17'], source='inherited', origins=[
+            dict(file='kvik.json', pointer='/modules/0/targets/0/compilerOptions')])
+        assert settings['target:library:jvm:testResources:cpuSlots'] == dict(value=1, source='default', origins=[])
+        assert settings['resolver:pins']['source'] == 'invocation'
+        pinned = command(runtime, ['inspect', '--project', configuration, '--pin', 'example:api:2'])
+        assert pinned['settings']['resolver:pins']['value'] == ['example:api:2']
+        assert pinned['configuration'] != whole['configuration']
+        assert pinned['project'] == whole['project']
         (project/'entry/main.kts').unlink()
         (project/'imported/helper.kts').unlink()
         local.stop()
@@ -141,6 +154,17 @@ def main():
             for path, content in original.items()])))
         revision = kode_call('tx', 'fixture', '--base', base, '--ref', 'main', '--expect-head', base,
             '--intent', 'Import fixture', '--ops', tx)['revision']
+        # Restore the two declaration sources only inside a new immutable revision.
+        tx.write_text(json.dumps(dict(schemaVersion=1, operations=[
+            dict(op='write', path='nested/entry/main.kts', content='// fixture\n'),
+            dict(op='write', path='nested/imported/helper.kts', content='// fixture\n')])))
+        complete_revision = kode_call('tx', 'fixture', '--base', revision, '--ref', 'main', '--expect-head', revision,
+            '--intent', 'Restore script declaration inputs for full inspection', '--ops', tx)['revision']
+        complete = command(runtime, ['inspect', '--project', 'nested/kvik.json', '--kode', kode,
+            '--kode-home', root/'kode-home', '--source-project', 'fixture', '--revision', complete_revision])
+        assert complete['settings'] == whole['settings']
+        assert complete['effectiveConfiguration'] == whole['effectiveConfiguration']
+        assert complete['configuration'] == whole['configuration']
         options = ['--project', 'nested/kvik.json', '--kode', str(kode), '--kode-home', str(root/'kode-home'),
             '--source-project', 'fixture', '--revision', revision, '--store', str(root/'cache')]
         source_client = client(options)

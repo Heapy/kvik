@@ -952,10 +952,14 @@ DEFS["sourceRolePolicy"]["description"] = "Explicit trusted-caller invocation po
 DEFS["buildPluginInputs"] = {**mapping(object_({"files": array(PATH, maxItems=4096, uniqueItems=True),
     "directories": array(PATH, maxItems=4096, uniqueItems=True)})), "maxProperties": 128, "propertyNames": PLUGIN_ID,
     "description": "Computed input declarations from composed build plugins; at most 4096 paths across all plugins. Files are required; absent directories are tracked for later creation. These are not compiler source or package resource roots."}
+DEFS["inspectedSetting"] = object_({"value": {}, "source": enum("configuration", "inherited", "default", "invocation", "derived"),
+    "origins": array(object_({"file": PATH, "pointer": STRING}), uniqueItems=True)})
+DEFS["inspectedSetting"]["allOf"] = [{"if": {"properties": {"source": enum("configuration", "inherited")}},
+    "then": {"properties": {"origins": {"minItems": 1}}}}]
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING), "tags": array(FILE_TAG, minItems=1, uniqueItems=True)}, optional=("tags",))), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
     "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest"),
-    "buildPluginInputs": ref("buildPluginInputs")},
-    optional=("source", "sourceRoot", "sourceManifest", "buildPluginInputs"))
+    "buildPluginInputs": ref("buildPluginInputs"), "effectiveConfiguration": {"type": "object"}, "settings": mapping(ref("inspectedSetting"))},
+    optional=("source", "sourceRoot", "sourceManifest", "buildPluginInputs", "effectiveConfiguration", "settings"))
 DEFS["inspection"]["dependentRequired"] = {key: [other for other in ("source", "sourceRoot", "sourceManifest") if other != key]
     for key in ("source", "sourceRoot", "sourceManifest")}
 KODE_REVISION = {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}

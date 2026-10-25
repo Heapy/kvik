@@ -63,7 +63,16 @@ data class ProjectInspection(
     val origins: Map<String, ConfigurationOrigin>,
     val capabilities: List<String>,
     val source: SourceReference? = null,
+    val effectiveConfiguration: JsonValue.Object? = null,
+    val settings: Map<String, InspectedSetting> = emptyMap(),
 ) {
+    init {
+        effectiveConfiguration?.let {
+            require(Sha256.digest(it) == configuration) { "Effective inspection configuration digest mismatch" }
+            require(it.values["project"] == project.document) { "Effective inspection configuration refers to another project" }
+        }
+    }
+
     fun toJson(): JsonValue.Object = JsonValue.Object(buildMap {
         put("schemaVersion", CONTRACT_VERSION.json())
         put("project", project.document)
@@ -72,6 +81,8 @@ data class ProjectInspection(
         put("files", files.map { it.toJson() }.json())
         put("origins", JsonValue.Object(origins.mapValues { it.value.toJson() }))
         put("capabilities", capabilities.map { it.json() }.json())
+        effectiveConfiguration?.let { put("effectiveConfiguration", it) }
+        if (settings.isNotEmpty()) put("settings", JsonValue.Object(settings.mapValues { it.value.toJson() }))
         if (project.buildPluginInputs.isNotEmpty()) put("buildPluginInputs", JsonValue.Object(project.buildPluginInputs.mapValues { it.value.toJson() }))
         source?.let {
             put("source", it.provenance.toJson())
@@ -83,7 +94,8 @@ data class ProjectInspection(
     companion object {
         fun fromJson(value: JsonValue): ProjectInspection {
             val sourceFields = setOf("source", "sourceRoot", "sourceManifest")
-            val fields = value.fields(setOf("schemaVersion", "project", "configuration", "composition", "files", "origins", "capabilities"), sourceFields + "buildPluginInputs")
+            val fields = value.fields(setOf("schemaVersion", "project", "configuration", "composition", "files", "origins", "capabilities"),
+                sourceFields + setOf("buildPluginInputs", "effectiveConfiguration", "settings"))
             fields.requireVersion()
             val present = fields.keys.intersect(sourceFields)
             require(present.isEmpty() || present == sourceFields) { "Inspection source context requires source, sourceRoot and sourceManifest" }
@@ -95,7 +107,9 @@ data class ProjectInspection(
                 Digest.fromJson(fields.getValue("configuration")), Digest.fromJson(fields.getValue("composition")),
                 fields.getValue("files").arrayValue().map(FileInspection::fromJson),
                 fields.getValue("origins").objectValue().mapValues { ConfigurationOrigin.fromJson(it.value) },
-                fields.getValue("capabilities").arrayValue().map(JsonValue::stringValue), source)
+                fields.getValue("capabilities").arrayValue().map(JsonValue::stringValue), source,
+                fields["effectiveConfiguration"]?.let { JsonValue.Object(it.objectValue()) },
+                fields["settings"]?.objectValue()?.mapValues { InspectedSetting.fromJson(it.value) } ?: emptyMap())
         }
     }
 }

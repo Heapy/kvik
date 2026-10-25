@@ -140,15 +140,22 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
         if (existingFile(path)) owners.getOrPut(path.value) { mutableListOf() }
     }
     val tags = tagProjectFiles(configuration, fileName, null, owners.keys.map(::LogicalPath), checkpoint).associateBy { it.path.value }
+    val effective = effectiveConfiguration(configuration, policy)
+    val settings = projectSettingsInspection(configuration, fileName).toMutableMap()
+    for ((name, value) in effective.document.objectValue().getValue("resolver").objectValue()) {
+        settings["resolver:$name"] = InspectedSetting(value,
+            if (name in setOf("pins", "scopedPins", "metadataExclusions", "maxComponents", "maxRequests")) "invocation" else "default")
+    }
     return ProjectInspection(
         project = configuration,
-        configuration = effectiveConfiguration(configuration, policy).digest, composition = Digest(runtimeComposition, runtimeCompositionSize),
+        configuration = effective.digest, composition = Digest(runtimeComposition, runtimeCompositionSize),
         files = owners.keys.sorted().map { path ->
             val entries = owners.getValue(path)
             FileInspection(LogicalPath(path), entries.map { it.module }.distinct().sorted(),
                 entries.map { it.sourceSet }.distinct().sorted(), entries.flatMap { it.targets }.distinct().sorted(),
                 tags.getValue(path).tags.sorted())
         }, origins = origins,
-        capabilities = listOf("runtime-info", "project-inspection", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "jvm-benchmarks", "sqldelight-generation", "verification"),
+        capabilities = listOf("runtime-info", "project-inspection", "effective-settings", "file-tags", "manual-file-tags", "source-views", "dependency-resolution", "locked-dependencies", "build", "test", "jvm-benchmarks", "sqldelight-generation", "verification"),
+        effectiveConfiguration = JsonValue.Object(effective.document.objectValue()), settings = settings,
     )
 }

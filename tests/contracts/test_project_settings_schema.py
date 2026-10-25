@@ -12,6 +12,17 @@ VALIDATOR = Draft202012Validator({**SCHEMA, "$ref": "#/$defs/target"})
 
 
 class ProjectSettingsSchemaTest(unittest.TestCase):
+    def test_inspected_settings_distinguish_defaults_from_authored_origins(self):
+        validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/inspectedSetting'})
+        default = dict(value=['junit'], source='default', origins=[])
+        validator.validate(default)
+        authored = dict(value=['-jvm-target=17'], source='inherited', origins=[dict(file='kvik.json', pointer='/modules/0/targets/0/compilerOptions')])
+        validator.validate(authored)
+        for invalid in [{**authored, 'origins': []}, {**authored, 'origins': authored['origins'] * 2},
+                        {**default, 'source': 'guessed'}, {**default, 'extra': True},
+                        {k: v for k, v in default.items() if k != 'value'}]:
+            self.assertFalse(validator.is_valid(invalid))
+
     def test_native_timeouts_are_optional_bounded_and_native_only(self):
         target = {**self.target(), 'name': 'macosArm64'}
         VALIDATOR.validate(target)

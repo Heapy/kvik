@@ -27,6 +27,20 @@ origins and capabilities. Kotlin consumers can parse it with
 inspection also carries the source revision, project root and manifest identity as
 one source context.
 
+`inspect` also returns `effectiveConfiguration`, the canonical declaration and
+resolver-policy document identified by its `configuration` digest, and a `settings`
+map. Keys such as `target:library:jvm:test:compilerOptions` expose applied options,
+selected compiler plugins, dependency scope/export defaults, test budgets and
+configured application/framework/benchmark settings. Each value identifies whether
+it is configured, inherited, defaulted, derived or supplied through invocation
+policy; authored values carry configuration-file JSON pointers. `invocation`
+identifies resolver-policy values, including unchanged policy defaults. Build-plugin
+settings are available under `buildPlugin:PLUGIN_ID:settings`, and resolver controls
+under `resolver:NAME`. These are model settings: installed tools, resolved artifact
+versions, adapter-generated command lines and invocation-specific test filters are
+queried separately through graph/dependency/run inspection. Script declarations and
+resolution domains remain available in `effectiveConfiguration`.
+
 Use `inspect --file library/src/Example.kt --project /absolute/project/kvik.json`
 for a focused `file-inspection` result. Paths are relative to the configuration
 directory, including for Kode revisions. The result lists source-set ownership,

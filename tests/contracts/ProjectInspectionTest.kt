@@ -3,6 +3,21 @@ package kvik.core
 import kotlin.test.*
 
 class ProjectInspectionTest {
+    @Test fun effectiveDocumentMustMatchItsDigestAndAuthoringAndSettingsRetainOrigins() {
+        val document = obj("schemaVersion" to 1.json(), "project" to project.document, "resolver" to obj("maxComponents" to 256.json()))
+        val setting = InspectedSetting(listOf("-jvm-target=17".json()).json(), "inherited",
+            listOf(ConfigurationOrigin(LogicalPath("kvik.json"), "/modules/0/targets/0/compilerOptions")))
+        val value = inspection.copy(configuration = Sha256.digest(document), effectiveConfiguration = document, settings = mapOf("testOptions" to setting))
+        assertEquals(value, ProjectInspection.fromJson(parseJson(value.toJson().canonical())))
+        assertFails { value.copy(configuration = digest) }
+        val other = JsonValue.Object(document.values + ("project" to obj()))
+        assertFails { value.copy(configuration = Sha256.digest(other), effectiveConfiguration = other) }
+        assertFails { InspectedSetting(setting.value, "configuration") }
+        assertFails { InspectedSetting(setting.value, "guessed") }
+        val malformed = value.toJson().values + ("effectiveConfiguration" to JsonValue.Null)
+        assertFails { ProjectInspection.fromJson(JsonValue.Object(malformed)) }
+    }
+
     private val digest = Digest("a".repeat(64), 42)
     private val project = parseProjectConfiguration(parseJson("""{
         "schemaVersion":1,"name":"sample","repositories":[{"id":"central","url":"https://repo.maven.apache.org/maven2"}],

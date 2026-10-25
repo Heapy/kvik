@@ -12328,6 +12328,70 @@
       },
       "description": "Computed input declarations from composed build plugins; at most 4096 paths across all plugins. Files are required; absent directories are tracked for later creation. These are not compiler source or package resource roots."
     },
+    "inspectedSetting": {
+      "type": "object",
+      "properties": {
+        "value": {},
+        "source": {
+          "enum": [
+            "configuration",
+            "inherited",
+            "default",
+            "invocation",
+            "derived"
+          ]
+        },
+        "origins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "pointer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "file",
+              "pointer"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "value",
+        "source",
+        "origins"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "enum": [
+                  "configuration",
+                  "inherited"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "origins": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
     "inspection": {
       "type": "object",
       "properties": {
@@ -12439,6 +12503,15 @@
         },
         "buildPluginInputs": {
           "$ref": "#/$defs/buildPluginInputs"
+        },
+        "effectiveConfiguration": {
+          "type": "object"
+        },
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/inspectedSetting"
+          }
         }
       },
       "required": [
