@@ -116,3 +116,19 @@ The graph does not run compilers, materialize files, validate installed toolchai
 Dependency visibility is explicit: `scope=compile` (the default) reaches the owner’s compiler and runtime; `scope=runtime` reaches runtime only. `exported=true` makes a compile dependency visible to downstream module compilation; default `false` keeps it private. Exported chains remain visible only while every traversed edge is exported. Runtime includes all transitive dependencies, including private external dependencies and runtime-only modules. A runtime-only module is built for a test’s runtime prerequisites, but its output/resources never enter the consumer compile inputs. Each compilation/usage looks up its own domain in lock v2, preserving independently pinned main/test versions and preventing test-only artifacts from changing main action keys.
 
 The Native adapter currently has a single library list. This graph explicitly rejects differing visible/link module or external root closures and differing locked compile/link artifact identities. It does **not** promote private or runtime-only dependencies to visible API to make linking work. Supporting such Native graphs requires a separate hidden-library/link adapter extension. Native tests recompile main sources, so their opt-ins must include main opt-ins; other unsupported compiler flags remain explicit errors. Their separate main prerequisite still checks production’s strict API/warnings policy. This slice does not claim full Native kotaml compatibility.
+
+## Source-plugin executors
+
+`ProjectExecutorContributor` registers invocation-scoped `ActionExecutor`
+implementations named `<plugin-id>:<implementation-version>`. It can be combined
+with `ProjectGraphContributor` or a graph provider. `ProjectExecutionContext`
+provides the private retained workspace, composition, content store and owned
+process host. The CLI composes these executors beneath the ordinary local cache
+and scheduler for builds, scripts and foreground/IDE requests.
+
+Custom artifact/verification actions support local caching or always-run policy;
+remote reuse and custom test/script/publication/server adapters are not enabled
+by this contract. Registration is side-effect-free, callbacks are cooperative,
+and running handles must reap their work on close. The wrapper validates action
+ownership, enforces deadlines/cancellation and closes before cache publication.
+See the root README's source-plugin section for lifecycle and caching rules.

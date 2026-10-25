@@ -1176,11 +1176,42 @@ duplicate action IDs, missing dependencies, cycles and missing requested termina
 are rejected. Existing `BuildPlugin.actions(project)` implementations remain
 supported as additive callbacks over the authoring document.
 
-Actions must use the current runtime composition identity. Contributions use the
-existing typed executor adapters and remain locally cached or uncached; a plugin
-cannot opt an added action into remote caching. Custom executor registration and
-additional project-configuration fields require separate adapter support. Graph
-construction must be deterministic and perform no external effects.
+Actions must use the current runtime composition identity. Contributions can use
+built-in adapters or register native implementations through
+`ProjectExecutorContributor.executors(context)`. The returned map binds names
+such as `example.assets:manifest-v1` to the existing `ActionExecutor` contract.
+Names must belong to the registering plugin's namespace, so plugins cannot
+replace built-in executors or another plugin's implementations. Registration runs
+once per invocation, before scheduling, and must not execute tasks or launch
+processes. Additional project-configuration fields still require schema support.
+Graph construction must be deterministic and perform no external effects.
+
+`ProjectExecutionContext` supplies the run ID, composition identity, a private
+retained workspace, `ContentStore`, and the invocation-owned `ProcessHost`.
+Read declared input bytes by digest; publish output bytes to the content store
+and return their logical paths and digests in the action result. Use separate
+workspace paths for concurrent actions. Process-backed adapters must use the
+supplied host and reap their work in `RunningAction.close()`;
+`ProcessActionExecutor` provides a reusable process adapter. Plugin state belongs
+to this run, including when a foreground session reuses its graph.
+
+The scheduler uses each executor's CPU, memory and exclusive-resource requests.
+Custom executors currently support `GENERATE`, `COMPILE`, `LINK`, `PACKAGE` and
+`VERIFY`, with `LOCAL` or `NEVER` cache policy. Remote caching is rejected even
+for custom graph providers. Cache hits bypass `start`; native source composition,
+inputs, tools, options and environment remain part of the normal action identity.
+Choose `NEVER` when execution depends on undeclared external state or performs
+external effects. Registering an executor does not establish hermetic execution.
+
+Kvik checks the implementation/composition/run identity, applies the action
+deadline and cancellation, and closes each handle before exposing its result to
+the cache. Registration, `resources`, `start` and `poll` are cooperative native
+callbacks: keep them bounded and nonblocking, moving long tool work to owned
+processes. Cleanup must be idempotent. Source plugins are trusted native code;
+these interfaces are not an in-process sandbox. A failed, timed-out or cancelled
+contribution prevents the requested checks from completing successfully.
+See the [native executor plugin](tests/plugin-executors/src/ExecutorPlugin.kt)
+for artifact consumption, content publication and process execution.
 Test and script execution belong to checks declared by the graph provider;
 additive callbacks cannot introduce extra test or script executions.
 

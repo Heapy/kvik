@@ -1,0 +1,74 @@
+package fixture.executors
+
+import kvik.cache.NativeFiles
+import kvik.core.*
+import kvik.execution.ProcessActionExecutor
+import kvik.projectgraph.*
+
+class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor {
+    override val id = "fixture.executors"
+    override val apiVersion = CONTRACT_VERSION
+    override val configurationSchema = obj("type" to "object".json())
+
+    override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> {
+        val compile = "app:jvm:main"
+        if (graph.nodes.none { it.id == compile }) return emptyList()
+        val resources = context.snapshot.files.filter { it.path.value.startsWith("other/resources/") }
+        val manifest = ActionNode("$id:manifest", setOf(compile),
+            outputContract = ActionOutputContract(listOf(OutputArtifact(LogicalPath("manifest.json"), "plugin-manifest", ArtifactShape.FILE)))) { results ->
+            ActionSpec("$id:manifest-v1", context.composition, ActionKind.GENERATE, mapOf("os" to "macos", "arch" to "arm64"), "jvm",
+                mapOf("native-runtime" to context.composition), TreeManifest(results.getValue(compile).outputs.files + resources),
+                listOf(LogicalPath("manifest.json")), emptyList(), emptyMap())
+        }
+        val mode = listOf("fail", "timeout", "cancel").singleOrNull { mode -> resources.any { it.path.value.endsWith("/$mode.txt") } }
+        val process = mode?.let {
+            ActionNode("$id:process", setOf(manifest.id), outputContract = ActionOutputContract(emptyList())) {
+                val shell = resources.single { it.path.value.endsWith("/sh") }.copy(path = LogicalPath("tools/sh"), executable = true)
+                val sleep = resources.single { it.path.value.endsWith("/sleep") }.copy(path = LogicalPath("tools/sleep"), executable = true)
+                ActionSpec("$id:process-v1", context.composition, ActionKind.GENERATE, mapOf("os" to "macos", "arch" to "arm64"), "jvm",
+                    mapOf("shell" to shell.digest, "sleep" to sleep.digest), TreeManifest(listOf(shell, sleep)), emptyList(),
+                    listOf(mode), mapOf("LANG" to "C", "LC_ALL" to "C"),
+                    timeoutMillis = if (mode == "timeout") 1000 else 60_000, cachePolicy = CachePolicy.NEVER)
+            }
+        }
+        return listOfNotNull(manifest, process)
+    }
+
+    override fun executors(context: ProjectExecutionContext): Map<String, ActionExecutor> = mapOf(
+        "$id:manifest-v1" to object : ActionExecutor {
+            override fun resources(action: ActionSpec) = ResourceRequest(memoryMiB = 32)
+            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
+                NativeFiles.writeNew("${context.workspace}/manifest-started", action.key(Sha256).toJson().canonical().encodeToByteArray())
+                return object : RunningAction {
+                    override fun poll(): ActionResult {
+                        for (file in action.inputs.files) {
+                            val bytes = requireNotNull(context.content.get(file.digest))
+                            require(Sha256.digest(bytes) == file.digest)
+                        }
+                        val bytes = obj("kind" to "native-plugin-manifest".json(), "inputs" to action.inputs.toJson()).canonical().encodeToByteArray()
+                        val outputs = TreeManifest(listOf(FileEntry(LogicalPath("manifest.json"), context.content.put(bytes))))
+                        return ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED, outputs, 0)
+                    }
+                    override fun cancel() = Unit
+                    override fun close() = Unit
+                }
+            }
+        },
+        "$id:process-v1" to ProcessActionExecutor(context.runId, context.processes, prepare = { _, action ->
+            val directory = "${context.workspace}/process"
+            NativeFiles.ensureDirectory(directory)
+            for (file in action.inputs.files) {
+                val bytes = requireNotNull(context.content.get(file.digest))
+                require(Sha256.digest(bytes) == file.digest)
+                // macOS system executables cannot reliably run after byte-copy materialization.
+                // Bind execution to the declared tool bytes before using the system location.
+                val hostTool = "/bin/${file.path.value.substringAfterLast('/')}"
+                require(Sha256.digest(NativeFiles.read(hostTool, 16 * 1024 * 1024)) == file.digest)
+            }
+            val script = if (action.arguments.single() == "fail") "exit 7" else
+                $$""""$1" 30 & child=$!; printf '%s %s\n' "$$" "$child" > pids; wait "$child""""
+            ProcessRequest(listOf("/bin/sh", "-c", script, "fixture", "/bin/sleep"), directory,
+                action.environment, "$directory/stdout", "$directory/stderr", action.timeoutMillis)
+        }, collect = { _, _ -> TreeManifest(emptyList()) }, resourceRequest = { ResourceRequest(memoryMiB = 32) }),
+    )
+}

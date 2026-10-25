@@ -24,7 +24,7 @@ interface ProjectBuildPlugin : BuildPlugin {
 fun supportsCoreChangeSelection(plugins: List<BuildPlugin>): Boolean =
     (plugins.singleOrNull() as? ProjectBuildPlugin)?.usesCoreProjectImpact == true
 
-/** Adds actions using existing executor adapters; cannot replace the provider's actions or checks. */
+/** Adds actions using built-in or registered source executors; cannot replace provider actions or checks. */
 interface ProjectGraphContributor : BuildPlugin {
     fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode>
 }

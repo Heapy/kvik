@@ -302,8 +302,13 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
                     val kmpLibrary = KmpLibraryPackageExecutor(content)
+                    val pluginExecutors = pluginActionExecutors(buildPlugins, { id ->
+                        val workspace = "${run.path}/plugins/${Sha256.digest(id.encodeToByteArray()).hash}"
+                        NativeFiles.ensureDirectory(workspace)
+                        ProjectExecutionContext(run.runId, workspace, composition, content, host)
+                    })
                     val delegate = object : ActionExecutor {
-                        private fun executor(action: ActionSpec): ActionExecutor = when (action.implementation) {
+                        private fun executor(action: ActionSpec): ActionExecutor = pluginExecutors[action.implementation] ?: when (action.implementation) {
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
                             "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
                             "kvik-sqldelight-v1" -> sqlDelight
