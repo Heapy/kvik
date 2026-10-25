@@ -42,11 +42,13 @@ fun versionChannel(version: String): String = when {
 }
 
 fun queryVersions(project: String, id: PackageId, repositories: List<Repository>, transport: QueryTransport,
-                  parser: PomParser, channel: String = "all", limit: Int = 50, cursor: String? = null): JsonValue.Object {
+                  parser: PomParser, channel: String = "all", limit: Int = 50, cursor: String? = null,
+                  source: SourceReference? = null): JsonValue.Object {
     require(channel in setOf("all", "stable", "prerelease") && limit in 1..200) { "Invalid version query channel/limit" }
-    val query = obj("project" to project.json(), "coordinate" to id.toString().json(),
+    val baseQuery = obj("project" to project.json(), "coordinate" to id.toString().json(),
         "repositories" to repositories.map { obj("id" to it.id.json(), "url" to it.url.json()) }.json(),
         "channel" to channel.json(), "limit" to limit.json(), "cursor" to (cursor?.json() ?: JsonValue.Null), "mode" to transport.mode.wire.json())
+    val query = if (source == null) baseQuery else JsonValue.Object(baseQuery.values + ("source" to source.toJson()))
     val queryIdentity = Sha256.digest(JsonValue.Object(query.values - setOf("cursor", "mode")))
     val diagnostics = mutableListOf<QueryDiagnostic>()
     val versions = linkedMapOf<String, MutableSet<String>>()

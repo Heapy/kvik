@@ -22,7 +22,6 @@ internal fun mcpOptions(arguments: List<String>): McpOptions {
     if (source != null) {
         LogicalPath(projectName)
         options.values["--lock"]?.let(::LogicalPath)
-        require("--query-cache" !in options.values) { "Package queries are not available for MCP source projects" }
     }
     val policy = options.repeats.flatMap { (flag, values) -> values.flatMap { listOf(flag, it) } }
     projectOptions(policy, lockOptions = false).resolverPolicy()
@@ -71,14 +70,14 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         val configurationPlan = tool.name == "kvik_config_plan"
         if (dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build) arguments += options.policy
         if (dependencyQuery || configurationPlan || tool.build || options.source != null && tool.project) {
-            options.lock?.let { arguments += listOf("--lock", it) }
+            if (tool.name !in setOf("kvik_package_versions", "kvik_package_dependencies")) options.lock?.let { arguments += listOf("--lock", it) }
             options.store?.let { arguments += listOf("--store", it) }
         }
         if (tool.repositories) {
             if (!dependencyQuery || "--available-versions" in command) options.queryCache?.let { arguments += listOf("--query-cache", it) }
             if (options.offline && "--offline" !in arguments) arguments += "--offline"
         }
-        if ((tool.build || configurationPlan || options.source != null && tool.project) && options.offline) arguments += "--offline"
+        if ((tool.build || configurationPlan || options.source != null && tool.project) && options.offline && "--offline" !in arguments) arguments += "--offline"
         val prepared = if (tool.build) prepareMcpBuild(arguments, options, id) else null
         val request = prepared?.first
         val directory = NativeFiles.tempDirectory(workspace())

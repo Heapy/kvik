@@ -43,10 +43,9 @@ revision when inspection and execution must address the same contents. Inspect
 `source` and `sourceRoot` in inspection models, and `source.provenance` and
 `source.root` in validation and verification records.
 
-Source mode exposes inspection, configuration validation, retained-run/session
-queries and, with `--tools`, build/test execution. Local-only package/dependency
-queries and change-aware `kvik_verify` are not advertised in source mode.
-`--query-cache` is rejected there. `--config-edits` enables source configuration
+Source mode exposes inspection, configuration validation, package/dependency
+queries, retained-run/session queries and, with `--tools`, build/test execution.
+Change-aware `kvik_verify` remains local-only. `--config-edits` enables source configuration
 plans for explicit publication through Kode, as described below. Session controls
 remain independently available with `--session-controls`.
 
@@ -57,6 +56,22 @@ cached data returns an error, with no fallback to local files or a newer revisio
 Source builds retain their usual provider references and results after the MCP
 connection closes. Run output and caches must be separate from the provider
 store and executable, tool configuration and each other.
+
+Package and dependency queries include a `source` reference identifying the
+revision, manifest and configuration root. Their `query.project` and `query.lock`
+are logical revision paths; `query.store` is the local artifact cache. Declared
+requirements and locked selections come from that revision. Repository
+observations retain their separate timestamps and freshness, including when
+showing available versions next to locked dependencies.
+
+`--query-cache` selects a separate repository-metadata cache. For source queries
+it must not overlap the Kode executable, Kode store or artifact cache. Offline
+queries read existing source and repository caches without repairing or updating
+them. A source `check-lock` or build can provision the source content beforehand.
+Version cursors include the source reference: continue against the same revision,
+or restart pagination after a moving reference changes. The CLI exposes the same
+behavior by adding `--kode`, `--kode-home`, `--source-project`, `--revision` and
+`--store` to `dependencies` or `packages versions|dependencies`.
 
 The connection implements the [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 and negotiates protocol version `2025-11-25` or `2025-06-18`. Initialize the

@@ -35,7 +35,7 @@ build, test and change-aware `kvik_verify` tools using the same executor, cache
 and retained run results.
 Add `--config-edits` for guarded local configuration/lock edits or Kode transaction plans through MCP.
 Add `--session-controls` to control an existing foreground `dev` session.
-MCP also accepts Kode source selectors for inspection, validation, builds and tests without a checkout; see [MCP usage](docs/mcp.md).
+MCP also accepts Kode source selectors for inspection, dependency/package queries, validation, builds and tests without a checkout; see [MCP usage](docs/mcp.md).
 
 ### BSP project import and builds
 

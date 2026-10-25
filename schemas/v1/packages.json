@@ -728,6 +728,9 @@
             "refresh",
             "offline"
           ]
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -1383,6 +1386,9 @@
             "total"
           ],
           "additionalProperties": false
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -1471,6 +1477,9 @@
               "type": "null"
             }
           ]
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -1634,6 +1643,9 @@
             "packages"
           ],
           "additionalProperties": false
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
         }
       },
       "required": [
@@ -1653,6 +1665,87 @@
         "declarations",
         "declarationsScope",
         "domains"
+      ],
+      "additionalProperties": false
+    },
+    "sourceReference": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "provenance": {
+          "$ref": "#/$defs/sourceProvenance"
+        },
+        "root": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            }
+          ]
+        },
+        "manifest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "provenance",
+        "root",
+        "manifest"
+      ],
+      "additionalProperties": false
+    },
+    "sourceProvenance": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "tree": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f]"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "provider",
+        "project",
+        "revision",
+        "tree"
       ],
       "additionalProperties": false
     }

@@ -76,7 +76,8 @@ def main():
         c = client()
         names = {t['name'] for t in c.request('tools/list')['tools']}
         assert {'kvik_inspect', 'kvik_config_validate', 'kvik_build', 'kvik_test', 'kvik_verification'} <= names
-        assert not {'kvik_verify', 'kvik_dependencies', 'kvik_package_versions', 'kvik_package_dependencies', 'kvik_config_plan'} & names
+        assert {'kvik_dependencies', 'kvik_package_versions', 'kvik_package_dependencies'} <= names
+        assert not {'kvik_verify', 'kvik_config_plan'} & names
         source(call(c, 'kvik_inspect'), revision)
         source(call(c, 'kvik_config_validate'), revision)
         built = call(c, 'kvik_build', common)
@@ -120,9 +121,6 @@ def main():
         call(unsafe, 'kvik_build', common, failed=True)
         assert not (home/'requests').exists()
         unsafe.stop()
-        for extra in (['--query-cache', str(root/'query-cache')],):
-            result = subprocess.run(command(revision, extra), env=env, input=b'', capture_output=True, timeout=15)
-            assert result.returncode == 2 and not result.stdout, result
         for c in clients: c.stop()
         assert not list(scratch.iterdir())
         print('PASS MCP source inspection/validation/build/test, moving refs, immutable results, offline reuse and output isolation', flush=True)

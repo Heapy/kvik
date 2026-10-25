@@ -5,6 +5,7 @@ import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.locking.*
 import kvik.packages.*
+import kvik.execution.platform.*
 import kvik.resolution.*
 import kotlinx.cinterop.*
 import platform.posix.*
@@ -61,43 +62,74 @@ private fun cacheOutsideInput(cache: String, input: String) {
     }
 }
 
+/** A source query reads one immutable revision; only local files need a freshness recheck. */
+private class PackageQueryProject(val project: ProjectFile, val options: ProjectOptions, val source: PreparedSourceProject?) {
+    val path: String get() = source?.revisionPath(source.configuration.name)?.value ?: project.path
+    val lock: String get() = source?.revisionPath(LogicalPath(options.lock))?.value ?: projectPath(project.root, options.lock)
+    val store: String get() = projectPath(project.root, options.store)
+    fun cache(path: String?): String {
+        val cache = projectPath(project.root, path ?: ".kvik/package-queries")
+        if (source == null) {
+            cacheOutsideInput(cache, project.path); cacheOutsideInput(cache, lock)
+        } else for (input in listOf(source.options.executable, source.options.home, store)) {
+            require(!pathsPhysicallyOverlap(cache, input)) { "Query cache overlaps source provider or content store: $input" }
+        }
+        return cache
+    }
+    fun finish(result: JsonValue.Object): JsonValue.Object = if (source == null) unchangedQueryProject(result, project)
+        else JsonValue.Object(result.values + ("source" to source.reference.toJson())).also { sourceCheckpoint() }
+}
+
+private fun <T> withPackageQueryProject(source: KodeProjectOptions?, options: ProjectOptions,
+                                        block: (PackageQueryProject) -> T): T {
+    if (source == null) return block(PackageQueryProject(readProject(options.project), options, null))
+    check(kvik_interrupt_install() == 0) { "Cannot install source query interruption handlers" }
+    try {
+        return withPreparedSourceProject(source, options) { prepared -> block(PackageQueryProject(prepared.project, options, prepared)) }
+    } finally { kvik_interrupt_restore() }
+}
+
 internal fun packageCommand(args: List<String>): JsonValue.Object {
     val operation = args.firstOrNull()
     require(operation in setOf("versions", "dependencies")) { "Expected packages versions or packages dependencies" }
     val coordinate = args.getOrNull(1) ?: error("Missing package coordinate")
     val versionQuery = operation == "versions"
-    val options = queryArguments(args.drop(2), setOf("--project", "--query-cache") +
+    val (source, remaining) = sourceProjectOptions(args.drop(2))
+    val options = queryArguments(remaining, setOf("--project", "--query-cache") + (if (source != null) setOf("--store") else emptySet()) +
         if (versionQuery) setOf("--channel", "--limit", "--cursor") else setOf("--target", "--usage", "--jvm-target"),
         repeats = if (versionQuery) emptySet() else setOf("--pin"), flags = setOf("--offline", "--refresh"))
-    val project = readProject(options.values["--project"] ?: "kvik.json")
     val offline = "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1"
     require(!offline || "--refresh" !in options.flags) { "Refresh cannot be combined with offline" }
     val mode = if (offline) QueryMode.OFFLINE else if ("--refresh" in options.flags) QueryMode.REFRESH else QueryMode.CACHE
-    val cache = projectPath(project.root, options.values["--query-cache"] ?: ".kvik/package-queries")
-    cacheOutsideInput(cache, project.path); cacheOutsideInput(cache, "${project.root}/kvik.lock.json")
-    val repositories = project.configuration.project.repositories
-    require(repositories.isNotEmpty()) { "Package queries require configured repositories" }
-    val transport = QueryTransport(repositories, NativeQueryCache(cache, allowRepair = mode == QueryMode.REFRESH),
-        if (offline) null else NativeHttpsTransport(), mode, Clock.System.now().epochSeconds)
-    val result = if (versionQuery) queryVersions(project.path, PackageId.parse(coordinate), repositories, transport, NativeVersionXmlParser(),
-        options.values["--channel"] ?: "all", options.values["--limit"]?.toIntOrNull() ?: if ("--limit" in options.values) error("Invalid page limit") else 50,
-        options.values["--cursor"])
-    else {
-        val target = options.values["--target"] ?: error("Package dependencies requires --target")
-        val usage = options.values["--usage"] ?: error("Package dependencies requires --usage")
-        require(target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) { "Unsupported query target" }
-        val variant = if (target == "jvm") {
-            val jvm = options.values["--jvm-target"]?.let { value -> require(value in setOf("11", "17", "21", "25")); value.toInt() } ?: DEFAULT_JVM_TARGET
-            jvmVariantRequest(usage, jvm)
-        } else {
-            require("--jvm-target" !in options.values) { "JVM bytecode target requires a JVM metadata query" }
-            VariantRequest(target, usage, KotlinJsTarget.find(target)?.variantAttributes.orEmpty())
+    val selected = ProjectOptions(project = options.values["--project"] ?: "kvik.json",
+        store = options.values["--store"] ?: ".kvik/cache", offline = offline)
+    return withPackageQueryProject(source, selected) { context ->
+        val project = context.project
+        val cache = context.cache(options.values["--query-cache"])
+        val repositories = project.configuration.project.repositories
+        require(repositories.isNotEmpty()) { "Package queries require configured repositories" }
+        val transport = QueryTransport(repositories, NativeQueryCache(cache, allowRepair = mode == QueryMode.REFRESH),
+            if (offline) null else NativeHttpsTransport(), mode, Clock.System.now().epochSeconds)
+        val result = if (versionQuery) queryVersions(context.path, PackageId.parse(coordinate), repositories, transport, NativeVersionXmlParser(),
+            options.values["--channel"] ?: "all", options.values["--limit"]?.toIntOrNull() ?: if ("--limit" in options.values) error("Invalid page limit") else 50,
+            options.values["--cursor"], context.source?.reference)
+        else {
+            val target = options.values["--target"] ?: error("Package dependencies requires --target")
+            val usage = options.values["--usage"] ?: error("Package dependencies requires --usage")
+            require(target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) { "Unsupported query target" }
+            val variant = if (target == "jvm") {
+                val jvm = options.values["--jvm-target"]?.let { value -> require(value in setOf("11", "17", "21", "25")); value.toInt() } ?: DEFAULT_JVM_TARGET
+                jvmVariantRequest(usage, jvm)
+            } else {
+                require("--jvm-target" !in options.values) { "JVM bytecode target requires a JVM metadata query" }
+                VariantRequest(target, usage, KotlinJsTarget.find(target)?.variantAttributes.orEmpty())
+            }
+            val pins = options.repeats["--pin"].orEmpty().map(Coordinate::parse)
+            ResolverPolicy(pins) // Conflicting pins are invalid arguments, not unsupported producer metadata.
+            queryPackageDependencies(context.path, Coordinate.parse(coordinate), variant, repositories, pins, transport, NativePomParser())
         }
-        val pins = options.repeats["--pin"].orEmpty().map(Coordinate::parse)
-        ResolverPolicy(pins) // Conflicting pins are invalid arguments, not unsupported producer metadata.
-        queryPackageDependencies(project.path, Coordinate.parse(coordinate), variant, repositories, pins, transport, NativePomParser())
+        context.finish(result)
     }
-    return unchangedQueryProject(result, project)
 }
 
 private fun unchangedQueryProject(result: JsonValue.Object, project: ProjectFile): JsonValue.Object {
@@ -110,7 +142,8 @@ private fun unchangedQueryProject(result: JsonValue.Object, project: ProjectFile
 }
 
 internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
-    val options = queryArguments(args, setOf("--project", "--store", "--lock", "--compilation", "--usage", "--query-cache", "--channel", "--limit", "--cursor"),
+    val (source, remaining) = sourceProjectOptions(args)
+    val options = queryArguments(remaining, setOf("--project", "--store", "--lock", "--compilation", "--usage", "--query-cache", "--channel", "--limit", "--cursor"),
         repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge", "--module", "--script", "--target", "--package"), flags = setOf("--offline", "--available-versions", "--refresh"))
     val available = "--available-versions" in options.flags
     require(available || options.values.keys.none { it in setOf("--query-cache", "--channel", "--limit", "--cursor") } && "--package" !in options.repeats && "--refresh" !in options.flags) {
@@ -131,34 +164,43 @@ internal fun projectDependenciesCommand(args: List<String>): JsonValue.Object {
         if ("--offline" in options.flags) add("--offline")
     }
     val selected = projectOptions(projectFlags, lockOptions = true)
-    val project = readProject(selected.project)
-    val effective = effectiveConfiguration(project.configuration, selected.resolverPolicy())
-    val lock = projectPath(project.root, selected.lock); val store = projectPath(project.root, selected.store)
-    val content by lazy { ReadOnlyContentStore(store, effective.maxArtifactBytes) }
-    val readOnly = object : ContentStore {
-        override fun put(bytes: ByteArray): Digest = error("Project queries cannot write content")
-        override fun get(digest: Digest) = content.get(digest)
-    }
-    var observedLock: ByteArray? = null
-    var result = queryProjectDependencies(project.path, lock, store, project.configuration, effective,
-        { NativeFiles.ensureDirectory(lock.substringBeforeLast('/'), create = false); NativeFiles.read(lock, 16 * 1024 * 1024).also { observedLock = it } }, readOnly, NativePomParser(), Clock.System.now().epochSeconds,
-        ProjectQueryFilter(options.repeats["--module"].orEmpty(), options.repeats["--target"].orEmpty(), options.values["--compilation"], options.values["--usage"], options.repeats["--script"].orEmpty()))
-    if (available) {
-        val cachePath = projectPath(project.root, options.values["--query-cache"] ?: ".kvik/package-queries")
-        cacheOutsideInput(cachePath, project.path); cacheOutsideInput(cachePath, lock)
-        val mode = if (offline) QueryMode.OFFLINE else if ("--refresh" in options.flags) QueryMode.REFRESH else QueryMode.CACHE
-        val cache = NativeQueryCache(cachePath, allowRepair = mode == QueryMode.REFRESH)
-        val network = if (offline) null else NativeHttpsTransport()
-        val now = Clock.System.now().epochSeconds
-        result = withAvailableVersions(result, effective, packages.toSet(), singleQuery = cursor != null) { id, repositories ->
-            queryVersions(project.path, id, repositories, QueryTransport(repositories, cache, network, mode, now),
-                NativeVersionXmlParser(), channel, limit, cursor)
+    return withPackageQueryProject(source, selected) { context ->
+        val project = context.project
+        val effective = effectiveConfiguration(project.configuration, selected.resolverPolicy())
+        val lock = context.lock; val store = context.store
+        val content by lazy { ReadOnlyContentStore(store, effective.maxArtifactBytes) }
+        val readOnly = object : ContentStore {
+            override fun put(bytes: ByteArray): Digest = error("Project queries cannot write content")
+            override fun get(digest: Digest) = content.get(digest)
         }
+        var observedLock: ByteArray? = null
+        var result = queryProjectDependencies(context.path, lock, store, project.configuration, effective,
+            {
+                val prepared = context.source
+                if (prepared != null) prepared.read(prepared.entry(LogicalPath(selected.lock))
+                    ?: error("Dependency lock is absent from source revision"), store, 16 * 1024 * 1024)
+                else {
+                    NativeFiles.ensureDirectory(lock.substringBeforeLast('/'), create = false)
+                    NativeFiles.read(lock, 16 * 1024 * 1024).also { observedLock = it }
+                }
+            }, readOnly, NativePomParser(), Clock.System.now().epochSeconds,
+            ProjectQueryFilter(options.repeats["--module"].orEmpty(), options.repeats["--target"].orEmpty(), options.values["--compilation"], options.values["--usage"], options.repeats["--script"].orEmpty()))
+        if (available) {
+            val cachePath = context.cache(options.values["--query-cache"])
+            val mode = if (offline) QueryMode.OFFLINE else if ("--refresh" in options.flags) QueryMode.REFRESH else QueryMode.CACHE
+            val cache = NativeQueryCache(cachePath, allowRepair = mode == QueryMode.REFRESH)
+            val network = if (offline) null else NativeHttpsTransport()
+            val now = Clock.System.now().epochSeconds
+            result = withAvailableVersions(result, effective, packages.toSet(), singleQuery = cursor != null) { id, repositories ->
+                queryVersions(context.path, id, repositories, QueryTransport(repositories, cache, network, mode, now),
+                    NativeVersionXmlParser(), channel, limit, cursor, context.source?.reference)
+            }
+        }
+        if (observedLock != null) {
+            val unchanged = try { NativeFiles.read(lock, 16 * 1024 * 1024).contentEquals(observedLock) } catch (_: Exception) { false }
+            if (!unchanged) result = JsonValue.Object(result.values + mapOf("status" to "incomplete".json(), "freshness" to "indeterminate".json(),
+                "diagnostics" to (result.values.getValue("diagnostics").arrayValue() + QueryDiagnostic("KVIK_QUERY_INPUT_CHANGED", "Dependency lock changed during query; retry").toJson()).json()))
+        }
+        context.finish(result)
     }
-    if (observedLock != null) {
-        val unchanged = try { NativeFiles.read(lock, 16 * 1024 * 1024).contentEquals(observedLock) } catch (_: Exception) { false }
-        if (!unchanged) result = JsonValue.Object(result.values + mapOf("status" to "incomplete".json(), "freshness" to "indeterminate".json(),
-            "diagnostics" to (result.values.getValue("diagnostics").arrayValue() + QueryDiagnostic("KVIK_QUERY_INPUT_CHANGED", "Dependency lock changed during query; retry").toJson()).json()))
-    }
-    return unchangedQueryProject(result, project)
 }
