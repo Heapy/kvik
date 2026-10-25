@@ -8,15 +8,16 @@ class KotlinBuildPlugin : ProjectBuildPlugin {
     override val id: String = "kvik.kotlin"
     override val apiVersion: Int = CONTRACT_VERSION
     override val usesCoreProjectImpact: Boolean = true
+    override val acceptsGeneratedInputs: Boolean = true
     override val configurationSchema: JsonValue.Object = obj(
         "description" to "Kotlin consumes the core project or standalone script authoring document.".json(),
         "oneOf" to listOf("project", "standaloneScript").map {
             obj("\$ref" to "https://kvik.dev/schemas/v1/contracts.json#/\$defs/$it".json())
         }.json())
     override fun projectGraph(context: ProjectBuildContext, request: ProjectGraphRequest): ProjectActionGraph =
-        projectActionGraph(context.effective, context.lock, context.snapshot, context.composition, context.toolchains, request)
+        projectActionGraph(context.effective, context.lock, context.snapshot, context.composition, context.toolchains, request, context.generatedInputs)
 
     override fun scriptGraph(context: ProjectBuildContext, request: ScriptGraphRequest): ProjectActionGraph =
         scriptActionGraph(context.effective, context.lock, context.snapshot, context.composition,
-            context.toolchains.getValue("jvm"), request)
+            context.toolchains.getValue("jvm"), request, context.generatedInputs)
 }

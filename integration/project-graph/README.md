@@ -144,3 +144,34 @@ before resolution and edits, and graph composition validates them again before c
 Lower execution-relevant values into action parameters/inputs so executors use the
 same values included in action keys. Settings change the effective configuration and
 foreground graph identity without changing the source runtime composition.
+
+### Generated inputs from source build plugins
+
+`ProjectGenerationContributor.generatedInputs(context)` runs before the graph
+provider. Return `ProjectGeneratedInputs` containing action nodes and typed
+`GeneratedSourceRoot`/`GeneratedResourceRoot` declarations. The bundled
+`KotlinBuildPlugin` consumes them without replacing its compilation graph. Custom
+providers explicitly opt in with `acceptsGeneratedInputs` and read
+`context.generatedInputs`.
+
+Generator/helper action IDs use `plugin:PLUGIN_ID:generate:NAME`. Their dependencies
+must form an acyclic graph closed over the contributed generator/helper nodes;
+they cannot depend on consumer compilation actions. Each generated root names its
+producer, module, source set and a declared `TREE` output in that producer's
+`ActionOutputContract`. Source roots contain regular `.kt` files. Resource roots
+also declare the exact relative file list, allowing classpaths and collision checks
+to be built before execution. Separate source/resource roots cannot overlap.
+
+Only producers needed by the selected source-set closures are scheduled. Shared
+common sources use one producer across target compilations; test-only producers do
+not run for production-only builds. Compilation, scripts, packaging, documentation
+and Native source fragments use the same generated input bindings. Resource names
+must not collide with static resources or other generators. Generated origins and
+producer edges are available in `inspect-graph` and its consumers.
+Named script runs with additional source plugins capture all declared project inputs,
+since the core script dependency closure cannot predict a plugin's inputs.
+
+These actions use the ordinary scheduler and registered executors. Their output
+bytes feed downstream action keys; cached generator outputs are consumable without
+rerunning the generator. The contribution guards still require the current runtime
+composition and reject remote caching and undeclared test/script execution.

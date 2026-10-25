@@ -63,11 +63,15 @@ internal data class ScriptFile(val root: String, val name: LogicalPath, val byte
     fun expanded() = project?.let { expandScript(it, scriptName) } ?: checkNotNull(standalone).expanded()
 }
 
+/** Extra source plugins may consume any declared project input, beyond the script's module closure. */
+private fun scriptInputSelection(name: String): SnapshotSelection =
+    if (supportsCoreChangeSelection(buildPlugins)) SnapshotSelection.Script(name) else SnapshotSelection.Project
+
 internal fun readScript(options: ScriptOptions): ScriptFile {
     options.name?.let { name ->
         val project = readProject(options.project.project)
         expandScript(project.configuration, name)
-        return ScriptFile(project.root, project.name, project.bytes, name, SnapshotSelection.Script(name), project.configuration, null, null)
+        return ScriptFile(project.root, project.name, project.bytes, name, scriptInputSelection(name), project.configuration, null, null)
     }
     val file = checkNotNull(options.file)
     val absolute = if (file.startsWith('/')) file else "${currentDirectory()}/$file"
@@ -112,7 +116,7 @@ internal fun readSourceScript(options: ScriptOptions, prepared: PreparedSourcePr
     options.name?.let { name ->
         val project = prepared.project.configuration
         expandScript(project, name)
-        return ScriptFile(captured.root, captured.name, captured.bytes, name, SnapshotSelection.Script(name), project, null, null)
+        return ScriptFile(captured.root, captured.name, captured.bytes, name, scriptInputSelection(name), project, null, null)
     }
     val primary = LogicalPath(checkNotNull(options.file).substringAfterLast('/'))
     val configuration = parseStandaloneScriptConfiguration(parseJson(captured.bytes.decodeToString(throwOnInvalidSequence = true)))

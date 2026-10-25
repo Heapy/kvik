@@ -5,16 +5,31 @@ import kvik.core.*
 import kvik.execution.ProcessActionExecutor
 import kvik.projectgraph.*
 
-class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor, ConfigurableBuildPlugin {
+class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor, ConfigurableBuildPlugin, ProjectGenerationContributor {
     override val id = "fixture.executors"
     override val apiVersion = CONTRACT_VERSION
     override val configurationSchema = obj("type" to "object".json())
 
     override val settingsSchema = obj("type" to "object".json(), "additionalProperties" to false.json(),
-        "properties" to obj("label" to obj("type" to "string".json(), "minLength" to 1.json())))
+        "properties" to obj("label" to obj("type" to "string".json(), "minLength" to 1.json()), "generate" to obj("type" to "boolean".json())))
     override fun validateSettings(settings: JsonValue.Object) {
-        val fields = settings.fields(emptySet(), setOf("label"))
+        val fields = settings.fields(emptySet(), setOf("label", "generate"))
+        fields["generate"]?.booleanValue()
         fields["label"]?.let { require(it.stringValue().isNotBlank()) { "label must not be blank" } }
+    }
+
+    override fun generatedInputs(context: ProjectBuildContext): ProjectGeneratedInputs {
+        if (context.settings(id).values["generate"]?.booleanValue() != true) return ProjectGeneratedInputs()
+        val producer = "plugin:$id:generate:code"
+        val inputs = TreeManifest(context.snapshot.files.filter { it.path.value == "other/resources/input.txt" })
+        require(inputs.files.size == 1)
+        val node = ActionNode(producer, emptySet(), ActionOutputContract(treeOutput("kotlin", "kotlin-sources"), treeOutput("assets", "resources"))) {
+            ActionSpec("$id:code-v1", context.composition, ActionKind.GENERATE, mapOf("os" to "macos", "arch" to "arm64"), "jvm",
+                mapOf("native-runtime" to context.composition), inputs, listOf(LogicalPath("kotlin"), LogicalPath("assets")), emptyList(), emptyMap())
+        }
+        return ProjectGeneratedInputs(listOf(node),
+            listOf(GeneratedSourceRoot(producer, "app", "main", "build-plugin", "/pluginSettings/$id/generate", LogicalPath("kotlin"))),
+            listOf(GeneratedResourceRoot(producer, "app", "main", "/pluginSettings/$id/generate", LogicalPath("assets"), listOf(LogicalPath("generated.txt")))))
     }
 
     override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> {
@@ -42,6 +57,20 @@ class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor, Conf
     }
 
     override fun executors(context: ProjectExecutionContext): Map<String, ActionExecutor> = mapOf(
+        "$id:code-v1" to object : ActionExecutor {
+            override fun resources(action: ActionSpec) = ResourceRequest(memoryMiB = 32)
+            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction = object : RunningAction {
+                override fun poll(): ActionResult {
+                    val value = action.inputs.files.single().digest.hash
+                    val source = "package example\nobject Generated { const val value = \"$value\" }\n".encodeToByteArray()
+                    val outputs = TreeManifest(listOf(FileEntry(LogicalPath("kotlin/Generated.kt"), context.content.put(source)),
+                        FileEntry(LogicalPath("assets/generated.txt"), context.content.put(value.encodeToByteArray()))))
+                    return ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED, outputs, 0)
+                }
+                override fun cancel() = Unit
+                override fun close() = Unit
+            }
+        },
         "$id:manifest-v1" to object : ActionExecutor {
             override fun resources(action: ActionSpec) = ResourceRequest(memoryMiB = 32)
             override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {

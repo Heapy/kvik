@@ -1197,6 +1197,17 @@ duplicate action IDs, missing dependencies, cycles and missing requested termina
 are rejected. Existing `BuildPlugin.actions(project)` implementations remain
 supported as additive callbacks over the authoring document.
 
+For code generation, implement `ProjectGenerationContributor.generatedInputs(context)`.
+Its `ProjectGeneratedInputs` supplies generator/helper action nodes and typed source
+and resource roots before the Kotlin graph is built. The bundled provider wires
+those producers into the selected module/source-set compilations, runtime resources
+and packaging. Common sources can serve JVM, Native and JS; test-only generators
+run only when their source sets are needed. `inspect-graph` exposes their origins
+and prerequisite edges. Generator IDs use `plugin:PLUGIN_ID:generate:NAME`, output
+roots require declared tree contracts, and resource roots declare exact relative
+file names. See the [generation API](integration/project-graph/README.md#generated-inputs-from-source-build-plugins)
+for dependency and output rules.
+
 Actions must use the current runtime composition identity. Contributions can use
 built-in adapters or register native implementations through
 `ProjectExecutorContributor.executors(context)`. The returned map binds names

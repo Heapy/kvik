@@ -93,7 +93,8 @@ fun projectActionGraph(
     composition: Digest,
     toolchains: Map<String, Map<String, Digest>>,
     request: ProjectGraphRequest,
-): ProjectActionGraph = Builder(effective, lock, snapshot, composition, toolchains, request).build()
+    generatedInputs: ProjectGeneratedInputs = ProjectGeneratedInputs(),
+): ProjectActionGraph = Builder(effective, lock, snapshot, composition, toolchains, request, generatedInputs).build()
 
 private class Builder(
     private val effective: EffectiveConfiguration,
@@ -102,6 +103,7 @@ private class Builder(
     private val composition: Digest,
     toolchains: Map<String, Map<String, Digest>>,
     request: ProjectGraphRequest,
+    private val generatedInputs: ProjectGeneratedInputs,
 ) {
     private val policy = effective.policy
     private val project = parseProjectConfiguration(effective.document.objectValue().getValue("project")).project
@@ -129,6 +131,7 @@ private class Builder(
     } else emptySet()
 
     init {
+        validateGeneratedInputs(project, generatedInputs)
         require(lock.configuration == effective.digest) { "Stale dependency lock" }
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
@@ -169,7 +172,7 @@ private class Builder(
                 val id = ensureDocumentation(module)
                 "$module:common:documentation" to id
             }
-            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList())
+            return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals, contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), generatedResources = generatedResources.toList())
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
@@ -196,7 +199,7 @@ private class Builder(
                 terminals["$module:common:package"] = root
             }
         }
-        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList())
+        return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), contributedActions = nodes.keys.intersect(generatedInputs.nodes.map { it.id }.toSet()), generatedSources = generatedSources.toList(), testLaunches = testLaunches.toMap(), generatedResources = generatedResources.toList())
     }
 
     private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
@@ -226,6 +229,7 @@ private class Builder(
         documentationCommonSourceSets(modules.getValue(module), targets).any { set ->
             set.name == modules.getValue(module).sqlDelight?.sourceSet ||
                 scriptGenerators(project, module, setOf(set.name)).isNotEmpty() ||
+                generatedInputs.sources.any { it.module == module && it.sourceSet == set.name } ||
                 set.directories.any { directory -> files.any { it.path.value.startsWith(directory.value + "/") } }
         }
 
@@ -267,7 +271,7 @@ private class Builder(
             }
         } }.distinct()
         val sqlDelight = spec.sqlDelight?.takeIf { settings -> sets.any { it.name == settings.sourceSet } }?.let { ensureSqlDelight(module) }
-        val generators = ensureScriptGenerators(module, sets)
+        val generators = ensureSourceGenerators(module, sets)
         require(source.isNotEmpty() || sqlDelight != null || generators.isNotEmpty()) { "No common documentation dependency sources: $module" }
         val dependencies = documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) }
         val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
@@ -289,7 +293,7 @@ private class Builder(
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
             val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
             val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
-            val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + scriptGeneratorOutputs(generators, results).values.flatten()
+            val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + sourceGeneratorOutputs(generators, results).values.flatten()
             jvmMetadataCompileAction(JvmMetadataCompilation(module, (source + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path } +
                     listOfNotNull(nativeTarget?.let { LogicalPath("native-stdlib/shared") }), LogicalPath("metadata"),
@@ -308,7 +312,7 @@ private class Builder(
         val selectedSets = selectedTargets.flatMap { sourceSets(module, it, "main") }.distinctBy { it.name }
         val sqlDelight = spec.sqlDelight?.takeIf { settings -> selectedSets.any { it.name == settings.sourceSet } }
         val sqlDelightId = sqlDelight?.let { ensureSqlDelight(module) }
-        val generators = ensureScriptGenerators(module, selectedSets)
+        val generators = ensureSourceGenerators(module, selectedSets)
         val reached = spec.targets.associate { it.name to sourceSets(module, it.name, "main").map { source -> source.name }.toSet() }
         fun platform(set: SourceSet): String {
             val families = reached.filterValues { set.name in it }.keys.map {
@@ -353,7 +357,7 @@ private class Builder(
             val generated = (sqlDelightId?.let { generation -> sqlDelightOutputs(module, generation, results).map { entry ->
                 entry.copy(path = LogicalPath("sources/${sqlDelight!!.sourceSet}/sqldelight/" +
                     entry.path.value.removePrefix("generated/sqldelight/$module/")))
-            } } ?: emptyList()) + scriptGeneratorOutputs(generators, results).flatMap { (set, entries) -> entries.map { entry ->
+            } } ?: emptyList()) + sourceGeneratorOutputs(generators, results).flatMap { (set, entries) -> entries.map { entry ->
                 entry.copy(path = LogicalPath("sources/$set/scripts/" + entry.path.value.removePrefix("generated/scripts/")))
             } }
             val sets = selectedSets.map { set ->
@@ -463,8 +467,9 @@ private class Builder(
     }
 
     private fun resources(module: String, target: String, scope: String): ResourceSelection =
-        moduleResources(project, files, module, target, scope).also { selection ->
+        moduleResources(project, files, module, target, scope, generatedInputs.resources).also { selection ->
             selection.generators.forEach(::ensureScriptGenerator)
+            selection.pluginDependencies.forEach(::ensurePluginGenerator)
         }
 
     private fun pluginResourceDependencies(module: String, target: String, scope: String): Set<String> =
@@ -601,7 +606,9 @@ private class Builder(
         } == true
         val scriptCommon = scriptGenerators(project, module, sourceSets(module, target, scope).map { it.name }.toSet())
             .any { it.declaration.generator!!.resources.isEmpty() && it.declaration.generator!!.sourceSet in commonSets(module) }
-        require(!it.multiplatform || sources.common.isNotEmpty() || generatedCommon || scriptCommon) { "Explicit multiplatform option requires common fragments" }
+        require(!it.multiplatform || sources.common.isNotEmpty() || generatedCommon || scriptCommon ||
+            generatedInputs.sources.any { root -> root.module == module && root.sourceSet in commonSets(module) &&
+                sourceSets(module, target, scope).any { it.name == root.sourceSet } }) { "Explicit multiplatform option requires common fragments" }
     }
 
     private data class CompilationClasspath(val dependencies: List<String>, val modules: List<String>, val artifacts: List<FileEntry>)
@@ -672,32 +679,52 @@ private class Builder(
         return runId
     }
 
-    private fun generatorId(script: ExpandedScript) = "script:${script.name}:jvm:generate"
+    private fun generatorId(generator: SourceGenerator) = generator.producer
 
-    private fun ensureScriptGenerators(module: String, sets: List<SourceSet>): List<ExpandedScript> =
-        scriptGenerators(project, module, sets.map { it.name }.toSet())
-            .filter { it.declaration.generator!!.resources.isEmpty() }.also { it.forEach(::ensureScriptGenerator) }
+    private fun ensurePluginGenerator(id: String) {
+        if (id in nodes) return
+        val node = generatedInputs.nodes.single { it.id == id }
+        node.dependencies.forEach(::ensurePluginGenerator)
+        nodes[id] = node
+        generatedSources += generatedInputs.sources.filter { it.producer == id }
+        generatedResources += generatedInputs.resources.filter { it.producer == id }
+    }
+
+    private fun ensureSourceGenerators(module: String, sets: List<SourceSet>): List<SourceGenerator> {
+        val names = sets.map { it.name }.toSet()
+        val scripts = scriptGenerators(project, module, names)
+            .filter { it.declaration.generator!!.resources.isEmpty() }.onEach(::ensureScriptGenerator).map { script ->
+                SourceGenerator("script:${script.name}:jvm:generate", script.declaration.generator!!.sourceSet,
+                    LogicalPath("generated"), "generated/scripts/${script.name}/", exclusiveRoot = true)
+            }
+        val plugins = generatedInputs.sources.filter { it.module == module && it.sourceSet in names }.map { root ->
+            ensurePluginGenerator(root.producer)
+            SourceGenerator(root.producer, root.sourceSet, root.outputRoot, pluginSourcePrefix(root))
+        }
+        return scripts + plugins
+    }
 
     private fun ensureScriptGenerator(script: ExpandedScript) {
-        if (generatorId(script) in nodes) return
+        if ("script:${script.name}:jvm:generate" in nodes) return
         val graph = scriptActionGraph(effective, lock, TreeManifest(files), composition, tools.getValue("jvm"),
-            ScriptGraphRequest(script.name, generator = true))
+            ScriptGraphRequest(script.name, generator = true), generatedInputs)
         for (node in graph.nodes) if (node.id !in nodes) nodes[node.id] = node
         generatedSources += graph.generatedSources
         generatedResources += graph.generatedResources
     }
 
-    private fun scriptGeneratorOutputs(generators: List<ExpandedScript>, results: Map<String, ActionResult>): Map<String, List<FileEntry>> =
-        generators.groupBy { it.declaration.generator!!.sourceSet }.mapValues { (_, scripts) -> scripts.flatMap { script ->
-            results.getValue(generatorId(script)).outputs.files.map { entry ->
-                require(entry.path.value.startsWith("generated/") && entry.path.value.endsWith(".kt") && !entry.executable) {
-                    "Invalid script generator output: ${script.name}:${entry.path.value}"
-                }
-                entry.copy(path = LogicalPath("generated/scripts/${script.name}/" + entry.path.value.removePrefix("generated/")))
+    private fun sourceGeneratorOutputs(generators: List<SourceGenerator>, results: Map<String, ActionResult>): Map<String, List<FileEntry>> =
+        generators.groupBy { it.sourceSet }.mapValues { (_, declarations) -> declarations.flatMap { generator ->
+            if (generator.exclusiveRoot) require(results.getValue(generator.producer).outputs.files.all {
+                it.path.value.startsWith(generator.root.value + "/")
+            }) { "Unexpected source generator output: ${generator.producer}" }
+            generatedFiles(results, generator.producer, generator.root).map { entry ->
+                require(entry.path.value.endsWith(".kt")) { "Invalid generated Kotlin source: ${generator.producer}:${entry.path.value}" }
+                entry.copy(path = LogicalPath(generator.prefix + entry.path.value.removePrefix(generator.root.value + "/")))
             }
         } }
 
-    private fun withScriptGenerators(module: String, source: Sources, generated: Map<String, List<FileEntry>>): Sources = Sources(
+    private fun withGeneratedSources(module: String, source: Sources, generated: Map<String, List<FileEntry>>): Sources = Sources(
         source.entries + generated.values.flatten(), source.paths + generated.values.flatten().map { it.path },
         source.common + generated.filterKeys { it in commonSets(module) }.values.flatten().map { it.path },
     )
@@ -772,7 +799,7 @@ private class Builder(
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val source = sources(module, target, "main")
         val sqlDelight = sqlDelightFor(module, target)
-        val generators = ensureScriptGenerators(module, sourceSets(module, target, "main"))
+        val generators = ensureSourceGenerators(module, sourceSets(module, target, "main"))
         require(source.paths.isNotEmpty() || sqlDelight != null || generators.isNotEmpty()) { "No Kotlin main sources: $module:$target" }
         mainSources[module to target] = source
         val options = options(module, target, "main", source)
@@ -794,8 +821,8 @@ private class Builder(
             val compilerInputs = classpathInputs(compilationClasspath, target, results)
             val workspace = workspacePlugin(module, target, "main", results)
             val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
-            val scriptSources = scriptGeneratorOutputs(generators, results)
-            val compiledSource = withScriptGenerators(module, withSqlDelight(module, source, generated), scriptSources)
+            val scriptSources = sourceGeneratorOutputs(generators, results)
+            val compiledSource = withGeneratedSources(module, withSqlDelight(module, source, generated), scriptSources)
             val inputs = merge(compiledSource.entries, resource.resolve(results), compilerInputs.files, plugin, workspace.entries)
             val classpath = classpathPaths(compilationClasspath, target)
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
@@ -940,7 +967,7 @@ private class Builder(
             }
         } }.sortedBy { it.path.value }
         val sqlDelight = spec.sqlDelight?.takeIf { settings -> shared.any { it.name == settings.sourceSet } }?.let { ensureSqlDelight(module) }
-        val generators = ensureScriptGenerators(module, shared)
+        val generators = ensureSourceGenerators(module, shared)
         require((sources.isNotEmpty() || sqlDelight != null || generators.isNotEmpty()) && sources.map { it.path }.distinct().size == sources.size) { "Empty or overlapping common source ownership: $module" }
         val dependencies = commonPublicationDependencyClosure(project, module).modules
         val pluginDependencies = if (applyPlugin) pluginModules(module, pluginTarget, "main") else emptyList()
@@ -958,7 +985,7 @@ private class Builder(
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
             val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
-            val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + scriptGeneratorOutputs(generators, results).values.flatten()
+            val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + sourceGeneratorOutputs(generators, results).values.flatten()
             jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", (sources + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),
                 optIns = settings.flatMap { it.optIns }.distinct().sorted(), explicitApi = settings.any { it.explicitApi },
@@ -1092,7 +1119,7 @@ private class Builder(
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val mainSets = sourceSets(module, target, "main").map { it.name }.toSet()
-        val generators = ensureScriptGenerators(module, sourceSets(module, target, "test").filter { target != "jvm" || it.name !in mainSets })
+        val generators = ensureSourceGenerators(module, sourceSets(module, target, "test").filter { target != "jvm" || it.name !in mainSets })
         val producerEdges = resource.dependencies + moduleIds.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, target, "test") + generators.map(::generatorId)
         val sqlDelight = if (NativeTarget.find(target) != null) sqlDelightFor(module, target) else null
         val compileEdges = producerEdges + listOfNotNull(sqlDelight) + if (kotest == null) emptySet() else setOf(generationId(module, target))
@@ -1124,7 +1151,7 @@ private class Builder(
                     ActionOutputContract(treeOutput("generated", "generated-sources"))) { results ->
                     validateResults(results, producerEdges)
                     val modules = moduleIds.flatMap { remap(results, it, target, "main") }
-                    val generatedSources = scriptGeneratorOutputs(generators, results).filterKeys { it !in mainSets }
+                    val generatedSources = sourceGeneratorOutputs(generators, results).filterKeys { it !in mainSets }
                     val allTestSources = testSources + generatedSources.values.flatten()
                     require(allTestSources.isNotEmpty()) { "Native Kotest requires test Kotlin sources" }
                     val common = source.common.filter { path -> testSources.any { it.path == path } } +
@@ -1148,8 +1175,8 @@ private class Builder(
                     require(it.map { file -> file.path } == listOf(kotestGeneratedLauncher)) { "KSP prerequisite must contain exactly the raw pinned launcher" }
                 }
                 val sqlSources = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
-                val scriptSources = scriptGeneratorOutputs(generators, results)
-                val compiledSource = withScriptGenerators(module, withSqlDelight(module, source, sqlSources), scriptSources)
+                val scriptSources = sourceGeneratorOutputs(generators, results)
+                val compiledSource = withGeneratedSources(module, withSqlDelight(module, source, sqlSources), scriptSources)
                 val inputs = merge(compiledSource.entries, resource.resolve(results), compilerInputs.files, plugin, workspace.entries, generated)
                 val classpath = classpathPaths(compilationClasspath, target)
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
@@ -1245,7 +1272,7 @@ private class Builder(
         val pluginDependencies = pluginModules(module, target, "test")
         pluginDependencies.forEach { ensureMain(it, "jvm") }
         val sqlDelight = sqlDelightFor(module, target)
-        val generators = ensureScriptGenerators(module, sourceSets(module, target, "test"))
+        val generators = ensureSourceGenerators(module, sourceSets(module, target, "test"))
         val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, target, "test") + listOfNotNull(sqlDelight) + generators.map(::generatorId)
         nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges,
             ActionOutputContract(listOf(fileOutput("tests.klib", "klib")) + pluginOutputArtifacts(module, target, "test"))) { results ->
@@ -1253,7 +1280,7 @@ private class Builder(
             val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
             val workspace = workspacePlugin(module, target, "test", results)
             val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
-            val compiledSource = withScriptGenerators(module, withSqlDelight(module, source, generated), scriptGeneratorOutputs(generators, results))
+            val compiledSource = withGeneratedSources(module, withSqlDelight(module, source, generated), sourceGeneratorOutputs(generators, results))
             jsCompileAction(JsCompilation(module = module, target = jsTarget, sources = compiledSource.paths,
                 commonSources = compiledSource.common, libraries = dependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
                 output = LogicalPath("tests.klib"), moduleName = testModuleName, optIns = options.optIns, explicitApi = options.explicitApi,

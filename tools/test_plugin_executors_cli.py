@@ -145,7 +145,7 @@ def main():
     assert changed[MANIFEST]['status'] == 'executed' and changed[MANIFEST]['key'] != cold_actions[MANIFEST]['key']
     assert changed['app:jvm:main']['status'] == 'local_hit'
     _, scripted = build('script', script=True)
-    assert scripted[MANIFEST]['status'] == 'executed'
+    assert scripted[MANIFEST]['status'] == 'local_hit' and scripted[MANIFEST]['key'] == changed[MANIFEST]['key']
     _, repeated = build('script-repeat', script=True)
     assert repeated[MANIFEST]['status'] == 'local_hit' and repeated['script:task:jvm:run']['status'] == 'executed'
     print('PASS custom Kotlin/Native task, compiler artifact consumption, local cache, invalidation and scripts', flush=True)

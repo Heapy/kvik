@@ -10,6 +10,7 @@ data class ProjectBuildContext(
     val snapshot: TreeManifest,
     val composition: Digest,
     val toolchains: Map<String, Map<String, Digest>>,
+    val generatedInputs: ProjectGeneratedInputs = ProjectGeneratedInputs(),
 ) {
     /** Settings affecting execution must be lowered into action parameters/inputs by the plugin. */
     fun settings(pluginId: String): JsonValue.Object =
@@ -21,6 +22,7 @@ data class ProjectBuildContext(
 interface ProjectBuildPlugin : BuildPlugin {
     /** Opt in only when the core module/source-set impact model covers every graph input. */
     val usesCoreProjectImpact: Boolean get() = false
+    val acceptsGeneratedInputs: Boolean get() = false
     fun projectGraph(context: ProjectBuildContext, request: ProjectGraphRequest): ProjectActionGraph
     fun scriptGraph(context: ProjectBuildContext, request: ScriptGraphRequest): ProjectActionGraph
 }
@@ -36,19 +38,19 @@ interface ProjectGraphContributor : BuildPlugin {
 
 fun composedProjectActionGraph(
     plugins: List<BuildPlugin>, context: ProjectBuildContext, request: ProjectGraphRequest,
-): ProjectActionGraph = compose(plugins, context, projectRequestedChecks(request)) { provider ->
-    provider.projectGraph(context, request)
+): ProjectActionGraph = compose(plugins, context, projectRequestedChecks(request)) { provider, prepared ->
+    provider.projectGraph(prepared, request)
 }
 
 fun composedScriptActionGraph(
     plugins: List<BuildPlugin>, context: ProjectBuildContext, request: ScriptGraphRequest,
-): ProjectActionGraph = compose(plugins, context, setOf("script:${request.name}:jvm:run")) { provider ->
-    provider.scriptGraph(context, request)
+): ProjectActionGraph = compose(plugins, context, setOf("script:${request.name}:jvm:run")) { provider, prepared ->
+    provider.scriptGraph(prepared, request)
 }
 
 private fun compose(
     plugins: List<BuildPlugin>, context: ProjectBuildContext, expectedChecks: Set<String>,
-    provide: (ProjectBuildPlugin) -> ProjectActionGraph,
+    provide: (ProjectBuildPlugin, ProjectBuildContext) -> ProjectActionGraph,
 ): ProjectActionGraph {
     val ordered = plugins.toList().sortedBy { it.id }
     require(ordered.all { it.id.isNotBlank() }) { "Build plugin IDs must not be blank" }
@@ -59,7 +61,10 @@ private fun compose(
     val providers = ordered.filterIsInstance<ProjectBuildPlugin>()
     require(providers.size == 1) { "Exactly one project build plugin is required" }
     val provider = providers.single()
-    val supplied = provide(provider)
+    val generated = collectGeneratedInputs(ordered, context)
+    require(generated == ProjectGeneratedInputs() || provider.acceptsGeneratedInputs) { "Graph provider does not accept plugin generated inputs" }
+    val prepared = if (context.generatedInputs == generated) context else context.copy(generatedInputs = generated)
+    val supplied = provide(provider, prepared)
     require(expectedChecks.isNotEmpty() && supplied.requestedChecks == expectedChecks && supplied.terminalActions.keys == expectedChecks) {
         "Build plugin graph must cover exactly the requested checks"
     }
@@ -74,7 +79,7 @@ private fun compose(
     require(terminals.values.all { terminal -> nodes.any { it.id == terminal } }) { "Build plugin graph omits a terminal action" }
     for (plugin in ordered.filter { it !== provider }) {
         val added = if (plugin is ProjectGraphContributor) {
-            plugin.contribute(context, ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
+            plugin.contribute(prepared, ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
                 expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList()))
         } else {
             val authoring = context.effective.document.objectValue()
@@ -86,7 +91,7 @@ private fun compose(
         if (plugin is ProjectTestInstrumentationContributor) {
             val graph = ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals.toMap(), contributed.toSet(),
                 supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList())
-            for (instrumentation in plugin.instrumentTests(context, graph)) {
+            for (instrumentation in plugin.instrumentTests(prepared, graph)) {
                 val index = nodes.indexOfFirst { it.id == instrumentation.actionId }
                 require(index >= 0) { "Unknown instrumentation action: ${instrumentation.actionId}" }
                 val launch = requireNotNull(launches[instrumentation.actionId]) { "Instrumentation action has no declared test launch" }

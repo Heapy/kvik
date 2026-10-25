@@ -8,8 +8,9 @@ data class ScriptGraphRequest(val name: String, val arguments: List<String> = em
 
 /** Shares real module prerequisites and locked artifacts; scripts never masquerade as modules. */
 fun scriptActionGraph(effective: EffectiveConfiguration, lock: DependencyLock, snapshot: TreeManifest,
-                      composition: Digest, toolchains: Map<String, Digest>, request: ScriptGraphRequest): ProjectActionGraph =
-    ScriptGraphBuilder(effective, lock, snapshot, composition, toolchains, request).build()
+                      composition: Digest, toolchains: Map<String, Digest>, request: ScriptGraphRequest,
+                      generatedInputs: ProjectGeneratedInputs = ProjectGeneratedInputs()): ProjectActionGraph =
+    ScriptGraphBuilder(effective, lock, snapshot, composition, toolchains, request, generatedInputs).build()
 
 private class ScriptGraphBuilder(
     private val effective: EffectiveConfiguration,
@@ -18,6 +19,7 @@ private class ScriptGraphBuilder(
     private val composition: Digest,
     toolchains: Map<String, Digest>,
     request: ScriptGraphRequest,
+    private val generatedInputs: ProjectGeneratedInputs,
 ) {
     private val authoring = effective.document.objectValue()
     private val standalone = authoring["standaloneScript"]?.let(::parseStandaloneScriptConfiguration)
@@ -49,7 +51,7 @@ private class ScriptGraphBuilder(
         val prerequisites = (compileClosure.modules + runtimeClosure.modules + pluginModules).toSet()
         moduleGraph = if (prerequisites.isEmpty()) ProjectActionGraph(emptyList(), emptySet(), emptyMap()) else {
             require(standalone == null) { "Standalone script cannot reference modules" }
-            projectActionGraph(effective, lock, snapshot, composition, mapOf("jvm" to tools), ProjectGraphRequest(prerequisites, setOf("jvm"), ProjectMode.BUILD))
+            projectActionGraph(effective, lock, snapshot, composition, mapOf("jvm" to tools), ProjectGraphRequest(prerequisites, setOf("jvm"), ProjectMode.BUILD), generatedInputs)
         }
     }
 
@@ -90,7 +92,7 @@ private class ScriptGraphBuilder(
         }
         return result.values.sortedBy { it.path.value }
     }
-    private fun moduleResources(name: String) = moduleResources(project, files, name, "jvm", "main")
+    private fun moduleResources(name: String) = moduleResources(project, files, name, "jvm", "main", generatedInputs.resources)
     private fun compiled(results: Map<String, ActionResult>, id: String, root: LogicalPath): List<FileEntry> {
         val result = results[id] ?: error("Missing script prerequisite: $id")
         require(result.actionId == id && result.successful) { "Unsuccessful/mismatched script prerequisite: $id" }
@@ -207,6 +209,7 @@ private class ScriptGraphBuilder(
             }
         }
         return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId),
+            contributedActions = moduleGraph.contributedActions,
             generatedSources = moduleGraph.generatedSources + if (generator == null || generator.resources.isNotEmpty()) emptyList() else listOf(
                 GeneratedSourceRoot(runId, generator.module, generator.sourceSet, "script", "/scripts/${script.name}/generator", LogicalPath("generated"))),
             generatedResources = moduleGraph.generatedResources + if (generator == null || generator.resources.isEmpty()) emptyList() else listOf(
