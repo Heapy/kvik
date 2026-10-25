@@ -156,14 +156,14 @@ fun kotestNativeReport(module: String, request: String, text: String, process: P
     } catch (failure: IllegalArgumentException) { protocolError = failure.message ?: "Malformed Kotest journal" }
       catch (failure: IllegalStateException) { protocolError = failure.message ?: "Incomplete Kotest journal" }
       catch (failure: NoSuchElementException) { protocolError = failure.message ?: "Missing Kotest journal fields" }
-    val complete = main && protocolError == null && !unknownLeaves && process.exitCode == 0 && !process.cancelled && !process.timedOut
+    val complete = main && protocolError == null && !unknownLeaves
     val tests = results.values.toList()
     val counts = TestCounts(if (complete) tests.size else null, tests.count { it.status != TestStatus.SKIPPED },
         tests.count { it.status == TestStatus.FAILED }, tests.count { it.status == TestStatus.SKIPPED }, complete)
     val status = when {
         process.cancelled -> VerificationStatus.CANCELLED
         engineFailure != null || counts.failed > 0 -> VerificationStatus.FAILED
-        process.timedOut || protocolError != null || !main -> VerificationStatus.INCOMPLETE
+        process.timedOut || process.exitCode != 0 || protocolError != null || !main -> VerificationStatus.INCOMPLETE
         !counts.satisfiesExecution -> VerificationStatus.INCOMPLETE
         else -> VerificationStatus.PASSED
     }

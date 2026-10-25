@@ -89,9 +89,17 @@ class KotestReportTest {
             assertEquals(TestCounts(null, 1, 0, 0, false), result.counts)
         }
         val all = finishedLeaf + end()
-        assertEquals(VerificationStatus.CANCELLED, report(all, ProcessResult(130, cancelled = true)).status)
-        assertEquals(VerificationStatus.INCOMPLETE, report(all, ProcessResult(17)).status)
-        assertEquals(VerificationStatus.INCOMPLETE, report(all, ProcessResult(124, timedOut = true)).status)
+        for ((process, status) in listOf(
+            ProcessResult(130, cancelled = true) to VerificationStatus.CANCELLED,
+            ProcessResult(17) to VerificationStatus.INCOMPLETE,
+            ProcessResult(124, timedOut = true) to VerificationStatus.INCOMPLETE,
+        )) {
+            val result = report(all, process)
+            assertEquals(status, result.status)
+            assertEquals(TestCounts(1, 1, 0, 0, true), result.counts)
+            assertEquals(report(all).tests, result.tests)
+            assertNotNull(result.diagnostic)
+        }
         for (text in listOf(journal(all).dropLast(1), journal(all) + "{}\n", journal(all).replace("\"sequence\":1,", "\"sequence\":9,"),
             journal(all).replace("\"request\":\"$token\"", "\"request\":\"${"b".repeat(64)}\""))) {
             assertEquals(VerificationStatus.INCOMPLETE, kotestNativeReport("module", token, text, ProcessResult(0)).status)
