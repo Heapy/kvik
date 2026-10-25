@@ -1197,6 +1197,18 @@ duplicate action IDs, missing dependencies, cycles and missing requested termina
 are rejected. Existing `BuildPlugin.actions(project)` implementations remain
 supported as additive callbacks over the authoring document.
 
+Build plugins can implement `ProjectInputContributor.projectInputs(configuration)` to
+return `BuildPluginInputs(files = ..., directories = ...)` with project-relative
+schema, template or data paths. This pure hook runs before capture and may use
+authored configuration, including plugin settings, but must not read files or
+external state. Declared files are required; absent directories are tracked so
+creating them triggers a rebuild. Inputs participate in local and revision-backed
+snapshots and foreground freshness checks without becoming compiler source roots
+or packaged resources. `inspect` exposes `buildPluginInputs` and tags their files
+with `kind:plugin-input` and `build-plugin:PLUGIN_ID`. Generators select the captured
+entries they consume into their action inputs; only those declared action inputs
+participate in that action's cache key.
+
 For code generation, implement `ProjectGenerationContributor.generatedInputs(context)`.
 Its `ProjectGeneratedInputs` supplies generator/helper action nodes and typed source
 and resource roots before the Kotlin graph is built. The bundled provider wires

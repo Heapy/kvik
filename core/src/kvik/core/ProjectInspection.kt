@@ -72,6 +72,7 @@ data class ProjectInspection(
         put("files", files.map { it.toJson() }.json())
         put("origins", JsonValue.Object(origins.mapValues { it.value.toJson() }))
         put("capabilities", capabilities.map { it.json() }.json())
+        if (project.buildPluginInputs.isNotEmpty()) put("buildPluginInputs", JsonValue.Object(project.buildPluginInputs.mapValues { it.value.toJson() }))
         source?.let {
             put("source", it.provenance.toJson())
             put("sourceRoot", it.root.json())
@@ -82,14 +83,15 @@ data class ProjectInspection(
     companion object {
         fun fromJson(value: JsonValue): ProjectInspection {
             val sourceFields = setOf("source", "sourceRoot", "sourceManifest")
-            val fields = value.fields(setOf("schemaVersion", "project", "configuration", "composition", "files", "origins", "capabilities"), sourceFields)
+            val fields = value.fields(setOf("schemaVersion", "project", "configuration", "composition", "files", "origins", "capabilities"), sourceFields + "buildPluginInputs")
             fields.requireVersion()
             val present = fields.keys.intersect(sourceFields)
             require(present.isEmpty() || present == sourceFields) { "Inspection source context requires source, sourceRoot and sourceManifest" }
             val source = if (present.isEmpty()) null else SourceReference(
                 SourceProvenance.fromJson(fields.getValue("source")), fields.getValue("sourceRoot").stringValue(),
                 Digest.fromJson(fields.getValue("sourceManifest")))
-            return ProjectInspection(parseProjectConfiguration(fields.getValue("project")),
+            return ProjectInspection(parseProjectConfiguration(fields.getValue("project")).copy(
+                buildPluginInputs = parseBuildPluginInputs(fields["buildPluginInputs"])),
                 Digest.fromJson(fields.getValue("configuration")), Digest.fromJson(fields.getValue("composition")),
                 fields.getValue("files").arrayValue().map(FileInspection::fromJson),
                 fields.getValue("origins").objectValue().mapValues { ConfigurationOrigin.fromJson(it.value) },

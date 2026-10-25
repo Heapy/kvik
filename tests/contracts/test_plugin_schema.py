@@ -8,6 +8,19 @@ SCHEMA = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/contracts
 
 
 class PluginSchemaTest(unittest.TestCase):
+    def test_inspection_exposes_plugin_inputs_separately_from_authored_project(self):
+        validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/inspection'})
+        digest = dict(hash='a' * 64, sizeBytes=0)
+        inspection = dict(schemaVersion=1, project=dict(schemaVersion=1, name='inputs', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[]),
+                          configuration=digest, composition=digest, files=[], origins={}, capabilities=[])
+        validator.validate(inspection)
+        declaration = dict(files=['schema.json'], directories=['templates'])
+        validator.validate({**inspection, 'buildPluginInputs': {'example.generator': declaration}})
+        for inputs in [None, {'bad/id': declaration}, {'example.generator': {'files': ['../escape'], 'directories': []}},
+                       {'example.generator': {'files': ['schema.json', 'schema.json'], 'directories': []}},
+                       {'example.generator': {'files': []}}]:
+            self.assertFalse(validator.is_valid({**inspection, 'buildPluginInputs': inputs}))
+
     def test_project_plugin_contract_and_legacy_serialization(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/compilerPlugin'})
         workspace = dict(module='producer', id='example.plugin', compilerVersion='2.4.20', targets=['jvm'], scopes=['main', 'test'], options=['message=a=b'], inputs=[])

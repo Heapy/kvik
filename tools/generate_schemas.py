@@ -949,9 +949,13 @@ DEFS["sourceRolePolicy"] = versioned({"kind": {"const": "source-role-policy"},
     "capabilities": array(enum("task-create", "task-update", "ref-create", "ref-update", "ref-delete", "project-add", "merge"), uniqueItems=True),
 })
 DEFS["sourceRolePolicy"]["description"] = "Explicit trusted-caller invocation policy, not authentication or sandboxing. Pinned view tags must match rules. Null editable denies all edits; paths outside source.root are denied. Canonical UTF-8 JSON must fit 16 MiB."
+DEFS["buildPluginInputs"] = {**mapping(object_({"files": array(PATH, maxItems=4096, uniqueItems=True),
+    "directories": array(PATH, maxItems=4096, uniqueItems=True)})), "maxProperties": 128, "propertyNames": PLUGIN_ID,
+    "description": "Computed input declarations from composed build plugins; at most 4096 paths across all plugins. Files are required; absent directories are tracked for later creation. These are not compiler source or package resource roots."}
 DEFS["inspection"] = versioned({"project": ref("project"), "configuration": ref("digest"), "composition": ref("digest"), "files": array(object_({"path": PATH, "modules": array(ID), "sourceSets": array(ID), "targets": array(STRING), "tags": array(FILE_TAG, minItems=1, uniqueItems=True)}, optional=("tags",))), "origins": mapping(object_({"file": PATH, "pointer": STRING})), "capabilities": array(STRING),
-    "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest")},
-    optional=("source", "sourceRoot", "sourceManifest"))
+    "source": ref("sourceProvenance"), "sourceRoot": {"anyOf": [{"const": ""}, PATH]}, "sourceManifest": ref("digest"),
+    "buildPluginInputs": ref("buildPluginInputs")},
+    optional=("source", "sourceRoot", "sourceManifest", "buildPluginInputs"))
 DEFS["inspection"]["dependentRequired"] = {key: [other for other in ("source", "sourceRoot", "sourceManifest") if other != key]
     for key in ("source", "sourceRoot", "sourceManifest")}
 KODE_REVISION = {"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"}

@@ -61,6 +61,53 @@ private fun capture(provider: SourceSnapshotProvider, store: ContentStore = Prov
         LogicalPath("kvik.lock.json"), selection = selection, checkpoint = checkpoint)
 
 class SourceProviderTest {
+    @Test fun buildPluginFilesAndDirectoriesMatchRevisionCaptureAndTrackLocalChanges() {
+        val plugin = object : ProjectInputContributor {
+            override val id = "fixture.inputs"
+            override val apiVersion = CONTRACT_VERSION
+            override val configurationSchema = obj()
+            override fun projectInputs(configuration: ProjectConfiguration) = BuildPluginInputs(
+                listOf(LogicalPath("schema.txt")), listOf(LogicalPath("templates"), LogicalPath("future")))
+        }
+        val parser: (ByteArray) -> ProjectConfiguration = {
+            parseProjectConfiguration(parseJson(it.decodeToString())).withBuildPluginInputs(listOf(plugin))
+        }
+        val base = revision()
+        val original = MemoryRevision(base.contents + mapOf("schema.txt" to "schema".encodeToByteArray(),
+            "templates/code.txt" to "template".encodeToByteArray()), base.directoryNames + "templates")
+        fun remote(value: MemoryRevision) = ProviderProjectSnapshotter(MemoryProvider(value), ProviderStore(),
+            SourcePathPolicy.CaseSensitive, parseConfiguration = parser).capture(SourceSelector("project", "main"),
+                LogicalPath("kvik.json"), LogicalPath("kvik.lock.json")).snapshot
+        val captured = remote(original)
+        assertTrue(captured.inputs.files.any { it.path.value == "schema.txt" })
+        assertTrue(captured.inputs.files.any { it.path.value == "templates/code.txt" })
+        assertFalse(captured.inputs.files.any { it.path.value == "unrelated/ignored.bin" })
+        assertNotEquals(captured.fingerprint, remote(MemoryRevision(original.contents +
+            ("schema.txt" to "changed".encodeToByteArray()), original.directoryNames)).fingerprint)
+        assertFailsWith<SnapshotFailure> { remote(MemoryRevision(original.contents - "schema.txt", original.directoryNames)) }
+        val root = NativeFiles.tempDirectory("/private/tmp")
+        try {
+            original.directoryNames.forEach { NativeFiles.ensureDirectory("$root/$it") }
+            original.contents.forEach { (path, bytes) -> NativeFiles.writeNew("$root/$path", bytes) }
+            val observer = NativeProjectSnapshotter(root, ProviderStore(), parseConfiguration = parser)
+            fun local() = assertIs<SnapshotCapture.Captured>(observer.capture(LogicalPath("kvik.json"), "$root/kvik.lock.json")).snapshot
+            val initial = local()
+            assertEquals(captured.fingerprint, initial.fingerprint)
+            assertEquals(Freshness.CURRENT, observer.freshness(initial))
+            NativeFiles.writeNew("$root/templates/second.txt", "second".encodeToByteArray())
+            assertEquals(Freshness.STALE, observer.freshness(initial))
+            NativeFiles.removeEntry("$root/templates/second.txt")
+            assertEquals(Freshness.CURRENT, observer.freshness(initial))
+            NativeFiles.ensureDirectory("$root/future")
+            assertEquals(Freshness.STALE, observer.freshness(initial))
+            val withDirectory = local()
+            NativeFiles.removeEntry("$root/templates/code.txt")
+            assertEquals(Freshness.STALE, observer.freshness(withDirectory))
+            NativeFiles.removeEntry("$root/schema.txt")
+            assertFailsWith<SnapshotFailure> { local() }
+        } finally { NativeFiles.removeTree(root) }
+    }
+
     @Test fun measuredProviderCapturePreservesSnapshotAndManifestIdentity() {
         val provider = MemoryProvider(revision())
         val expected = capture(provider)

@@ -12289,6 +12289,45 @@
       "additionalProperties": false,
       "description": "Explicit trusted-caller invocation policy, not authentication or sandboxing. Pinned view tags must match rules. Null editable denies all edits; paths outside source.root are denied. Canonical UTF-8 JSON must fit 16 MiB."
     },
+    "buildPluginInputs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            "maxItems": 4096,
+            "uniqueItems": true
+          },
+          "directories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            "maxItems": 4096,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "files",
+          "directories"
+        ],
+        "additionalProperties": false
+      },
+      "maxProperties": 128,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}(?![\\s\\S])"
+      },
+      "description": "Computed input declarations from composed build plugins; at most 4096 paths across all plugins. Files are required; absent directories are tracked for later creation. These are not compiler source or package resource roots."
+    },
     "inspection": {
       "type": "object",
       "properties": {
@@ -12397,6 +12436,9 @@
         },
         "sourceManifest": {
           "$ref": "#/$defs/digest"
+        },
+        "buildPluginInputs": {
+          "$ref": "#/$defs/buildPluginInputs"
         }
       },
       "required": [

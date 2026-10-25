@@ -75,7 +75,8 @@ private fun captureResolved(resolved: ResolvedSourceSnapshot, root: String, conf
             return scoped
         }
     }
-    return ProviderProjectSnapshotter(provider, content, SourcePathPolicy.CaseSensitive, hasher = hasher).capture(
+    return ProviderProjectSnapshotter(provider, content, SourcePathPolicy.CaseSensitive, hasher = hasher,
+        parseConfiguration = ::parseBuildProjectConfiguration).capture(
         SourceSelector(scoped.provenance.project, scoped.provenance.revision), configuration, lock,
         selection = selection, checkpoint = checkpoint).snapshot
 }

@@ -129,6 +129,12 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             }
         }
     }
+    for ((id, inputs) in configuration.buildPluginInputs) {
+        origin("buildPlugin:$id", if (id in configuration.pluginSettings) "/pluginSettings/$id" else "")
+        for (path in inputs.files) if ((file == null || file == path) && existingFile(path))
+            owners.getOrPut(path.value) { mutableListOf() }
+        for (directory in inputs.directories) filesBelow(directory).forEach { owners.getOrPut(it) { mutableListOf() } }
+    }
     for (path in if (file == null) configuration.project.fileTags.keys else setOf(file)) {
         checkpoint()
         if (existingFile(path)) owners.getOrPut(path.value) { mutableListOf() }

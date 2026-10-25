@@ -23,7 +23,7 @@ internal fun currentDirectory(): String = memScoped {
 
 internal fun validatedPluginConfiguration(configuration: ProjectConfiguration): ProjectConfiguration = configuration.also {
     validatePluginSettings(buildPlugins, it.pluginSettings)
-}
+}.withBuildPluginInputs(buildPlugins)
 
 internal fun parseBuildProjectConfiguration(bytes: ByteArray): ProjectConfiguration =
     validatedPluginConfiguration(parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true))))

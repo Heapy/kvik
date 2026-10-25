@@ -2,7 +2,8 @@ package kvik.core
 
 /** Validated declarative configuration; retain the document for origins and identity. */
 data class ProjectConfiguration(val project: ProjectSpec, val document: JsonValue.Object,
-                                val scriptDeclarations: Map<String, ScriptSourceDeclarations> = emptyMap()) {
+                                val scriptDeclarations: Map<String, ScriptSourceDeclarations> = emptyMap(),
+                                val buildPluginInputs: Map<String, BuildPluginInputs> = emptyMap()) {
     val digest: Digest get() = Sha256.digest(document.canonical().encodeToByteArray())
 }
 

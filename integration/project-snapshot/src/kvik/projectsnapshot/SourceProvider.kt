@@ -121,7 +121,10 @@ data class ProviderSnapshot(val provenance: SourceProvenance, val manifestDigest
 /** Immutable capture needs one manifest observation, not local filesystem double-scanning.
  * Exceptions (including cancellation) propagate; unavailable data never falls back to local or newer sources. */
 class ProviderProjectSnapshotter(private val provider: SourceSnapshotProvider, private val content: ContentStore,
-    private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits = SnapshotLimits(), private val hasher: Hasher = Sha256) {
+    private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits = SnapshotLimits(), private val hasher: Hasher = Sha256,
+    private val parseConfiguration: (ByteArray) -> ProjectConfiguration = {
+        parseProjectConfiguration(parseJson(it.decodeToString(throwOnInvalidSequence = true)))
+    }) {
     fun capture(selector: SourceSelector, configurationPath: LogicalPath, lockPath: LogicalPath,
         expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project,
         checkpoint: () -> Unit = {}): ProviderSnapshot {
@@ -135,7 +138,7 @@ class ProviderProjectSnapshotter(private val provider: SourceSnapshotProvider, p
         val frozen = SourceManifest(manifest.files, manifest.directories, checkpoint)
         val frozenSelection = SnapshotSelection.fromJson(selection.toJson())
         val manifestDigest = hasher.digest(frozen.toJson())
-        val capture = ProviderObservation(resolved, frozen, content, pathPolicy, limits, checkpoint, hasher, manifestDigest)
+        val capture = ProviderObservation(resolved, frozen, content, pathPolicy, limits, checkpoint, hasher, manifestDigest, parseConfiguration)
             .capture(configurationPath, lockPath, expectedConfiguration, frozenSelection)
         checkpoint()
         return ProviderSnapshot(provenance, manifestDigest, capture)
@@ -144,7 +147,8 @@ class ProviderProjectSnapshotter(private val provider: SourceSnapshotProvider, p
 
 private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, private val manifest: SourceManifest,
     private val content: ContentStore, private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits,
-    private val checkpoint: () -> Unit, private val hasher: Hasher, private val manifestDigest: Digest) {
+    private val checkpoint: () -> Unit, private val hasher: Hasher, private val manifestDigest: Digest,
+    private val parseConfiguration: (ByteArray) -> ProjectConfiguration) {
     private val files = manifest.files.associateBy { it.path.value }
     private val folders = manifest.directories.map { it.value }.toSet()
     private val children = linkedMapOf<String, MutableList<Pair<String, Boolean>>>()
@@ -173,7 +177,7 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
             return bytes
         }
         val configuration = if (selection == SnapshotSelection.StandaloneScript) null else
-            parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
+            parseConfiguration(configurationBytes)
                 .withScriptDeclarations(::declarationSource)
         val standalone = if (selection != SnapshotSelection.StandaloneScript) null else
             parseStandaloneScriptConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))

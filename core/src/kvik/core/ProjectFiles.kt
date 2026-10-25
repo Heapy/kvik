@@ -100,6 +100,11 @@ fun projectFileTagRules(configuration: ProjectConfiguration, configurationPath: 
     }
     add(configurationPath, setOf("kind:configuration"))
     lockPath?.let { add(it, setOf("kind:lock")) }
+    for ((id, inputs) in configuration.buildPluginInputs) {
+        val tags = setOf("kind:plugin-input", "build-plugin:$id")
+        inputs.files.forEach { add(it, tags) }
+        inputs.directories.forEach { add(it, tags, directory = true) }
+    }
     val project = configuration.project
     for (module in project.modules) {
         checkpoint()
