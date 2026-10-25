@@ -95,7 +95,9 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             runtime = state.applicationRun || state.request.method == "buildTarget/test", classpath = state.classpathQuery)
         targetsChanged(owners.mapNotNull { owner ->
             clearGeneratedDiagnostics(state.model, owner, state)
-            if (state.model.replaceGeneratedSources(owner, emptyList())) owner.uri to 2 else null
+            val sourcesChanged = state.model.replaceGeneratedSources(owner, emptyList())
+            val resourcesChanged = state.model.replaceGeneratedResources(owner, emptyList())
+            if (sourcesChanged || resourcesChanged) owner.uri to 2 else null
         })
         val project = readProject(options.project.project)
         require(effectiveConfiguration(project.configuration, options.project.resolverPolicy()).digest == state.model.inspection.configuration) {
@@ -192,11 +194,15 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             observedDiagnostics = replayDiagnostics(state, record, events.filter { it.type == "diagnostic" }.map { Diagnostic.fromJson(it.payload) })
             val fresh = record.freshnessAtCompletion == Freshness.CURRENT
             if (fresh && !state.cancelled && !result.cancelled) {
-                val generated = materializeBspGeneratedSources(state.model, record, events, directory, child.directory,
+                val generated = materializeBspGeneratedOutputs(state.model, record, events, directory, child.directory,
                     projectPath(state.model.root, options.project.store))
-                targetsChanged(generated.mapNotNull { (target, sources) ->
-                    if (state.model.replaceGeneratedSources(target, sources)) target.uri to 2 else null
-                })
+                val changedSources = generated.sources.mapNotNull { (target, sources) ->
+                    if (state.model.replaceGeneratedSources(target, sources)) target.uri else null
+                }
+                val changedResources = generated.resources.mapNotNull { (target, resources) ->
+                    if (state.model.replaceGeneratedResources(target, resources)) target.uri else null
+                }
+                targetsChanged((changedSources + changedResources).distinct().map { it to 2 })
             }
             diagnostics(state, record, observedDiagnostics, fresh)
             state.snapshots += record.inputSnapshot

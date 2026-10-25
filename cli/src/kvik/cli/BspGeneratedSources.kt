@@ -10,22 +10,31 @@ import kvik.compiler.ksp.kspNativeAction
 import kvik.compiler.native.adaptKotestLauncher
 import kvik.compiler.sqldelight.SqlDelightGeneration
 import kvik.compiler.sqldelight.sqlDelightAction
+import kvik.compiler.jvm.*
 import kvik.core.*
 import kvik.runevidence.explainRetainedAction
 
-/** Publish only the supported producer's verified, original source into a new retained BSP tree. */
-internal fun materializeBspGeneratedSources(
+internal data class BspGeneratedOutputs(
+    val sources: Map<BspTarget, List<BspGeneratedSources>>,
+    val resources: Map<BspTarget, List<BspGeneratedResources>>,
+)
+
+/** Publish supported producers' verified outputs into a new retained BSP tree. */
+internal fun materializeBspGeneratedOutputs(
     model: BspProjectModel,
     record: VerificationRecord,
     events: List<RunEvent>,
     runDirectory: String,
     childDirectory: String,
     store: String,
-): Map<BspTarget, List<BspGeneratedSources>> {
+): BspGeneratedOutputs {
     require(record.freshnessAtCompletion == Freshness.CURRENT)
     val generated = linkedMapOf<BspTarget, MutableList<BspGeneratedSources>>()
+    val resources = linkedMapOf<BspTarget, MutableList<BspGeneratedResources>>()
     for (result in record.actions) {
-        val targets = model.generatedSourceTargets(result.actionId)
+        val sourceTargets = model.generatedSourceTargets(result.actionId)
+        val resourceTargets = model.generatedResourceTargets(result.actionId)
+        val targets = sourceTargets + resourceTargets
         val target = targets.firstOrNull() ?: continue
         if (!result.successful) continue
         val name = Sha256.digest(result.actionId.encodeToByteArray()).hash
@@ -63,21 +72,64 @@ internal fun materializeBspGeneratedSources(
                 }
                 sqlDelightAction(generation, inputs, record.composition, toolchains, timeout)
             }
-            else -> error("Unsupported generated source producer")
+            "kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1" -> {
+                val script = requireNotNull(model.scriptGenerator(result.actionId))
+                val generator = checkNotNull(script.declaration.generator)
+                val parameters = fields.getValue("parameters").objectValue()
+                val outputs = parameters["resourceOutputs"]?.arrayValue()?.map { LogicalPath(it.stringValue()) }.orEmpty()
+                require(outputs == generator.resources && timeout == script.declaration.timeoutMillis) {
+                    "Script generation differs from imported configuration"
+                }
+                val environment = fields.getValue("environment").objectValue().mapValues { it.value.stringValue() }
+                require(environment == script.declaration.environment)
+                require(result.outputs.files.size <= 10_000 && result.outputs.files.all {
+                    !it.executable && it.path.value.startsWith("generated/") &&
+                        (outputs.isNotEmpty() || it.path.value.endsWith(".kt")) && it.digest.sizeBytes <= 8L * 1024 * 1024
+                } && result.outputs.files.sumOf { it.digest.sizeBytes } <= 64L * 1024 * 1024) { "Unsupported script generator outputs" }
+                if (outputs.isNotEmpty()) require(result.outputs.files.map { it.path }.toSet() ==
+                    outputs.map { LogicalPath("generated/${it.value}") }.toSet()) { "Script resource outputs differ from declaration" }
+                val launchParameters = JsonValue.Object(parameters - "resourceOutputs")
+                val arguments = listOf("generated", "inputs") + generator.arguments
+                if (implementation == "kvik-jvm-script-generator-v1") {
+                    val launch = JvmScriptLaunch.fromJson(launchParameters)
+                    require(script.declaration.entryScript == null && launch.name == script.name &&
+                        launch.arguments == arguments && launch.mainClass == script.declaration.mainClass)
+                    jvmScriptGeneratorAction(launch, inputs, record.composition, toolchains, environment, timeout, outputs)
+                } else {
+                    val launch = KtsLaunch.fromJson(launchParameters)
+                    require(script.declaration.entryScript != null && launch.name == script.name && launch.arguments == arguments)
+                    ktsScriptGeneratorAction(launch, inputs, record.composition, toolchains, environment, timeout, outputs)
+                }
+            }
+            else -> error("Unsupported generator implementation")
         }
-        require(expected.toJson() == action && expected.key(Sha256) == result.key) { "Generated source action differs from the supported contract" }
-        val owners = targets.map { generated.getOrPut(it) { mutableListOf() } }
+        require(expected.toJson() == action && expected.key(Sha256) == result.key) { "Generator action differs from the supported contract" }
+        val owners = sourceTargets.map { generated.getOrPut(it) { mutableListOf() } }
+        val resourceOwners = resourceTargets.map { resources.getOrPut(it) { mutableListOf() } }
         if (result.outputs.files.isEmpty()) continue
         val content = NativeContentStore(store, maxBlobBytes = 8 * 1024 * 1024)
         for (output in result.outputs.files) {
-            val bytes = content.get(output.digest) ?: error("Generated source content is unavailable")
-            val source = bytes.decodeToString(throwOnInvalidSequence = true)
-            if (implementation == "kvik-ksp-native-v1") adaptKotestLauncher(source)
+            val bytes = content.get(output.digest) ?: error("Generated content is unavailable")
+            if (sourceTargets.isNotEmpty()) {
+                val source = bytes.decodeToString(throwOnInvalidSequence = true)
+                if (implementation == "kvik-ksp-native-v1") adaptKotestLauncher(source)
+            }
         }
         val directory = "$childDirectory/generated-$name"
-        NativeOutputTrees(content).materialize(result.outputs, directory)
-        val sources = BspGeneratedSources(directory, result.actionId, checkNotNull(result.key), result.outputs)
-        owners.forEach { it += sources }
+        // Match the paths used by consuming compilers, so diagnostics resolve to these files.
+        val script = model.scriptGenerator(result.actionId)
+        val files = if (script == null || sourceTargets.isEmpty()) result.outputs else TreeManifest(result.outputs.files.map {
+            it.copy(path = LogicalPath("generated/scripts/${script.name}/" + it.path.value.removePrefix("generated/")))
+        })
+        NativeOutputTrees(content).materialize(files, directory)
+        if (owners.isNotEmpty()) {
+            val sources = BspGeneratedSources(directory, result.actionId, checkNotNull(result.key), files)
+            owners.forEach { it += sources }
+        }
+        if (resourceOwners.isNotEmpty()) {
+            val generatedResources = BspGeneratedResources(directory, result.actionId, checkNotNull(result.key), files)
+            resourceOwners.forEach { it += generatedResources }
+        }
     }
-    return generated
+    return BspGeneratedOutputs(generated, resources)
 }

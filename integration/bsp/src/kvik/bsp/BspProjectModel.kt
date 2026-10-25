@@ -53,6 +53,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     private val byUri = compilations.associateBy { it.uri }
     private val filesByUri = inspection.files.associateBy { fileUri(it.path) }
     private val generated = mutableMapOf<String, List<BspGeneratedSources>>()
+    private val generatedResources = mutableMapOf<String, List<BspGeneratedResources>>()
 
     private fun selected(targetUris: List<String>): List<Compilation> = targetUris.distinct().map { uri ->
         requireNotNull(byUri[uri]) { "Unknown BSP target: $uri" }
@@ -62,8 +63,30 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
 
     fun allTargets(): List<BspTarget> = select(byUri.keys.toList())
 
+    fun scriptGenerator(actionId: String): ExpandedScript? {
+        val parts = actionId.split(':')
+        if (parts.size != 4 || parts[0] != "script" || parts[2] != "jvm" || parts[3] != "generate") return null
+        val project = inspection.project.project
+        if (project.scripts[parts[1]]?.generator == null) return null
+        return expandScript(project, parts[1])
+    }
+
+    private fun scriptGeneratorTargets(script: ExpandedScript, resources: Boolean): List<BspTarget> {
+        val generator = checkNotNull(script.declaration.generator)
+        if (generator.resources.isNotEmpty() != resources) return emptyList()
+        return compilations.filter { compilation ->
+            compilation.module.id == generator.module && compilation.sourceSets.any { it.name == generator.sourceSet } &&
+                (resources || compilation.scope == "main" || sourceSetClosure(compilation.module, listOf(compilation.target.main))
+                    .none { it.name == generator.sourceSet })
+        }.map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
+    }
+
+    fun generatedResourceTargets(actionId: String): List<BspTarget> =
+        scriptGenerator(actionId)?.let { scriptGeneratorTargets(it, resources = true) }.orEmpty()
+
     /** A host generator may serve several target compilations without exposing a host BSP target. */
     fun generatedSourceTargets(actionId: String): List<BspTarget> {
+        scriptGenerator(actionId)?.let { return scriptGeneratorTargets(it, resources = false) }
         val parts = actionId.split(':')
         if (parts.size != 3) return emptyList()
         val owners = when (parts[2]) {
@@ -83,7 +106,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         return owners.map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
     }
 
-    /** Generator owners in the requested build's prerequisite graph, including host compiler plugins.
+    /** Source and resource generator owners in the build's prerequisites, including host compiler plugins.
      * Classpath queries build their producers, but do not compile the requested compilation itself. */
     fun generatedSourceOwners(target: BspTarget, runtime: Boolean = false, classpath: Boolean = false): List<BspTarget> {
         require(select(listOf(target.uri)).single() == target) { "Generated-source owner differs from imported target" }
@@ -98,6 +121,15 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
                 val shared = generatedSourceTargets("$module:jvm:sqldelight")
                 if (shared.any { it.uri == compilation.uri }) owners += shared
             } else owners += generatedSourceTargets("$module:$platform:ksp-test")
+            for (script in scriptGenerators(project, module, compilation.sourceSets.map { it.name }.toSet())) {
+                val id = "script:${script.name}:jvm:generate"
+                owners += generatedSourceTargets(id)
+                owners += generatedResourceTargets(id)
+                script.dependencies.mapNotNull { (it.value as? Dependency.Module)?.module }.forEach {
+                    visit(it, "jvm", "main", true)
+                }
+                script.compilerPlugins.mapNotNull { it.value.module }.forEach { visit(it, "jvm", "main", true) }
+            }
             dependencyClosure(project, module, platform, scope,
                 if (includeRuntime) DependencyUsage.RUNTIME else DependencyUsage.COMPILE).modules.forEach {
                 visit(it, platform, "main", false)
@@ -127,12 +159,33 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         for (source in sources) {
             require(source.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated sources must belong to a retained BSP run" }
             require(target in generatedSourceTargets(source.producer)) { "Unsupported generated-source producer for target" }
+            scriptGenerator(source.producer)?.let { script ->
+                require(source.files.files.all { it.path.value.startsWith("generated/scripts/${script.name}/") }) {
+                    "Generated script sources must use consuming compiler paths"
+                }
+            }
         }
         require(sources.flatMap { it.files.files }.map { it.path }.distinct().size == sources.sumOf { it.files.files.size }) {
             "Ambiguous generated-source logical paths"
         }
         if (generated[target.uri].orEmpty() == sources) return false
         if (sources.isEmpty()) generated.remove(target.uri) else generated[target.uri] = sources.toList()
+        return true
+    }
+
+    fun replaceGeneratedResources(target: BspTarget, resources: List<BspGeneratedResources>): Boolean {
+        require(select(listOf(target.uri)).single() == target) { "Generated-resource owner differs from imported target" }
+        require(resources.map { it.producer }.distinct().size == resources.size) { "Duplicate generated-resource producer" }
+        for (resource in resources) {
+            require(resource.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated resources must belong to a retained BSP run" }
+            require(target in generatedResourceTargets(resource.producer)) { "Unsupported generated-resource producer for target" }
+            val declaration = checkNotNull(scriptGenerator(resource.producer)?.declaration?.generator)
+            require(resource.files.files.map { it.path }.toSet() == declaration.resources.map { LogicalPath("generated/${it.value}") }.toSet()) {
+                "Generated resources differ from declared outputs"
+            }
+        }
+        if (generatedResources[target.uri].orEmpty() == resources) return false
+        if (resources.isEmpty()) generatedResources.remove(target.uri) else generatedResources[target.uri] = resources.toList()
         return true
     }
 
@@ -232,7 +285,9 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     fun resources(targetUris: List<String>): JsonValue.Object = obj("items" to selected(targetUris).map { compilation ->
         obj("target" to compilation.id(), "resources" to inspection.files.filter {
             belongs(it.path, compilation.resourceDirectories)
-        }.map { fileUri(it.path) }.distinct().sorted().map { it.json() }.json())
+        }.map { fileUri(it.path) }.let { static ->
+            static + generatedResources[compilation.uri].orEmpty().flatMap { resource -> resource.files.files.map(resource::uri) }
+        }.distinct().sorted().map { it.json() }.json())
     }.json())
 
     fun inverseSources(documentUri: String): JsonValue.Object {
