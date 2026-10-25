@@ -106,6 +106,14 @@ def main():
                 compile_ids = {'consumer:jvm:main', 'consumer:jvm:test-compile', 'library:jvm:main'}
                 compilations = [action for action in record['actions'] if action['actionId'] in compile_ids]
                 assert len(compilations) == 3 and all(action['status'] == expected for action in compilations), record['actions']
+                # Relocated compilation outputs must not retain the producer's workspace paths.
+                for action in compilations:
+                    for entry in action['outputs']['files']:
+                        digest = entry['digest']
+                        data = (root / '.kvik/cache/blobs' / f"{digest['hash']}-{digest['sizeBytes']}").read_bytes()
+                        for directory in (case, fixture):
+                            for encoding in ('utf-8', 'utf-16-le', 'utf-16-be'):
+                                assert str(directory).encode(encoding) not in data, (action['actionId'], entry['path'])
                 tests = [action for action in record['actions'] if action['actionId'] == 'consumer:jvm:test']
                 assert len(tests) == 1 and tests[0]['status'] == 'executed', tests
                 assert record['testCounts']['executed'] == 1 and record['testCounts']['failed'] == 0

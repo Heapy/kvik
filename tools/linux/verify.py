@@ -20,6 +20,8 @@ def main():
                         help='Per-command bootstrap deadline in seconds (1–3600; default: 300).')
     parser.add_argument('--native-link-timeout-ms', type=int,
                         help='Explicit consumer fixture link deadline for slow emulators; leaves production defaults unchanged.')
+    parser.add_argument('--remote-cache-backend', type=Path,
+                        help='Run JVM remote restoration, relocation and outage checks with this bazel-remote executable.')
     parser.add_argument('--pin-tools', action='store_true',
                         help='Acquire Native dependencies and replace bootstrap/toolchains.lock.json in this disposable checkout.')
     args = parser.parse_args()
@@ -73,8 +75,18 @@ def main():
     if Path(cached.stdout.strip()).resolve(strict=True) != executable:
         raise RuntimeError('Cached startup selected a different runtime')
     run([*bootstrap, '--offline', '--no-build', '--', 'runtime-info'])
+    fixture_parent = ROOT/'.kvik/tests/linux-jvm'
+    fixture_parent.mkdir(parents=True, exist_ok=True)
+    fixture_output = Path(tempfile.mkdtemp(prefix='run-', dir=fixture_parent))
     run([sys.executable, ROOT/'tools/test_build_cli.py', '--java-home', java,
-         '--konan-home', native, '--konan-data', data, '--runtime', executable])
+         '--konan-home', native, '--konan-data', data, '--runtime', executable,
+         '--output-dir', fixture_output])
+    if args.remote_cache_backend is not None:
+        fixtures = list(fixture_output.glob('case-*'))
+        if len(fixtures) != 1:
+            raise RuntimeError('Expected one JVM fixture for remote cache checks')
+        run([sys.executable, ROOT/'tools/test_remote_cache_cli.py', '--runtime', executable,
+             '--fixture', fixtures[0], '--backend', args.remote_cache_backend.resolve(strict=True)])
     run([sys.executable, ROOT/'tools/test_native_build_cli.py', '--java-home', java,
          '--konan-home', native, '--konan-data', data, '--runtime', executable,
          *(['--link-timeout-ms', args.native_link_timeout_ms] if args.native_link_timeout_ms is not None else [])])

@@ -15,7 +15,7 @@ Pass `--remote-cache PATH` to `build`, `test` or `dev`. The JSON file configures
 
 `mode` defaults to `read`. Trusted writers can select `read-write`. `instance` and `tokenEnvironment` are optional; tokens are read from the named environment variable and are excluded from action descriptions and logs. HTTPS is required except for loopback test servers. The schema is [remote-cache.json](../schemas/v1/remote-cache.json).
 
-The initial eligible actions are typed JVM compilations without compiler plugins on macOS ARM64. Native and compiler-plugin actions retain their local policies. Tests execute on every request. Runtime composition, tools and all declared compilation inputs remain part of each action key.
+The eligible actions are typed JVM compilations without compiler plugins on macOS ARM64 and Linux x64. Native and compiler-plugin actions retain their local policies. Tests execute on every request. Runtime composition, tools and all declared compilation inputs remain part of each action key. Host platform is also part of the key: Linux and macOS compilation entries are separate.
 
 Lookups check the local cache first. Missing, unavailable or invalid remote entries fall back to local compilation. Uploads follow successful scheduler completion and publish metadata after output blobs. All network workers belong to the invocation and are joined before exit.
 
@@ -34,6 +34,9 @@ locked dependency blobs. Both hosts need the same source/configuration/lock inpu
 runtime composition and tool identities; installation paths may differ. Supply
 each host's installation paths through its own `--tools` file. Start with an empty
 remote namespace and keep the same endpoint and namespace for both phases.
+Use two macOS ARM64 hosts or two Linux x64 hosts. On Linux, the harness requires
+read access to `/sys/class/dmi/id/product_uuid` to distinguish hardware; container
+IDs and hostnames are insufficient.
 
 On machine A:
 

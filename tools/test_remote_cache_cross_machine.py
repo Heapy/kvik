@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writer/reader gate for the consumer JVM fixture on distinct macOS ARM64 hosts.
+"""Writer/reader gate for the JVM fixture on matching macOS ARM64 or Linux x64 hosts.
 
 The writer's baseline.json is the reader's required input. Supply host-local tools
 and the existing CLI remote-cache JSON schema; credentials stay in environment.
@@ -69,14 +69,27 @@ def run(command, timeout):
 
 
 def machine_identity():
-    require(platform.system() == 'Darwin' and platform.machine() == 'arm64',
-            'This gate requires macOS ARM64')
-    result = run(['/usr/sbin/ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'], 10)
-    require(result.returncode == 0, 'Cannot determine hardware identity')
-    matches = re.findall(rb'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"', result.stdout)
-    require(len(matches) == 1, 'Cannot determine a unique hardware identity')
-    return dict(kind='sha256-IOPlatformUUID', fingerprint=hashlib.sha256(matches[0].lower()).hexdigest(),
-                os='Darwin', architecture='arm64')
+    host = platform.system(), platform.machine()
+    if host == ('Darwin', 'arm64'):
+        result = run(['/usr/sbin/ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'], 10)
+        require(result.returncode == 0, 'Cannot determine hardware identity')
+        matches = re.findall(rb'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{36})"', result.stdout)
+        require(len(matches) == 1, 'Cannot determine a unique hardware identity')
+        value, kind = matches[0].decode().lower(), 'sha256-IOPlatformUUID'
+    elif host == ('Linux', 'x86_64'):
+        # Container IDs, hostnames and /etc/machine-id can change on the same hardware.
+        # Never accept them as evidence of a second machine.
+        try:
+            value = Path('/sys/class/dmi/id/product_uuid').read_text().strip().lower()
+        except OSError as failure:
+            raise GateError('Linux hardware identity requires readable /sys/class/dmi/id/product_uuid') from failure
+        kind = 'sha256-DMI-product_uuid'
+    else:
+        raise GateError('This gate requires macOS ARM64 or Linux x64')
+    require(re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value) and
+            value.replace('-', '') not in ('0' * 32, 'f' * 32), 'Invalid hardware UUID')
+    return dict(kind=kind, fingerprint=hashlib.sha256(value.encode()).hexdigest(),
+                os=host[0], architecture=host[1])
 
 
 def remote_configuration(path, mode):
@@ -263,8 +276,8 @@ def main():
     same_host = False
     if baseline is not None:
         require(baseline['schemaVersion'] == 1 and baseline['phase'] == 'writer', 'Expected a writer baseline')
-        require(baseline['machine']['kind'] == machine['kind'] and baseline['machine']['os'] == 'Darwin' and
-                baseline['machine']['architecture'] == 'arm64' and
+        require(baseline['machine']['kind'] == machine['kind'] and baseline['machine']['os'] == machine['os'] and
+                baseline['machine']['architecture'] == machine['architecture'] and
                 re.fullmatch('[0-9a-f]{64}', baseline['machine']['fingerprint']), 'Invalid writer machine identity')
         same_host = baseline['machine']['fingerprint'] == machine['fingerprint']
         require(not same_host or args.allow_same_host,

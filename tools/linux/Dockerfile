@@ -14,5 +14,10 @@ RUN curl --fail --location --retry 3 \
     && rm /tmp/kotlin-native.tar.gz
 
 ENV KONAN_HOME=/opt/kotlin-native-prebuilt-linux-x86_64-2.4.20
+RUN curl --fail --location --retry 3 \
+      https://github.com/buchgr/bazel-remote/releases/download/v2.6.4/bazel-remote-2.6.4-linux-amd64 \
+      --output /usr/local/bin/bazel-remote \
+    && echo '6a6b64666c2238ec6b49b7b29f5e41e4149de09417a0028897c9bffe40376876  /usr/local/bin/bazel-remote' | sha256sum --check \
+    && chmod 755 /usr/local/bin/bazel-remote
 ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /work/kvik

@@ -46,6 +46,27 @@ class CrossMachineGateTests(unittest.TestCase):
     def blob_name(self):
         return f"{self.blob['hash']}-{self.blob['sizeBytes']}"
 
+    def test_linux_uses_hardware_uuid(self):
+        value = '12345678-ABCD-1234-ABCD-123456789ABC'
+        with patch.object(gate.platform, 'system', return_value='Linux'), \
+             patch.object(gate.platform, 'machine', return_value='x86_64'), \
+             patch.object(Path, 'read_text', return_value=value + '\n') as read:
+            result = gate.machine_identity()
+        read.assert_called_once_with()
+        self.assertEqual(result, dict(kind='sha256-DMI-product_uuid', os='Linux', architecture='x86_64',
+                                     fingerprint=gate.hashlib.sha256(value.lower().encode()).hexdigest()))
+
+    def test_linux_missing_or_placeholder_uuid_is_rejected(self):
+        with patch.object(gate.platform, 'system', return_value='Linux'), \
+             patch.object(gate.platform, 'machine', return_value='x86_64'):
+            with patch.object(Path, 'read_text', side_effect=PermissionError), self.assertRaisesRegex(gate.GateError, 'readable'):
+                gate.machine_identity()
+            for value in ('', 'container-name', '00000000-0000-0000-0000-000000000000',
+                          'FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF'):
+                with self.subTest(value=value), patch.object(Path, 'read_text', return_value=value), \
+                     self.assertRaisesRegex(gate.GateError, 'Invalid hardware UUID'):
+                    gate.machine_identity()
+
     def test_only_locked_blobs_are_seeded(self):
         (self.blobs / 'unlocked').write_bytes(b'not locked')
         project = self.root / 'project'

@@ -333,9 +333,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     fun cacheDiagnostic(value: CacheDiagnostic) = journal.diagnostic(Diagnostic("KVIK_CACHE_NOTICE", DiagnosticCategory.CACHE, "${value.code}: ${value.message}"))
                     val localCache = NativeActionCache("$storePath/actions", content)
                     val remote = remoteEndpoint?.let { endpoint ->
-                        val client = RemoteActionCache(content, localCache, endpoint, setOf(PortabilityApproval(
-                            "kvik-jvm-compiler-v1", "jvm", mapOf("os" to "macos", "arch" to "arm64"),
-                            "tools/test_jvm_portability.py")), checkNotNull(remoteConfiguration).limits)
+                        val client = RemoteActionCache(content, localCache, endpoint, setOf(
+                            PortabilityApproval("kvik-jvm-compiler-v1", "jvm", mapOf("os" to "macos", "arch" to "arm64"),
+                                "tools/test_jvm_portability.py"),
+                            PortabilityApproval("kvik-jvm-compiler-v1", "jvm", mapOf("os" to "linux", "arch" to "x64"),
+                                "tools/test_remote_cache_cli.py via tools/linux/verify.py"),
+                        ), checkNotNull(remoteConfiguration).limits)
                         RemoteCachingActionExecutor(delegate, localCache, content, client, ::portableJvmCompilation,
                             ::cacheDiagnostic, cacheDecision = { journal.emit("action-cache-decision", it.toJson()) },
                             publishEnabled = remoteConfiguration.write,
