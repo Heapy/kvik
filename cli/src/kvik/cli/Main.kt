@@ -39,7 +39,7 @@ private fun command(args: Array<String>) {
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
             Agent queries: mcp --project PATH [--lock PATH] [--store PATH] [--query-cache PATH] [--offline] serves MCP over foreground stdio
-            Agent execution: add --tools PATH [--runs PATH] [--jobs N] [--memory-mib N] [--remote-cache PATH] to enable MCP build/test/verify tools
+            Agent execution: add --tools PATH [--runs PATH] [--jobs N] [--memory-mib N] [--remote-cache PATH] to enable MCP build/test/verify and script tools
             Agent configuration: add --config-edits for local guarded edits or source transaction plans; validation is always available
             Agent session controls: add --session-controls to submit commands to existing foreground owners; session queries are always available
             Agent source projects: add --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF; --project is a logical revision path

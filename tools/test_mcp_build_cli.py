@@ -230,7 +230,7 @@ class PassingTests { @Test fun slow() {
         # Read-only work stays usable while the execution budget is occupied.
         call(c, 'kvik_inspect', {})
         busy = call(c, 'kvik_build', common, failed=True)
-        assert 'One build/test request' in busy['content'][0]['text']
+        assert 'One execution request' in busy['content'][0]['text']
         call(c, 'kvik_verify', common | dict(full=True), failed=True)
         conflict = call(c, 'kvik_config_apply', dict(plan=edit_plan), failed=True)
         assert 'cannot overlap' in conflict['content'][0]['text'] and config.read_bytes() == configuration_bytes

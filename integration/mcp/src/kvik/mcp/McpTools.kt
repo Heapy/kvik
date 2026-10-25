@@ -4,7 +4,7 @@ import kvik.core.*
 
 internal data class Argument(val name: String, val flag: String, val schema: JsonValue.Object,
                             val repeated: Boolean = false, val switch: Boolean = false,
-                            val encode: ((RpcValue) -> String)? = null)
+                            val encode: ((RpcValue) -> String)? = null, val tail: Boolean = false)
 
 private fun text(name: String, flag: String, description: String = name, choices: List<String> = emptyList(), maximum: Int = 4096) = Argument(name, flag,
     JsonValue.Object(buildMap {
@@ -50,13 +50,17 @@ class McpTool internal constructor(val name: String, private val description: St
                                   private val coordinate: String? = null, private val required: Set<String> = emptySet(),
                                   private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false,
                                   val project: Boolean = true, val build: Boolean = false, val mutating: Boolean = false,
-                                  val sessionControl: Boolean = false, private val openWorld: Boolean = repositories || build || sessionControl) {
+                                  val sessionControl: Boolean = false, val script: Boolean = false,
+                                  private val openWorld: Boolean = repositories || build || sessionControl) {
     fun definition(): JsonValue.Object = obj("name" to name.json(), "description" to description.json(),
         "inputSchema" to obj("type" to "object".json(), "additionalProperties" to false.json(),
             "properties" to JsonValue.Object(buildMap {
                 coordinate?.let { put(it, text(it, "", if (it == "package") "Maven group:artifact" else "Maven group:artifact:version").schema) }
                 arguments.forEach { put(it.name, it.schema) }
-            }), "required" to (required + listOfNotNull(coordinate)).sorted().map { it.json() }.json()),
+            }), "required" to (required + listOfNotNull(coordinate)).sorted().map { it.json() }.json()).let { schema ->
+                if (!script) schema else JsonValue.Object(schema.values + ("oneOf" to listOf(
+                    obj("required" to listOf("name".json()).json()), obj("required" to listOf("file".json()).json())).json()))
+            },
         "annotations" to obj("readOnlyHint" to (!build && !mutating && !sessionControl).json(), "destructiveHint" to (build || mutating || sessionControl).json(),
             "idempotentHint" to (!build).json(), "openWorldHint" to openWorld.json()))
 
@@ -65,6 +69,7 @@ class McpTool internal constructor(val name: String, private val description: St
         val allowed = this.arguments.map { it.name }.toSet() + listOfNotNull(coordinate)
         require(arguments.keys.all { it in allowed }) { "Unknown tool arguments: ${arguments.keys - allowed}" }
         require(arguments.keys.containsAll(required + listOfNotNull(coordinate))) { "Missing required tool arguments" }
+        if (script) require(("name" in arguments) != ("file" in arguments)) { "Select exactly one script name or standalone file" }
         fun value(raw: RpcValue): String = raw.string().also {
             require(it.isNotBlank() && it.length <= 4096 && !it.startsWith("--") && '\u0000' !in it) { "Invalid or oversized argument" }
         }
@@ -74,6 +79,12 @@ class McpTool internal constructor(val name: String, private val description: St
             for (spec in this@McpTool.arguments) {
                 val raw = arguments[spec.name] ?: continue
                 when {
+                    spec.tail -> {
+                        val entries = raw.array().map { it.string() }
+                        require(entries.size <= 256 && entries.all { it.length <= 4096 && '\u0000' !in it } &&
+                            entries.sumOf { it.encodeToByteArray().size } <= 64 * 1024) { "Script arguments exceed bounds or contain NUL" }
+                        add("--"); addAll(entries)
+                    }
                     spec.encode != null -> { add(spec.flag); add(spec.encode(raw)) }
                     spec.switch -> {
                         require(raw is RpcValue.Literal && raw.value in setOf("true", "false")) { "${spec.name} must be boolean" }
@@ -99,7 +110,8 @@ class McpTool internal constructor(val name: String, private val description: St
                         val selected = value(raw)
                         require(selected.length <= spec.schema.values.getValue("maxLength").longValue()) { "${spec.name} exceeds its maximum length" }
                         spec.schema.values["enum"]?.let { require(selected.json() in it.arrayValue()) { "Unsupported ${spec.name}: $selected" } }
-                        add(spec.flag); add(selected)
+                        if (spec.flag.isNotEmpty()) add(spec.flag)
+                        add(selected)
                     }
                 }
             }
@@ -205,4 +217,17 @@ val mcpBuildTools: List<McpTool> = listOf(
             repeated("modules", "--module", 1), repeated("targets", "--target", 1), repeated("since", "--since", 1),
             repeated("checks", "--check", 1, listOf("build", "test", "abi-check")), switch("full", "--full"), switch("planOnly", "--plan-only"),
             switch("coverage", "--coverage"), repeated("coverageExcludes", "--coverage-exclude")), build = true),
+)
+
+private val scriptSelectors = listOf(text("name", "", "Named script in the configured project", maximum = 128),
+    text("file", "--file", "Standalone .kt or .kts file with an adjacent companion and lock; a logical revision path in source mode"))
+
+/** Both operations need pinned tools; only run-script executes project code. */
+val mcpScriptTools: List<McpTool> = listOf(
+    McpTool("kvik_inspect_script", "Inspect one named project script or standalone file: captured inputs, locked dependencies, compiler plugins and prerequisite actions. Requires the existing script lock and configured tools; does not compile or execute code.",
+        listOf("inspect-script"), arguments = scriptSelectors, script = true),
+    McpTool("kvik_run_script", "Compile and run one named project script or standalone file using its existing lock. Compilation may be reused; execution always runs freshly and can have external effects. Arguments are passed literally, including empty strings and flags. Returns committed verification, script output paths and retained run logs. Cancellation stops owned processes but cannot undo script effects.",
+        listOf("run-script"), arguments = scriptSelectors + Argument("arguments", "--",
+            obj("type" to "array".json(), "maxItems" to 256.json(), "items" to obj("type" to "string".json(), "maxLength" to 4096.json())), tail = true),
+        build = true, script = true),
 )

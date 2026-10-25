@@ -93,7 +93,7 @@ internal fun ScriptOptions.forFile(file: ScriptFile): ProjectOptions = if (file.
     else project.copy(lock = scriptStem(file.primary.value) + ".kvik.lock.json")
 
 /** Source selectors before `--` belong to Kvik; everything after it belongs to the script. */
-private fun scriptCommandOptions(args: List<String>, execution: Boolean, toolsRequired: Boolean): Pair<KodeProjectOptions?, ScriptOptions> {
+internal fun scriptCommandOptions(args: List<String>, execution: Boolean, toolsRequired: Boolean): Pair<KodeProjectOptions?, ScriptOptions> {
     val separator = args.indexOf("--")
     val (source, remaining) = sourceProjectOptions(if (separator < 0) args else args.take(separator))
     val options = scriptOptions(remaining + if (separator < 0) emptyList() else args.drop(separator), execution, toolsRequired)

@@ -45,7 +45,7 @@ revision when inspection and execution must address the same contents. Inspect
 
 Source mode exposes inspection, configuration validation, package/dependency
 queries, retained-run/session queries and, with `--tools`, build/test execution
-and change-aware `kvik_verify`. `--config-edits` enables source configuration
+and change-aware `kvik_verify`, plus script inspection and execution. `--config-edits` enables source configuration
 plans for explicit publication through Kode, as described below. Session controls
 remain independently available with `--session-controls`.
 
@@ -103,8 +103,10 @@ used by CLI builds:
 | `kvik_build` | Nonempty `modules` and `targets` arrays | Build result, verification record, diagnostics and retained output paths |
 | `kvik_test` | Nonempty `modules` and `targets` arrays; optional `coverage`, `coverageExcludes` | Fresh test execution with eligible compilation cache reuse, counts and retained output paths |
 | `kvik_verify` | Nonempty `modules` and `targets`; `since` baseline directories or `full: true`; optional `checks`, `planOnly`, `coverage`, `coverageExcludes` | Affected-check selection, omission reasons and execution results |
+| `kvik_inspect_script` | Exactly one of `name` or `file` | Script inputs, dependency/plugin origins, locked selections and prerequisite actions; no execution |
+| `kvik_run_script` | Exactly one of `name` or `file`; optional `arguments` array | Fresh script execution, committed verification and separate script output paths |
 
-These tools execute project code, including compiler plugins, generators and
+Execution tools run project code, including compiler plugins, generators and
 tests. They use the CLI executor, configured dependency lock, cache and resolver
 policy. Coverage is available for JVM-only test selections. Each call selects
 the cross product of its modules and targets. For example:
@@ -193,6 +195,44 @@ execution runs are retained under the MCP request directory. Both locations
 survive connection closure. Progress, cancellation, execution limits and
 concurrent-query behavior are the same as for `kvik_build` and `kvik_test`.
 
+Both script tools require `--tools` because inspection validates the compilation
+graph and tool identities. Select a named script with `{"name": "maintenance"}`,
+or a standalone `.kt`/`.kts` file with `{"file": "/absolute/scripts/update.kt"}`.
+A local relative file path resolves against the server's project directory;
+in source mode it is a logical path from the revision root. Standalone files use
+their adjacent companion configuration and default script lock. The server's
+`--lock` applies to named project scripts. Both forms use the server's resolver
+policy, tools, artifact cache and run output directory. Script compilation uses
+the local cache; the CLI script executor does not use `--remote-cache`.
+
+Scripts require existing compatible locks. These tools never resolve or update
+them. `kvik_inspect_script` returns the CLI `script-inspection` document and does
+not compile or execute code. To run a script:
+
+```json
+{
+  "name": "kvik_run_script",
+  "arguments": {
+    "name": "maintenance",
+    "arguments": ["--input", "directory with spaces", "", "@literal.args"]
+  }
+}
+```
+
+Program arguments are literal, ordered strings; duplicates and empty strings
+are preserved. Up to 256 arguments are allowed, with at most 4096 characters
+per argument and 64 KiB of UTF-8 argument content in total; NUL is rejected.
+Script results have `kind: "mcp-script-result"` with the same request, run,
+verification, diagnostic and log fields as build results. `scriptExecution`
+contains the runtime observation, including `stdoutFile`, `stderrFile`, JVM command arguments
+and process outcome, or null when no runtime observation is available. The top-level
+`stdout`/`stderr` paths contain Kvik's own event stream and worker diagnostics.
+A nonzero script exit status is preserved in `exitCode` and returns `isError`.
+Compilation reuse still starts a fresh script process. Cancellation and connection
+closure stop owned processes; effects already performed by a script remain.
+Source scripts resolve one immutable revision per call and support offline
+execution from an exact cached revision, like the CLI.
+
 Enable configuration planning and application independently of compiler tools:
 
 ```sh
@@ -255,7 +295,7 @@ transaction. Offline planning only checks an existing compatible lock and return
 `operation: "check-lock"` without a transaction; it does not prepare new dependency
 selections or publish changes. There is no source `kvik_config_apply` tool.
 
-Configuration application cannot overlap another application or build/test/verify
+Configuration application cannot overlap another application or build/test/verify/script
 request on the same connection. Queries remain available. Other connections and
 CLI invocations use the existing publication locks and file preconditions.
 
@@ -354,9 +394,9 @@ process exits. Source mode exposes the supported subset described above. Session
 address existing local or source-provider owners. Retained-run queries can inspect results from either local
 projects or source-provider builds.
 
-The server allows four concurrent operations, with at most one build/test/verify per
-connection. Queries have a 120-second timeout; builds and tests have a 30-minute
-timeout. Read-only queries remain available while a build or test is running.
+The server allows four concurrent operations, with at most one build/test/verify/script run per
+connection. Queries have a 120-second timeout; execution has a 30-minute
+timeout. Read-only queries remain available while execution is running.
 Excess calls return a tool error and can be retried when another call completes.
 Requests are limited to 1 MiB, or 32 MiB on `--config-edits` connections so a returned
 plan can be submitted for application. Child output is limited to 16 MiB per stream, and complete

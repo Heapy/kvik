@@ -60,16 +60,31 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         require(pending.size < 4) { "At most four MCP queries may run at once; retry after a query completes" }
         require(id !in pending) { "Request id is already active" }
         require(progressToken == null || pending.values.none { it.progressToken == progressToken }) { "Progress token is already active" }
-        require(!tool.build || pending.values.none { it.build != null }) { "One build/test request may run at a time; retry when it completes" }
+        require(!tool.build || pending.values.none { it.build != null }) { "One execution request may run at a time; retry when it completes" }
         require(!(tool.build || tool.mutating) || pending.values.none { it.mutating || tool.mutating && it.build != null }) {
-            "Configuration application and build/test/verify requests cannot overlap on one connection"
+            "Configuration application and execution requests cannot overlap on one connection"
         }
-        val arguments = command.toMutableList()
-        if (tool.project) arguments += listOf("--project", options.project)
+        val separator = if (tool.script) command.indexOf("--") else -1
+        val scriptArguments = if (separator < 0) emptyList() else command.drop(separator + 1)
+        val arguments = (if (separator < 0) command else command.take(separator)).toMutableList()
+        val standalone = tool.script && "--file" in arguments
+        if (tool.project && !standalone) arguments += listOf("--project", options.project)
+        if (tool.script) {
+            val configured = requireNotNull(options.build) { "Script tools require mcp --tools PATH" }
+            arguments += listOf("--tools", projectPath(options.root, configured.tools),
+                "--store", projectPath(options.root, options.store ?: ProjectOptions().store))
+            arguments += options.policy
+            if (!standalone) options.lock?.let { arguments += listOf("--lock", it) }
+            if (standalone && options.source == null) {
+                val index = arguments.indexOf("--file") + 1
+                arguments[index] = projectPath(options.root, arguments[index])
+            }
+            if (options.offline) arguments += "--offline"
+        }
         val dependencyQuery = tool.name == "kvik_dependencies"
         val configurationPlan = tool.name == "kvik_config_plan"
-        if (dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build) arguments += options.policy
-        if (dependencyQuery || configurationPlan || tool.build || options.source != null && tool.project) {
+        if (!tool.script && (dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build)) arguments += options.policy
+        if (!tool.script && (dependencyQuery || configurationPlan || tool.build || options.source != null && tool.project)) {
             if (tool.name !in setOf("kvik_package_versions", "kvik_package_dependencies")) options.lock?.let { arguments += listOf("--lock", it) }
             options.store?.let { arguments += listOf("--store", it) }
         }
@@ -78,12 +93,14 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             if (options.offline && "--offline" !in arguments) arguments += "--offline"
         }
         if ((tool.build || configurationPlan || options.source != null && tool.project) && options.offline && "--offline" !in arguments) arguments += "--offline"
-        val prepared = if (tool.build) prepareMcpBuild(arguments, options, id) else null
+        val prepared = if (tool.build && tool.script) prepareMcpScript(arguments, scriptArguments, options, id)
+            else if (tool.build) prepareMcpBuild(arguments, options, id) else null
         val request = prepared?.first
         val directory = NativeFiles.tempDirectory(workspace())
         try {
             val actualArguments = (prepared?.second ?: mcpConfigurationArguments(tool, arguments, options, directory)) +
-                if (tool.project) options.source?.arguments().orEmpty() else emptyList()
+                (if (tool.project) options.source?.arguments().orEmpty() else emptyList()) +
+                (if (tool.script && tool.build) listOf("--") + scriptArguments else emptyList())
             val owner = host ?: runtimeProcessHost().also { host = it }
             val commandLine = listOf("${runtimeDirectory()}/kvik.kexe") + actualArguments
             val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "TMPDIR" to directory,

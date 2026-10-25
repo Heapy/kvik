@@ -31,11 +31,11 @@ Agents can query the project model, package/dependency versions, retained run
 results and foreground-session state through
 [`kvik mcp --project PATH`](docs/mcp.md), a foreground MCP stdio server with
 cancellable queries and structured CLI results. Add `--tools PATH` to enable
-build, test and change-aware `kvik_verify` tools using the same executor, cache
+build, test, change-aware `kvik_verify`, script inspection and script execution using the same executor, cache
 and retained run results.
 Add `--config-edits` for guarded local configuration/lock edits or Kode transaction plans through MCP.
 Add `--session-controls` to control an existing foreground `dev` session.
-MCP also accepts Kode source selectors for inspection, dependency/package queries, validation, builds and tests without a checkout; see [MCP usage](docs/mcp.md).
+MCP also accepts Kode source selectors for inspection, dependency/package queries, validation, builds, tests and scripts without a checkout; see [MCP usage](docs/mcp.md).
 
 ### BSP project import and builds
 
