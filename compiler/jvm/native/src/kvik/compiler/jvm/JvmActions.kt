@@ -160,23 +160,27 @@ fun jvmMetadataCompileAction(compilation: JvmMetadataCompilation, inputs: TreeMa
         workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources()) {
+data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources(), val agents: List<JvmTestAgent> = emptyList()) {
     init {
         require(module.matches(Regex("[A-Za-z0-9_.-]+")))
         require(classpath.isNotEmpty()) { "Test runtime classpath must be nonempty" }
         require(classpath.distinct().size == classpath.size && classes.distinct().size == classes.size)
         require(classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_.$]*")) })
         require(engines.isNotEmpty() && engines.distinct().size == engines.size && engines.all { it in setOf("junit-jupiter", "kotest") })
+        require(agents.size <= 16 && agents.map { it.id }.distinct().size == agents.size) { "Duplicate or too many test agents" }
+        require(agents.flatMap { it.outputs }.size <= 256) { "Too many test instrumentation outputs" }
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "classpath" to classpath.jsonPaths(),
         "classes" to classes.map { it.json() }.json(), "engines" to engines.map { it.json() }.json()).let {
             val measured = if (coverage == null) it else JsonValue.Object(it.values + ("coverage" to coverage.toJson()))
-            if (resources == TestResources()) measured else JsonValue.Object(measured.values + ("resources" to resources.toJson()))
+            val scheduled = if (resources == TestResources()) measured else JsonValue.Object(measured.values + ("resources" to resources.toJson()))
+            if (agents.isEmpty()) scheduled else JsonValue.Object(scheduled.values + ("agents" to agents.map { it.toJson() }.json()))
         }
     companion object {
         fun fromJson(value: JsonValue): JvmTestSelection {
-            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources"))
-            return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson), d["resources"]?.let(TestResources::fromJson) ?: TestResources())
+            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources", "agents"))
+            return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson), d["resources"]?.let(TestResources::fromJson) ?: TestResources(),
+                d["agents"]?.arrayValue()?.map(JvmTestAgent::fromJson).orEmpty())
         }
     }
 }
@@ -224,6 +228,7 @@ fun portableJvmCompilation(action: ActionSpec): Boolean {
 fun jvmTestAction(selection: JvmTestSelection, inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>, timeoutMillis: Long = 60_000): ActionSpec {
     require(toolchains.keys == jvmIdentities)
     declaredClasspath(selection.classpath, inputs)
+    selection.agents.forEach { it.requireInputs(inputs) }
     selection.coverage?.let { coverage ->
         require(coverage.classDirectories.all { it.path in selection.classpath && !it.path.value.endsWith(".jar") }) { "Coverage class roots must be declared runtime directories" }
         require(coverage.sources.all { source -> inputs.files.any { it.path == source.inputPath && it.digest == source.digest } }) { "Coverage source inputs differ from their declared digests" }
@@ -235,7 +240,8 @@ fun jvmTestAction(selection: JvmTestSelection, inputs: TreeManifest, composition
         } }) { "Test/runtime directory shadows a production coverage class" }
     }
     return ActionSpec("kvik-jvm-tests-v1", composition, ActionKind.TEST, hostPlatform, "jvm", toolchains.toMap(), TreeManifest(inputs.files.toList()),
-        listOf(LogicalPath("test-results.json")) + if (selection.coverage == null) emptyList() else listOf(LogicalPath("coverage.exec"), LogicalPath("coverage-result.json")), listOf("kvik.jvm.TestWorker") + selection.classes, workerEnvironment, selection.toJson(), timeoutMillis, CachePolicy.NEVER)
+        listOf(LogicalPath("test-results.json")) + (if (selection.coverage == null) emptyList() else listOf(LogicalPath("coverage.exec"), LogicalPath("coverage-result.json"))) + selection.agents.flatMap { it.outputs },
+        listOf("kvik.jvm.TestWorker") + selection.classes, workerEnvironment, selection.toJson(), timeoutMillis, CachePolicy.NEVER)
 }
 
 /** Exact classes avoid instrumenting test/framework/dependency JAR classes. Bound the agent option

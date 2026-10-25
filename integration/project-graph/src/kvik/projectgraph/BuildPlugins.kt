@@ -58,7 +58,7 @@ private fun compose(
     }
     val terminals = supplied.terminalActions.toMap()
     require(terminals.values.distinct().size == terminals.size) { "A terminal action cannot satisfy multiple checks" }
-    val launches = supplied.testLaunches.toMap()
+    val launches = supplied.testLaunches.toMutableMap()
     require(launches.keys.all { id -> supplied.nodes.any { it.id == id } }) { "Unknown test launch action" }
     val nodes = supplied.nodes.map { guardedNode(it, context.composition, contribution = it.id in supplied.contributedActions, launch = launches[it.id]) }.toMutableList()
     val contributed = supplied.contributedActions.toMutableSet()
@@ -76,6 +76,18 @@ private fun compose(
         }
         nodes += added.map { guardedNode(it, context.composition, contribution = true) }
         contributed += added.map { it.id }
+        if (plugin is ProjectTestInstrumentationContributor) {
+            val graph = ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals.toMap(), contributed.toSet(),
+                supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList())
+            for (instrumentation in plugin.instrumentTests(context, graph)) {
+                val index = nodes.indexOfFirst { it.id == instrumentation.actionId }
+                require(index >= 0) { "Unknown instrumentation action: ${instrumentation.actionId}" }
+                val launch = requireNotNull(launches[instrumentation.actionId]) { "Instrumentation action has no declared test launch" }
+                val (node, instrumented) = instrumentJvmTest(nodes[index], launch, instrumentation)
+                launches[node.id] = instrumented
+                nodes[index] = guardedNode(node, context.composition, contribution = node.id in contributed, launch = instrumented)
+            }
+        }
     }
     validateNodes(nodes)
     return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches, supplied.generatedResources.toList())

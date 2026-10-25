@@ -10,6 +10,35 @@ class TestLaunchesTest {
     private val resources = TestResources(768, setOf("database"), 2)
     private fun file(path: String, executable: Boolean = false) = FileEntry(LogicalPath(path), digest, executable)
 
+    @Test fun javaAgentsBindOrderedOptionsDeclaredInputsAndOutputs() {
+        val options = mutableListOf(JvmAgentOption(JvmAgentOptionKind.LITERAL, "config="),
+            JvmAgentOption(JvmAgentOptionKind.INPUT_FILE, "agent/config.txt"), JvmAgentOption(JvmAgentOptionKind.LITERAL, ",out="),
+            JvmAgentOption(JvmAgentOptionKind.OUTPUT_FILE, "instrumentation/probe/report.bin"))
+        val agent = JvmTestAgent("probe", LogicalPath("agent/probe.jar"), options, listOf(LogicalPath("instrumentation/probe/report.bin")))
+        val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests"), agents = listOf(agent)))
+        options.clear()
+        val inputs = TreeManifest(listOf(file("classes/Test.class"), file("agent/probe.jar"), file("agent/config.txt")))
+        val tools = listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith { digest }
+        val action = launch.action(inputs, digest, tools)
+        launch.outputContract.requireMatches(action)
+        assertEquals(CachePolicy.NEVER, action.cachePolicy)
+        assertEquals("-javaagent:input/agent/probe.jar=config=input/agent/config.txt,out=output/instrumentation/probe/report.bin", launch.selection.agents.single().argument())
+        assertEquals(launch.parameters, JvmTestSelection.fromJson(launch.parameters).toJson())
+        for (path in listOf("agent/probe.jar", "agent/config.txt")) {
+            assertFails { launch.action(TreeManifest(inputs.files.filter { it.path.value != path }), digest, tools) }
+            val changed = TreeManifest(inputs.files.map { if (it.path.value == path) it.copy(digest = Sha256.digest(byteArrayOf(1))) else it })
+            assertNotEquals(action.key(Sha256), launch.action(changed, digest, tools).key(Sha256))
+        }
+        val changedOptions = launch.selection.agents.single().copy(options = listOf(JvmAgentOption(JvmAgentOptionKind.LITERAL, "changed")))
+        assertNotEquals(action.key(Sha256), JvmTestLaunch(launch.selection.copy(agents = listOf(changedOptions))).action(inputs, digest, tools).key(Sha256))
+        assertFails { agent.copy(jar = LogicalPath("agent=bad.jar")) }
+        assertFails { agent.copy(outputs = listOf(LogicalPath("test-results.json"))) }
+        assertFails { launch.selection.copy(agents = listOf(agent, agent)) }
+        assertFails { JvmAgentOption(JvmAgentOptionKind.LITERAL, "bad\u0000option") }
+        assertFails { agent.copy(options = listOf(JvmAgentOption(JvmAgentOptionKind.OUTPUT_FILE, "instrumentation/probe/undeclared"))) }
+        assertFails { agent.copy(outputs = listOf(LogicalPath("instrumentation/probe/a"), LogicalPath("instrumentation/probe/a/b"))) }
+    }
+
     @Test fun launchSettingsMatchAllAdaptersAndRejectRecipeDrift() {
         val inputs = TreeManifest(listOf(file("classes/Main.class"), file("tests.kexe", true), file("tests.mjs")))
         val jvmTools = listOf("jdk", "jvm-compiler", "jvm-worker", "junit").associateWith { digest }

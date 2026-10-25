@@ -34,14 +34,40 @@ rejects resolved recipes that disagree with a declared launch. Launch constructo
 snapshot caller collections; paths describe staged runtime inputs, not host paths.
 
 `JvmTestLaunch.selection` exposes the ordered runtime classpath, selected classes,
-engines and `JvmCoverageSpec` instrumentation settings. Coverage includes pinned
+engines, Java agents and `JvmCoverageSpec` instrumentation settings. Coverage includes pinned
 agent/reporter identities, production class roots, source digests and exclusions;
 the adapter still validates these against actual inputs during resolution.
 Native launches expose their executable and runner; JS/Wasm launches expose their
 entry point and filter. All launches expose timeout and scheduler resources.
-The CLI/MCP `testLaunch` object serializes the same parameters. This is a declaration
-of supported runner settings, not a general arbitrary instrumentation callback or
-test discovery result.
+The CLI/MCP `testLaunch` object serializes the same parameters. It describes runner
+settings; test discovery still happens during execution.
+
+Source plugins implement `ProjectTestInstrumentationContributor.instrumentTests`
+to return `JvmTestInstrumentation` declarations for existing JVM test actions.
+Each declaration adds ordered `JvmTestAgent` descriptors, prerequisite action IDs
+and an input resolver. A plugin can also implement `ProjectGraphContributor` to
+provide those prerequisite actions. The input resolver receives only its declared
+prerequisites and returns a manifest of agent JARs and supporting files; the
+executor materializes their verified CAS contents. Instrumentation preserves the
+original checks, classes, classpath, resource budget and timeout. Contributors run
+in plugin-ID order, and later contributors see earlier instrumentation.
+
+An agent's options are ordered `JvmAgentOption` fragments. `LITERAL` fragments are
+passed unchanged; `INPUT_FILE` and `OUTPUT_FILE` fragments become paths beneath
+the action's isolated `input/` and `output/` directories. Concatenation defines the
+agent-specific option syntax, for example a `LITERAL` fragment containing
+`destfile=` followed by an `OUTPUT_FILE` fragment. Each output must be declared under
+`instrumentation/<agent-id>/`; output parents are created before launch. Agent JARs,
+option inputs, option order and outputs participate in the ordinary test action
+key. Agents execute after the built-in JaCoCo agent when coverage is enabled.
+
+Tests always run freshly, with the same foreground ownership and cancellation as
+ordinary tests. Agent output files are retained with the test report and exposed
+as `test-instrumentation` artifacts. Missing or unreadable declared files produce
+`KVIK_TEST_INSTRUMENTATION_INCOMPLETE`; a successful test run then becomes incomplete.
+Undeclared files invalidate output capture. Limits are 16 agents, 256 output files
+in total, 8 MiB per output and 64 MiB per agent. This hook currently supports JVM
+Java agents; Native and JS instrumentation require their own adapter contracts.
 
 `ProjectActionGraph.generatedResources` records resource generators separately
 from Kotlin source generators. Resource declarations name exact relative files,

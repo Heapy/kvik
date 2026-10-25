@@ -34,6 +34,10 @@ class JvmTestLaunch(selection: JvmTestSelection, override val timeoutMillis: Lon
     override val implementation = "kvik-jvm-tests-v1"
     override val resources get() = selection.resources
     override val parameters get() = selection.toJson()
+    val outputContract get() = ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) +
+        (if (selection.coverage == null) emptyList() else listOf(fileOutput("coverage.exec", "coverage-execution"),
+            fileOutput("coverage-result.json", "coverage-results"))) +
+        selection.agents.flatMap { agent -> agent.outputs.map { fileOutput(it.value, "test-instrumentation") } })
     override fun action(inputs: TreeManifest, composition: Digest, toolchains: Map<String, Digest>) =
         jvmTestAction(selection, inputs, composition, toolchains, timeoutMillis)
 }

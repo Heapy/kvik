@@ -1212,7 +1212,7 @@ private class Builder(
         } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, edges,
-            ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) + if (coverage == null) emptyList() else listOf(fileOutput("coverage.exec", "coverage-execution"), fileOutput("coverage-result.json", "coverage-results")))) { results ->
+            if (launch is JvmTestLaunch) launch.outputContract else ActionOutputContract(fileOutput("test-results.json", "test-results"))) { results ->
             validateResults(results, edges)
             val testFiles = if (hasTestCompile) remap(results, module, target, "test") else emptyList()
             val inputs = if (target == "jvm") {

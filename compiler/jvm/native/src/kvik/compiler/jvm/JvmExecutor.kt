@@ -96,6 +96,14 @@ class JvmActionExecutor(
             val trees = NativeOutputTrees(content)
             trees.materialize(expected.inputs, "$directory/input")
             mkdirJvm("$directory/output"); mkdirJvm("$directory/home"); mkdirJvm("$directory/tmp")
+            val agentDirectories = linkedSetOf<String>()
+            selection?.agents?.flatMap { it.outputs }?.forEach { output ->
+                var parent = "$directory/output"
+                output.value.split('/').dropLast(1).forEach { part ->
+                    parent += "/$part"
+                    if (agentDirectories.add(parent)) mkdirJvm(parent)
+                }
+            }
             compilerOutput?.value?.substringBeforeLast('/', "")?.takeIf { it.isNotEmpty() }?.let { parent ->
                 var path = "$directory/output"
                 parent.split('/').forEach { path += "/$it"; mkdirJvm(path) }
@@ -138,7 +146,7 @@ class JvmActionExecutor(
                     "includes=" + coverageClassNames(coverage, expected.inputs).joinToString(":") +
                     if (coverage.excludes.isEmpty()) "" else ",excludes=" + coverage.excludes.joinToString(":"))
             } ?: emptyList()
-            val arguments = listOf(layout.javaExecutable) + coverageArguments + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
+            val arguments = listOf(layout.javaExecutable) + coverageArguments + selection?.agents.orEmpty().map { it.argument() } + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
                 if (compilerOutput != null) listOf(if (script != null) "kvik.jvm.KotlinScriptCompileWorker" else "kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
                 else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json")
             val process = host.start(ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
@@ -233,6 +241,20 @@ class JvmActionExecutor(
                             if (status != ActionStatus.CANCELLED) status = ActionStatus.FAILED
                         }
                     }
+                    for (agent in selection?.agents.orEmpty()) {
+                        try {
+                            var bytes = 0L
+                            for (output in agent.outputs) {
+                                bytes += readJvmFile("$directory/output/${output.value}", 8 * 1024 * 1024).size
+                                require(bytes <= 64L * 1024 * 1024) { "Test agent outputs exceed 64 MiB" }
+                            }
+                        } catch (failure: Exception) {
+                            diagnostics = diagnostics + Diagnostic("KVIK_TEST_INSTRUMENTATION_INCOMPLETE", DiagnosticCategory.INFRASTRUCTURE,
+                                "Test agent ${agent.id}: ${failure.message}")
+                            if (tests?.status == VerificationStatus.PASSED) tests = tests!!.copy(status = VerificationStatus.INCOMPLETE)
+                            if (status != ActionStatus.CANCELLED) status = ActionStatus.FAILED
+                        }
+                    }
                     diagnostics = diagnostics.map { it.copy(actionId = actionId, module = module, target = expected.target, path = it.path?.removePrefix("input/")) }
                     if (tests != null) {
                         // Even negative/cancelled reports are retained; TEST actions can never enter caches.
@@ -245,7 +267,7 @@ class JvmActionExecutor(
                             outputs = TreeManifest(emptyList())
                             if (status != ActionStatus.CANCELLED) {
                                 status = ActionStatus.FAILED
-                                tests = if (selection?.coverage != null) tests!!.let { report ->
+                                tests = if (selection?.coverage != null || !selection?.agents.isNullOrEmpty()) tests!!.let { report ->
                                     if (report.status == VerificationStatus.PASSED) report.copy(status = VerificationStatus.INCOMPLETE) else report
                                 } else JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
                             }

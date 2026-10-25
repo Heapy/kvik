@@ -59,6 +59,70 @@ private class Contributor(id: String, private val add: (ProjectBuildContext, Pro
 }
 
 class BuildPluginsTest {
+    @Test fun instrumentationContributorsEnrichOrdinaryTestsWithoutReplacingTheirChecks() {
+        val context = pluginContext()
+        val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests")))
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("classes/Tests.class"), pluginDigest("class"))))
+        val provider = FixtureProvider(project = { _, _ ->
+            pluginGraph(listOf(ActionNode("main", emptySet(), launch.outputContract) {
+                launch.action(inputs, pluginComposition, context.toolchains.getValue("jvm"))
+            })).copy(testLaunches = mapOf("main" to launch))
+        })
+        val agentFile = FileEntry(LogicalPath("agent.jar"), pluginDigest("agent"))
+        fun contributor(name: String, actionId: String = "main", dependencies: Set<String> = setOf("agent-build")) =
+            object : AdditivePlugin(name), ProjectTestInstrumentationContributor, ProjectGraphContributor {
+                override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> =
+                    if (name == "a") listOf(pluginNode("agent-build")) else emptyList()
+                override fun instrumentTests(context: ProjectBuildContext, graph: ProjectActionGraph): List<JvmTestInstrumentation> {
+                    if (name == "z") assertEquals(listOf("a"), (graph.testLaunches.getValue("main") as JvmTestLaunch).selection.agents.map { it.id })
+                    return listOf(JvmTestInstrumentation(actionId, listOf(JvmTestAgent(name, agentFile.path,
+                        outputs = listOf(LogicalPath("instrumentation/$name/report.bin")))), dependencies) { results ->
+                        assertEquals(dependencies, results.keys)
+                        TreeManifest(listOf(agentFile))
+                    })
+                }
+            }
+        val graph = composedProjectActionGraph(listOf(contributor("z"), provider, contributor("a")), context, pluginRequest)
+        assertEquals(setOf(pluginCheck), graph.requestedChecks)
+        assertEquals(mapOf(pluginCheck to "main"), graph.terminalActions)
+        assertEquals(setOf("agent-build"), graph.contributedActions)
+        val node = graph.nodes.single { it.id == "main" }
+        assertEquals(setOf("agent-build"), node.dependencies)
+        val prerequisite = ActionResult("agent-build", pluginDigest("build"), ActionStatus.EXECUTED, TreeManifest(listOf(agentFile)), 0)
+        val action = node.resolve(mapOf("agent-build" to prerequisite))
+        val instrumented = graph.testLaunches.getValue("main") as JvmTestLaunch
+        assertEquals(listOf("a", "z"), instrumented.selection.agents.map { it.id })
+        assertEquals(launch.selection.classes, instrumented.selection.classes)
+        assertEquals(launch.selection.classpath, instrumented.selection.classpath)
+        instrumented.requireMatches(action)
+        checkNotNull(node.outputContract).requireMatches(action)
+        assertEquals(CachePolicy.NEVER, action.cachePolicy)
+        assertEquals(listOf("classes/Tests.class", "agent.jar"), action.inputs.files.map { it.path.value })
+        assertFails { node.resolve(emptyMap()) }
+        assertFails { node.resolve(mapOf("agent-build" to prerequisite.copy(status = ActionStatus.FAILED))) }
+        assertFails { composedProjectActionGraph(listOf(provider, contributor("a", "missing")), context, pluginRequest) }
+        assertFails { composedProjectActionGraph(listOf(provider, contributor("a", dependencies = setOf("main"))), context, pluginRequest) }
+        assertFalse(supportsCoreChangeSelection(listOf(provider, contributor("a"))))
+        val inspected = inspectActionGraph(graph).values.getValue("actions").arrayValue()
+            .single { it.objectValue().getValue("id").stringValue() == "main" }.objectValue()
+        assertEquals(instrumented.toJson(), inspected.getValue("testLaunch"))
+    }
+
+    @Test fun instrumentationRejectsWrongLaunchesConflictingInputsAndHiddenRecipeChanges() {
+        val context = pluginContext()
+        val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests")))
+        val file = FileEntry(LogicalPath("classes/Tests.class"), pluginDigest("class"))
+        val inputs = TreeManifest(listOf(file, FileEntry(LogicalPath("agent.jar"), pluginDigest("agent"))))
+        val node = ActionNode("main", emptySet(), launch.outputContract) { launch.action(inputs, pluginComposition, context.toolchains.getValue("jvm")) }
+        val instrumentation = JvmTestInstrumentation("main", listOf(JvmTestAgent("agent", LogicalPath("agent.jar")))) {
+            TreeManifest(listOf(file.copy(digest = pluginDigest("conflict"))))
+        }
+        assertFails { instrumentJvmTest(node, launch, instrumentation).first.resolve(emptyMap()) }
+        val native = NativeTestLaunch("app", NativeTarget.MACOS_ARM64, LogicalPath("tests.kexe"))
+        assertFails { instrumentJvmTest(node, native, instrumentation) }
+        val drift = node.copy(resolve = { launch.action(inputs, pluginComposition, context.toolchains.getValue("jvm")).copy(timeoutMillis = 1) })
+        assertFails { instrumentJvmTest(drift, launch, instrumentation).first.resolve(emptyMap()) }
+    }
     @Test fun providerLaunchesReachContributorsAndRejectConflictingRecipes() {
         val launch = JvmTestLaunch(JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("fixture.Tests")))
         val context = pluginContext()
