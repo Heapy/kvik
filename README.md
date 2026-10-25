@@ -53,8 +53,14 @@ plugin contributions and declared script/SQLDelight/KSP generated-source roots.
 Each generated root is relative to its producer's output tree and carries its
 module, source set and configuration JSON pointer. A result consumer receives
 the producer's action result; it need not consume every file in that output tree.
-Recipes, actual output files and cache decisions remain unresolved until their
-prerequisites succeed. Compiler-plugin declarations remain available in `inspect`.
+`output.declaredArtifacts` lists the output-relative path, semantic kind and shape
+(`file`, `tree`, or `file-or-tree`) of each declared root. Built-in project and script
+graph actions describe their outputs, including compiler-plugin roots, coverage files and Native
+debug-symbol trees. An empty list means no declared outputs; `null` means a source
+plugin has not supplied a contract. Actual file inventories, digests and cache
+decisions remain unresolved until execution. A declared root may produce no files.
+The scheduler rejects a recipe whose roots disagree with its contract and rejects
+successful results with incompatible file/tree paths, including cache hits.
 
 Graph inspection checks the existing dependency lock against locally available
 metadata/artifacts and captures current inputs. It uses desired tool identities without

@@ -25,6 +25,7 @@ fun inspectActionGraph(graph: ProjectActionGraph): JsonValue.Object {
             "dependencies" to node.dependencies.sorted().map(String::json).json(),
             "contributed" to (node.id in graph.contributedActions).json(),
             "output" to obj("contract" to "tree-manifest".json(), "state" to "unresolved".json(),
+                "declaredArtifacts" to (node.outputContract?.toJson() ?: JsonValue.Null),
                 "resultConsumers" to consumers.getValue(node.id).sorted().map(String::json).json()),
         ) }.json(),
         "checks" to graph.requestedChecks.sorted().map { check -> obj("id" to check.json(),

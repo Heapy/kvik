@@ -1,5 +1,31 @@
 # Pure project action graph
 
+`ActionNode.outputContract` exposes output roots before prerequisite actions run.
+Built-in graph nodes provide an `ActionOutputContract` containing `OutputArtifact`
+values with a logical path, semantic kind and `ArtifactShape` (`FILE`, `TREE` or
+`FILE_OR_TREE`). These paths are relative to the producer's output manifest, not
+the project or the consumer's staged input directory. Tree roots can be empty;
+contracts describe allowed outputs without promising an exact file inventory.
+Compiler plugins use `FILE_OR_TREE` because their existing declarations name roots
+without specifying their shape. Source resources are inputs and are not falsely
+listed as compilation outputs.
+
+Source plugins can supply the same contract on additive or provider actions:
+
+```kotlin
+ActionNode("generate", prerequisites,
+    ActionOutputContract(treeOutput("generated", "generated-sources"))) { results ->
+    generationAction(results)
+}
+```
+
+The legacy constructor remains available with an unknown (`null`) contract.
+`copy` and graph composition retain contracts. The scheduler checks the resolved
+recipe's output roots before starting it and validates successful output paths
+against declared shapes, including cached and deduplicated results. Mismatches
+fail the action and block consumers. The `inspect-graph` CLI/MCP query serializes
+these declarations without invoking any action resolver.
+
 `kvik.projectgraph.projectActionGraph` has no filesystem, CAS, network, process or clock access. Its inputs are a validated `EffectiveConfiguration`, a dependency lock already verified by `DependencyLocks.loadLocked`, an immutable project-relative `TreeManifest` whose bytes are already in CAS, runtime composition identity, target toolchain identity maps, and an explicit selection:
 
 ```kotlin

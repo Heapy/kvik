@@ -93,6 +93,15 @@ def main():
             assert value['execution'] == 'not-requested'
             nodes = {n['id']: n for n in value['actions']}
             assert not any('unrelated' in n for n in nodes)
+            assert all(node['output']['declaredArtifacts'] is not None for node in nodes.values())
+            for node in nodes.values():
+                if node['id'].endswith(':generate'):
+                    assert node['output']['declaredArtifacts'] == [dict(path='generated', kind='generated-sources', shape='tree')]
+            if 'library:jvm:main' in nodes:
+                assert nodes['library:jvm:main']['output']['declaredArtifacts'] == [dict(path='classes', kind='jvm-classes', shape='tree')]
+            if mode == 'test':
+                assert nodes['library:jvm:test']['output']['declaredArtifacts'] == [dict(path='test-results.json', kind='test-results', shape='file')]
+
             assert len(value['checks']) == 1
             assert value['checks'][0]['terminalAction'] in nodes
             for node in nodes.values():
@@ -111,6 +120,9 @@ def main():
         native = command(runtime, ['inspect-graph', *base, '--tools', tools, '--module', 'library', '--target', 'macosArm64'])
         validator.validate(native)
         assert native['toolTargets'] == ['jvm', 'macosArm64']
+        assert next(n for n in native['actions'] if n['id'] == 'library:macosArm64:main')['output']['declaredArtifacts'] == [
+            dict(path='module.klib', kind='klib', shape='file')]
+
         assert 'script:generate:jvm:generate' in next(n for n in native['actions'] if n['id'] == 'library:macosArm64:main')['dependencies']
         for flags in (['--mode', 'unknown'], ['--runs', 'forbidden'], ['--mode', 'build', '--mode', 'test'], ['--module', 'unknown'], ['--coverage']):
             command(runtime, ['inspect-graph', *base, '--tools', tools, '--module', 'library', '--target', 'jvm', *flags], failed=True)

@@ -90,6 +90,7 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
 private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<String, ActionSpec> {
     val results = linkedMapOf<String, ActionResult>(); val actions = linkedMapOf<String, ActionSpec>()
     for (node in graph.nodes) {
+        assertNotNull(node.outputContract, "Missing built-in output contract: ${node.id}")
         val action = node.resolve(results.filterKeys { it in node.dependencies })
         actions[node.id] = action
         results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED, outputs(action, node.id + if(node.id == changed) "changed" else ""), 0)

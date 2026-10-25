@@ -139,7 +139,10 @@ to `build` and supports all project graph modes listed by CLI help. It needs a
 compatible existing lock and cached dependency metadata/artifacts. The graph is built by
 the configured source plugin without resolving action recipes or starting an
 executor. `output.resultConsumers` are direct recipients of prerequisite results,
-not per-file provenance. Output paths/digests and cache hits are not predicted.
+not per-file provenance. `output.declaredArtifacts` describes each known root's
+path, kind and file/tree shape; `null` means the provider supplied no contract,
+while an empty list means it declared no outputs. Actual files/digests and cache
+hits are not predicted.
 Generated roots identify script, SQLDelight and KSP declarations; their paths are
 producer-output-relative. The query also works with configured Kode selectors;
 offline source inspection requires cached content. It does not create run records.

@@ -4,6 +4,18 @@ import kvik.core.*
 import kotlin.test.*
 
 class GraphInspectionTest {
+    @Test fun declaredArtifactsAreAvailableWithoutResolvingAndAbsentMetadataStaysUnknown() {
+        val compile = ActionNode("compile", emptySet(), ActionOutputContract(treeOutput("classes", "jvm-classes"))) { error("Must not resolve") }
+        val run = ActionNode("run", setOf("compile"), ActionOutputContract()) { error("Must not resolve") }
+        val unknown = node("contributor")
+        val actions = inspectActionGraph(ProjectActionGraph(listOf(compile, run, unknown), setOf("script:run"),
+            mapOf("script:run" to "run"), setOf("contributor"))).values.getValue("actions").arrayValue()
+            .associate { it.objectValue().let { fields -> fields.getValue("id").stringValue() to fields.getValue("output").objectValue().getValue("declaredArtifacts") } }
+        assertEquals(compile.outputContract!!.toJson(), actions.getValue("compile"))
+        assertEquals(emptyList<JsonValue>().json(), actions.getValue("run"))
+        assertEquals(JsonValue.Null, actions.getValue("contributor"))
+    }
+
     private fun node(id: String, vararg dependencies: String) = ActionNode(id, dependencies.toSet()) {
         error("Inspection must not resolve action recipes")
     }

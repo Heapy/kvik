@@ -104,7 +104,7 @@ private fun inspectGraph(options: BuildOptions, mode: ProjectMode, project: Proj
         "execution" to "not-requested".json(),
         "limitations" to listOf(
             "Output trees are unresolved contracts; resultConsumers receive prerequisite results, not necessarily every output file.",
-            "Recipes, output paths, file digests and cache decisions require successful prerequisite results and are not predicted.",
+            "Declared artifact roots describe allowed output shapes; exact files, digests and cache decisions remain unresolved.",
             "Desired tool identities do not establish installed tool availability or successful execution."
         ).map(String::json).json()).values + topology.values +
         if (source == null) emptyMap() else mapOf("source" to source.reference.toJson())).also {

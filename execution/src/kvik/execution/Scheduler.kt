@@ -46,7 +46,13 @@ class SchedulerRun(
     }
 
     private fun complete(result: ActionResult, timing: ActionTiming? = null) {
-        val snapshot = result.copy(outputs = TreeManifest(result.outputs.files.toList()), processUsage = result.processUsage.toList())
+        val checked = try {
+            if (result.successful) nodes.getValue(result.actionId).outputContract?.requireMatches(result.outputs)
+            result
+        } catch (failure: Exception) {
+            result.copy(status = ActionStatus.FAILED, outputs = TreeManifest(emptyList()), diagnostic = "Output contract: ${failure.message}")
+        }
+        val snapshot = checked.copy(outputs = TreeManifest(checked.outputs.files.toList()), processUsage = checked.processUsage.toList())
         completed[result.actionId] = snapshot
         if (timing != null) emit("action-timing", timing.toJson())
         emit("action-finished", snapshot.toJson() as JsonValue.Object)
@@ -88,6 +94,7 @@ class SchedulerRun(
                 val action = try {
                     resolved.getOrPut(id) {
                         val spec = node.resolve(node.dependencies.sorted().associateWith { completed.getValue(it) }).snapshot()
+                        node.outputContract?.requireMatches(spec)
                         val request = executor.resources(spec)
                         Resolved(spec, spec.key(hasher), request.copy(exclusive = request.exclusive.toSet()))
                     }

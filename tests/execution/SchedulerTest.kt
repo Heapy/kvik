@@ -35,6 +35,52 @@ private class ManualExecutor : ActionExecutor {
 }
 
 class SchedulerTest {
+    @Test fun outputContractDriftFailsBeforeExecutorStartIncludingCopiedNodes() {
+        val executor = ManualExecutor()
+        val contract = ActionOutputContract(treeOutput("classes", "jvm-classes"))
+        // Primary construction and copy can replace a resolver; the scheduler still enforces the contract.
+        val node = ActionNode("compile", emptySet(), { spec() }, contract).copy(resolve = { spec() })
+        SchedulerRun("contract", listOf(node, ActionNode("consumer", setOf("compile")) { spec("consumer") }),
+            executor, ResourceBudget(1, 1), EventJournal {}).use { run ->
+            assertTrue(run.tick())
+            assertTrue(executor.started.isEmpty())
+            assertEquals(ActionStatus.FAILED, run.results.getValue("compile").status)
+            assertEquals(ActionStatus.BLOCKED, run.results.getValue("consumer").status)
+        }
+    }
+
+    @Test fun artifactShapesAreCheckedForExecutionCacheHitsAndDeduplicatedFollowers() {
+        for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) {
+            val action = spec().copy(outputs = listOf(LogicalPath("output")))
+            val starts = mutableListOf<String>()
+            val executor = object : ActionExecutor {
+                override fun resources(action: ActionSpec) = ResourceRequest(1)
+                override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
+                    starts += actionId
+                    return object : RunningAction {
+                        override fun poll() = ActionResult(actionId, action.key(Sha256), status,
+                            TreeManifest(listOf(FileEntry(LogicalPath("output"), Sha256.digest(byteArrayOf())))), 0)
+                        override fun cancel() {}
+                        override fun close() {}
+                    }
+                }
+            }
+            val nodes = listOf(
+                ActionNode("a-file", emptySet(), ActionOutputContract(fileOutput("output", "klib"))) { action },
+                ActionNode("b-tree", emptySet(), ActionOutputContract(treeOutput("output", "jvm-classes"))) { action },
+                ActionNode("c-child", setOf("b-tree")) { spec("child") },
+            )
+            SchedulerRun("shapes", nodes, executor, ResourceBudget(2, 2), EventJournal {}).use { run ->
+                run.tick(); assertTrue(run.tick())
+                assertEquals(listOf("a-file"), starts)
+                assertTrue(run.results.getValue("a-file").successful)
+                assertEquals(ActionStatus.FAILED, run.results.getValue("b-tree").status)
+                assertTrue(run.results.getValue("b-tree").outputs.files.isEmpty())
+                assertEquals(ActionStatus.BLOCKED, run.results.getValue("c-child").status)
+            }
+        }
+    }
+
     @OptIn(kotlin.time.ExperimentalTime::class)
     @Test fun timingUsesRunLocalClockAndDoesNotDuplicateSharedWork() {
         val clock = TestTimeSource()

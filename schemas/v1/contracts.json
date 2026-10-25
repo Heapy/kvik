@@ -14204,6 +14204,33 @@
       ],
       "additionalProperties": false
     },
+    "outputArtifact": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "kind": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "shape": {
+          "enum": [
+            "file",
+            "tree",
+            "file-or-tree"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "shape"
+      ],
+      "additionalProperties": false
+    },
     "graphInspection": {
       "type": "object",
       "properties": {
@@ -14326,6 +14353,20 @@
                   },
                   "state": {
                     "const": "unresolved"
+                  },
+                  "declaredArtifacts": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/outputArtifact"
+                        },
+                        "uniqueItems": true
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "resultConsumers": {
                     "type": "array",

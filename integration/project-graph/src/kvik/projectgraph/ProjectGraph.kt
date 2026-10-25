@@ -195,9 +195,18 @@ private class Builder(
         return ProjectActionGraph(nodes.values.toList(), terminals.keys.toSet(), terminals.toMap(), generatedSources = generatedSources.toList())
     }
 
+    private fun pluginOutputArtifacts(module: String, target: String, scope: String): List<OutputArtifact> =
+        selectedPlugins(module, target, scope).flatMap { plugin -> compilerPluginOutputArtifacts(listOf(plugin)) }
+
+    private fun nativeLinkOutputs(path: String, target: String, framework: Boolean = false,
+                                  staticFramework: Boolean = false): ActionOutputContract = ActionOutputContract(
+        listOf(if (framework) treeOutput(path, "native-framework") else fileOutput(path, "native-executable")) +
+            if (NativeTarget.require(target).isApple && !staticFramework) listOf(treeOutput("$path.dSYM", "debug-symbols")) else emptyList())
+
     private fun ensureDocumentationStdlib(module: String, target: String): String {
         val id = "$module:$target:documentation-stdlib"
-        if (id !in nodes) nodes[id] = ActionNode(id, emptySet()) { results ->
+        if (id !in nodes) nodes[id] = ActionNode(id, emptySet(),
+            ActionOutputContract(treeOutput("stdlib", "native-stdlib"))) { results ->
             validateResults(results, emptySet())
             documentationNativeStdlibAction(NativeTarget.require(target), composition, tools.getValue(target))
         }
@@ -270,7 +279,8 @@ private class Builder(
         require(options.all { it.nativeLanguageOptions == NativeLanguageOptions() }) {
             "Native return-value checker/destructuring settings are not yet represented by the metadata adapter"
         }
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + if (applyPlugin) pluginOutputArtifacts(module, pluginTarget, "main") else emptyList())) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
             val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
@@ -330,7 +340,8 @@ private class Builder(
         } }
         val includes = settings.includes.map { path -> files.singleOrNull { it.path == path } ?: error("Missing documentation include: ${path.value}") }
         val id = "$module:common:documentation"
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(treeOutput("html", "documentation"))) { results ->
             validateResults(results, edges)
             val dependencyFiles = targetDependencies.flatMap { (target, dependencies) -> dependencies.flatMap { remap(results, it, target, "main") } }
             val metadataFiles = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.flatMap { documentationMetadataOutputs(results, it, targets) } }
@@ -368,7 +379,8 @@ private class Builder(
         if (id in nodes) return id
         require(tools["jvm"]?.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit")) { "ABI extraction requires JVM tool identities" }
         val dependencies = setOf(mainId(module, target))
-        nodes[id] = ActionNode(id, dependencies) { results ->
+        nodes[id] = ActionNode(id, dependencies,
+            ActionOutputContract(fileOutput("abi.json", "abi-snapshot"), fileOutput("api.txt", "abi-text"))) { results ->
             validateResults(results, dependencies)
             abiDumpAction(AbiExtraction(module, target, modulePath(module, target, "main")),
                 TreeManifest(remap(results, module, target, "main")), composition, tools.getValue("jvm"))
@@ -382,7 +394,8 @@ private class Builder(
         val entry = files.singleOrNull { it.path == baseline } ?: error("Missing ABI baseline: ${baseline.value}")
         require(!entry.executable && entry.digest.sizeBytes <= ABI_MAX_BYTES) { "Invalid ABI baseline: ${baseline.value}" }
         val dump = ensureAbiDump(module, target)
-        nodes[id] = ActionNode(id, setOf(dump)) { results ->
+        nodes[id] = ActionNode(id, setOf(dump),
+            ActionOutputContract(fileOutput("abi.json", "abi-snapshot"), fileOutput("api.txt", "abi-text"))) { results ->
             validateResults(results, setOf(dump))
             val output = results.getValue(dump).outputs
             require(output.files.map { it.path.value }.toSet() == setOf("abi.json", "api.txt") && output.files.none { it.executable }) { "Invalid ABI dump output" }
@@ -612,7 +625,8 @@ private class Builder(
         classpath.modules.forEach { ensureMain(it, "jvm") }
         val edges = classpath.modules.map { mainId(it, "jvm") }.toSet()
         val id = "$module:jvm:classpath-$scope"
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(treeOutput("classpath", "platform-classpath"))) { results ->
             validateResults(results, edges)
             jvmClasspathAction(JvmClasspath(module, scope, classpathPaths(classpath, "jvm")),
                 classpathInputs(classpath, "jvm", results), composition, tools.getValue("jvm"))
@@ -641,13 +655,15 @@ private class Builder(
         val edges = runtimeModules.map { mainId(it, "jvm") }.toSet()
         val harnessId = "$module:jvm:benchmark-harness"
         fun runtimeInputs(results: Map<String, ActionResult>) = merge(runtimeModules.flatMap { remap(results, it, "jvm", "main") }, resourceFiles, artifacts)
-        nodes[harnessId] = ActionNode(harnessId, edges) { results ->
+        nodes[harnessId] = ActionNode(harnessId, edges,
+            ActionOutputContract(treeOutput("benchmark-harness", "benchmark-harness"))) { results ->
             validateResults(results, edges)
             jvmBenchmarkHarnessAction(JvmBenchmarkHarness(module, classpath, settings.classes), runtimeInputs(results), composition, tools.getValue("jvm"))
         }
         val runId = "$module:jvm:benchmark-${profile.wireName}"
         val runEdges = edges + harnessId
-        nodes[runId] = ActionNode(runId, runEdges) { results ->
+        nodes[runId] = ActionNode(runId, runEdges,
+            ActionOutputContract(fileOutput("benchmark-summary.json", "benchmark-summary"), fileOutput("benchmark-results.json", "benchmark-results"))) { results ->
             validateResults(results, runEdges)
             val generated = results.getValue(harnessId).outputs.files
             require(generated.isNotEmpty() && generated.all { it.path.value.startsWith("benchmark-harness/") && !it.executable }) { "Unexpected JMH harness outputs" }
@@ -706,7 +722,8 @@ private class Builder(
             .distinctBy { it.path }.sortedBy { it.path.value }
         val embedded = sqlDelightWorkerSources().map { (path, text) -> FileEntry(path, Sha256.digest(text.encodeToByteArray())) }.sortedBy { it.path.value }
         val workerId = "$module:jvm:sqldelight-worker"
-        nodes[workerId] = ActionNode(workerId, emptySet()) { results ->
+        nodes[workerId] = ActionNode(workerId, emptySet(),
+            ActionOutputContract(treeOutput("sqldelight-worker", "jvm-classes"))) { results ->
             validateResults(results, emptySet())
             jvmCompileAction(JvmCompilation("kvik-sqldelight-worker", embedded.map { it.path }, artifacts.map { it.path },
                 LogicalPath("sqldelight-worker"), includeStandardLibrary = true), merge(embedded, artifacts), composition, tools.getValue("jvm"))
@@ -716,7 +733,8 @@ private class Builder(
         require(sql.all { it.path.value.endsWith(".sq") && !it.executable }) {
             "SQLDelight supports regular .sq sources only; migrations and database files require a separate adapter"
         }
-        nodes[id] = ActionNode(id, setOf(workerId)) { results ->
+        nodes[id] = ActionNode(id, setOf(workerId),
+            ActionOutputContract(if (sql.isEmpty()) emptyList() else listOf(treeOutput("generated/sqldelight/$module", "generated-sources")))) { results ->
             validateResults(results, setOf(workerId))
             val worker = results.getValue(workerId).outputs.files
             require(worker.isNotEmpty() && worker.all { it.path.value.startsWith("sqldelight-worker/") && !it.executable } &&
@@ -770,7 +788,8 @@ private class Builder(
         val plugin = plugins(module, target, "main")
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
         val edges = dependencies.map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight) + generators.map(::generatorId)
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(listOf(if (target == "jvm") treeOutput("classes", "jvm-classes") else fileOutput("module.klib", "klib")) + pluginOutputArtifacts(module, target, "main"))) { results ->
             validateResults(results, edges)
             val compilerInputs = classpathInputs(compilationClasspath, target, results)
             val workspace = workspacePlugin(module, target, "main", results)
@@ -852,7 +871,8 @@ private class Builder(
         val selection = LibraryPackage(module, target, publication.coordinateFor(target), dependencies,
             if (target == "jvm") jvmTargetFromOptions(target(module, target).compilerOptions) else null,
             rootCoordinate = if (module in rootPublicationModules) publication.coordinate else null)
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(treeOutput("library", "library-package"))) { results ->
             validateResults(results, edges)
             val own = remap(results, module, target, "main")
             val prefix = modulePath(module, target, "main").value
@@ -933,7 +953,8 @@ private class Builder(
         require(settings.all { it.nativeLanguageOptions == NativeLanguageOptions() }) {
             "Native return-value checker/destructuring settings are not yet represented by the metadata adapter"
         }
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + if (applyPlugin) pluginOutputArtifacts(module, pluginTarget, "main") else emptyList())) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
             val workspace = if (applyPlugin) workspacePlugin(module, pluginTarget, "main", results) else WorkspacePlugin(emptyList(), emptyList())
@@ -969,7 +990,8 @@ private class Builder(
                 if (it.name == "jvm") jvmTargetFromOptions(it.compilerOptions) else null, rootCoordinate = publication.coordinate) },
             listOf(KmpSourceSetMetadata("commonMain", emptyList(), coordinates)), targets.associate { it.name to listOf("commonMain") })
         val edges = packages + rootDependencies + metadata
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(treeOutput("library", "library-package"))) { results ->
             validateResults(results, edges)
             kmpLibraryPackageAction(selection, merge(commonOutputs(results, module, "metadata/commonMain"),
                 packages.flatMap { results.getValue(it).outputs.files }), composition)
@@ -989,7 +1011,8 @@ private class Builder(
         val edges = runtimeIds.map { mainId(it, target) }.toSet()
         val options = options(module, target, "main", mainSources.getValue(module to target))
         val id = "$module:$target:framework"
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            nativeLinkOutputs("${framework.baseName}.framework", target, framework = true, staticFramework = framework.isStatic)) { results ->
             validateResults(results, edges)
             val libraries = runtimeIds.flatMap { remap(results, it, target, "main") }
             nativeCompileAction(NativeCompilation(module, emptyList(),
@@ -1013,7 +1036,8 @@ private class Builder(
         val id = "$module:$target:application"
         if (target == "jvm") {
             val edges = runtimeIds.map { mainId(it, target) }.toSet()
-            nodes[id] = ActionNode(id, edges) { results ->
+            nodes[id] = ActionNode(id, edges,
+                ActionOutputContract(treeOutput("application", "application-bundle"))) { results ->
                 validateResults(results, edges)
                 val classes = runtimeIds.flatMap { remap(results, it, target, "main") }
                 val classpath = runtimeIds.flatMap { producer -> listOfNotNull(modulePath(producer, target, "main"),
@@ -1025,7 +1049,8 @@ private class Builder(
             val linkId = "$module:$target:application-link"
             val linkEdges = runtimeIds.map { mainId(it, target) }.toSet()
             val options = options(module, target, "main", mainSources.getValue(module to target))
-            nodes[linkId] = ActionNode(linkId, linkEdges) { results ->
+            nodes[linkId] = ActionNode(linkId, linkEdges,
+                nativeLinkOutputs("application.kexe", target)) { results ->
                 validateResults(results, linkEdges)
                 val libraries = runtimeIds.flatMap { remap(results, it, target, "main") }
                 nativeCompileAction(NativeCompilation(module, emptyList(), libraries = runtimeDependencies.map { modulePath(it, target, "main") } + artifacts.map { it.path },
@@ -1033,7 +1058,8 @@ private class Builder(
                     warningsAsErrors = options.warningsAsErrors, includedLibrary = modulePath(module, target, "main"), entryPoint = application.entryPoint, target = NativeTarget.require(target)),
                     merge(libraries, artifacts), composition, tools.getValue(target), timeoutMillis = target(module, target).nativeTimeouts?.linkMillis ?: 180_000)
             }
-            nodes[id] = ActionNode(id, setOf(linkId)) { results ->
+            nodes[id] = ActionNode(id, setOf(linkId),
+                ActionOutputContract(treeOutput("application", "application-bundle"))) { results ->
                 validateResults(results, setOf(linkId))
                 val linked = results.getValue(linkId).outputs.files
                 require(linked.any { it.path.value == "application.kexe" && it.executable } && linked.all {
@@ -1094,7 +1120,8 @@ private class Builder(
                 val ksp = host("ksp-runtime", listOf("symbol-processing-api", "symbol-processing-aa-embeddable", "symbol-processing-common-deps").map { Coordinate("com.google.devtools.ksp", it, kotest.kspVersion) })
                 val processors = host("symbol-processor", listOf(kotest.processor))
                 val testSources = source.entries.filter { it.path !in main.paths }
-                nodes[generationId(module, target)] = ActionNode(generationId(module, target), producerEdges) { results ->
+                nodes[generationId(module, target)] = ActionNode(generationId(module, target), producerEdges,
+                    ActionOutputContract(treeOutput("generated", "generated-sources"))) { results ->
                     validateResults(results, producerEdges)
                     val modules = moduleIds.flatMap { remap(results, it, target, "main") }
                     val generatedSources = scriptGeneratorOutputs(generators, results).filterKeys { it !in mainSets }
@@ -1112,7 +1139,8 @@ private class Builder(
             }
             val plugin = plugins(module, target, "test")
             require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin also appears in consumer classpath" }
-            nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
+            nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges,
+                ActionOutputContract(listOf(if (target == "jvm") treeOutput("classes", "jvm-classes") else fileOutput("tests.klib", "klib")) + pluginOutputArtifacts(module, target, "test"))) { results ->
                 validateResults(results, compileEdges)
                 val compilerInputs = classpathInputs(compilationClasspath, target, results)
                 val workspace = workspacePlugin(module, target, "test", results)
@@ -1136,7 +1164,8 @@ private class Builder(
             if (NativeTarget.find(target) != null) {
                 val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
                 val runtimeArtifacts = artifactEntries(external(module, target, "test", "kotlin-runtime"), target)
-                nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges) { results ->
+                nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges,
+                    nativeLinkOutputs("tests.kexe", target)) { results ->
                     validateResults(results, linkEdges)
                     val compiled = results.getValue(compileId(module, target)).outputs.files
                     require(compiled.count { it.path == LogicalPath("tests.klib") } == 1 &&
@@ -1163,7 +1192,8 @@ private class Builder(
         val runtime = if (target == "jvm") artifactEntries(external(module, target, "test", "java-runtime"), target) else emptyList()
         val testSelection = request.jvmTests[module]
         if (target == "jvm") JvmTestSelection(module, listOf(LogicalPath("validated-placeholder")), testSelection!!.classes, testSelection.engines)
-        nodes[id] = ActionNode(id, edges) { results ->
+        nodes[id] = ActionNode(id, edges,
+            ActionOutputContract(listOf(fileOutput("test-results.json", "test-results")) + if (testSelection?.coverage == null) emptyList() else listOf(fileOutput("coverage.exec", "coverage-execution"), fileOutput("coverage-result.json", "coverage-results")))) { results ->
             validateResults(results, edges)
             val testFiles = if (hasTestCompile) remap(results, module, target, "test") else emptyList()
             if (target == "jvm") {
@@ -1214,7 +1244,8 @@ private class Builder(
         val sqlDelight = sqlDelightFor(module, target)
         val generators = ensureScriptGenerators(module, sourceSets(module, target, "test"))
         val compileEdges = (listOf(module) + dependencies).map { mainId(it, target) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + listOfNotNull(sqlDelight) + generators.map(::generatorId)
-        nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges) { results ->
+        nodes[compileId(module, target)] = ActionNode(compileId(module, target), compileEdges,
+            ActionOutputContract(listOf(fileOutput("tests.klib", "klib")) + pluginOutputArtifacts(module, target, "test"))) { results ->
             validateResults(results, compileEdges)
             val dependencyFiles = dependencies.flatMap { remap(results, it, target, "main") }
             val workspace = workspacePlugin(module, target, "test", results)
@@ -1227,7 +1258,8 @@ private class Builder(
                 merge(compiledSource.entries, artifacts, plugins, dependencyFiles, workspace.entries), composition, jsCompilerTools(target))
         }
         val linkEdges = runtimeDependencies.map { mainId(it, target) }.toSet() + compileId(module, target)
-        nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges) { results ->
+        nodes[linkId(module, target)] = ActionNode(linkId(module, target), linkEdges,
+            ActionOutputContract(treeOutput("tests", "web-modules"))) { results ->
             validateResults(results, linkEdges)
             val compiled = results.getValue(compileId(module, target)).outputs.files
             require(compiled.count { it.path == LogicalPath("tests.klib") } == 1 &&
@@ -1246,7 +1278,8 @@ private class Builder(
         val settings = target(module, target).jsTestSettings ?: JsTestSettings()
         val resources = resources(module, target, "main") + resources(module, target, "test") +
             runtimeDependencies.flatMap { resources(it, target, "main") }
-        nodes[id] = ActionNode(id, setOf(linkId(module, target))) { results ->
+        nodes[id] = ActionNode(id, setOf(linkId(module, target)),
+            ActionOutputContract(fileOutput("test-results.json", "test-results"))) { results ->
             validateResults(results, setOf(linkId(module, target)))
             val linked = results.getValue(linkId(module, target)).outputs.files
             require(linked.isNotEmpty() && linked.all { it.path.value.startsWith("tests/") } &&

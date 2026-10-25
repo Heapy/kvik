@@ -123,7 +123,14 @@ data class ActionResult(
 }
 
 /** Implementations resolve only declared predecessor outputs, never mutable build directories. */
-data class ActionNode(val id: String, val dependencies: Set<String>, val resolve: (Map<String, ActionResult>) -> ActionSpec)
+data class ActionNode(val id: String, val dependencies: Set<String>, val resolve: (Map<String, ActionResult>) -> ActionSpec,
+                      val outputContract: ActionOutputContract?) {
+    constructor(id: String, dependencies: Set<String>, resolve: (Map<String, ActionResult>) -> ActionSpec) :
+        this(id, dependencies, resolve, null)
+    constructor(id: String, dependencies: Set<String>, outputContract: ActionOutputContract,
+                resolve: (Map<String, ActionResult>) -> ActionSpec) :
+        this(id, dependencies, { results -> resolve(results).also(outputContract::requireMatches) }, outputContract)
+}
 
 /** maxParallel bounds both active actions and their total CPU slot reservations. */
 data class ResourceBudget(val maxParallel: Int, val memoryMiB: Long) {

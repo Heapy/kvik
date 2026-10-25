@@ -176,7 +176,8 @@ private class ScriptGraphBuilder(
         val compileId = "script:${script.name}:jvm:compile"
         val runId = "script:${script.name}:jvm:${if (generator == null) "run" else "generate"}"
         val compileEdges = (compileClosure.modules + pluginModules).map(::moduleId).toSet()
-        val compile = ActionNode(compileId, compileEdges) { results ->
+        val compile = ActionNode(compileId, compileEdges,
+            ActionOutputContract(listOf(treeOutput("classes", "jvm-classes")) + compilerPluginOutputArtifacts(plugins))) { results ->
             validate(results, compileEdges)
             val modules = compileClosure.modules.flatMap { compiled(results, moduleId(it), moduleRoot(it)) }
             val plugin = pluginInputs(results)
@@ -194,7 +195,8 @@ private class ScriptGraphBuilder(
                 inputs, composition, tools)
         }
         val runEdges = runtimeClosure.modules.map(::moduleId).toSet() + compileId
-        val run = ActionNode(runId, runEdges) { results ->
+        val run = ActionNode(runId, runEdges,
+            ActionOutputContract(if (generator == null) emptyList() else listOf(treeOutput("generated", "generated-sources")))) { results ->
             validate(results, runEdges)
             val root = LogicalPath("scripts/${script.name}/classes")
             val classes = compiled(results, compileId, root) + runtimeClosure.modules.flatMap { compiled(results, moduleId(it), moduleRoot(it)) }

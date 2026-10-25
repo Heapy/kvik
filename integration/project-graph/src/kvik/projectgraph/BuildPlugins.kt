@@ -86,8 +86,9 @@ private fun validateNodes(nodes: List<ActionNode>) {
 }
 
 private fun guardedNode(node: ActionNode, composition: Digest, contribution: Boolean): ActionNode =
-    ActionNode(node.id, node.dependencies.toSet()) { results ->
+    node.copy(dependencies = node.dependencies.toSet(), resolve = { results ->
         val action = node.resolve(results)
+        node.outputContract?.requireMatches(action)
         require(action.composition == composition) { "Build plugin action uses a different source composition: ${node.id}" }
         require(!contribution || action.cachePolicy != CachePolicy.REMOTE) {
             "Contributed build plugin actions cannot use remote caching: ${node.id}"
@@ -96,4 +97,4 @@ private fun guardedNode(node: ActionNode, composition: Digest, contribution: Boo
             "Contributed test and script execution require a declared check; use the graph provider: ${node.id}"
         }
         action
-    }
+    })

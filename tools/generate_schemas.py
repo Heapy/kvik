@@ -1067,6 +1067,8 @@ DEFS["doctor"] = versioned({
 
 GRAPH_MODES = ("build", "test", "compile-tests", "classpath-main", "classpath-test", "benchmark-smoke",
     "benchmark-measurement", "application", "package", "abi-dump", "abi-check", "documentation")
+DEFS["outputArtifact"] = object_({"path": PATH, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
+    "shape": enum("file", "tree", "file-or-tree")})
 DEFS["graphInspection"] = versioned({
     "kind": {"const": "graph-inspection"}, "mode": enum(*GRAPH_MODES),
     "modules": array(ID, minItems=1, uniqueItems=True), "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
@@ -1075,7 +1077,8 @@ DEFS["graphInspection"] = versioned({
     "toolIdentities": mapping(mapping(ref("digest"))), "execution": {"const": "not-requested"},
     "actions": array(object_({"id": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "contributed": BOOL,
         "output": object_({"contract": {"const": "tree-manifest"}, "state": {"const": "unresolved"},
-            "resultConsumers": array(NONEMPTY, uniqueItems=True)})}), maxItems=10000),
+            "declaredArtifacts": nullable(array(ref("outputArtifact"), uniqueItems=True)),
+            "resultConsumers": array(NONEMPTY, uniqueItems=True)}, optional=("declaredArtifacts",))}), maxItems=10000),
     "checks": array(object_({"id": NONEMPTY, "terminalAction": NONEMPTY, "requiredContributions": array(NONEMPTY, uniqueItems=True)}), minItems=1),
     "generatedSources": array(object_({"producer": NONEMPTY, "module": ID, "sourceSet": ID, "kind": NONEMPTY,
         "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH}), uniqueItems=True),
