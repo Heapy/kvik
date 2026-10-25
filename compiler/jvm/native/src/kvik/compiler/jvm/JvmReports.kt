@@ -8,6 +8,71 @@ data class JvmTestReport(val tests: List<TestResult>, val counts: TestCounts, va
 
 internal data class ParsedTestResult(val report: JvmTestReport, val diagnostics: List<Diagnostic>)
 
+/** A complete final result is authoritative; journal recovery can never establish completion. */
+internal fun parseTestProgress(bytes: ByteArray, requestId: String, module: String, cancelled: Boolean = false): ParsedTestResult {
+    require(bytes.size <= 64 * 1024 * 1024) { "Test progress journal exceeds its limit" }
+    var start = 0
+    fun line(end: Int): JsonValue = parseJson(bytes.decodeToString(start, end, throwOnInvalidSequence = true))
+    val headerEnd = bytes.indexOf(10.toByte())
+    require(headerEnd >= 0) { "Missing test progress header" }
+    val header = line(headerEnd).fields(setOf("schemaVersion", "kind", "requestId", "module", "target"))
+    header.requireVersion()
+    require(header.getValue("kind").stringValue() == "jvm-test-progress" &&
+        header.getValue("requestId").stringValue() == requestId && header.getValue("module").stringValue() == module &&
+        header.getValue("target").stringValue() == "jvm") { "Test progress identity mismatch" }
+    start = headerEnd + 1
+    var sequence = 0L
+    val tests = linkedMapOf<String, TestResult>()
+    val diagnostics = mutableListOf<Diagnostic>()
+    fun JsonValue.nullableText(): String? = if (this == JsonValue.Null) null else stringValue()
+    for (end in start until bytes.size) {
+        if (bytes[end] != 10.toByte()) continue
+        try {
+            require(sequence < 1_000_000) { "Too many test progress events" }
+            val raw = line(end)
+            val event = raw.objectValue()
+            require(event.getValue("sequence").longValue() == sequence) { "Test progress sequence mismatch" }
+            when (event.getValue("kind").stringValue()) {
+                "attempt" -> {
+                    raw.fields(setOf("sequence", "kind", "id", "suite", "name", "message", "attempt"))
+                    val id = event.getValue("id").stringValue()
+                    val attempt = TestAttempt.fromJson(event.getValue("attempt"))
+                    val prior = tests[id]?.details?.attempts.orEmpty()
+                    require(attempt.number == prior.size + 1 && attempt.logs.isEmpty()) { "Invalid test progress attempt" }
+                    val details = TestDetails(event.getValue("suite").nullableText(), event.getValue("name").nullableText(), prior + attempt)
+                    tests[id] = TestResult(id, module, "jvm", attempt.status, event.getValue("message").nullableText(), details)
+                }
+                "diagnostic" -> {
+                    raw.fields(setOf("sequence", "kind", "diagnostic"))
+                    val diagnostic = Diagnostic.fromJson(event.getValue("diagnostic"))
+                    require(diagnostic.actionId == null && (diagnostic.module == null || diagnostic.module == module) &&
+                        (diagnostic.target == null || diagnostic.target == "jvm")) { "Invalid test progress diagnostic scope" }
+                    diagnostics += diagnostic
+                }
+                else -> error("Unknown test progress event")
+            }
+            sequence++
+            start = end + 1
+        } catch (failure: Exception) {
+            // Preserve only the validated prefix, never events beyond a broken record.
+            diagnostics += Diagnostic("KVIK_JVM_PROGRESS_INVALID", DiagnosticCategory.INFRASTRUCTURE,
+                "Invalid test progress event $sequence: ${failure.message}", module = module, target = "jvm")
+            break
+        }
+    }
+    val results = tests.values.sortedBy { it.id }
+    val counts = TestCounts(null, results.count { it.status != TestStatus.SKIPPED }, results.count { it.status == TestStatus.FAILED },
+        results.count { it.status == TestStatus.SKIPPED }, false)
+    val status = when {
+        cancelled -> VerificationStatus.CANCELLED
+        results.any { it.hasFailedAttempt } || diagnostics.any {
+            it.category != DiagnosticCategory.TEST || it.code !in setOf("KVIK_TEST_CONTAINER_ABORTED", "KVIK_TEST_INCOMPLETE")
+        } -> VerificationStatus.FAILED
+        else -> VerificationStatus.INCOMPLETE
+    }
+    return ParsedTestResult(JvmTestReport(results, counts, status), diagnostics)
+}
+
 /** Independently validate the worker's identity/count/status claims before they become run evidence. */
 internal fun parseTestResult(value: JsonValue, requestId: String, module: String, exitCode: Int): ParsedTestResult {
     val d = value.fields(setOf("schemaVersion", "requestId", "status", "exitCode", "tests", "testCounts", "diagnostics"))

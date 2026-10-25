@@ -465,6 +465,69 @@ class BridgeUnitTest {
         }
     }
 
+    @Test fun interruptedTestsRecoverOnlyAfterProcessCleanupAndFinalReportsTakePrecedence() {
+        for (mode in listOf("missing", "malformed", "timeout", "cancel", "wrong-owner", "corrupt-tail", "output", "final")) {
+            val root = NativeRunDirectory("/private/tmp")
+            val store = NativeContentStore("${root.path}/store")
+            val manifest = obj("fixture" to true.json())
+            writeJvmFile("${root.path}/manifest.json", manifest.canonical().encodeToByteArray())
+            val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
+            val provider = JvmToolchainProvider { requested -> JvmToolchainLayout(requested, "/tool/java", "/tool/classes", "/tool/api.jar",
+                "/tool/std.jar", "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json") }
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess = object : OwnedProcess {
+                    override fun poll() = ProcessResult(0, timedOut = mode == "timeout", cancelled = mode == "cancel")
+                    override fun cancel() = Unit
+                    override fun close() {
+                        val directory = request.workingDirectory
+                        val id = parseJson(readJvmFile("$directory/request.json").decodeToString()).objectValue().getValue("requestId").stringValue()
+                        val header = obj("schemaVersion" to 1.json(), "kind" to "jvm-test-progress".json(),
+                            "requestId" to (if (mode == "wrong-owner") "other" else id).json(), "module" to "m".json(), "target" to "jvm".json())
+                        val attempts = listOf(TestAttempt(1, TestStatus.FAILED, failure = TestFailure(TestFailureKind.ASSERTION, message = "first failure")),
+                            TestAttempt(2, TestStatus.PASSED))
+                        val records = listOf(header) + attempts.mapIndexed { index, attempt -> obj("sequence" to index.json(), "kind" to "attempt".json(),
+                            "id" to "retry".json(), "suite" to JsonValue.Null, "name" to "retry".json(), "message" to JsonValue.Null, "attempt" to attempt.toJson()) }
+                        val journal = records.joinToString("\n", postfix = "\n") { it.canonical() } + if (mode == "corrupt-tail") "{}\n" else "{partial"
+                        writeJvmFile("$directory/result.json.progress.jsonl", (if (mode in listOf("final", "output")) "{invalid journal" else journal).encodeToByteArray())
+                        if (mode == "malformed") writeJvmFile("$directory/result.json", "{truncated".encodeToByteArray())
+                        if (mode in listOf("final", "output")) {
+                            writeJvmFile("$directory/result.json", testJson(id).canonical().encodeToByteArray())
+                        }
+                        if (mode == "output") writeJvmFile("$directory/output/unexpected", byteArrayOf(1))
+                    }
+                }
+                override fun close() = Unit
+            }
+            val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
+            val inputs = TreeManifest(listOf(FileEntry(LogicalPath("runtime.jar"), store.put(byteArrayOf()))))
+            val action = jvmTestAction(JvmTestSelection("m", listOf(LogicalPath("runtime.jar")), listOf("fixture.Test")), inputs, digest, identities)
+            executor.start(root.runId, mode, action).use { awaitBridgeResult(it) }
+            val observed = executor.observations.getValue(mode)
+            assertEquals(when (mode) { "final" -> ActionStatus.EXECUTED; "cancel" -> ActionStatus.CANCELLED; else -> ActionStatus.FAILED }, observed.result.status)
+            val report = observed.tests!!
+            when (mode) {
+                "wrong-owner" -> {
+                    assertTrue(report.tests.isEmpty())
+                    assertEquals("KVIK_JVM_PROGRESS_INVALID", observed.diagnostics.last().code)
+                }
+                "final", "output" -> {
+                    assertEquals("concrete-id", report.tests.single().id)
+                    assertEquals(if (mode == "final") VerificationStatus.PASSED else VerificationStatus.INCOMPLETE, report.status)
+                    assertEquals(if (mode == "final") emptyList() else listOf("KVIK_JVM_OUTPUT_INVALID"), observed.diagnostics.map { it.code })
+                }
+                else -> {
+                    assertEquals(listOf(TestStatus.FAILED, TestStatus.PASSED), report.tests.single().details!!.attempts.map { it.status })
+                    assertEquals(TestCounts(null, 1, 0, 0, false), report.counts)
+                    assertEquals(if (mode == "cancel") VerificationStatus.CANCELLED else VerificationStatus.FAILED, report.status)
+                    val code = when (mode) { "cancel" -> "KVIK_JVM_CANCELLED"; "timeout" -> "KVIK_JVM_TIMEOUT"; else -> "KVIK_JVM_RESULT_INVALID" }
+                    assertEquals(code, observed.diagnostics.first().code)
+                    if (mode == "corrupt-tail") assertEquals("KVIK_JVM_PROGRESS_INVALID", observed.diagnostics.last().code)
+                    assertTrue(observed.result.outputs.files.any { it.path.value == "test-results.json" })
+                }
+            }
+        }
+    }
+
     @Test fun compilerResultRequiresMatchingRequestExitAndDeclaredOutputs() {
         val root = NativeRunDirectory("/private/tmp")
         val store = NativeContentStore("${root.path}/store")

@@ -47,22 +47,22 @@ fun main(args: Array<String>) {
         val dependencies = testNode.getValue("dependencies").arrayValue().map(JsonValue::stringValue)
         val paths = testNode.getValue("inputPaths").arrayValue().map(JsonValue::stringValue).toSet()
         val testInputs = TreeManifest((inputs.files.filter { it.path.value in paths } + dependencies.flatMap { executor.observations.getValue(it).result.outputs.files }).distinct())
-        val selected = JvmTestSelection.fromJson(testNode.getValue("selection")).copy(classes = listOf("fixture.SlowTests"))
+        val selected = JvmTestSelection.fromJson(testNode.getValue("selection")).copy(classes = listOf("fixture.SlowTests"), maxRetries = 1)
         val tracking = object : ProcessHost {
-            lateinit var directory: String
+            var directory: String? = null
             override fun start(request: ProcessRequest): OwnedProcess { directory = request.workingDirectory; return host.start(request) }
             override fun close() = Unit
         }
         val cancellation = JvmActionExecutor(run.runId, run.path, tracking, store, provider)
         cancellation.start(run.runId, "cancel", jvmTestAction(selected, testInputs, composition, identities)).use { running ->
             var attempts = 0
-            while (access("${tracking.directory}/started.txt", F_OK) != 0 && attempts++ < 2000) { check(running.poll() == null); usleep(10000u) }
+            while ((tracking.directory == null || access("${tracking.directory}/started.txt", F_OK) != 0) && attempts++ < 2000) { check(running.poll() == null); usleep(10000u) }
             check(attempts < 2000) { "Slow test did not start" }
             running.cancel()
             while (running.poll() == null) usleep(10000u)
             check(access("${tracking.directory}/finished.txt", F_OK) != 0)
         }
-        cancellation.start(run.runId, "timeout", jvmTestAction(selected, testInputs, composition, identities, 300)).use { running ->
+        cancellation.start(run.runId, "timeout", jvmTestAction(selected, testInputs, composition, identities, 5_000)).use { running ->
             while (running.poll() == null) usleep(10000u)
         }
         val observations = executor.observations + cancellation.observations

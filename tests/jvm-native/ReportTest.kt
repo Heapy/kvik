@@ -4,6 +4,78 @@ import kvik.core.*
 import kotlin.test.*
 
 class ReportTest {
+    private fun progressHeader(id: String = "request", module: String = "m", target: String = "jvm") = obj(
+        "schemaVersion" to 1.json(), "kind" to "jvm-test-progress".json(), "requestId" to id.json(),
+        "module" to module.json(), "target" to target.json())
+    private fun attemptEvent(sequence: Int, attempt: TestAttempt, id: String = "test") = obj(
+        "sequence" to sequence.json(), "kind" to "attempt".json(), "id" to id.json(), "suite" to "suite".json(),
+        "name" to "test name".json(), "message" to JsonValue.Null, "attempt" to attempt.toJson())
+    private fun journal(vararg events: JsonValue, header: JsonValue = progressHeader()): ByteArray =
+        (listOf(header) + events).joinToString("\n", postfix = "\n") { it.canonical() }.encodeToByteArray()
+
+    @Test fun interruptedRetriesRetainEveryCompletedAttemptWithoutClaimingDiscovery() {
+        val failed = TestAttempt(1, TestStatus.FAILED, failure = TestFailure(TestFailureKind.ASSERTION, message = "original"))
+        val passed = TestAttempt(2, TestStatus.PASSED)
+        val bytes = journal(attemptEvent(0, failed), attemptEvent(1, passed),
+            attemptEvent(2, TestAttempt(1, TestStatus.SKIPPED, skipReason = "disabled"), "skipped"))
+        val parsed = parseTestProgress(bytes, "request", "m")
+        assertEquals(VerificationStatus.FAILED, parsed.report.status)
+        assertEquals(TestCounts(null, 1, 0, 1, false), parsed.report.counts)
+        assertEquals(listOf(failed, passed), parsed.report.tests.single { it.id == "test" }.details!!.attempts)
+        assertTrue(parsed.diagnostics.isEmpty())
+        val cancelled = parseTestProgress(bytes, "request", "m", cancelled = true)
+        assertEquals(VerificationStatus.CANCELLED, cancelled.report.status)
+        assertEquals(parsed.report.tests, cancelled.report.tests)
+    }
+
+    @Test fun progressIgnoresUncommittedTailIncludingPartialUtf8() {
+        val bytes = journal(attemptEvent(0, TestAttempt(1, TestStatus.PASSED)))
+        for (tail in listOf(byteArrayOf(), "{unfinished".encodeToByteArray(), byteArrayOf(0xf0.toByte(), 0x9f.toByte()))) {
+            val parsed = parseTestProgress(bytes + tail, "request", "m")
+            assertEquals(VerificationStatus.INCOMPLETE, parsed.report.status)
+            assertEquals(TestCounts(null, 1, 0, 0, false), parsed.report.counts)
+            assertTrue(parsed.diagnostics.isEmpty())
+        }
+        assertEquals(TestCounts(null, 0, 0, 0, false), parseTestProgress(journal(), "request", "m").report.counts)
+    }
+
+    @Test fun progressRejectsWrongOwnerAndInvalidHeaders() {
+        for (bytes in listOf(byteArrayOf(), "{}\n".encodeToByteArray(), journal(header = progressHeader(id = "other")),
+            journal(header = progressHeader(module = "other")), journal(header = progressHeader(target = "js")))) {
+            assertFails { parseTestProgress(bytes, "request", "m") }
+        }
+    }
+
+    @Test fun progressStopsAtCorruptRecordAndKeepsValidPrefix() {
+        val first = attemptEvent(0, TestAttempt(1, TestStatus.PASSED))
+        val forgedLog = TestAttempt(2, TestStatus.PASSED, logs = listOf(TestLogReference(TestLogStream.STDOUT,
+            LogicalPath("other/stdout.log"), Sha256.digest(byteArrayOf()))))
+        val foreign = Diagnostic("KVIK_TEST_CONTAINER_FAILURE", DiagnosticCategory.TEST, "foreign", module = "other")
+        for (bad in listOf(attemptEvent(0, TestAttempt(2, TestStatus.PASSED)),
+            attemptEvent(1, TestAttempt(1, TestStatus.PASSED)), attemptEvent(1, forgedLog),
+            obj("sequence" to 1.json(), "kind" to "diagnostic".json(), "diagnostic" to foreign.toJson()),
+            obj("sequence" to 1.json(), "kind" to "unknown".json()))) {
+            val parsed = parseTestProgress(journal(first, bad, attemptEvent(2, TestAttempt(1, TestStatus.PASSED), "later")), "request", "m")
+            assertEquals(1, parsed.report.tests.size)
+            assertEquals(1, parsed.report.tests.single().details!!.attempts.size)
+            assertEquals("KVIK_JVM_PROGRESS_INVALID", parsed.diagnostics.single().code)
+            assertFalse(parsed.report.counts.discoveryComplete)
+        }
+        val invalidUtf8 = parseTestProgress(journal(first) + byteArrayOf(0xff.toByte(), 10), "request", "m")
+        assertEquals(1, invalidUtf8.report.tests.size)
+        assertEquals("KVIK_JVM_PROGRESS_INVALID", invalidUtf8.diagnostics.single().code)
+    }
+
+    @Test fun progressRetainsContainerDiagnostics() {
+        for (code in listOf("KVIK_TEST_CONTAINER_FAILURE", "KVIK_TEST_CONTAINER_ABORTED")) {
+            val diagnostic = Diagnostic(code, DiagnosticCategory.TEST, "container stopped", module = "m", target = "jvm")
+            val parsed = parseTestProgress(journal(obj("sequence" to 0.json(), "kind" to "diagnostic".json(),
+                "diagnostic" to diagnostic.toJson())), "request", "m")
+            assertEquals(listOf(diagnostic), parsed.diagnostics)
+            assertEquals(if (code.endsWith("FAILURE")) VerificationStatus.FAILED else VerificationStatus.INCOMPLETE, parsed.report.status)
+        }
+    }
+
     private fun testJson(id: String = "request", exit: Int = 0, status: String = "passed", executed: Int = 1, tests: List<JsonValue> = listOf(TestResult("concrete-id", "m", "jvm", TestStatus.PASSED).toJson())) = obj(
         "schemaVersion" to 1.json(), "requestId" to id.json(), "exitCode" to exit.json(), "status" to status.json(), "tests" to tests.json(),
         "testCounts" to TestCounts(1, executed, 0, 0, true).toJson(), "diagnostics" to emptyList<JsonValue>().json())

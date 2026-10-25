@@ -143,7 +143,7 @@ def main():
         assert (Path(observed["directory"]) / "effects.txt").read_text() == "ran\n"
     assert observations["passing"]["directory"] != observations["passing-again"]["directory"]
     assert [t["id"] for t in observations["passing"]["tests"]["tests"]] == [t["id"] for t in observations["passing-again"]["tests"]["tests"]]
-    for name in ["zero", "all-skipped", "assumption", "malformed", "missing", "timeout"]:
+    for name in ["zero", "all-skipped", "assumption", "malformed", "missing"]:
         assert observations[name]["result"]["status"] == "failed" and observations[name]["tests"]["status"] == "incomplete", observations[name]
     assert observations["failing"]["tests"]["status"] == "failed" and observations["failing"]["tests"]["counts"]["failed"] == 1
     assert observations["cancel"]["result"]["status"] == "cancelled" and observations["cancel"]["tests"]["status"] == "cancelled"
@@ -155,6 +155,17 @@ def main():
         assert f"-Xjdk-release={release}" in request["options"]
     for name in ["malformed", "missing"]:
         assert any(d["code"] == "KVIK_JVM_RESULT_INVALID" for d in observations[name]["diagnostics"])
+        assert observations[name]['tests']['counts'] == dict(discovered=None, executed=1, failed=0, skipped=0, discoveryComplete=False)
+        assert observations[name]['tests']['tests'][0]['details']['name'] == 'completed()'
+    for name, status, code in [('cancel', 'cancelled', 'KVIK_JVM_CANCELLED'), ('timeout', 'failed', 'KVIK_JVM_TIMEOUT')]:
+        observed = observations[name]
+        assert observed['result']['status'] == status and observed['tests']['status'] == status, observed
+        assert any(d['code'] == code for d in observed['diagnostics']), observed
+        assert observed['tests']['counts'] == dict(discovered=None, executed=2, failed=0, skipped=0, discoveryComplete=False), observed
+        flaky = next(test for test in observed['tests']['tests'] if test['details']['name'] == 'flaky()')
+        assert [attempt['status'] for attempt in flaky['details']['attempts']] == ['failed', 'passed'], observed
+        assert flaky['details']['attempts'][0]['failure']['message'] == 'original failure before interruption'
+        assert not (Path(observed['directory']) / 'finished.txt').exists()
     events = result["events"]
     assert [e["sequence"] for e in events] == list(range(1, len(events) + 1))
     assert sum(e["type"] == "action-started" for e in events) == len(nodes)

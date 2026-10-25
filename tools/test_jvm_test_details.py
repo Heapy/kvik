@@ -50,12 +50,33 @@ def main():
     services.mkdir(parents=True)
     (services / 'org.junit.platform.engine.TestEngine').write_text('fixture.RetryEngine\n')
 
-    def invoke(label, selected, engine, expected, **settings):
+    def progress(label):
+        records = [json.loads(line) for line in (output / f'{label}.result.json.progress.jsonl').read_bytes().splitlines()]
+        assert records[0] == dict(schemaVersion=1, kind='jvm-test-progress', requestId=label, module='fixture', target='jvm')
+        tests, diagnostics = {}, []
+        for sequence, event in enumerate(records[1:]):
+            assert event['sequence'] == sequence
+            if event['kind'] == 'diagnostic':
+                diagnostics.append(event['diagnostic'])
+                continue
+            assert event['kind'] == 'attempt'
+            attempts = tests.get(event['id'], {}).get('details', {}).get('attempts', []) + [event['attempt']]
+            assert event['attempt']['number'] == len(attempts)
+            tests[event['id']] = dict(id=event['id'], module='fixture', target='jvm', status=event['attempt']['status'],
+                message=event['message'], details=dict(suite=event['suite'], name=event['name'], attempts=attempts))
+        return sorted(tests.values(), key=lambda test: test['id']), diagnostics
+
+    def invoke(label, selected, engine, expected, abrupt=False, **settings):
         request = dict(schemaVersion=1, requestId=label, module='fixture', target='jvm', classpath=['fixture'], testClasses=[selected], engines=[engine], **settings)
         (output / f'{label}.request.json').write_bytes(canonical(request))
         run([java, '-cp', os.pathsep.join(map(str, [worker, junit, stdlib, fixture])), 'kvik.jvm.TestWorker', output,
              f'{label}.request.json', f'{label}.result.json'], label, expected)
+        if abrupt:
+            assert not (output / f'{label}.result.json').exists()
+            return progress(label)
         result = json.loads((output / f'{label}.result.json').read_text())
+        if (output / f'{label}.result.json.progress.jsonl').exists():
+            assert progress(label) == (result['tests'], result['diagnostics']), label
         assert result['exitCode'] == expected
         assert len({test['id'] for test in result['tests']}) == len(result['tests'])
         for test in result['tests']:
@@ -66,6 +87,13 @@ def main():
             assert all(a['durationNanos'] is None or a['durationNanos'] >= 0 for a in attempts)
         return result
 
+    interrupted, diagnostics = invoke('halt', 'fixture.InterruptedTests', 'junit-jupiter', 7, abrupt=True)
+    assert len(interrupted) == 1 and interrupted[0]['status'] == 'passed' and diagnostics == []
+    interrupted, diagnostics = invoke('halt-retry', 'fixture.InterruptedTests$Retry', 'junit-jupiter', 7, abrupt=True, maxRetries=2)
+    flaky = next(test for test in interrupted if test['details']['name'] == 'flaky()')
+    assert [attempt['status'] for attempt in flaky['details']['attempts']] == ['failed', 'passed']
+    assert flaky['details']['attempts'][0]['failure']['message'] == 'first attempt'
+    assert len(interrupted) == 2 and diagnostics == []
     details = invoke('details', 'fixture.DetailsTests', 'junit-jupiter', 1)
     assert details['testCounts'] == dict(discovered=6, executed=4, failed=3, skipped=2, discoveryComplete=True)
     tests = {t['details']['name']: t for t in details['tests']}
@@ -179,6 +207,7 @@ def main():
         run([java, '-cp', os.pathsep.join(map(str, [worker, junit, stdlib, *classpath])), 'kvik.jvm.TestWorker', output,
              f'{label}.request.json', f'{label}.result.json'], label, 1)
         result = json.loads((output / f'{label}.result.json').read_text())
+        assert progress(label) == (result['tests'], result['diagnostics']), label
         assert result['status'] == 'failed' and result['testCounts']['discoveryComplete'] == complete, (label, result)
         assert result['testCounts']['failed'] == expected_failed, (label, result)
         flaky = [test for test in result['tests'] if any('original failure' in (a.get('failure') or {}).get('message', '')

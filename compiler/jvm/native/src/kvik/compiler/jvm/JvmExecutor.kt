@@ -164,6 +164,7 @@ class JvmActionExecutor(
                     close() // The full owned process group is quiescent before results/outputs are read.
                     var diagnostics = emptyList<Diagnostic>()
                     var tests: JvmTestReport? = null
+                    var finalTestResult = false
                     var status = ActionStatus.FAILED
                     var outputs = TreeManifest(emptyList())
                     try {
@@ -203,6 +204,7 @@ class JvmActionExecutor(
                                 } else {
                                     val worker = parseTestResult(raw, requestId, module, exit.exitCode)
                                     diagnostics = worker.diagnostics; tests = worker.report
+                                    finalTestResult = true
                                     if (tests.status == VerificationStatus.PASSED) status = ActionStatus.EXECUTED
                                 }
                             }
@@ -211,6 +213,19 @@ class JvmActionExecutor(
                         status = ActionStatus.FAILED; outputs = TreeManifest(emptyList())
                         diagnostics = diagnostics + Diagnostic("KVIK_JVM_RESULT_INVALID", DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Invalid JVM worker result")
                         if (selection != null) tests = JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
+                    }
+                    if (selection != null && !finalTestResult) {
+                        val journal = "$directory/result.json.progress.jsonl"
+                        val exists = memScoped { val info = alloc<stat>(); lstat(journal, info.ptr) == 0 || errno != ENOENT }
+                        if (exists) try {
+                            val recovered = parseTestProgress(readJvmFile(journal, 64 * 1024 * 1024), requestId, module,
+                                cancelled = status == ActionStatus.CANCELLED)
+                            tests = recovered.report
+                            diagnostics = diagnostics + recovered.diagnostics
+                        } catch (failure: Exception) {
+                            diagnostics = diagnostics + Diagnostic("KVIK_JVM_PROGRESS_INVALID", DiagnosticCategory.INFRASTRUCTURE,
+                                failure.message ?: "Cannot recover JVM test progress")
+                        }
                     }
                     selection?.coverage?.let { coverage ->
                         var data: Digest? = null
@@ -267,9 +282,9 @@ class JvmActionExecutor(
                             outputs = TreeManifest(emptyList())
                             if (status != ActionStatus.CANCELLED) {
                                 status = ActionStatus.FAILED
-                                tests = if (selection?.coverage != null || !selection?.agents.isNullOrEmpty()) tests!!.let { report ->
+                                tests = tests!!.let { report ->
                                     if (report.status == VerificationStatus.PASSED) report.copy(status = VerificationStatus.INCOMPLETE) else report
-                                } else JvmTestReport(emptyList(), TestCounts(null, 0, 0, 0, false), VerificationStatus.INCOMPLETE)
+                                }
                             }
                             diagnostics = diagnostics + Diagnostic("KVIK_JVM_OUTPUT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
                                 failure.message ?: "Cannot retain test report", actionId, module, "jvm")

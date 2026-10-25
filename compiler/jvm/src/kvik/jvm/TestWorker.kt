@@ -1,6 +1,10 @@
 package kvik.jvm
 
 import kvik.core.*
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.StandardOpenOption.*
 import java.nio.file.Path
 import java.util.ServiceLoader
 import kotlin.system.exitProcess
@@ -20,6 +24,11 @@ object TestWorker {
         var requestId = "invalid-request"
         val tests = linkedMapOf<String, TestResult>()
         val diagnostics = mutableListOf<Diagnostic>()
+        var progress: TestProgress? = null
+        fun diagnostic(value: Diagnostic) {
+            diagnostics += value
+            progress?.diagnostic(value)
+        }
         var counts = TestCounts(null, 0, 0, 0, false)
         var status = "incomplete"
         var exit = 3
@@ -52,6 +61,9 @@ object TestWorker {
             val bootstrap = listOf(codeSource(TestWorker::class.java), codeSource(LauncherFactory::class.java), codeSource(kotlin.Unit::class.java))
             val processClasspath = System.getProperty("java.class.path").split(java.io.File.pathSeparator).map { Path.of(it).toRealPath() }
             if (processClasspath != bootstrap + classpath) reject("KVIK_TEST_CLASSPATH", "JVM classpath must be exactly worker, JUnit Platform bundle, stdlib, then the ordered declared test classpath")
+            val journal = TestProgress(workspace.path(args[2] + ".progress.jsonl", false), requestId, module)
+            progress = journal
+            check(journal.failure == null) { journal.failure!! }
             run {
                 val loader = TestWorker::class.java.classLoader
                 val thread = Thread.currentThread()
@@ -93,8 +105,8 @@ object TestWorker {
                         val prior = tests[identifier.uniqueId]?.details?.attempts.orEmpty()
                         val duration = started.remove(identifier.uniqueId)?.let { (System.nanoTime() - it).coerceAtLeast(0) }
                         if (prior.size >= TEST_ATTEMPT_LIMIT) {
-                            if (limited.add(identifier.uniqueId)) diagnostics += Diagnostic("KVIK_TEST_ATTEMPT_LIMIT", DiagnosticCategory.TEST,
-                                "Test exceeded the supported $TEST_ATTEMPT_LIMIT attempts: ${reportText(identifier.uniqueId)}", module = module, target = target)
+                            if (limited.add(identifier.uniqueId)) diagnostic(Diagnostic("KVIK_TEST_ATTEMPT_LIMIT", DiagnosticCategory.TEST,
+                                "Test exceeded the supported $TEST_ATTEMPT_LIMIT attempts: ${reportText(identifier.uniqueId)}", module = module, target = target))
                             return
                         }
                         val failure = if (state == TestStatus.FAILED) reportFailure(throwable) else null
@@ -105,6 +117,7 @@ object TestWorker {
                         val message = reason ?: throwable?.let { reportText("${it.javaClass.name}: ${it.message}") }
                         tests[identifier.uniqueId] = TestResult(identifier.uniqueId, module, target, state, message,
                             TestDetails(suite, reportText(identifier.displayName), prior + attempt))
+                        journal.attempt(tests.getValue(identifier.uniqueId), attempt)
                     }
                     val listener = object : TestExecutionListener {
                         override fun dynamicTestRegistered(identifier: TestIdentifier) = synchronized(lock) {
@@ -118,8 +131,8 @@ object TestWorker {
                             identifiers[identifier.uniqueId] = identifier
                             if (identifier.isTest) {
                                 if (started.put(identifier.uniqueId, System.nanoTime()) != null) {
-                                    diagnostics += Diagnostic("KVIK_TEST_ATTEMPT_OVERLAP", DiagnosticCategory.TEST,
-                                        "Test started again before its prior attempt finished: ${reportText(identifier.uniqueId)}", module = module, target = target)
+                                    diagnostic(Diagnostic("KVIK_TEST_ATTEMPT_OVERLAP", DiagnosticCategory.TEST,
+                                        "Test started again before its prior attempt finished: ${reportText(identifier.uniqueId)}", module = module, target = target))
                                 }
                             }
                         }
@@ -137,15 +150,15 @@ object TestWorker {
                                 record(identifier, state, result.throwable.orElse(null))
                             }
                             if (identifier.isContainer && result.status == TestExecutionResult.Status.ABORTED) {
-                                diagnostics += Diagnostic("KVIK_TEST_CONTAINER_ABORTED", DiagnosticCategory.TEST,
+                                diagnostic(Diagnostic("KVIK_TEST_CONTAINER_ABORTED", DiagnosticCategory.TEST,
                                     reportText("${identifier.uniqueId}: ${result.throwable.orElse(null)?.message ?: "Container aborted"}"),
-                                    module = module, target = target)
+                                    module = module, target = target))
                                 for (test in plan.getDescendants(identifier).filter { it.isTest && it.uniqueId !in roundReported }) {
                                     record(test, TestStatus.SKIPPED, skipReason = result.throwable.orElse(null)?.message ?: "Container aborted")
                                 }
                             } else if (!identifier.isTest && result.status == TestExecutionResult.Status.FAILED) {
-                                diagnostics += Diagnostic("KVIK_TEST_CONTAINER_FAILURE", DiagnosticCategory.TEST,
-                                    reportText("${identifier.uniqueId}: ${result.status}: ${result.throwable.orElse(null)?.message ?: ""}"), module = module, target = target)
+                                diagnostic(Diagnostic("KVIK_TEST_CONTAINER_FAILURE", DiagnosticCategory.TEST,
+                                    reportText("${identifier.uniqueId}: ${result.status}: ${result.throwable.orElse(null)?.message ?: ""}"), module = module, target = target))
                             }
                         }
                         override fun testPlanExecutionFinished(testPlan: TestPlan) = synchronized(lock) { finished = true }
@@ -168,18 +181,18 @@ object TestWorker {
                         }
                         launcher.execute(plan, listener)
                         val sameSelection = previousSelection == null || previousSelection == roundDiscovered
-                        if (!sameSelection) diagnostics += Diagnostic("KVIK_TEST_RETRY_SCOPE_CHANGED", DiagnosticCategory.TEST,
-                            "Retry discovered different test identities", module = module, target = target)
+                        if (!sameSelection) diagnostic(Diagnostic("KVIK_TEST_RETRY_SCOPE_CHANGED", DiagnosticCategory.TEST,
+                            "Retry discovered different test identities", module = module, target = target))
                         val roundComplete = finished && started.isEmpty() && roundDiscovered == roundReported &&
                             sameSelection && diagnostics.none { it.code == "KVIK_TEST_CONTAINER_ABORTED" }
                         previousSelection = roundDiscovered.toSet()
                         complete = complete && roundComplete
                         // Do not retry incomplete discovery, container/lifecycle failures or infrastructure errors.
-                        if (!roundComplete || diagnostics.isNotEmpty() || roundReported.none { tests[it]?.status == TestStatus.FAILED }) break
+                        if (journal.failure != null || !roundComplete || diagnostics.isNotEmpty() || roundReported.none { tests[it]?.status == TestStatus.FAILED }) break
                     }
                     for (test in tests.values.filter { it.hasFailedAttempt && it.status != TestStatus.FAILED }) {
-                        diagnostics += Diagnostic("KVIK_TEST_RETRY_FAILURE", DiagnosticCategory.TEST,
-                            "Test had a failed attempt before its final ${test.status.name.lowercase()} result: ${reportText(test.id)}", module = module, target = target)
+                        diagnostic(Diagnostic("KVIK_TEST_RETRY_FAILURE", DiagnosticCategory.TEST,
+                            "Test had a failed attempt before its final ${test.status.name.lowercase()} result: ${reportText(test.id)}", module = module, target = target))
                     }
                     // An aborted factory can stop before registering all dynamic tests. Even when
                     // every observed leaf passed, the container did not complete its requested scope.
@@ -191,23 +204,29 @@ object TestWorker {
                         tests.values.any { it.hasFailedAttempt } || counts.failed > 0 ||
                             diagnostics.any { it.code != "KVIK_TEST_CONTAINER_ABORTED" } -> { status = "failed"; exit = 1 }
                         counts.satisfiesExecution -> { status = "passed"; exit = 0 }
-                        else -> diagnostics += Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST,
-                            "Selected scope has no completed passing execution or discovery is incomplete", module = module, target = target)
+                        else -> diagnostic(Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST,
+                            "Selected scope has no completed passing execution or discovery is incomplete", module = module, target = target))
                     }
                 } finally { thread.contextClassLoader = previous }
             }
         } catch (failure: Exception) {
             if ((failure as? AdapterFailure)?.code == "KVIK_TEST_EMPTY_SELECTION") {
                 counts = TestCounts(0, 0, 0, 0, true)
-                diagnostics += Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST, failure.message ?: "No tests selected")
+                diagnostic(Diagnostic("KVIK_TEST_INCOMPLETE", DiagnosticCategory.TEST, failure.message ?: "No tests selected"))
             } else {
                 failure.printStackTrace(System.err)
                 status = "failed"; exit = 1
-                diagnostics += Diagnostic((failure as? AdapterFailure)?.code ?: "KVIK_TEST_INFRASTRUCTURE", DiagnosticCategory.INFRASTRUCTURE,
-                    generateSequence<Throwable>(failure) { it.cause }.take(8).joinToString("; caused by: ") { "${it::class.simpleName}: ${it.message}" })
+                diagnostic(Diagnostic((failure as? AdapterFailure)?.code ?: "KVIK_TEST_INFRASTRUCTURE", DiagnosticCategory.INFRASTRUCTURE,
+                    generateSequence<Throwable>(failure) { it.cause }.take(8).joinToString("; caused by: ") { "${it::class.simpleName}: ${it.message}" }))
                 counts = TestCounts(null, tests.values.count { it.status != TestStatus.SKIPPED }, tests.values.count { it.status == TestStatus.FAILED },
                     tests.values.count { it.status == TestStatus.SKIPPED }, false)
             }
+        }
+        progress?.close()
+        progress?.failure?.let { problem ->
+            diagnostics += Diagnostic("KVIK_TEST_PROGRESS_WRITE_FAILED", DiagnosticCategory.INFRASTRUCTURE, problem)
+            status = "failed"; exit = 1
+            counts = counts.copy(discoveryComplete = false)
         }
         workspace.publish(args[2], obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(),
             "status" to status.json(), "exitCode" to exit.json(), "tests" to tests.values.sortedBy { it.id }.map { it.toJson() }.json(),
@@ -255,4 +274,46 @@ private fun reportFailure(failure: Throwable?): TestFailure {
     if (current != null) stack.append("... remaining causes omitted\n")
     return TestFailure(if (failure is AssertionError) TestFailureKind.ASSERTION else TestFailureKind.EXCEPTION,
         reportText(failure.javaClass.name), failure.message?.let(::reportText), reportText(stack.toString(), TEST_STACK_TRACE_LIMIT))
+}
+
+/** Append only completed observations. An interrupted write leaves an ignorable final fragment. */
+private class TestProgress(path: Path, requestId: String, module: String) : AutoCloseable {
+    private val channel = FileChannel.open(path, CREATE_NEW, WRITE, NOFOLLOW_LINKS)
+    private var sequence = 0
+    private var bytes = 0L
+    var failure: String? = null
+        private set
+
+    init {
+        append(obj("schemaVersion" to CONTRACT_VERSION.json(), "kind" to "jvm-test-progress".json(),
+            "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json()))
+    }
+
+    fun attempt(test: TestResult, attempt: TestAttempt) = append(obj(
+        "sequence" to (sequence++).json(), "kind" to "attempt".json(), "id" to test.id.json(),
+        "suite" to (test.details!!.suite?.json() ?: JsonValue.Null),
+        "name" to (test.details.name?.json() ?: JsonValue.Null),
+        "message" to (test.message?.json() ?: JsonValue.Null), "attempt" to attempt.toJson()))
+
+    fun diagnostic(value: Diagnostic) = append(obj("sequence" to (sequence++).json(), "kind" to "diagnostic".json(),
+        "diagnostic" to value.toJson()))
+
+    private fun append(value: JsonValue) {
+        if (failure != null) return
+        try {
+            val data = (value.canonical() + "\n").encodeToByteArray()
+            check(sequence <= 1_000_000 && bytes + data.size <= 64L * 1024 * 1024) { "Test progress journal exceeds its limit" }
+            val buffer = ByteBuffer.wrap(data)
+            while (buffer.hasRemaining()) channel.write(buffer)
+            bytes += data.size
+        } catch (problem: Exception) {
+            failure = reportText("Cannot write test progress: ${problem.message}")
+        }
+    }
+
+    override fun close() {
+        try { channel.close() } catch (problem: Exception) {
+            if (failure == null) failure = reportText("Cannot close test progress: ${problem.message}")
+        }
+    }
 }
