@@ -100,6 +100,7 @@ class PassingTests {
             arguments += ['--tools', str(project/'tools.json'), '--module', 'consumer', '--target', 'jvm', '--offline']
         started = time.monotonic()
         result = subprocess.run(arguments, env=environment, capture_output=True, text=True, timeout=600)
+        elapsed = time.monotonic() - started
         write(label+'.stdout.jsonl', result.stdout)
         write(label+'.stderr.log', result.stderr)
         assert result.returncode == expected, (label, result.returncode, result.stdout, result.stderr)
@@ -135,7 +136,7 @@ class PassingTests {
                     assert record['testCounts']['executed'] == 0
                     assert not list(run.glob('kvik-run-*/effects.txt'))
                     assert not list(run.glob('kvik-run-*/worker.stdout')), 'JDK verification must precede worker launch'
-            summaries.append(dict(label=label, seconds=time.monotonic()-started, run=str(run), actions=record['actions']))
+            summaries.append(dict(label=label, seconds=elapsed, run=str(run), actions=record['actions'], statistics=statistics))
             print('PASS', label, round(summaries[-1]['seconds'], 3), 'seconds', flush=True)
             return record
         validate(values[0], 'dependencyResolution')
@@ -144,11 +145,26 @@ class PassingTests {
     invoke('resolve', 'resolve')
     cold = invoke('cold-build', 'build')
     assert all(action['status'] == 'executed' for action in cold['actions'])
+    warm = invoke('repeated-build', 'build')
+    assert all(action['status'] == 'local_hit' for action in warm['actions'])
+    assert {a['actionId']: a['key'] for a in warm['actions']} == {a['actionId']: a['key'] for a in cold['actions']}
     first = invoke('first-test', 'test')
     repeated = invoke('repeated-test', 'test')
     assert {action['actionId']: action['key'] for action in first['actions']} == {action['actionId']: action['key'] for action in repeated['actions']}
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':test') else 'local_hit') for action in repeated['actions'])
     check_run_journal(executable, Path(summaries[-1]['run']), validate)
+    original_consumer = (project/'consumer/main/Consumer.kt').read_bytes()
+    try:
+        write('consumer/main/Consumer.kt', 'package fixture\nfun message() = greeting().also { require(it.isNotEmpty()) }\n')
+        edited = invoke('small-source-edit', 'build')
+        assert {a['actionId']: a['status'] for a in edited['actions']} == {
+            'library:jvm:main': 'local_hit', 'consumer:jvm:main': 'executed'}
+        assert edited['inputSnapshot'] != warm['inputSnapshot']
+        assert {a['actionId']: a['key'] for a in edited['actions']}['consumer:jvm:main'] != {
+            a['actionId']: a['key'] for a in warm['actions']}['consumer:jvm:main']
+        invoke('small-source-edit-test', 'test')
+    finally:
+        (project/'consumer/main/Consumer.kt').write_bytes(original_consumer)
     original_tools = (project/'tools.json').read_bytes()
     unavailable = json.loads(original_tools)
     unavailable['roots'] = {key: (value if key == 'jdk' else str(project/'.kvik/absent-tools'/key))
