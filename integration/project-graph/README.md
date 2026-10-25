@@ -267,3 +267,23 @@ These actions use the ordinary scheduler and registered executors. Their output
 bytes feed downstream action keys; cached generator outputs are consumable without
 rerunning the generator. The contribution guards still require the current runtime
 composition and reject remote caching and undeclared test/script execution.
+
+### Compiler input views
+
+`ProjectActionGraph.compilations` exposes selected module compilations, including
+main/test inputs and common metadata. Use `requireCompilation(module, target, scope)`
+for an unambiguous lookup. Its authored `sourceRoots` retain source-set refinement,
+common membership and both project-relative and input-relative paths. JVM test
+roots exclude main roots; Native and JS tests include main sources they recompile.
+
+Declare the view's `dependencies` on an analysis action, then call `resolve(results)`.
+Resolution shares the actual compiler recipe and exposes `CompilationInputs`: the
+full input manifest, ordered source/common/classpath paths, published and workspace
+compiler plugins, JVM friends and Native fragments. `sourceFiles()` and
+`classpathFiles()` provide selected manifests. Generated sources and dependencies
+carry the same digests and paths used by the compiler. Resolution rejects missing,
+failed or mismatched prerequisites and needs no output from this compilation.
+
+Views survive source-plugin composition and script prerequisite graphs.
+`inspect-graph` serializes declarations without executing recipes; classpath and
+generated-file contents remain lazy until their producers finish.

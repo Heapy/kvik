@@ -43,6 +43,16 @@ class ClasspathPlugin : ProjectGraphContributor {
                     context.composition, context.toolchains.getValue("jvm"))
             }
         }
-        return listOfNotNull(bundle, extraCompile, reportBundle)
+        val compilation = graph.requireCompilation("app", "jvm", "main")
+        val inputBundle = ActionNode("$id:inputs", compilation.dependencies,
+            ActionOutputContract(treeOutput("classpath", "platform-classpath"))) { results ->
+            val inputs = compilation.resolve(results)
+            val roots = compilation.sourceRoots.map { it.inputPath }
+            require(inputs.sources.all { source -> roots.any { source.value.startsWith(it.value + "/") } })
+            jvmClasspathAction(JvmClasspath("app", "main", roots + inputs.classpath),
+                TreeManifest(inputs.sourceFiles().files + inputs.classpathFiles().files),
+                context.composition, context.toolchains.getValue("jvm"))
+        }
+        return listOfNotNull(bundle, extraCompile, reportBundle, inputBundle)
     }
 }

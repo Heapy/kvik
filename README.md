@@ -1246,6 +1246,19 @@ Test graphs also expose `test-results`, JVM coverage captures and declared
 instrumentation outputs. These can feed dependent plugin actions after successful
 tests; retained report commands handle failed and incomplete runs.
 
+Plugins can obtain compiler inputs with
+`graph.requireCompilation(module, target, compilation)`. Add its `dependencies` to
+the consumer action and call `resolve(results)` to obtain source files, common
+sources, the ordered classpath, friend paths and compiler-plugin inputs from the
+same recipe used by compilation. `sourceFiles()` and `classpathFiles()` select
+CAS manifests for analyzers. This waits for input producers, without requiring the
+module's compiled output. Authored source roots retain their source-set names and
+project/input paths; generated files appear after prerequisite resolution.
+JVM, Native, JS/Wasm and common metadata compilations are covered. Queries only
+cover module compilations in the selected graph, including script prerequisites.
+`inspect-graph` lists these declarations under `compilations` without resolving
+recipes or running generators.
+
 Contributors can also override `artifacts(context, graph)` to publish semantic
 references to their own declared outputs. The callback runs after their actions and
 instrumentation are added, so later plugins can find these artifacts without

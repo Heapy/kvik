@@ -8,6 +8,17 @@ SCHEMA = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/contracts
 
 
 class PluginSchemaTest(unittest.TestCase):
+    def test_compilation_declarations_have_safe_source_roots_and_dependencies(self):
+        definition = SCHEMA['$defs']['graphInspection']['properties']['compilations']
+        validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **definition})
+        root = dict(sourceSet='main', directory='src', inputPath='src/src', common=False, dependsOn=[])
+        compilation = dict(module='app', target='jvm', compilation='main', action='compile', dependencies=[], sourceRoots=[root])
+        validator.validate([compilation])
+        for change in [dict(action=''), dict(dependencies=['a', 'a']),
+                       dict(sourceRoots=[{**root, 'inputPath': '../escape'}])]:
+            self.assertFalse(validator.is_valid([{**compilation, **change}]))
+        self.assertNotIn('compilations', SCHEMA['$defs']['graphInspection']['required'])
+
     def test_graph_artifact_references_keep_semantic_coordinates_and_output_shape(self):
         definition = SCHEMA['$defs']['graphInspection']['properties']['artifacts']
         validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **definition})

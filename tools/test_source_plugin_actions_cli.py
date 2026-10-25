@@ -97,6 +97,10 @@ def main():
     assert len(published) == 1 and published[0]['producer'] == PLUGIN_ACTION, published
     chained = next(action for action in graph['actions'] if action['id'] == 'fixture.artifactConsumer:bundle')
     assert chained['dependencies'] == [published[0]['producer']], chained
+    compilation = next(c for c in graph['compilations'] if c['module'] == 'app' and c['compilation'] == 'main')
+    inputs_action = next(a for a in graph['actions'] if a['id'] == 'fixture.classpath:inputs')
+    assert inputs_action['dependencies'] == compilation['dependencies'] == [], inputs_action
+    assert compilation['sourceRoots'] == [dict(sourceSet='main', directory='src', inputPath='src/src', common=False, dependsOn=[])], compilation
     (root / 'graph.json').write_text(json.dumps(graph))
     inspection = invoke('inspect-script', ['inspect-script', 'task', '--project', config,
         '--tools', tools, '--store', store, '--offline'])[0]
@@ -109,6 +113,10 @@ def main():
         assert events[-1]['type'] == 'run-finished' and record['status'] == 'passed', record
         actions = {action['actionId']: action for action in record['actions']}
         assert PLUGIN_ACTION in actions, actions.keys()
+        input_files = actions['fixture.classpath:inputs']['outputs']['files']
+        copied_source = next(f for f in input_files if f['path'] == 'classpath/input/src/src/Answer.kt')
+        assert copied_source['digest']['hash'] == hashlib.sha256(main.read_bytes()).hexdigest(), copied_source
+        assert any(f['path'].startswith('classpath/input/deps/') for f in input_files), input_files
         artifact = actions[PLUGIN_ACTION]
         assert any(entry['path'] == 'classpath/input/classes/sample/AnswerKt.class' for entry in artifact['outputs']['files'])
         manifest = next(entry for entry in artifact['outputs']['files'] if entry['path'] == 'classpath/manifest.json')
@@ -135,6 +143,7 @@ def main():
     assert cold[PLUGIN_ACTION]['status'] == 'executed'
     warm, warm_record = build('warm')
     assert warm['fixture.artifactConsumer:bundle']['status'] == 'local_hit'
+    assert warm['fixture.classpath:inputs']['status'] == 'local_hit'
     assert warm[PLUGIN_ACTION]['status'] == 'local_hit' and warm[PLUGIN_ACTION]['key'] == cold[PLUGIN_ACTION]['key']
     script, _ = build('script', script=True)
     # Script snapshots contain only their declared scope, so the unrelated plugin input is absent.
@@ -160,6 +169,7 @@ def main():
     main.write_text('package sample\nfun answer() = 43\n')
     changed, _ = build('changed')
     assert changed['fixture.artifactConsumer:bundle']['status'] == 'executed'
+    assert changed['fixture.classpath:inputs']['key'] != cold['fixture.classpath:inputs']['key']
     assert changed[PLUGIN_ACTION]['status'] == 'executed' and changed[PLUGIN_ACTION]['key'] != cold[PLUGIN_ACTION]['key']
     remote = project / 'remote.json'
     remote.write_text(json.dumps(dict(schemaVersion=1, url='http://127.0.0.1:1', trustedWriters=True)))

@@ -15157,6 +15157,90 @@
           },
           "maxItems": 10000
         },
+        "compilations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "target": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "compilation": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "action": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "uniqueItems": true
+              },
+              "sourceRoots": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sourceSet": {
+                      "type": "string",
+                      "pattern": "\\S"
+                    },
+                    "directory": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                    },
+                    "inputPath": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                    },
+                    "common": {
+                      "type": "boolean"
+                    },
+                    "dependsOn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "sourceSet",
+                    "directory",
+                    "inputPath",
+                    "common",
+                    "dependsOn"
+                  ],
+                  "additionalProperties": false
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "module",
+              "target",
+              "compilation",
+              "action",
+              "dependencies",
+              "sourceRoots"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
         "artifacts": {
           "type": "array",
           "items": {

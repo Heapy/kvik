@@ -87,7 +87,7 @@ private fun compose(
     val contributed = supplied.contributedActions.toMutableSet()
     fun currentGraph() = ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
         expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(),
-        launches.toMap(), supplied.generatedResources.toList(), artifacts.toList())
+        launches.toMap(), supplied.generatedResources.toList(), artifacts.toList(), supplied.compilations.toList())
     require(contributed.all { id -> nodes.any { it.id == id } }) { "Unknown contributed action" }
     validateNodes(nodes)
     require(terminals.values.all { terminal -> nodes.any { it.id == terminal } }) { "Build plugin graph omits a terminal action" }
@@ -127,7 +127,7 @@ private fun compose(
         }
     }
     validateNodes(nodes)
-    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches, supplied.generatedResources.toList(), artifacts.toList())
+    return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches, supplied.generatedResources.toList(), artifacts.toList(), supplied.compilations.toList())
 }
 
 /** Graph callback ordering is independent of source acquisition and pre-provider declarations. */

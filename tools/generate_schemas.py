@@ -1126,6 +1126,10 @@ DEFS["graphInspection"] = versioned({
         "output": object_({"contract": {"const": "tree-manifest"}, "state": {"const": "unresolved"},
             "declaredArtifacts": nullable(array(ref("outputArtifact"), uniqueItems=True)),
             "resultConsumers": array(NONEMPTY, uniqueItems=True)}, optional=("declaredArtifacts",))}, optional=("testLaunch",)), maxItems=10000),
+    "compilations": array(object_({"module": NONEMPTY, "target": NONEMPTY, "compilation": NONEMPTY,
+        "action": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True),
+        "sourceRoots": array(object_({"sourceSet": NONEMPTY, "directory": PATH, "inputPath": PATH,
+            "common": BOOL, "dependsOn": array(NONEMPTY, uniqueItems=True)}), uniqueItems=True)}), uniqueItems=True),
     "artifacts": array(object_({"module": NONEMPTY, "target": NONEMPTY, "compilation": NONEMPTY,
         "producer": NONEMPTY, "output": ref("outputArtifact")}), uniqueItems=True),
     "checks": array(object_({"id": NONEMPTY, "terminalAction": NONEMPTY, "requiredContributions": array(NONEMPTY, uniqueItems=True)}), minItems=1),
@@ -1135,7 +1139,7 @@ DEFS["graphInspection"] = versioned({
         "configurationPointer": {"type": "string", "pattern": "^/"}, "outputRoot": PATH,
         "files": array(PATH, minItems=1, maxItems=10000, uniqueItems=True)}), uniqueItems=True),
     "limitations": array(NONEMPTY), "source": ref("sourceReference"),
-}, optional=("source", "generatedResources", "artifacts"))
+}, optional=("source", "generatedResources", "artifacts", "compilations"))
 
 
 DEFS["jvmAgentOption"] = object_({"kind": enum("literal", "input-file", "output-file"),

@@ -72,6 +72,16 @@ class PluginGenerationTest {
             val node = graph.nodes.single { it.id == "app:$target:main" }
             assertEquals(setOf(producer), node.dependencies)
             val action = node.resolve(result(output()))
+            val compilation = graph.requireCompilation("app", target, "main")
+            assertEquals(setOf(producer), compilation.dependencies)
+            assertTrue(compilation.sourceRoots.isEmpty())
+            val inputs = compilation.resolve(result(output()))
+            assertEquals(action.inputs, inputs.files)
+            assertEquals(listOf(generated), inputs.sources)
+            assertEquals(listOf(generated), inputs.commonSources)
+            assertEquals(digest("source"), inputs.sourceFiles().files.single().digest)
+            assertEquals(digest("edited source"), compilation.resolve(result(output("edited source"))).sourceFiles().files.single().digest)
+            assertFails { compilation.resolve(emptyMap()) }
             assertContains(action.inputs.files.map { it.path }, generated)
             assertContains(action.inputs.files.map { it.path }, LogicalPath("runtime/app/main/settings.json"))
             val common = when (target) {

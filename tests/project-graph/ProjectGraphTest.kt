@@ -100,6 +100,15 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
             launch.requireMatches(action)
             assertEquals(action.parameters, launch.parameters)
         } else assertFalse(node.id in graph.testLaunches)
+        graph.compilations.singleOrNull { it.actionId == node.id }?.let { compilation ->
+            val inputs = compilation.resolve(results)
+            assertEquals(action.inputs, inputs.files)
+            assertEquals(action.parameters.objectValue().getValue("sources").arrayValue().map { LogicalPath(it.stringValue()) }, inputs.sources)
+            assertEquals(inputs.sources.toSet(), inputs.sourceFiles().files.map { it.path }.toSet())
+            val parameters = action.parameters.objectValue()
+            assertEquals(parameters.getValue("plugins").arrayValue().map { LogicalPath(it.stringValue()) }, inputs.plugins)
+            assertEquals(parameters["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson).orEmpty(), inputs.pluginApplications)
+        }
         actions[node.id] = action
         results[node.id] = ActionResult(node.id, action.key(Sha256), ActionStatus.EXECUTED, outputs(action, node.id + if(node.id == changed) "changed" else ""), 0)
     }
@@ -124,6 +133,45 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun compilationInputsMatchCompilerRecipesAcrossTargetsWithoutRequiringCompilationOutput() {
+        for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
+            val config = configuration(*listOf(base, app).map { module -> module.copy(targets = module.targets
+                .filter { it.name == if (target == "jvm") "jvm" else "macosArm64" }.map { it.copy(name = target) }) }.toTypedArray())
+            val plan = graph(config, request = request(ProjectMode.COMPILE_TESTS, target))
+            val actions = resolved(plan)
+            for (scope in listOf("main", "test")) {
+                val view = plan.requireCompilation("app", target, scope)
+                val action = actions.getValue(view.actionId)
+                val results = view.dependencies.associateWith { id -> ActionResult(id, digest("key"), ActionStatus.LOCAL_HIT,
+                    outputs(actions.getValue(id), id), 0) }
+                assertFalse(view.actionId in results)
+                val inputs = view.resolve(results)
+                assertEquals(action.inputs, inputs.files)
+                val parameters = action.parameters.objectValue()
+                assertEquals(parameters.getValue("sources").arrayValue().map { LogicalPath(it.stringValue()) }, inputs.sources)
+                assertEquals(parameters.getValue(if (target == "jvm") "classpath" else "libraries").arrayValue()
+                    .map { LogicalPath(it.stringValue()) }, inputs.classpath)
+                assertEquals(inputs.sources.toSet(), inputs.sourceFiles().files.map { it.path }.toSet())
+                assertTrue(inputs.classpathFiles().files.any { it.path.value.startsWith("deps/") })
+                assertTrue(inputs.classpathFiles().files.any { it.path.value.startsWith("modules/base/") })
+                assertTrue(inputs.commonSources.all { it in inputs.sources })
+                assertEquals(target != "jvm" || scope == "main", inputs.sources.any { it.value == "src/app/common/Common.kt" })
+                assertEquals(target != "jvm" || scope == "main", view.sourceRoots.any { it.directory == LogicalPath("app/common") })
+                assertTrue(view.sourceRoots.all { it.inputPath == LogicalPath("src/${it.directory.value}") })
+                if (target == "jvm" && scope == "test") assertEquals(listOf(LogicalPath("modules/app/jvm/main")), inputs.friendPaths)
+                if (target in listOf("macosArm64", "linuxX64")) assertTrue(inputs.sourceFragments.isNotEmpty())
+                val producer = view.dependencies.first()
+                assertFails { view.resolve(results - producer) }
+                assertFails { view.resolve(results + (producer to results.getValue(producer).copy(status = ActionStatus.FAILED))) }
+                assertFails { view.resolve(results + (producer to results.getValue(producer).copy(actionId = "wrong"))) }
+            }
+            assertFails { plan.requireCompilation("base", target, "test") }
+            assertEquals(plan.compilations.size, inspectActionGraph(plan).values.getValue("compilations").arrayValue().size)
+            assertFails { plan.copy(compilations = plan.compilations + plan.compilations.first()) }
+            assertFails { plan.copy(nodes = plan.nodes.filter { it.id != plan.compilations.first().actionId }) }
+        }
+    }
+
     @Test fun testArtifactsExposeReportsAndCoverageOnlyForRequestedTestExecutions() {
         for (target in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
             val config = configuration(*listOf(base, app).map { module -> module.copy(targets = module.targets
