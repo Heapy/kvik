@@ -14,7 +14,8 @@ internal data class EffectivePom(
 ) {
     fun dependencies(request: VariantRequest): List<Coordinate> = dependencyEdges(request).map { it.coordinate }
     fun dependencyEdges(request: VariantRequest): List<PomDependency> = declared.mapNotNull { dependency ->
-        val effective = (management[dependencyKey(dependency)].orEmpty() - "optional") + dependency
+        val managed = management[dependencyKey(dependency)].orEmpty()
+        val effective = (managed - "optional") + dependency
         val scope = effective.scalar("scope") ?: "compile"
         require(scope in setOf("compile", "runtime", "test", "provided")) { "Unsupported POM scope: $scope" }
         val optional = effective.scalar("optional")
@@ -23,8 +24,9 @@ internal data class EffectivePom(
         // test/provided exclusions and versions do not change the published dependency closure.
         if (scope in setOf("test", "provided") || optional == "true" || scope == "runtime" && request.usage != "java-runtime") null
         else {
-            require("exclusions" !in management[dependencyKey(dependency)].orEmpty()) { "Managed POM exclusion merging is unsupported" }
-            val exclusions = pomExclusions(effective["exclusions"])
+            // Maven injects managed exclusions only when the dependency's own list is
+            // empty (including an explicit <exclusions/>). Nonempty lists replace it.
+            val exclusions = pomExclusions(dependency["exclusions"]).ifEmpty { pomExclusions(managed["exclusions"]) }
             val all = ModuleExclusion("*", "*") in exclusions
             // Preserve the existing wildcard-all traversal and lock identities. Selective
             // rules join the incoming path context, including across metadata redirects.

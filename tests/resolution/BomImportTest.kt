@@ -18,6 +18,42 @@ class BomImportTest {
     private fun management(vararg entries: String) = "<dependencyManagement>${dependencies(*entries)}</dependencyManagement>"
     private fun bom(name: String) = dependency(name, "<version>1</version><type>pom</type><scope>import</scope>")
     private fun parent(name: String) = "<parent><groupId>example</groupId><artifactId>$name</artifactId><version>1</version></parent>"
+    private fun exclusions(group: String, artifact: String) =
+        "<exclusions><exclusion><groupId>$group</groupId><artifactId>$artifact</artifactId></exclusion></exclusions>"
+
+    @Test fun managedExclusionsAreDefaultsRatherThanCombinedWithDeclaredRules() {
+        val managed = management(dependency("b", "<version>1</version>" + exclusions("blocked", "*")))
+        fun edge(own: String, defaults: String = managed) = effectivePom(c("root"),
+            pom("root", defaults + dependencies(dependency("b", own)))) { error("No fetch") }.dependencyEdges(runtime).single()
+        for (own in listOf("", "<exclusions/>")) {
+            assertEquals(setOf(ModuleExclusion("blocked", "*")), edge(own).excludes)
+        }
+        assertEquals(setOf(ModuleExclusion("*", "leaf")), edge(exclusions("*", "leaf")).excludes)
+        assertFalse(edge(exclusions("*", "*")).transitive)
+        val all = management(dependency("b", "<version>1</version>" + exclusions("*", "*")))
+        assertFalse(edge("", all).transitive)
+        assertTrue(edge(exclusions("example", "leaf"), all).transitive)
+        val malformed = management(dependency("b", "<version>1</version>" + exclusions("bad*", "leaf")))
+        assertFails { edge("", malformed) }
+        assertFails { edge("<exclusions/>", malformed) }
+        // An overridden management rule does not contribute to this dependency's closure.
+        assertEquals(setOf(ModuleExclusion("example", "leaf")), edge(exclusions("example", "leaf"), malformed).excludes)
+        assertFails { edge(exclusions("example", "bad*")) }
+        // Gradle platform constraints have a separate contract; do not discard their rules.
+        assertFails { effectivePom(c("root"), pom("root", managed)) { error("No fetch") }.managementCoordinates() }
+    }
+
+    @Test fun managedExclusionsSurviveParentInheritanceAndNestedBomImports() {
+        val rules = exclusions("example", "leaf")
+        val models = mapOf(
+            c("parent") to pom("parent", "<packaging>pom</packaging>" + management(dependency("b", "<version>1</version>$rules"))),
+            c("nested") to pom("nested", parent("parent") + "<packaging>pom</packaging>"),
+            c("bom") to pom("bom", "<packaging>pom</packaging>" + management(bom("nested"))))
+        for (source in listOf(parent("parent"), management(bom("bom")))) {
+            val model = effectivePom(c("root"), pom("root", source + dependencies(dependency("b"))), models::getValue)
+            assertEquals(setOf(ModuleExclusion("example", "leaf")), model.dependencyEdges(runtime).single().excludes)
+        }
+    }
 
     @Test fun explicitAndInheritedManagementWinBeforeOrderedBomImports() {
         val models = mapOf(
@@ -105,22 +141,37 @@ class BomImportTest {
         assertFails { effectivePom(c("root"), pom("root", profile(dependency("b", "<scope>runtime</scope><version>1</version>")))) { error("No fetch") } }
     }
 
-    @Test fun importedBomMetadataIsRetainedForOfflineReplayAndMutationChecks() {
+    @Test fun importedBomExclusionsStayPathLocalAndReplayOffline() {
         val repo = Repository("central", "https://example.test/maven")
         val rootPom = text("root", management(bom("bom")) + dependencies(dependency("b")))
-        val bomPom = text("bom", "<packaging>pom</packaging>" + management(dependency("b", "<version>1</version>")))
-        val documents = mapOf("root" to rootPom, "bom" to bomPom, "b" to text("b"))
+        val bomPom = text("bom", "<packaging>pom</packaging>" + management(dependency("b", "<version>1</version>" + exclusions("example", "leaf"))))
+        val documents = mapOf("root" to rootPom, "bom" to bomPom,
+            "b" to text("b", dependencies(dependency("leaf", "<version>1</version>"), dependency("keep", "<version>1</version>"))),
+            "ordinary" to text("ordinary", dependencies(dependency("b", "<version>1</version>"))),
+            "leaf" to text("leaf"), "keep" to text("keep"))
         val fetched = mutableMapOf<Digest, ByteArray>()
+        val responses = mutableMapOf<String, ByteArray>()
         val transport = object : ArtifactTransport {
             override fun fetch(url: String): ByteArray {
                 if (url.endsWith(".module")) throw MissingResource(url)
                 val name = url.substringBeforeLast('/').substringBeforeLast('/').substringAfterLast('/')
                 return (if (url.endsWith(".pom")) documents.getValue(name).encodeToByteArray() else name.encodeToByteArray())
-                    .also { fetched[Sha256.digest(it)] = it }
+                    .also { fetched[Sha256.digest(it)] = it; responses[url] = it }
             }
         }
-        val selected = MavenResolver(transport, parser).resolve(c("root"), runtime, listOf(repo))
-        assertEquals(setOf(c("root"), c("b")), selected.artifacts.map { it.coordinate }.toSet())
+        val graph = MavenResolver(transport, parser).resolveGraph(listOf(c("root")), runtime, listOf(repo))
+        val selected = graph.selections.single()
+        assertEquals(setOf(c("root"), c("b"), c("keep")), selected.artifacts.map { it.coordinate }.toSet())
+        assertFalse(responses.keys.any { "/leaf/" in it })
+        val offline = object : ArtifactTransport {
+            override fun fetch(url: String): ByteArray = responses[url] ?: throw MissingResource(url)
+        }
+        assertEquals(graph, MavenResolver(offline, parser).resolveGraph(listOf(c("root")), runtime, listOf(repo)))
+        for (order in listOf(listOf("root", "ordinary"), listOf("ordinary", "root"))) {
+            val selections = MavenResolver(transport, parser).resolveAll(order.map(::c), runtime, listOf(repo)).associateBy { it.requested.name }
+            assertEquals(setOf("root", "b", "keep"), selections.getValue("root").artifacts.map { it.coordinate.name }.toSet())
+            assertEquals(setOf("ordinary", "b", "leaf", "keep"), selections.getValue("ordinary").artifacts.map { it.coordinate.name }.toSet())
+        }
         val imported = selected.metadata.single { it.url.endsWith("/bom/1/bom-1.pom") }
         verifyLocked(selected) { fetched[it] }
         assertFails { verifyLocked(selected) { if (it == imported.digest) bomPom.replace("<version>1</version>", "<version>2</version>").encodeToByteArray() else fetched[it] } }

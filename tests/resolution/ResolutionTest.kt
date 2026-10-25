@@ -248,7 +248,7 @@ class ResolutionTest {
         }
         val managed = component("excluded", dependency("middle")).mapValues { (path, bytes) -> if (path.endsWith(".pom")) bytes.decodeToString()
             .replace("</project>", "<dependencyManagement><dependencies>${dependency("middle", all)}</dependencies></dependencyManagement></project>").encodeToByteArray() else bytes }
-        assertFails { resolve(listOf("excluded"), base + managed) }
+        assertEquals(listOf("excluded", "middle"), resolve(listOf("excluded"), base + managed).single().artifacts.map { it.coordinate.name })
         // Excluding transitives does not bypass producer variant or artifact verification.
         val wrong = module(Coordinate("example", "middle", "1"), variant(attrs = ",\"unsupported.attribute\":\"x\""))
         assertFails { resolve(listOf("excluded"), base + (url("middle", "module") to wrong)) }

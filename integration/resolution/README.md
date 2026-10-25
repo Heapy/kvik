@@ -53,8 +53,11 @@ Published Maven POM dependencies also support selective `<exclusions>` with lite
 that declares them and combine with exclusions inherited along that traversal path,
 including when it crosses into Gradle metadata. Other paths can still include the
 excluded library. Up to 64 unique rules per declaration and per traversal context
-are supported. Partial glob patterns, property expressions in exclusion names and
-dependency-management exclusion merging remain explicit errors. This follows
+are supported. POM `dependencyManagement`, including inherited entries and imported
+BOMs, supplies exclusions when a dependency's own list is absent or empty. A nonempty
+list on the dependency replaces those managed rules. Partial glob patterns, property
+expressions in exclusion names and exclusions on Gradle platform POM constraints
+remain explicit errors. This follows
 [Maven's per-dependency exclusion model](https://maven.apache.org/guides/introduction/introduction-to-optional-and-excludes-dependencies.html).
 
 Maven dependency management supports bounded recursive BOM imports. Explicit management in the consuming POM overrides imported entries; earlier imports win over later imports, and imported management overrides inherited parent defaults. Imported POM identities are retained in the lock and used during offline replay. BOM properties are evaluated in their own model. Import/parent cycles and bounds are checked before traversal expands further. Profiles may add literal test-scope dependencies only when they cannot replace a production dependency, including dependencies whose scope comes from management. Other resolution-affecting profile content remains unsupported.
