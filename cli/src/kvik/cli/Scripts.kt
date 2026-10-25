@@ -153,18 +153,37 @@ internal fun scriptDependencyCommand(args: List<String>, updateRequested: Boolea
     }
 }
 
-/** Inspection verifies inputs/tools/lock but never compiles, executes a script, or publishes CAS bytes. */
+/** Locked inspection verifies inputs/tools/lock; configuration-only stops after declaration expansion. */
 internal fun inspectScriptCommand(args: List<String>): JsonValue {
-    val (source, options) = scriptCommandOptions(args, execution = false, toolsRequired = true)
-    if (source == null) return inspectScript(options, readScript(options))
+    require(args.count { it == "--configuration-only" } <= 1) { "Duplicate --configuration-only" }
+    val configurationOnly = "--configuration-only" in args
+    val (source, options) = scriptCommandOptions(args.filter { it != "--configuration-only" }, execution = false, toolsRequired = !configurationOnly)
+    fun inspect(file: ScriptFile, prepared: PreparedSourceProject? = null) =
+        if (configurationOnly) inspectScriptConfiguration(options, file, prepared) else inspectScript(options, file, prepared)
+    if (source == null) return inspect(readScript(options))
     val store = projectPath(currentDirectory(), options.project.store)
-    require(!pathsPhysicallyOverlap(store, projectPath(currentDirectory(), checkNotNull(options.tools)))) { "Source cache overlaps tool configuration" }
+    if (!configurationOnly) require(!pathsPhysicallyOverlap(store, projectPath(currentDirectory(), checkNotNull(options.tools)))) { "Source cache overlaps tool configuration" }
     check(kvik.execution.platform.kvik_interrupt_install() == 0) { "Cannot install source script inspection interruption handlers" }
     try {
         return withPreparedSourceProject(source, options.project, validateConfiguration = options.file == null) { prepared ->
-            inspectScript(options, readSourceScript(options, prepared), prepared)
+            inspect(readSourceScript(options, prepared), prepared)
         }
     } finally { kvik.execution.platform.kvik_interrupt_restore() }
+}
+
+/** Reads only authoring and reachable script declarations; no lock, tools or project action graph. */
+private fun inspectScriptConfiguration(options: ScriptOptions, file: ScriptFile, source: PreparedSourceProject?): JsonValue {
+    val effective = file.effective(options.project.resolverPolicy())
+    val expanded = file.expanded()
+    val value = JsonValue.Object(obj("schemaVersion" to CONTRACT_VERSION.json(), "kind" to "script-configuration-inspection".json(),
+        "script" to file.scriptName.json(), "configurationPath" to (source?.revisionPath(file.name)?.value ?: file.path).json(),
+        "configuration" to effective.digest.toJson(), "effectiveConfiguration" to effective.document,
+        "repositories" to effective.repositoriesFor(ResolutionDomain.script(file.scriptName, "java-api")).map {
+            obj("id" to it.id.json(), "url" to it.url.json()) }.json(),
+        "dependencyResolution" to "not-requested".json(), "execution" to "not-requested".json()).values +
+        expanded.inspectionFields() + (source?.let { mapOf("source" to it.reference.toJson()) } ?: emptyMap()))
+    require(value.canonical().encodeToByteArray().size <= 16 * 1024 * 1024) { "Script configuration inspection exceeds 16 MiB" }
+    return value
 }
 
 private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: PreparedSourceProject? = null): JsonValue {
@@ -203,23 +222,9 @@ private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: Prep
     val stdlib = Sha256.digest(NativeFiles.read(worker.stdlib, 64 * 1024 * 1024))
     if (source == null && observer.freshness(snapshot) != Freshness.CURRENT) throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
         "Script inputs changed during inspection; retry", ExitStatus.INCOMPLETE)
-    fun dependency(value: ScriptValue<Dependency>): JsonValue {
-        val reference = when (val dependency = value.value) {
-            is Dependency.External -> obj("coordinate" to dependency.coordinate.toString().json())
-            is Dependency.Module -> obj("module" to dependency.module.json())
-        }
-        return obj("reference" to reference, "scope" to value.value.scope.name.lowercase().json(), "origin" to value.origin.toJson())
-    }
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "kind" to "script-inspection".json(), "script" to file.scriptName.json(),
         "configurationPath" to (source?.revisionPath(file.name)?.value ?: file.path).json(), "inputSelection" to file.selection.toJson(), "inputSnapshot" to snapshot.fingerprint.toJson(),
         "configuration" to effective.digest.toJson(), "dependencyLock" to lock.digest.toJson(), "inputs" to snapshot.inputs.toJson(),
-        "declaration" to expanded.declaration.toJson(), "dependencies" to expanded.dependencies.map(::dependency).json(),
-        "compilerOptions" to expanded.compilerOptions.map { obj("value" to it.value.json(), "origin" to it.origin.toJson()) }.json(),
-        "compilerPlugins" to expanded.compilerPlugins.map { obj("reference" to (it.value.coordinate?.toString()?.json() ?: it.value.module!!.json()),
-            "kind" to (if (it.value.module == null) "published" else "workspace").json(), "origin" to it.origin.toJson(),
-            "id" to (it.value.id?.json() ?: JsonValue.Null), "compilerVersion" to (it.value.compilerVersion?.json() ?: JsonValue.Null),
-            "options" to it.value.options.map(String::json).json(), "inputs" to it.value.inputs.map { path -> path.value.json() }.json(),
-            "pathOptions" to it.value.pathOptions.map { option -> option.toJson() }.json(), "outputs" to it.value.outputs.map { path -> path.value.json() }.json()) }.json(),
         "lockedSelections" to lock.toJson().objectValue().getValue("selections").arrayValue().filter {
             ResolutionDomain.fromJson(it.objectValue().getValue("domain")).consumer == ResolutionConsumer.Script(file.scriptName)
         }.json(),
@@ -229,7 +234,7 @@ private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: Prep
         "entrypoint" to obj("requested" to ((expanded.declaration.entryScript?.value ?: expanded.declaration.mainClass)?.json() ?: JsonValue.Null),
             "status" to (if (expanded.declaration.entryScript == null) "requires-compiled-script-metadata" else "declared-kotlin-script").json()),
         "execution" to "not-requested".json()).let { result ->
-            if (source == null) result else JsonValue.Object(result.values + ("source" to source.reference.toJson()))
+            JsonValue.Object(result.values + expanded.inspectionFields() + (source?.let { mapOf("source" to it.reference.toJson()) } ?: emptyMap()))
         }.also {
             if (it.canonical().encodeToByteArray().size > 16 * 1024 * 1024) throw CliFailure("KVIK_SCRIPT_INSPECTION_BOUND",
                 DiagnosticCategory.CONFIGURATION, "Script inspection exceeds 16 MiB", ExitStatus.INCOMPLETE)

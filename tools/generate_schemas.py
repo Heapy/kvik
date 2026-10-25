@@ -1016,7 +1016,7 @@ DEFS["scriptInspection"] = versioned({
     "inputSelection": ref("snapshotSelection"), "inputSnapshot": ref("digest"), "configuration": ref("digest"),
     "dependencyLock": ref("digest"), "inputs": ref("tree"), "declaration": ref("script"),
     "dependencies": array(object_({"reference": {"oneOf": [object_({"coordinate": COORDINATE}), object_({"module": ID})]},
-        "scope": enum("compile", "runtime"), "origin": ref("scriptOrigin")}), maxItems=256),
+        "scope": enum("compile", "runtime"), "origin": ref("scriptOrigin")}), maxItems=1024),
     "compilerOptions": array(object_({"value": STRING, "origin": ref("scriptOrigin")}), maxItems=256),
     "compilerPlugins": array(object_({"reference": STRING, "kind": enum("published", "workspace"), "origin": ref("scriptOrigin"),
         "id": nullable(STRING), "compilerVersion": nullable(STRING), "options": array(STRING), "inputs": array(PATH),
@@ -1027,6 +1027,13 @@ DEFS["scriptInspection"] = versioned({
     "languageRuntime": object_({"path": STRING, "digest": ref("digest"), "classpathPosition": {"const": "after-declared-dependencies"}}),
     "entrypoint": object_({"requested": nullable(STRING), "status": enum("requires-compiled-script-metadata", "declared-kotlin-script")}),
     "execution": {"const": "not-requested"},
+}, optional=("source",))
+
+DEFS["scriptConfigurationInspection"] = versioned({
+    **{key: DEFS["scriptInspection"]["properties"][key] for key in
+       ("script", "configurationPath", "configuration", "declaration", "dependencies", "compilerOptions", "compilerPlugins", "execution", "source")},
+    "kind": {"const": "script-configuration-inspection"}, "effectiveConfiguration": {"type": "object"},
+    "repositories": array(ref("repository"), minItems=1), "dependencyResolution": {"const": "not-requested"},
 }, optional=("source",))
 
 DEFS["actionExplanation"] = versioned({
@@ -1150,6 +1157,9 @@ def main():
     inspection = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/script-inspection.json",
         "$ref": "contracts.json#/$defs/scriptInspection"}
     (directory / "script-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n")
+    script_configuration = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/script-configuration-inspection.json",
+        "$ref": "contracts.json#/$defs/scriptConfigurationInspection"}
+    (directory / "script-configuration-inspection.json").write_text(json.dumps(script_configuration, indent=2) + "\n")
     explanation = {"$schema": schema["$schema"], "$id": "https://kvik.dev/schemas/v1/explain.json",
         "$ref": "contracts.json#/$defs/actionExplanation"}
     (directory / "explain.json").write_text(json.dumps(explanation, indent=2) + "\n")

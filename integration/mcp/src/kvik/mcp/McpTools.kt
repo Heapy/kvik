@@ -235,10 +235,10 @@ val mcpBuildTools: List<McpTool> = listOf(
 private val scriptSelectors = listOf(text("name", "", "Named script in the configured project", maximum = 128),
     text("file", "--file", "Standalone .kt or .kts file with an adjacent companion and lock; a logical revision path in source mode"))
 
-/** Both operations need pinned tools; only run-script executes project code. */
+/** Configuration-only inspection needs no tools; only run-script executes project code. */
 val mcpScriptTools: List<McpTool> = listOf(
-    McpTool("kvik_inspect_script", "Inspect one named project script or standalone file: captured inputs, locked dependencies, compiler plugins and prerequisite actions. Requires the existing script lock and configured tools; does not compile or execute code.",
-        listOf("inspect-script"), arguments = scriptSelectors, script = true),
+    McpTool("kvik_inspect_script", "Inspect one named project script or standalone file. configurationOnly=true expands declarations, profiles, catalogs and source annotations without tools or a dependency lock. Otherwise returns captured inputs, locked dependencies and prerequisite actions and requires configured tools. Does not compile or execute code.",
+        listOf("inspect-script"), arguments = scriptSelectors + switch("configurationOnly", "--configuration-only"), script = true),
     McpTool("kvik_run_script", "Compile and run one named project script or standalone file using its existing lock. Compilation may be reused; execution always runs freshly and can have external effects. Arguments are passed literally, including empty strings and flags. Returns committed verification, script output paths and retained run logs. Cancellation stops owned processes but cannot undo script effects.",
         listOf("run-script"), arguments = scriptSelectors + Argument("arguments", "--",
             obj("type" to "array".json(), "maxItems" to 256.json(), "items" to obj("type" to "string".json(), "maxLength" to 4096.json())), tail = true),

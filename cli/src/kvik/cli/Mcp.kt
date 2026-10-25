@@ -22,7 +22,7 @@ internal fun mcpCommand(arguments: List<String>): Int {
         check(boundary != null) { "Cannot establish MCP stream ownership" }
         val queries = NativeMcpOperations(options).also { operations = it }
         val session = McpSession(queries, mcpTools +
-            (if (options.build != null) mcpBuildTools + mcpScriptTools + mcpGraphTools else emptyList()) +
+            (if (options.build != null) mcpBuildTools + mcpScriptTools + mcpGraphTools else mcpScriptTools.filter { !it.build }) +
             (if (options.reports) mcpReportTools + (if (options.build != null) mcpCoverageReportTools else emptyList()) else emptyList()) +
             (if (options.configurationEdits) {
                 if (options.source == null) mcpConfigurationTools else mcpSourceConfigurationTools

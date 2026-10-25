@@ -393,6 +393,19 @@ Named project scripts and standalone `.kt` or `.kts` files use explicit dependen
   --tools /absolute/scripts/tools.json
 ```
 
+Use `inspect-script NAME --project PATH --configuration-only` or
+`inspect-script --file FILE --configuration-only` before provisioning tools or
+resolving dependencies. This returns expanded dependencies, compiler options and
+plugins with profile/catalog origins, the effective configuration digest and
+script repository list. It reads reachable `.kts` imports and dependency/repository
+annotations without executing the body. It does not read a dependency lock,
+construct an action graph, provision tools or write project artifact blobs. Source
+queries accept the same Kode revision selectors and may retain provider metadata.
+The result has kind `script-configuration-inspection` and explicitly leaves
+dependency resolution and execution unrequested; it does not assert build readiness.
+MCP exposes the same query as `kvik_inspect_script` with `configurationOnly: true`,
+available without `mcp --tools`. Omit the flag for the existing locked inspection.
+
 A standalone `update.kt` or `update.kts` requires an adjacent `update.kvik.json` companion and defaults
 to `update.kvik.lock.json`. Use `check-script-lock` with the same selector to verify an
 existing lock. Compilation supplies the pinned standard library and can be reused;

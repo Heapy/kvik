@@ -13452,7 +13452,7 @@
             ],
             "additionalProperties": false
           },
-          "maxItems": 256
+          "maxItems": 1024
         },
         "compilerOptions": {
           "type": "array",
@@ -13665,6 +13665,221 @@
         "languageRuntime",
         "entrypoint",
         "execution"
+      ],
+      "additionalProperties": false
+    },
+    "scriptConfigurationInspection": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "script": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "configurationPath": {
+          "type": "string"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "declaration": {
+          "$ref": "#/$defs/script"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reference": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "coordinate": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*:(?!\\.{1,2}:)[A-Za-z0-9_.-]+:(?!\\.{1,2}$)(?!LATEST$)(?!RELEASE$)(?!.*-SNAPSHOT$)[A-Za-z0-9_.-]+$"
+                      }
+                    },
+                    "required": [
+                      "coordinate"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "module": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                      }
+                    },
+                    "required": [
+                      "module"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "scope": {
+                "enum": [
+                  "compile",
+                  "runtime"
+                ]
+              },
+              "origin": {
+                "$ref": "#/$defs/scriptOrigin"
+              }
+            },
+            "required": [
+              "reference",
+              "scope",
+              "origin"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 1024
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/scriptOrigin"
+              }
+            },
+            "required": [
+              "value",
+              "origin"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 256
+        },
+        "compilerPlugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reference": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "published",
+                  "workspace"
+                ]
+              },
+              "origin": {
+                "$ref": "#/$defs/scriptOrigin"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "compilerVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "inputs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                }
+              },
+              "pathOptions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/pluginPathOption"
+                }
+              },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                }
+              }
+            },
+            "required": [
+              "reference",
+              "kind",
+              "origin",
+              "id",
+              "compilerVersion",
+              "options",
+              "inputs",
+              "pathOptions",
+              "outputs"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 16
+        },
+        "execution": {
+          "const": "not-requested"
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        },
+        "kind": {
+          "const": "script-configuration-inspection"
+        },
+        "effectiveConfiguration": {
+          "type": "object"
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repository"
+          },
+          "minItems": 1
+        },
+        "dependencyResolution": {
+          "const": "not-requested"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "script",
+        "configurationPath",
+        "configuration",
+        "declaration",
+        "dependencies",
+        "compilerOptions",
+        "compilerPlugins",
+        "execution",
+        "kind",
+        "effectiveConfiguration",
+        "repositories",
+        "dependencyResolution"
       ],
       "additionalProperties": false
     },

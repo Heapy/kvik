@@ -70,11 +70,14 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         val standalone = tool.script && "--file" in arguments
         if (tool.project && !standalone) arguments += listOf("--project", options.project)
         if (tool.script) {
-            val configured = requireNotNull(options.build) { "Script tools require mcp --tools PATH" }
-            arguments += listOf("--tools", projectPath(options.root, configured.tools),
-                "--store", projectPath(options.root, options.store ?: ProjectOptions().store))
+            val configurationOnly = tool.name == "kvik_inspect_script" && "--configuration-only" in arguments
+            if (!configurationOnly) {
+                val configured = requireNotNull(options.build) { "Locked script inspection and execution require mcp --tools PATH; use configurationOnly for declarations" }
+                arguments += listOf("--tools", projectPath(options.root, configured.tools))
+            }
+            arguments += listOf("--store", projectPath(options.root, options.store ?: ProjectOptions().store))
             arguments += options.policy
-            if (!standalone) options.lock?.let { arguments += listOf("--lock", it) }
+            if (!standalone && !configurationOnly) options.lock?.let { arguments += listOf("--lock", it) }
             if (standalone && options.source == null) {
                 val index = arguments.indexOf("--file") + 1
                 arguments[index] = projectPath(options.root, arguments[index])

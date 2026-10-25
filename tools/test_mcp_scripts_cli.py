@@ -143,7 +143,10 @@ def main():
         for selector in (['task', '--project', 'named/kvik.json'], ['--file', 'standalone/Main.kts']):
             command(runtime, ['resolve-script', *selector, '--store', store])
         readonly = client(enabled=False)
-        assert not {'kvik_inspect_script', 'kvik_run_script'} & {t['name'] for t in readonly.request('tools/list')['tools']}
+        available = {t['name'] for t in readonly.request('tools/list')['tools']}
+        assert 'kvik_inspect_script' in available and 'kvik_run_script' not in available
+        validate(call(readonly, 'kvik_inspect_script', dict(name='task', configurationOnly=True)), 'scriptConfigurationInspection')
+        call(readonly, 'kvik_inspect_script', dict(name='task'), failed=True)
         readonly.stop()
         c = client()
         definitions = {t['name']: t for t in c.request('tools/list')['tools']}

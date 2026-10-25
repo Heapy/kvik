@@ -14,6 +14,18 @@ def validator(name):
 
 
 class ScriptsSchemaTest(unittest.TestCase):
+    def test_configuration_inspection_keeps_locked_inspection_requirements(self):
+        configuration = SCHEMA['$defs']['scriptConfigurationInspection']
+        self.assertEqual('script-configuration-inspection', configuration['properties']['kind']['const'])
+        self.assertEqual('not-requested', configuration['properties']['dependencyResolution']['const'])
+        for field in ['inputSnapshot', 'dependencyLock', 'inputs', 'actions', 'lockedSelections', 'languageRuntime']:
+            self.assertNotIn(field, configuration['properties'])
+            self.assertIn(field, SCHEMA['$defs']['scriptInspection']['required'])
+        for field in ['declaration', 'dependencies', 'compilerOptions', 'compilerPlugins']:
+            self.assertEqual(SCHEMA['$defs']['scriptInspection']['properties'][field], configuration['properties'][field])
+        entry = json.loads((ROOT / 'schemas/v1/script-configuration-inspection.json').read_text())
+        self.assertEqual('contracts.json#/$defs/scriptConfigurationInspection', entry['$ref'])
+
     def test_kts_entrypoint_requires_explicit_adapter_and_excludes_main_class(self):
         script = {'sources': ['scripts'], 'entryScript': 'scripts/run.main.kts'}
         validator('script').validate(script)
