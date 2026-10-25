@@ -66,6 +66,48 @@ class CancellationTest {
         cancelAtRepresentativeBoundaries { checkpoint -> CompilerFiles.names(root, checkpoint) }
     }
 
+    @Test fun inventoryRejectsTruncationAndGrowthAfterTheFirstRead() = fixture { root ->
+        val path = "$root/tool"
+        val bytes = ByteArray(131073) { (it % 251).toByte() }
+        put(path, bytes)
+        val expected = inventory(root)
+        val descriptors = NativeFiles.names("/dev/fd").toSet()
+        for (newSize in listOf(17L, bytes.size.toLong() + 1)) {
+            assertEquals(0, chmod(path, 384u))
+            val identity = memScoped {
+                val info = alloc<stat>()
+                assertEquals(0, lstat(path, info.ptr))
+                info.st_dev to info.st_ino
+            }
+            var changed = false
+            val failure = assertFails {
+                inventory(root) {
+                    if (!changed) {
+                        // Mutate after the first chunk, independently of checkpoint counts.
+                        val reading = NativeFiles.names("/dev/fd").any { name ->
+                            val fd = name.toIntOrNull() ?: return@any false
+                            memScoped {
+                                val info = alloc<stat>()
+                                fstat(fd, info.ptr) == 0 && (info.st_dev to info.st_ino) == identity &&
+                                    lseek(fd, 0, SEEK_CUR) >= 65536L
+                            }
+                        }
+                        if (reading) {
+                            changed = true
+                            assertEquals(0, truncate(path, newSize))
+                        }
+                    }
+                }
+            }
+            assertTrue(changed, "Mutation must occur during file reading")
+            assertTrue(failure.message.orEmpty().contains(if (newSize < bytes.size) "File shrank" else "File changed"), failure.toString())
+            assertEquals(descriptors, NativeFiles.names("/dev/fd").toSet())
+            NativeFiles.removeEntry(path)
+            put(path, bytes)
+            assertEquals(expected, inventory(root))
+        }
+    }
+
     private fun installations(root: String): Pair<Map<ToolComponent, String>, String> {
         val host = nativeHost()
         val macos = host.first == "Darwin"

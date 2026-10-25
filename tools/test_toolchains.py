@@ -77,6 +77,9 @@ def main():
             (tree / 'link-directory').symlink_to('a')
             (tree / 'link-chain').symlink_to('link-file')
             (tree / 'link-root').symlink_to('.')
+            escaped = 'controls-' + ''.join(chr(code) for code in range(1, 32)) + '-"\\é\U00010000'
+            (tree / escaped).write_bytes(b'escaped path and link target')
+            (tree / 'link-escaped').symlink_to(escaped)
             compare(tree)
             alias = fixture / 'alias'
             alias.symlink_to(tree)

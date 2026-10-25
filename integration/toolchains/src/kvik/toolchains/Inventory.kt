@@ -16,7 +16,7 @@ import kvik.toolchains.hash.kvik_sha_update
 
 class ToolchainVerificationFailure(message: String) : Exception(message)
 
-/** Limits metadata and traversal; file contents always use a reusable 64 KiB buffer. */
+/** Limits metadata and traversal; file contents and link targets share a reusable 64 KiB buffer. */
 data class InventoryLimits(val maxEntries: Int = 2_000_000, val maxDirectoryEntries: Int = 200_000, val maxDepth: Int = 128) {
     init { require(maxEntries > 0 && maxDirectoryEntries > 0 && maxDepth in 1..256) }
 }
@@ -42,7 +42,7 @@ internal class StreamHash(private val checkpoint: () -> Unit = {}) : AutoCloseab
         val bytes = ByteArray(32)
         bytes.usePinned { check(kvik_sha_finish(context, it.addressOf(0).reinterpret()) == 1) }
         finished = true
-        return Digest(bytes.joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }, size)
+        return Digest(bytes.toHexString(), size)
     }
     override fun close() { kvik_sha_free(context) }
 }
@@ -110,10 +110,12 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
     StreamHash(checkpoint).use { stream ->
         stream.text("{\"files\":[")
         var first = true
-        fun emit(value: JsonValue) {
+        // Field order is fixed by kvik-json-v1. Avoid constructing and sorting a JSON
+        // object graph for every file; keep the shared encoder for untrusted strings.
+        fun emit(value: String) {
             if (!first) stream.text(",")
             first = false
-            stream.text(value.canonical())
+            stream.text(value)
         }
         fun walk(directory: String, prefix: String, depth: Int) {
             checkpoint()
@@ -131,10 +133,10 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
                         S_IFLNK -> {
                             val target = physicalPath(path)
                             require(target == root || target.startsWith("$root/")) { "External tool symlink: $relative" }
-                            val bytes = ByteArray(65536)
-                            val length = bytes.usePinned { readlink(path, it.addressOf(0), bytes.size.convert()).toInt() }
-                            require(length in 0 until bytes.size) { "Unsupported symlink length: $relative" }
-                            emit(obj("path" to relative.json(), "symlink" to bytes.decodeToString(0, length, true).json()))
+                            val length = buffer.usePinned { readlink(path, it.addressOf(0), buffer.size.convert()).toInt() }
+                            require(length in 0 until buffer.size) { "Unsupported symlink length: $relative" }
+                            val targetJson = buffer.decodeToString(0, length, true).json().canonical()
+                            emit("{\"path\":${relative.json().canonical()},\"symlink\":$targetJson}")
                             links++
                         }
                         S_IFREG -> {
@@ -149,12 +151,16 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
                                 val captured = if (capture) ByteArray(before.st_size.toInt()) else null
                                 val digest = StreamHash(checkpoint).use { hash ->
                                     buffer.usePinned { pinned ->
-                                        while (true) {
+                                        // fstat fixes the amount to read. The post-read size/time
+                                        // checks below reject concurrent edits, so an extra EOF
+                                        // read per file is unnecessary (including empty files).
+                                        while (hash.size < before.st_size) {
                                             checkpoint()
-                                            val count = read(fd, pinned.addressOf(0), buffer.size.convert()).toInt()
+                                            val remaining = before.st_size - hash.size
+                                            val count = read(fd, pinned.addressOf(0), minOf(buffer.size.toLong(), remaining).convert()).toInt()
                                             if (count < 0 && errno == EINTR) continue
                                             if (count < 0) ioFailure("read $path")
-                                            if (count == 0) break
+                                            require(count > 0) { "File shrank during inventory: $path" }
                                             if (captured != null) {
                                                 require(hash.size + count <= captured.size) { "File grew: $path" }
                                                 buffer.copyInto(captured, hash.size.toInt(), 0, count)
@@ -168,7 +174,8 @@ internal fun captureInventory(suppliedRoot: String, limits: InventoryLimits, cap
                                 require(before.st_size == digest.sizeBytes && before.st_size == after.st_size && before.st_mode == after.st_mode &&
                                     kvik_files_mtime_seconds(before.ptr) == kvik_files_mtime_seconds(after.ptr) && kvik_files_mtime_nanoseconds(before.ptr) == kvik_files_mtime_nanoseconds(after.ptr) &&
                                     kvik_files_ctime_seconds(before.ptr) == kvik_files_ctime_seconds(after.ptr) && kvik_files_ctime_nanoseconds(before.ptr) == kvik_files_ctime_nanoseconds(after.ptr)) { "File changed during inventory: $path" }
-                                emit(obj("path" to relative.json(), "digest" to digest.toJson(), "executable" to (before.st_mode.toInt() and 73 != 0).json()))
+                                emit("{\"digest\":{\"hash\":\"${digest.hash}\",\"sizeBytes\":${digest.sizeBytes}}," +
+                                    "\"executable\":${before.st_mode.toInt() and 73 != 0},\"path\":${relative.json().canonical()}}")
                                 files++; fileBytes += digest.sizeBytes
                                 if (capture) settings = captured
                             } finally { close(fd) }

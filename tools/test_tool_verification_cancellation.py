@@ -37,7 +37,7 @@ def main():
     run([konan / 'bin/cinterop', '-def', process / 'process.def', '-compiler-option', '-I' + str(process),
          '-libraryPath', output, '-target', 'macos_arm64', '-o', output / 'process'])
     sources = [path for base in ('core/src', 'cache/src', 'execution/src', 'compiler/jvm/native/src',
-                                'compiler/native/src', 'integration/toolchains/src', 'integration/compiler-tools/src',
+                                'compiler/native/src', 'compiler/js/src', 'integration/toolchains/src', 'integration/compiler-tools/src',
                                 'tests/tool-verification-cancellation') for path in sorted((ROOT / base).rglob('*.kt'))]
     sources.append(ROOT / 'cli/src/kvik/cli/BuildCompletion.kt')
     sources.append(ROOT / 'integration/run-evidence/src/kvik/runevidence/RunEvidence.kt')
