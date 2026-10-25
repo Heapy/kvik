@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import zipfile
+from urllib.parse import unquote, urlsplit
+
+from test_bsp_build_cli import BuildClient, retained
 
 
 def main():
@@ -77,6 +80,61 @@ def main():
     assert first[producer]['status'] == 'executed'
     warm = run('warm', ['build', '--module', 'app', '--target', 'jvm'])
     assert warm[producer]['status'] == warm['app:jvm:main']['status'] == 'local_hit'
+    client = BuildClient([str(runtime), 'bsp', *common, '--tools', str(tools), '--offline', '--jobs', '1'])
+    try:
+        client.request('build/initialize', dict(displayName='Plugin generators', version='1', bspVersion='2.2.0',
+            rootUri=root.as_uri(), capabilities=dict(languageIds=['kotlin'])))
+        client.notify('build/initialized')
+        targets = client.request('workspace/buildTargets')['targets']
+        target = next(t['id'] for t in targets if t['id']['uri'].endswith('#app/jvm/main'))
+
+        def bsp_sources():
+            return [s for s in client.request('buildTarget/sources', dict(targets=[target]))['items'][0]['sources'] if s['generated']]
+
+        def bsp_compile(status=1):
+            response = client.request('buildTarget/compile', dict(targets=[target]), timeout=180)
+            return retained(response, [target], status=status, test_count=0)[0][1]
+
+        def bsp_files():
+            source, = bsp_sources()
+            assert source['data']['producer'] == producer
+            prefix = 'generated/plugins/' + hashlib.sha256(producer.encode()).hexdigest()
+            assert source['data']['logicalPath'] == prefix + '/kotlin/Generated.kt'
+            assert client.request('buildTarget/inverseSources', dict(textDocument=dict(uri=source['uri']))) == dict(targets=[target])
+            source_path = Path(unquote(urlsplit(source['uri']).path))
+            assert source_path.is_relative_to(root/'.kvik/bsp') and source_path.is_file()
+            assert source['data']['digest']['hash'] == hashlib.sha256(source_path.read_bytes()).hexdigest()
+            resources = client.request('buildTarget/resources', dict(targets=[target]))['items'][0]['resources']
+            resource, = [Path(unquote(urlsplit(uri).path)) for uri in resources]
+            expected = ':'.join(hashlib.sha256(p.read_bytes()).hexdigest() for p in [data, template])
+            assert resource.read_text() == expected and expected in source_path.read_text()
+            return source['uri']
+
+        assert bsp_sources() == []
+        first_bsp = bsp_compile()
+        assert next(a for a in first_bsp['actions'] if a['actionId'] == producer)['status'] == 'local_hit'
+        first_uri = bsp_files()
+        data.write_text(root.name + ':bsp-change')
+        changed_bsp = bsp_compile()
+        assert next(a for a in changed_bsp['actions'] if a['actionId'] == producer)['status'] == 'executed'
+        assert bsp_files() != first_uri
+        assert client.request('buildTarget/inverseSources', dict(textDocument=dict(uri=first_uri))) == dict(targets=[])
+        data.unlink()
+        response = client.request('buildTarget/compile', dict(targets=[target]), timeout=180)
+        assert response['statusCode'] == 2, response
+        assert bsp_sources() == []
+        assert client.request('buildTarget/resources', dict(targets=[target]))['items'][0]['resources'] == []
+        data.write_text(root.name)
+        bsp_compile()
+        bsp_files()
+        client.request('workspace/reload')
+        assert bsp_sources() == []
+        client.request('build/shutdown')
+        client.notify('build/exit')
+        assert client.process.wait(timeout=10) == 0
+        print('PASS BSP plugin sources/resources, cache hits, input edits, failed generation clearing and reload', flush=True)
+    finally:
+        client.close()
     token = ':'.join(hashlib.sha256(path.read_bytes()).hexdigest() for path in [data, template])
     scripted = run('script', ['run-script', 'task'], [token])
     assert scripted[producer]['status'] == scripted['app:jvm:main']['status'] == 'local_hit'

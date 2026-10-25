@@ -195,7 +195,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
             val fresh = record.freshnessAtCompletion == Freshness.CURRENT
             if (fresh && !state.cancelled && !result.cancelled) {
                 val generated = materializeBspGeneratedOutputs(state.model, record, events, directory, child.directory,
-                    projectPath(state.model.root, options.project.store))
+                    projectPath(state.model.root, options.project.store), options.project.resolverPolicy())
                 val changedSources = generated.sources.mapNotNull { (target, sources) ->
                     if (state.model.replaceGeneratedSources(target, sources)) target.uri else null
                 }

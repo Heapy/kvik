@@ -191,9 +191,9 @@ run; later builds do not overwrite them. Failed or stale prerequisites produce a
 error instead of a partial classpath. Preparation records use `classpath-main` or
 `classpath-test` checks and do not claim that the requested sources compiled.
 
-After compiling Native Kotest tests or SQLDelight JVM modules, `buildTarget/sources`
-also returns the generated Kotlin files. `buildTarget/inverseSources` maps the KSP
-launcher to its test target and SQLDelight files to their main target. The
+After a build runs a Native Kotest/KSP, SQLDelight, script or source-plugin generator,
+`buildTarget/sources` also returns its generated Kotlin files.
+`buildTarget/inverseSources` maps these files to the owning main or test targets. The
 `kvik-generated-source` metadata identifies each file's producer,
 action key, logical path and content digest. Files are restored from verified cache
 content into a retained directory for that build, including when generation succeeds
@@ -205,8 +205,16 @@ generator owners, including prerequisite modules and a test target's main module
 failed or cancelled generation does not restore them. Deleting the last SQL input
 removes that module's generated mapping. Reload starts with declared sources only.
 Source queries do not run generators: compile the owning target or a target that
-needs it to populate them. This covers the pinned Native Kotest/KSP and SQLDelight
-adapters; additional generators need explicit source-output contracts.
+needs it to populate them. Source plugins declare ownership through
+`ProjectGenerationContributor`; BSP reconstructs those declarations and action
+recipes from the completed build's captured inputs and verifies output digests.
+Generated resources appear in `buildTarget/resources` with their declared source-set
+ownership. Kotlin source paths match the compiler inputs, allowing compiler diagnostics
+to link to the retained files. Each plugin producer's imported outputs are limited
+to 64 MiB, with at most 8 MiB per file. A new BSP build conservatively clears generated
+mappings on all targets served by source-plugin generators because their declarations
+may depend on any captured input; successful producers repopulate them. Reload clears
+all mappings.
 SQLDelight errors are published at their `.sq` source locations on the owning JVM
 main target, including when generation is a prerequisite of another target.
 Generator and compiler diagnostics are tracked separately: a failed generator

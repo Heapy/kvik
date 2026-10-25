@@ -54,6 +54,24 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     private val filesByUri = inspection.files.associateBy { fileUri(it.path) }
     private val generated = mutableMapOf<String, List<BspGeneratedSources>>()
     private val generatedResources = mutableMapOf<String, List<BspGeneratedResources>>()
+    private var pluginRoots = emptyList<BspPluginGeneratedRoot>()
+
+    /** Declarations are supplied by the composed plugins using the retained build snapshot. */
+    fun registerPluginGeneratedRoots(roots: List<BspPluginGeneratedRoot>) {
+        require(roots.size <= 1024 && roots.distinct().size == roots.size)
+        require(roots.all { root -> inspection.project.project.modules.any { module ->
+            module.id == root.module && module.sourceSets.any { it.name == root.sourceSet }
+        } }) { "Unknown plugin generated source set" }
+        pluginRoots = roots.map { it.copy(resources = it.resources?.toList()) }
+    }
+
+    fun pluginGeneratedRoots(producer: String): List<BspPluginGeneratedRoot> = pluginRoots.filter { it.producer == producer }
+
+    fun pluginGeneratedTargets(root: BspPluginGeneratedRoot): List<BspTarget> = compilations.filter { compilation ->
+        compilation.module.id == root.module && compilation.sourceSets.any { it.name == root.sourceSet } &&
+            (root.resources != null || compilation.scope == "main" || sourceSetClosure(compilation.module, listOf(compilation.target.main))
+                .none { it.name == root.sourceSet })
+    }.map { BspTarget(it.uri, it.module.id, it.target.name, it.scope) }
 
     private fun selected(targetUris: List<String>): List<Compilation> = targetUris.distinct().map { uri ->
         requireNotNull(byUri[uri]) { "Unknown BSP target: $uri" }
@@ -82,10 +100,12 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     }
 
     fun generatedResourceTargets(actionId: String): List<BspTarget> =
-        scriptGenerator(actionId)?.let { scriptGeneratorTargets(it, resources = true) }.orEmpty()
+        scriptGenerator(actionId)?.let { scriptGeneratorTargets(it, resources = true) }
+            ?: pluginGeneratedRoots(actionId).filter { it.resources != null }.flatMap(::pluginGeneratedTargets).distinct()
 
     /** A host generator may serve several target compilations without exposing a host BSP target. */
     fun generatedSourceTargets(actionId: String): List<BspTarget> {
+        if (pluginGeneratedRoots(actionId).isNotEmpty()) return pluginGeneratedRoots(actionId).filter { it.resources == null }.flatMap(::pluginGeneratedTargets).distinct()
         scriptGenerator(actionId)?.let { return scriptGeneratorTargets(it, resources = false) }
         val parts = actionId.split(':')
         if (parts.size != 3) return emptyList()
@@ -114,6 +134,9 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         val project = inspection.project.project
         val visited = mutableSetOf<Pair<String, Boolean>>()
         val owners = linkedSetOf<BspTarget>()
+        // Plugin declaration callbacks can depend on any captured input. Until the new
+        // snapshot is available, invalidate all previously imported plugin outputs.
+        pluginRoots.flatMap(::pluginGeneratedTargets).forEach(owners::add)
         fun visit(module: String, platform: String, scope: String, includeRuntime: Boolean) {
             val compilation = byUri.getValue(targetUri(module, platform, scope))
             if (!visited.add(compilation.uri to includeRuntime)) return
@@ -159,6 +182,12 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         for (source in sources) {
             require(source.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated sources must belong to a retained BSP run" }
             require(target in generatedSourceTargets(source.producer)) { "Unsupported generated-source producer for target" }
+            if (pluginGeneratedRoots(source.producer).isNotEmpty()) {
+                val roots = pluginGeneratedRoots(source.producer).filter { it.resources == null && target in pluginGeneratedTargets(it) }
+                require(source.files.files.all { file -> roots.any { file.path.value.startsWith(it.prefix) } }) {
+                    "Generated plugin sources must use consuming compiler paths"
+                }
+            }
             scriptGenerator(source.producer)?.let { script ->
                 require(source.files.files.all { it.path.value.startsWith("generated/scripts/${script.name}/") }) {
                     "Generated script sources must use consuming compiler paths"
@@ -179,8 +208,10 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         for (resource in resources) {
             require(resource.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated resources must belong to a retained BSP run" }
             require(target in generatedResourceTargets(resource.producer)) { "Unsupported generated-resource producer for target" }
-            val declaration = checkNotNull(scriptGenerator(resource.producer)?.declaration?.generator)
-            require(resource.files.files.map { it.path }.toSet() == declaration.resources.map { LogicalPath("generated/${it.value}") }.toSet()) {
+            val expected = scriptGenerator(resource.producer)?.declaration?.generator?.resources?.map { LogicalPath("generated/${it.value}") }
+                ?: pluginGeneratedRoots(resource.producer).filter { it.resources != null && target in pluginGeneratedTargets(it) }
+                    .flatMap { root -> root.resources.orEmpty().map { LogicalPath(root.prefix + it.value) } }
+            require(resource.files.files.map { it.path }.toSet() == expected.toSet()) {
                 "Generated resources differ from declared outputs"
             }
         }

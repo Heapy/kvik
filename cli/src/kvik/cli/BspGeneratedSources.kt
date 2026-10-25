@@ -12,6 +12,7 @@ import kvik.compiler.sqldelight.SqlDelightGeneration
 import kvik.compiler.sqldelight.sqlDelightAction
 import kvik.compiler.jvm.*
 import kvik.core.*
+import kvik.locking.ResolverPolicy
 import kvik.runevidence.explainRetainedAction
 
 internal data class BspGeneratedOutputs(
@@ -27,11 +28,16 @@ internal fun materializeBspGeneratedOutputs(
     runDirectory: String,
     childDirectory: String,
     store: String,
+    policy: ResolverPolicy,
 ): BspGeneratedOutputs {
     require(record.freshnessAtCompletion == Freshness.CURRENT)
     val generated = linkedMapOf<BspTarget, MutableList<BspGeneratedSources>>()
     val resources = linkedMapOf<BspTarget, MutableList<BspGeneratedResources>>()
+    val plugins = materializeBspPluginOutputs(model, record, events, runDirectory, childDirectory, store, policy)
+    plugins.sources.forEach { (target, values) -> generated.getOrPut(target) { mutableListOf() }.addAll(values) }
+    plugins.resources.forEach { (target, values) -> resources.getOrPut(target) { mutableListOf() }.addAll(values) }
     for (result in record.actions) {
+        if (model.pluginGeneratedRoots(result.actionId).isNotEmpty()) continue
         val sourceTargets = model.generatedSourceTargets(result.actionId)
         val resourceTargets = model.generatedResourceTargets(result.actionId)
         val targets = sourceTargets + resourceTargets
