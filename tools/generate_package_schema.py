@@ -41,6 +41,9 @@ defs['domain']['allOf']=[{'if':{'properties':{'purpose':{'const':'sqldelight-com
 defs['moduleDomain']=defs['domain']
 defs['scriptDomain']=obj(script=script_id,target={'const':'jvm'},compilation={'const':'script'},usage=enum('java-api','java-runtime'),purpose=enum('dependencies','compiler-plugin'))
 defs['scriptDomain']['allOf']=[{'if':{'properties':{'purpose':{'const':'compiler-plugin'}}},'then':{'properties':{'usage':{'const':'java-runtime'}}}}]
+for name in ('moduleDomain', 'scriptDomain'):
+    defs[name]['properties']['pluginId'] = {'type':'string','pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END}
+    defs[name]['allOf'].append({'if':{'required':['pluginId']},'then':{'properties':{'purpose':{'const':'compiler-plugin'},'usage':{'const':'java-runtime'}}}})
 defs['domain']={'oneOf':[ref('moduleDomain'),ref('scriptDomain')]}
 defs['moduleDeclaration']=defs['declaration']
 defs['scriptOrigin']=obj(declaration=text,profileSelection=nullable(text),catalog=nullable(text))
@@ -68,5 +71,11 @@ defs['packageDependencies']=result('package-dependencies','packageQuery',graph=n
 defs['projectDependencies']=result('project-dependencies','projectQuery',configuration=nullable(ref('digest')),dependencyLock=nullable(ref('digest')),declarations=arr(ref('declaration'),16384),declarationsScope={'const':'all-project'},domains=arr(ref('scopedGraph'),256))
 defs['projectDependencies']['properties']['availableVersions']=obj(packageLimit={'const':32},totalPackages=nonnegative,
     packages=arr(obj(lockedVersions=arr(text,262144),domains=arr(ref('domain'),256),available=ref('versions')),32))
+# Keep source-backed query contracts when regenerating the package schema.
+contracts=json.loads((ROOT/'schemas/v1/contracts.json').read_text())['$defs']
+for name in ('sourceReference', 'sourceProvenance'):
+    defs[name]=contracts[name]
+for name in ('versionQuery', 'versions', 'packageDependencies', 'projectDependencies'):
+    defs[name]['properties']['source']=ref('sourceReference')
 schema={'$schema':'https://json-schema.org/draft/2020-12/schema','$id':'https://kvik.dev/schemas/v1/packages.json','$defs':defs,'oneOf':[ref('versions'),ref('packageDependencies'),ref('projectDependencies')]}
 (ROOT/'schemas/v1/packages.json').write_text(json.dumps(schema,indent=2)+'\n')

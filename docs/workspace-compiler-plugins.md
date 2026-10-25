@@ -109,3 +109,21 @@ at most one command-line processor and the declared plugin ID, and must be
 compatible with Kotlin 2.4.20 and the selected backend. JVM-only plugins do not
 gain Native/JS/Wasm compatibility by being published. Explicit Native plugin
 declarations select `main` and `test` independently, as workspace plugins do.
+
+Each explicitly described plugin has its own resolution domain, identified by
+`pluginId` in the lock and dependency queries. Two plugins may use different
+versions of the same helper library. Workspace plugin compilation still resolves
+the producer module's own dependencies normally; its consumer-side loading
+classpath uses the plugin's domain.
+
+To pin a helper version for one plugin, append its ID to `--scope-pin`:
+
+```sh
+--scope-pin 'app:jvm:main:java-runtime:compiler-plugin:example.plugin=example:helper:2'
+--scope-pin 'script:maintenance:jvm:script:java-runtime:compiler-plugin:example.plugin=example:helper:2'
+```
+
+Use the same pin when resolving and building. Global `--pin` values still apply
+across domains. Existing locks for explicitly described plugins need an explicit
+resolve after this domain change; update their plugin-specific pins to include
+the ID. The serialization shorthand keeps its existing domain without `pluginId`.

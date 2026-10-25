@@ -334,6 +334,10 @@ DEFS["scriptResolutionDomain"] = object_({"script": SCRIPT_ID, "target": {"const
     "usage": enum("java-api", "java-runtime"), "purpose": enum("dependencies", "compiler-plugin")})
 DEFS["scriptResolutionDomain"]["allOf"] = [{"if": {"properties": {"purpose": {"const": "compiler-plugin"}}},
     "then": {"properties": {"usage": {"const": "java-runtime"}}}}]
+for name in ("moduleResolutionDomain", "scriptResolutionDomain"):
+    DEFS[name]["properties"]["pluginId"] = {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}
+    DEFS[name]["allOf"].append({"if": {"required": ["pluginId"]},
+        "then": {"properties": {"purpose": {"const": "compiler-plugin"}}}})
 DEFS["resolutionDomain"] = {"oneOf": [ref("moduleResolutionDomain"), ref("scriptResolutionDomain")]}
 DEFS["snapshotSelection"] = {"oneOf": [object_({"kind": {"const": "project"}}),
     object_({"kind": {"const": "abi-check"}, "modules": array({**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, minItems=1, maxItems=1000, uniqueItems=True),

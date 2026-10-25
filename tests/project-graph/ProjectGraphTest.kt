@@ -1362,6 +1362,47 @@ class ProjectGraphTest {
         }
     }
 
+    @Test fun eachPluginUsesOnlyItsOwnLockedHelperVersion() {
+        val first = CompilerPluginSpec(null, Coordinate.parse("g:first:1"), setOf("jvm", "macosArm64"), setOf("main", "test"),
+            emptyList(), emptyList(), "example.first", "2.4.20")
+        val second = first.copy(coordinate = Coordinate.parse("g:second:1"), id = "example.second")
+        val config = configuration(base, app.copy(compilerPlugins = listOf(first, second)))
+        val effective = effectiveConfiguration(config)
+        val original = lock(effective)
+        fun pinned(changed: Boolean) = original.copy(selections = original.selections.map { selection ->
+            val id = selection.domain.pluginId
+            if (id == null) selection else {
+                val version = if (id == first.id) "1" else "2"
+                val helper = artifact("g:helper:$version", "jvm", "java-runtime").let {
+                    if (changed && id == first.id) it.copy(digest = digest("changed helper")) else it
+                }
+                selection.copy(selection = selection.selection.copy(artifacts = selection.artifacts + helper))
+            }
+        })
+        for (target in first.targets) {
+            fun actions(changed: Boolean) = resolved(projectActionGraph(effective, pinned(changed), snapshot(), composition, tools, request(ProjectMode.TEST, target)))
+            val initial = actions(false)
+            val changed = actions(true)
+            for (name in listOf("app:$target:main", "app:$target:test-compile")) {
+                fun plugins(action: ActionSpec) = action.parameters.values.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
+                val before = plugins(initial.getValue(name))
+                val after = plugins(changed.getValue(name))
+                assertEquals(listOf(first.id, second.id), before.map { it.id })
+                assertEquals(2, before[0].classpath.size)
+                assertEquals(2, before[1].classpath.size)
+                assertNotEquals(before[0].classpath, after[0].classpath)
+                assertEquals(before[1], after[1])
+                for ((index, version) in listOf(0 to "1", 1 to "2")) {
+                    val helper = artifact("g:helper:$version", "jvm", "java-runtime").digest
+                    assertTrue(initial.getValue(name).inputs.files.any { it.path in before[index].classpath && it.digest == helper })
+                    assertFalse(initial.getValue(name).inputs.files.any { it.path in before[1 - index].classpath && it.digest == helper })
+                }
+                assertNotEquals(initial.getValue(name).key(Sha256), changed.getValue(name).key(Sha256))
+            }
+            assertEquals(initial.getValue("base:$target:main").key(Sha256), changed.getValue("base:$target:main").key(Sha256))
+        }
+    }
+
     @Test fun metadataSelectsEachPluginIndependentlyByTargetCoverage() {
         val targets = setOf("jvm", "macosArm64")
         val workspace = CompilerPluginSpec("producer", null, targets, setOf("main"), emptyList(), emptyList(), "example.plugin", "2.4.20",

@@ -54,7 +54,7 @@ private class ScriptGraphBuilder(
             "Workspace and published plugins cannot share the serialization plugin ID"
         }
         for (usage in listOf("java-api", "java-runtime")) require(ResolutionDomain.script(script.name, usage) in authorized) { "Unauthorized script dependency scope: $usage" }
-        if (plugins.isNotEmpty()) require(ResolutionDomain.script(script.name, "java-runtime", "compiler-plugin") in authorized) { "Unauthorized script plugin scope" }
+        for (plugin in plugins) require(ResolutionDomain.script(script.name, "java-runtime", "compiler-plugin", plugin.id) in authorized) { "Unauthorized script plugin scope" }
         val prerequisites = (compileClosure.modules + runtimeClosure.modules + pluginModules).toSet()
         moduleGraph = if (prerequisites.isEmpty()) ProjectActionGraph(emptyList(), emptySet(), emptyMap()) else {
             require(standalone == null) { "Standalone script cannot reference modules" }
@@ -68,8 +68,8 @@ private class ScriptGraphBuilder(
         require(value.url.endsWith(".jar")) { "Non-JVM artifact in script: ${value.url}" }
         return LogicalPath("$prefix/${value.digest.hash}-${value.digest.sizeBytes}.jar")
     }
-    private fun artifacts(roots: List<Coordinate>, usage: String, plugin: Boolean = false): List<LockedArtifact> {
-        val domain = ResolutionDomain.script(script.name, usage, if (plugin) "compiler-plugin" else "dependencies")
+    private fun artifacts(roots: List<Coordinate>, usage: String, plugin: Boolean = false, pluginId: String? = null): List<LockedArtifact> {
+        val domain = ResolutionDomain.script(script.name, usage, if (plugin) "compiler-plugin" else "dependencies", pluginId)
         val variant = jvmVariantRequest(usage, if (plugin) COMPILER_PLUGIN_JVM_HOST else options.jvmTarget)
         return roots.flatMap { selections[ResolutionRequest(it, variant, domain)]?.artifacts ?: error("Missing script artifact: $it:$domain") }
             .distinctBy { artifactPath(it, "deps") }
@@ -152,7 +152,7 @@ private class ScriptGraphBuilder(
         }
         val roots = plugin.coordinate?.let { listOf(it) }
             ?: dependencyClosure(project, plugin.module!!, "jvm", "main", DependencyUsage.RUNTIME).external
-        val artifacts = artifacts(roots, "java-runtime", true)
+        val artifacts = artifacts(roots, "java-runtime", true, plugin.id)
         require(artifacts.none { it.coordinate.group == "org.jetbrains.kotlin" && it.coordinate.name in setOf("kotlin-compiler", "kotlin-compiler-embeddable") &&
             (it.coordinate.name != "kotlin-compiler-embeddable" || it.coordinate.version != plugin.compilerVersion) }) { "Compiler plugin API differs from pinned compiler" }
         for (entry in entries(artifacts, "$prefix/deps")) { files += entry; classpath += entry.path }

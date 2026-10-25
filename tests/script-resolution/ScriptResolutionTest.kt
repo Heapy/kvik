@@ -63,6 +63,48 @@ private fun save(name: String, value: JsonValue) {
 }
 
 class ScriptResolutionTest {
+    @Test fun pluginClosuresResolveIndependentlyForModulesScriptsAndScopedPins() {
+        fun published(name: String, scope: String): JsonValue = obj("coordinate" to "example:$name:1".json(),
+            "id" to "example.$name".json(), "compilerVersion" to "2.4.20".json(), "targets" to listOf("jvm".json()).json(),
+            "scopes" to listOf(scope.json()).json(), "options" to emptyList<JsonValue>().json(), "inputs" to emptyList<JsonValue>().json())
+        fun plugins(scope: String) = listOf(published("first", scope), published("second", scope), plugin("producer", scope))
+        val p = project(listOf(module("consumer", listOf(dependency("example:helper:4")), plugins("main")),
+            module("producer", listOf(dependency("example:helper:3")))),
+            mapOf("run" to script(listOf(obj("coordinate" to "example:helper:4".json())), plugins = plugins("script"))))
+        val entries = component("example:first:1", listOf("example:helper:1")) +
+            component("example:second:1", listOf("example:helper:2")) +
+            (1..5).flatMap { component("example:helper:$it").entries }.associate { it.toPair() }
+        val configuration = effectiveConfiguration(p)
+        val content = MemoryContent(); val service = DependencyLocks(content, noPom)
+        val network = Transport(entries)
+        val lock = service.resolve(configuration, network)
+        val expectedVersions = mapOf("example.first" to "1", "example.second" to "2", "example.plugin" to "3")
+        val host = lock.selections.filter { it.domain.isHostTool }
+        assertEquals(6, host.size)
+        for (selection in lock.selections) {
+            val expected = expectedVersions[selection.domain.pluginId]
+                ?: if (selection.domain.consumer == ResolutionConsumer.Module("producer")) "3" else "4"
+            assertEquals(listOf(expected), selection.artifacts.filter { it.coordinate.name == "helper" }.map { it.coordinate.version })
+        }
+        val calls = network.calls.toList(); val puts = content.puts
+        assertEquals(lock, service.loadLocked(lock.bytes(), configuration))
+        assertEquals(calls, network.calls); assertEquals(puts, content.puts)
+        val forged = lock.copy(selections = lock.selections.map { if (it.domain.isHostTool) it.copy(domain = it.domain.copy(pluginId = null)) else it })
+        assertFails { service.loadLocked(forged.bytes(), configuration) }
+        val selected = ResolutionDomain("consumer", "jvm", "main", "java-runtime", "compiler-plugin", "example.first")
+        val policy = ResolverPolicy(scopedPins = listOf(ScopedPin(selected, Coordinate.parse("example:helper:5"))))
+        val changed = effectiveConfiguration(p, policy)
+        val pinned = service.resolve(changed, Transport(entries))
+        assertEquals(listOf("5"), pinned.selections.single { it.domain == selected }.artifacts.filter { it.coordinate.name == "helper" }.map { it.coordinate.version })
+        assertEquals(lock.selections.filter { it.domain != selected }, pinned.selections.filter { it.domain != selected })
+        assertFails { effectiveConfiguration(p, ResolverPolicy(scopedPins = listOf(policy.scopedPins.single().copy(domain = selected.copy(pluginId = "missing"))))) }
+        val query = queryProjectDependencies("kvik.json", "lock.json", "cache", p, configuration, { lock.bytes() }, content, noPom, 1000)
+        assertEquals("complete", query.values.getValue("status").stringValue())
+        val reported = query.values.getValue("domains").arrayValue().map { ResolutionDomain.fromJson(it.objectValue().getValue("domain")) }
+        assertEquals(lock.selections.map { it.domain }.toSet(), reported.toSet())
+        save("plugin-lock.json", lock.toJson()); save("plugin-query.json", query)
+    }
+
     @Test fun legacyModuleDomainBytesAndEmptyScriptScopesRemainUnchanged() {
         val domain = ResolutionDomain("same", "jvm", "main", "java-api")
         assertEquals("""{"compilation":"main","module":"same","purpose":"dependencies","target":"jvm","usage":"java-api"}""", domain.toJson().canonical())
@@ -155,7 +197,7 @@ class ScriptResolutionTest {
         val expanded = expandScript(p.project, "run")
         assertEquals("/dependencyProfiles/base/compilerPlugins/0", expanded.compilerPlugins.single().origin.declaration)
         val effective = effectiveConfiguration(p, scopes = emptyList())
-        val host = ResolutionDomain.script("run", "java-runtime", "compiler-plugin")
+        val host = ResolutionDomain.script("run", "java-runtime", "compiler-plugin", "example.plugin")
         assertEquals(listOf(Coordinate.parse("example:host:1")), effective.requests.filter { it.domain == host }.map { it.coordinate })
         assertTrue(effective.requests.none { it.domain.consumer is ResolutionConsumer.Script && !it.domain.isHostTool })
         val plan = projectInputPlan(p, SnapshotSelection.Script("run"))
@@ -190,11 +232,20 @@ class ScriptResolutionTest {
             JsonValue.Object(domain.toJson().values + ("target" to "macosArm64".json())), JsonValue.Object(domain.toJson().values + ("script" to "same\n".json())))) {
             assertFails { ResolutionDomain.fromJson(bad) }
         }
-        val pins = listOf(ScopedPin(domain, Coordinate.parse("example:lib:1")), ScopedPin(ResolutionDomain("same", "jvm", "main", "java-api"), Coordinate.parse("example:lib:2")))
+        val pins = listOf(ScopedPin(domain, Coordinate.parse("example:lib:1")), ScopedPin(ResolutionDomain("same", "jvm", "main", "java-api"), Coordinate.parse("example:lib:2")),
+            ScopedPin(ResolutionDomain.script("same", "java-runtime", "compiler-plugin", "example.first"), Coordinate.parse("example:lib:3")),
+            ScopedPin(ResolutionDomain("script", "jvm", "main", "java-runtime", "compiler-plugin", "example.second"), Coordinate.parse("example:lib:4")))
+        pins.forEach { assertEquals(it.domain, ResolutionDomain.fromJson(it.domain.toJson())) }
         val options = projectOptions(pins.flatMap { listOf("--scope-pin", it.argument()) }, lockOptions = true)
         assertEquals(pins, options.scopedPins)
         assertEquals("script:same:jvm:script:java-api:dependencies=example:lib:1", pins.first().argument())
         assertFails { projectOptions(listOf("--scope-pin", "script:same:jvm:main:java-api:dependencies=example:lib:1"), true) }
+        for (bad in listOf("same:jvm:main:java-runtime:dependencies:example.plugin", "same:jvm:main:java-runtime:compiler-plugin:",
+            "same:jvm:main:java-runtime:compiler-plugin:bad/id", "script:same:jvm:script:java-api:compiler-plugin:example.plugin")) {
+            assertFails { projectOptions(listOf("--scope-pin", "$bad=example:lib:1"), true) }
+        }
+        assertFails { domain.copy(pluginId = "example.plugin") }
+        assertFails { ResolutionDomain.fromJson(JsonValue.Object(pins.last().domain.toJson().values + ("pluginId" to JsonValue.Null))) }
         assertFails { ResolverPolicy(scopedPins = listOf(pins.first(), pins.first())) }
         assertFails { effectiveConfiguration(project(emptyList(), mapOf("other" to script())), options.resolverPolicy()) }
     }

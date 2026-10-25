@@ -10,13 +10,17 @@ sealed interface ResolutionConsumer {
 }
 
 /** Consumer conflict-resolution boundary, deliberately separate from producer variant attributes. */
-data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String, val compilation: String, val usage: String, val purpose: String = "dependencies") {
-    constructor(module: String, target: String, compilation: String, usage: String, purpose: String = "dependencies") :
-        this(ResolutionConsumer.Module(module), target, compilation, usage, purpose)
+data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String, val compilation: String, val usage: String, val purpose: String = "dependencies",
+                            val pluginId: String? = null) {
+    constructor(module: String, target: String, compilation: String, usage: String, purpose: String = "dependencies", pluginId: String? = null) :
+        this(ResolutionConsumer.Module(module), target, compilation, usage, purpose, pluginId)
     /** Legacy module callers must not accidentally interpret a script as a workspace module. */
     val module: String get() = (consumer as? ResolutionConsumer.Module)?.name ?: error("Script domain is not a module")
     init {
         require(consumer.name.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid resolution consumer name" }
+        require(pluginId == null || purpose == "compiler-plugin" && pluginId.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) {
+            "Plugin resolution identity requires compiler-plugin purpose and a valid plugin ID"
+        }
         if (consumer is ResolutionConsumer.Script) {
             require(consumer.name.length <= 128 && target == "jvm" && compilation == "script") { "Scripts require a named JVM script domain" }
             require(purpose in setOf("dependencies", "compiler-plugin")) { "Unsupported script resolution purpose" }
@@ -30,15 +34,18 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
     }
     val isHostTool: Boolean get() = purpose != "dependencies"
     fun toJson(): JsonValue.Object = obj((if (consumer is ResolutionConsumer.Module) "module" else "script") to consumer.name.json(),
-        "target" to target.json(), "compilation" to compilation.json(), "usage" to usage.json(), "purpose" to purpose.json())
+        "target" to target.json(), "compilation" to compilation.json(), "usage" to usage.json(), "purpose" to purpose.json()).let {
+            if (pluginId == null) it else JsonValue.Object(it.values + ("pluginId" to pluginId.json()))
+        }
     companion object {
-        fun script(name: String, usage: String, purpose: String = "dependencies") = ResolutionDomain(ResolutionConsumer.Script(name), "jvm", "script", usage, purpose)
+        fun script(name: String, usage: String, purpose: String = "dependencies", pluginId: String? = null) =
+            ResolutionDomain(ResolutionConsumer.Script(name), "jvm", "script", usage, purpose, pluginId)
         fun fromJson(value: JsonValue): ResolutionDomain {
-            val fields = value.fields(setOf("target", "compilation", "usage", "purpose"), setOf("module", "script"))
+            val fields = value.fields(setOf("target", "compilation", "usage", "purpose"), setOf("module", "script", "pluginId"))
             require(("module" in fields) != ("script" in fields)) { "Resolution domain requires exactly one module or script" }
             val consumer = fields["module"]?.let { ResolutionConsumer.Module(it.stringValue()) }
                 ?: ResolutionConsumer.Script(fields.getValue("script").stringValue())
-            return ResolutionDomain(consumer, fields.getValue("target").stringValue(), fields.getValue("compilation").stringValue(), fields.getValue("usage").stringValue(), fields.getValue("purpose").stringValue())
+            return ResolutionDomain(consumer, fields.getValue("target").stringValue(), fields.getValue("compilation").stringValue(), fields.getValue("usage").stringValue(), fields.getValue("purpose").stringValue(), fields["pluginId"]?.stringValue())
         }
     }
 }
@@ -228,9 +235,9 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         }
         val selectedPlugins = module.compilerPlugins.filter { it.appliesTo(target.name, domain.compilation) }
         if (selectedPlugins.isNotEmpty()) {
-            val pluginDomain = domain.copy(usage = "java-runtime", purpose = "compiler-plugin")
-            domains += pluginDomain
             selectedPlugins.forEach { plugin ->
+                val pluginDomain = domain.copy(usage = "java-runtime", purpose = "compiler-plugin", pluginId = plugin.id)
+                domains += pluginDomain
                 plugin.coordinate?.let { requests += ResolutionRequest(it, jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST), pluginDomain) }
                 plugin.module?.let { producer ->
                     // Compilation uses its own target/API domain; loading uses the compiler host.
@@ -257,11 +264,11 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
         closure.external.forEach { requests += ResolutionRequest(it, variant, domain) }
         closure.modules.forEach { visit(ResolutionDomain(it, "jvm", "main", "java-api")) }
         if (script.compilerPlugins.isNotEmpty()) {
-            val pluginDomain = ResolutionDomain.script(script.name, "java-runtime", "compiler-plugin")
-            domains += pluginDomain
             val host = jvmVariantRequest("java-runtime", COMPILER_PLUGIN_JVM_HOST)
             for (value in script.compilerPlugins) {
                 val plugin = value.value
+                val pluginDomain = ResolutionDomain.script(script.name, "java-runtime", "compiler-plugin", plugin.id)
+                domains += pluginDomain
                 plugin.coordinate?.let { requests += ResolutionRequest(it, host, pluginDomain) }
                 plugin.module?.let { producer ->
                     visit(ResolutionDomain(producer, "jvm", "main", "java-api"))

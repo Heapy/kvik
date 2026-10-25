@@ -49,9 +49,9 @@ def validate_documents(case):
     lock = jsonschema.Draft202012Validator({'$defs': contracts['$defs'], '$ref': '#/$defs/dependencyLock'})
     query = jsonschema.Draft202012Validator(packages, format_checker=jsonschema.FormatChecker())
     result = {}
-    for name in ('legacy-lock.json', 'script-lock.json', 'standalone-lock.json', 'script-exclusion-lock.json'):
+    for name in ('legacy-lock.json', 'script-lock.json', 'standalone-lock.json', 'script-exclusion-lock.json', 'plugin-lock.json'):
         path = case / name; lock.validate(json.loads(path.read_bytes())); result[name] = digest(path)
-    for name in ('script-query.json', 'module-query.json', 'script-exclusion-query.json'):
+    for name in ('script-query.json', 'module-query.json', 'script-exclusion-query.json', 'plugin-query.json'):
         path = case / name; query.validate(json.loads(path.read_bytes())); result[name] = digest(path)
     legacy = json.loads((case / 'legacy-effective.json').read_bytes())
     assert set(legacy) == {'schemaVersion', 'project', 'resolver', 'scopes', 'domains'}

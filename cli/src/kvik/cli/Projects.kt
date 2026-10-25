@@ -90,19 +90,20 @@ internal fun ScopedPin.argument(): String = with(domain) {
         is ResolutionConsumer.Module -> owner.name
         is ResolutionConsumer.Script -> "script:${owner.name}"
     }
-    "$prefix:$target:$compilation:$usage:$purpose=$coordinate"
+    "$prefix:$target:$compilation:$usage:$purpose${pluginId?.let { ":$it" }.orEmpty()}=$coordinate"
 }
 
 private fun scopedPin(value: String): ScopedPin {
     require(value.count { it == '=' } == 1) {
-        "Expected scoped pin MODULE:TARGET:COMPILATION:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION"
+        "Expected scoped pin MODULE:TARGET:COMPILATION:USAGE:PURPOSE[:PLUGIN_ID]=GROUP:ARTIFACT:VERSION"
     }
     val domain = value.substringBefore('=').split(':')
     require(domain.all { it.isNotEmpty() }) { "Scoped pin has an empty domain component" }
     val selected = when {
-        domain.size == 5 -> ResolutionDomain(domain[0], domain[1], domain[2], domain[3], domain[4])
-        domain.size == 6 && domain[0] == "script" -> ResolutionDomain(ResolutionConsumer.Script(domain[1]), domain[2], domain[3], domain[4], domain[5])
-        else -> error("Scoped pin requires MODULE:TARGET:COMPILATION:USAGE:PURPOSE or script:NAME:jvm:script:USAGE:PURPOSE")
+        domain.size in 6..7 && domain[0] == "script" && domain[2] == "jvm" ->
+            ResolutionDomain(ResolutionConsumer.Script(domain[1]), domain[2], domain[3], domain[4], domain[5], domain.getOrNull(6))
+        domain.size in 5..6 -> ResolutionDomain(domain[0], domain[1], domain[2], domain[3], domain[4], domain.getOrNull(5))
+        else -> error("Scoped pin requires MODULE:TARGET:COMPILATION:USAGE:PURPOSE[:PLUGIN_ID] or script:NAME:jvm:script:USAGE:PURPOSE[:PLUGIN_ID]")
     }
     return ScopedPin(selected, Coordinate.parse(value.substringAfter('=')))
 }

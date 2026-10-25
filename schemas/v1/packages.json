@@ -921,6 +921,10 @@
             "symbol-processor",
             "sqldelight-compiler"
           ]
+        },
+        "pluginId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
         }
       },
       "required": [
@@ -947,6 +951,23 @@
               },
               "compilation": {
                 "const": "main"
+              },
+              "usage": {
+                "const": "java-runtime"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "pluginId"
+            ]
+          },
+          "then": {
+            "properties": {
+              "purpose": {
+                "const": "compiler-plugin"
               },
               "usage": {
                 "const": "java-runtime"
@@ -981,6 +1002,10 @@
             "dependencies",
             "compiler-plugin"
           ]
+        },
+        "pluginId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
         }
       },
       "required": [
@@ -1002,6 +1027,23 @@
           },
           "then": {
             "properties": {
+              "usage": {
+                "const": "java-runtime"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "pluginId"
+            ]
+          },
+          "then": {
+            "properties": {
+              "purpose": {
+                "const": "compiler-plugin"
+              },
               "usage": {
                 "const": "java-runtime"
               }

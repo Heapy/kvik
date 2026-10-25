@@ -568,7 +568,7 @@ private class Builder(
                 entries += resource.resolve(results).map { it.copy(path = LogicalPath(resourceRoot.value + "/" + it.path.value.removePrefix("runtime/$producer/main/"))) }
             }
         }
-        val domain = ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")
+        val domain = ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin", plugin.id)
         val roots = plugin.coordinate?.let { listOf(it) } ?: closure(plugin.module!!, "jvm", "main", true).external
         val artifacts = roots.flatMap { locked(it, domain).artifacts }.distinctBy { artifactPath(it, true) }
         require(artifacts.none { it.coordinate.group == "org.jetbrains.kotlin" && it.coordinate.name in setOf("kotlin-compiler", "kotlin-compiler-embeddable") &&

@@ -8,6 +8,19 @@ SCHEMA = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/contracts
 
 
 class PluginSchemaTest(unittest.TestCase):
+    def test_resolution_domains_separate_plugin_identities(self):
+        packages = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/packages.json').read_text())
+        validators = [Draft202012Validator({**SCHEMA, '$ref': '#/$defs/resolutionDomain'}),
+                      Draft202012Validator({'$defs': packages['$defs'], '$ref': '#/$defs/domain'})]
+        for validator in validators:
+            for owner in [dict(module='consumer', compilation='main'), dict(script='run', compilation='script')]:
+                domain = dict(**owner, target='jvm', usage='java-runtime', purpose='compiler-plugin')
+                validator.validate(domain)
+                validator.validate({**domain, 'pluginId': 'example.plugin'})
+                for changes in [dict(pluginId=None), dict(pluginId=''), dict(pluginId='bad/id'), dict(pluginId='plugin\n'),
+                                dict(pluginId='example.plugin', purpose='dependencies'), dict(pluginId='example.plugin', usage='java-api')]:
+                    self.assertFalse(validator.is_valid({**domain, **changes}), changes)
+
     def test_compilation_declarations_have_safe_source_roots_and_dependencies(self):
         definition = SCHEMA['$defs']['graphInspection']['properties']['compilations']
         validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **definition})

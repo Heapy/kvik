@@ -68,8 +68,10 @@ class ScriptIntegrationSchemaTest(unittest.TestCase):
 
     def test_schemas_are_valid_and_module_branch_keeps_legacy_shape(self):
         Draft202012Validator.check_schema(CONTRACTS); Draft202012Validator.check_schema(PACKAGES)
-        self.assertEqual(set(CONTRACTS['$defs']['moduleResolutionDomain']['properties']),
+        self.assertEqual(set(CONTRACTS['$defs']['moduleResolutionDomain']['required']),
                          {'module', 'target', 'compilation', 'usage', 'purpose'})
+        self.assertEqual(set(CONTRACTS['$defs']['moduleResolutionDomain']['properties']),
+                         {'module', 'target', 'compilation', 'usage', 'purpose', 'pluginId'})
         self.assertEqual(PACKAGES['$defs']['moduleDeclaration']['properties']['compilations']['items']['enum'], ['main', 'test'])
 
 
