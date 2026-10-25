@@ -48,6 +48,14 @@ fun scriptPrerequisiteModules(project: ProjectSpec, script: ExpandedScript): Lis
         if (!reached.add(id)) return
         val module = modules[id] ?: error("Unknown module: $id")
         dependencyClosure(project, id, "jvm", "main", DependencyUsage.COMPILE).modules.forEach(::visit)
+        val sources = sourceSetClosure(module, listOf(module.targets.single { it.name == "jvm" }.main)).map { it.name }.toSet()
+        for (generator in scriptGenerators(project, id, sources)) {
+            scriptDependencyClosure(project, generator, DependencyUsage.RUNTIME).modules.forEach(::visit)
+            generator.compilerPlugins.mapNotNull { it.value.module }.forEach { producer ->
+                visit(producer)
+                dependencyClosure(project, producer, "jvm", "main", DependencyUsage.RUNTIME).modules.forEach(::visit)
+            }
+        }
         for (plugin in module.compilerPlugins.filter { "jvm" in it.targets && "main" in it.scopes }) plugin.module?.let { producer ->
             visit(producer)
             dependencyClosure(project, producer, "jvm", "main", DependencyUsage.RUNTIME).modules.forEach(::visit)

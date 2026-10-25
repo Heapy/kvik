@@ -2061,6 +2061,56 @@
       "additionalProperties": false,
       "description": "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
     },
+    "scriptGenerator": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "sourceSet": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              {
+                "maxLength": 1024,
+                "pattern": "^[^\\u0000-\\u001f]*(?![\\s\\S])"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "not": {
+              "pattern": "\u0000"
+            }
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "module",
+        "sourceSet"
+      ],
+      "additionalProperties": false,
+      "description": "Attach a fresh script execution to a module source set. The script receives generated and inputs directories before configured arguments, and emits Kotlin .kt sources under generated. Native validation rejects overlapping inputs and module-level generator prerequisite cycles."
+    },
     "script": {
       "type": "object",
       "properties": {
@@ -2106,6 +2156,9 @@
           "minLength": 1,
           "maxLength": 1024,
           "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\\s\\S])"
+        },
+        "generator": {
+          "$ref": "#/$defs/scriptGenerator"
         },
         "entryScript": {
           "allOf": [
@@ -2377,7 +2430,18 @@
           }
         },
         "script": {
-          "$ref": "#/$defs/script"
+          "allOf": [
+            {
+              "$ref": "#/$defs/script"
+            },
+            {
+              "not": {
+                "required": [
+                  "generator"
+                ]
+              }
+            }
+          ]
         }
       },
       "required": [
@@ -12778,7 +12842,8 @@
                   "enum": [
                     "source",
                     "resource",
-                    "compiler-plugin-input"
+                    "compiler-plugin-input",
+                    "generator-input"
                   ]
                 },
                 "minItems": 1,
@@ -12814,45 +12879,95 @@
         "generators": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "module": {
-                "type": "string",
-                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
-              },
-              "kind": {
-                "const": "sqldelight"
-              },
-              "sourceSet": {
-                "type": "string",
-                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
-              },
-              "origin": {
+            "oneOf": [
+              {
                 "type": "object",
                 "properties": {
-                  "file": {
+                  "module": {
                     "type": "string",
-                    "minLength": 1,
-                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
                   },
-                  "pointer": {
-                    "type": "string"
+                  "kind": {
+                    "const": "sqldelight"
+                  },
+                  "sourceSet": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                      },
+                      "pointer": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "file",
+                      "pointer"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
-                  "file",
-                  "pointer"
+                  "module",
+                  "kind",
+                  "sourceSet",
+                  "origin"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "module": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                  },
+                  "kind": {
+                    "const": "script"
+                  },
+                  "script": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                  },
+                  "sourceSet": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+                  },
+                  "origin": {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                      },
+                      "pointer": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "file",
+                      "pointer"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "module",
+                  "kind",
+                  "script",
+                  "sourceSet",
+                  "origin"
                 ],
                 "additionalProperties": false
               }
-            },
-            "required": [
-              "module",
-              "kind",
-              "sourceSet",
-              "origin"
-            ],
-            "additionalProperties": false
+            ]
           }
         },
         "checks": {

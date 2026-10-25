@@ -307,7 +307,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-abi-dump-v1", "kvik-abi-check-v1" -> abi
                             "kvik-dokka-html-v1", "kvik-documentation-native-stdlib-v1" -> documentation
                             "kvik-sqldelight-v1" -> sqlDelight
-                            "kvik-jvm-script-v1", "kvik-kotlin-script-v1" -> scripts
+                            "kvik-jvm-script-v1", "kvik-kotlin-script-v1", "kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1" -> scripts
                             "kvik-jvm-classpath-v1" -> classpath
                             "kvik-jvm-benchmark-harness-v1", "kvik-jvm-benchmark-v1" -> benchmarks
                             "kvik-application-bundle-v1" -> application
@@ -386,8 +386,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         }
                         for ((id, observation) in scripts.observations) if (seen.add(id)) {
                             retain(id, observation.toJson())
-                            require(scriptFile != null && id == "script:${scriptFile.scriptName}:jvm:run") { "Unexpected script observation" }
-                            scriptObservation = observation
+                            if (scriptFile != null && id == "script:${scriptFile.scriptName}:jvm:run") scriptObservation = observation
+                            else require(id.startsWith("script:") && id.endsWith(":jvm:generate")) { "Unexpected script observation" }
                             observation.diagnostics.forEach(journal::diagnostic)
                         }
                         for ((id, observation) in jvm.observations) if (seen.add(id)) {

@@ -64,14 +64,20 @@ class JvmScriptExecutor(
 
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         require(this.runId == runId && actionId !in started) { "Wrong run or repeated script action ID" }
-        require(action.implementation in setOf("kvik-jvm-script-v1", "kvik-kotlin-script-v1")) { "Unsupported script implementation" }
+        require(action.implementation in setOf("kvik-jvm-script-v1", "kvik-kotlin-script-v1",
+            "kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1")) { "Unsupported script implementation" }
+        val generator = action.implementation in setOf("kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1")
         // Reconstruct into independent collections before accepting an action or retaining its key.
-        val script = if (action.implementation == "kvik-kotlin-script-v1") KtsLaunch.fromJson(parseJson(action.parameters.canonical())) else null
+        val script = if (action.implementation in setOf("kvik-kotlin-script-v1", "kvik-kotlin-script-generator-v1"))
+            KtsLaunch.fromJson(parseJson(action.parameters.canonical())) else null
         val launch = script?.let { JvmScriptLaunch(it.name, it.bundle, it.classpath, arguments = it.arguments) }
             ?: JvmScriptLaunch.fromJson(parseJson(action.parameters.canonical()))
-        val expected = if (script == null) jvmScriptAction(launch, action.inputs, action.composition, action.toolchains,
-            action.environment, action.timeoutMillis) else ktsScriptAction(script, action.inputs, action.composition, action.toolchains,
-            action.environment, action.timeoutMillis)
+        val expected = when {
+            script != null && generator -> ktsScriptGeneratorAction(script, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
+            script != null -> ktsScriptAction(script, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
+            generator -> jvmScriptGeneratorAction(launch, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
+            else -> jvmScriptAction(launch, action.inputs, action.composition, action.toolchains, action.environment, action.timeoutMillis)
+        }
         require(action == expected) { "Script action does not match its typed launch" }
         val key = expected.key(Sha256)
         started += actionId
@@ -83,8 +89,9 @@ class JvmScriptExecutor(
         var arguments = emptyList<String>()
         fun diagnostic(code: String, category: DiagnosticCategory, message: String) =
             Diagnostic(code, category, scriptMessage(message), actionId = actionId, target = "jvm")
-        fun record(status: ActionStatus, exit: ProcessResult?, cancelRequested: Boolean, diagnostics: List<Diagnostic>): ActionResult {
-            val result = ActionResult(actionId, key, status, exitCode = exit?.exitCode, diagnostic = diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit?.usage))
+        fun record(status: ActionStatus, exit: ProcessResult?, cancelRequested: Boolean, diagnostics: List<Diagnostic>,
+                   outputs: TreeManifest = TreeManifest(emptyList())): ActionResult {
+            val result = ActionResult(actionId, key, status, outputs, exitCode = exit?.exitCode, diagnostic = diagnostics.firstOrNull()?.message, processUsage = listOfNotNull(exit?.usage))
             recorded[actionId] = JvmScriptObservation(result, phase, exit, cancelRequested, mainClass, directory,
                 arguments.toList(), stdlibJar, diagnostics.toList())
             return result
@@ -92,7 +99,7 @@ class JvmScriptExecutor(
         fun startVerified(layout: JvmToolchainLayout): RunningAction {
             val process = try {
                 NativeFiles.ensureDirectory(runDirectory, create = false)
-                NativeFiles.ensureDirectory(workingDirectory, create = false)
+                if (!generator) NativeFiles.ensureDirectory(workingDirectory, create = false)
                 require(':' !in runDirectory && runDirectory.none(Char::isISOControl)) { "Invalid script staging classpath root" }
                 require(layout.identities == expected.toolchains) { "Script provider returned different tool identities" }
                 require(access(layout.javaExecutable, X_OK) == 0) { "Verified Java executable is not executable" }
@@ -102,6 +109,11 @@ class JvmScriptExecutor(
                 requestId = reservation.runId
                 directory = reserved
                 NativeOutputTrees(content).materialize(expected.inputs, "$reserved/input")
+                if (generator) {
+                    mkdirJvm("$reserved/input/generated")
+                    NativeFiles.ensureDirectory("$reserved/input/inputs")
+                }
+                val executionDirectory = if (generator) "$reserved/input" else workingDirectory
                 mkdirJvm("$reserved/home")
                 mkdirJvm("$reserved/tmp")
                 val javaClasspath: List<String>
@@ -138,11 +150,11 @@ class JvmScriptExecutor(
                 val environment = mapOf("PATH" to "/usr/bin:/bin:/usr/sbin:/sbin", "LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC",
                     "HOME" to "$reserved/home", "TMPDIR" to "$reserved/tmp") + expected.environment
                 writeJvmFile("$reserved/request.json", obj("actionId" to actionId.json(), "key" to key.toJson(),
-                    "arguments" to arguments.map { it.json() }.json(), "workingDirectory" to workingDirectory.json(),
+                    "arguments" to arguments.map { it.json() }.json(), "workingDirectory" to executionDirectory.json(),
                     "environment" to JsonValue.Object(environment.mapValues { it.value.json() }),
                     "timeoutMillis" to expected.timeoutMillis.json()).canonical().encodeToByteArray())
                 phase = JvmScriptPhase.EXECUTION
-                host.start(ProcessRequest(arguments.toList(), workingDirectory, environment, "$reserved/script.stdout",
+                host.start(ProcessRequest(arguments.toList(), executionDirectory, environment, "$reserved/script.stdout",
                     "$reserved/script.stderr", expected.timeoutMillis))
             } catch (failure: Exception) {
                 val code = when (phase) {
@@ -202,7 +214,17 @@ class JvmScriptExecutor(
                                 failure.message ?: "Invalid script evaluator result")
                         }
                     }
-                    return record(status, exit, cancelled, diagnostics).also { result = it }
+                    var outputs = TreeManifest(emptyList())
+                    if (generator && status == ActionStatus.EXECUTED) {
+                        try {
+                            outputs = captureScriptGeneratorOutputs(checkNotNull(directory), expected.inputs, content)
+                        } catch (failure: Exception) {
+                            status = ActionStatus.FAILED
+                            diagnostics = diagnostics + diagnostic("KVIK_SCRIPT_GENERATOR_OUTPUT_INVALID", DiagnosticCategory.INFRASTRUCTURE,
+                                failure.message ?: "Invalid script generator output or changed input")
+                        }
+                    }
+                    return record(status, exit, cancelled, diagnostics, outputs).also { result = it }
                 }
             }
         }
@@ -244,6 +266,71 @@ class JvmScriptExecutor(
             }
         }
     }
+}
+
+/** Called after owned cleanup. This detects changed staged inputs, not arbitrary external effects. */
+private fun captureScriptGeneratorOutputs(directory: String, inputs: TreeManifest, content: ContentStore): TreeManifest {
+    val root = "$directory/input"
+    NativeFiles.ensureDirectory(root, create = false)
+    val declared = inputs.files.associateBy { it.path.value }
+    val expectedDirectories = mutableSetOf("inputs")
+    for (path in declared.keys) {
+        val parts = path.split('/')
+        for (length in 1 until parts.size) expectedDirectories += parts.take(length).joinToString("/")
+    }
+    val seen = mutableSetOf<String>()
+    fun verifyInputs(path: String, prefix: String) {
+        for (name in NativeFiles.names(path)) {
+            val relative = if (prefix.isEmpty()) name else "$prefix/$name"
+            if (relative == "generated") continue
+            val physical = "$path/$name"
+            val info = checkNotNull(NativeFiles.info(physical)) { "Generator input disappeared: $relative" }
+            when {
+                NativeFiles.directory(info) -> {
+                    require(relative in expectedDirectories) { "Unexpected generator input directory: $relative" }
+                    verifyInputs(physical, relative)
+                }
+                NativeFiles.regular(info) -> {
+                    val entry = requireNotNull(declared[relative]) { "Unexpected generator input file: $relative" }
+                    require(info.size == entry.digest.sizeBytes && info.size <= Int.MAX_VALUE &&
+                        (info.mode and 73 != 0) == entry.executable &&
+                        Sha256.digest(NativeFiles.read(physical, info.size.toInt())) == entry.digest) { "Generator changed declared input: $relative" }
+                    seen += relative
+                }
+                else -> error("Generator input is a symlink or special file: $relative")
+            }
+        }
+    }
+    verifyInputs(root, "")
+    require(seen == declared.keys) { "Generator removed declared inputs" }
+    NativeFiles.ensureDirectory("$root/inputs", create = false)
+    val generated = "$root/generated"
+    NativeFiles.ensureDirectory(generated, create = false)
+    var fileCount = 0
+    var directoryCount = 0
+    var size = 0L
+    fun validateOutputs(path: String, depth: Int) {
+        require(depth <= 128) { "Generated Kotlin directory nesting exceeds limit" }
+        for (name in NativeFiles.names(path)) {
+            val physical = "$path/$name"
+            val info = checkNotNull(NativeFiles.info(physical)) { "Generated Kotlin output disappeared" }
+            when {
+                NativeFiles.directory(info) -> {
+                    require(++directoryCount <= 10000) { "Too many generated Kotlin directories" }
+                    validateOutputs(physical, depth + 1)
+                }
+                NativeFiles.regular(info) -> {
+                    size += info.size
+                    require(++fileCount <= 10000 && name.endsWith(".kt") && info.mode and 73 == 0 &&
+                        info.size in 0..8L * 1024 * 1024 && size <= 64L * 1024 * 1024) { "Invalid or oversized generated Kotlin output" }
+                }
+                else -> error("Generated Kotlin output is a symlink or special file")
+            }
+        }
+    }
+    validateOutputs(generated, 0)
+    val captured = NativeOutputTrees(content).capture(generated)
+    return TreeManifest(captured.files.map { it.copy(path = LogicalPath("generated/${it.path.value}")) })
 }
 
 private fun scriptMessage(value: String): String {

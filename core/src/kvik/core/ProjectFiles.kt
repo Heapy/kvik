@@ -141,6 +141,18 @@ fun projectFileTagRules(configuration: ProjectConfiguration, configurationPath: 
         val tags = setOf("script:$name", "target:jvm", "scope:script")
         script.sources.forEach { add(it, tags + setOf("kind:source", "kind:script"), directory = true, inclusive = true) }
         script.resources.forEach { add(it, tags + "kind:resource", directory = true, inclusive = true) }
+        script.generator?.let { generator ->
+            val module = project.modules.single { it.id == generator.module }
+            val consumerTags = module.targets.flatMap { target ->
+                val production = sourceSetClosure(module, listOf(target.main)).any { it.name == generator.sourceSet }
+                val tests = target.test?.let { sourceSetClosure(module, listOf(it)).any { source -> source.name == generator.sourceSet } } == true
+                if (production || tests) setOf("target:${target.name}", "scope:${if (production) "production" else "test"}") else emptySet()
+            }.toSet()
+            val generatorTags = tags + consumerTags + setOf("module:${generator.module}", "source-set:${generator.sourceSet}",
+                "kind:generator-input", "generator:script")
+            (script.sources + script.resources + generator.inputs + expandScript(project, name).compilerPlugins.flatMap { it.value.inputs })
+                .forEach { add(it, generatorTags, directory = true, inclusive = true) }
+        }
         expandScript(project, name).compilerPlugins.flatMap { it.value.inputs }.forEach {
             add(it, tags + "kind:plugin-input", directory = true, inclusive = true)
         }

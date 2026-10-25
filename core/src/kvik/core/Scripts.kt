@@ -59,7 +59,7 @@ data class ScriptDependencyProfile(
     }
 }
 
-/** Declaration only: no runtime argv, host paths, executable configuration, or inferred main class. */
+/** Declarative compilation and optional generator attachment; no host paths or inferred main class. */
 data class ScriptSpec(
     val sources: List<LogicalPath>,
     val resources: List<LogicalPath> = emptyList(),
@@ -71,6 +71,7 @@ data class ScriptSpec(
     val timeoutMillis: Long = DEFAULT_SCRIPT_TIMEOUT_MILLIS,
     val environment: Map<String, String> = emptyMap(),
     val entryScript: LogicalPath? = null,
+    val generator: ScriptGeneratorSpec? = null,
 ) {
     init {
         require(sources.isNotEmpty()) { "Script sources must be nonempty" }
@@ -101,17 +102,18 @@ data class ScriptSpec(
         "compilerOptions" to compilerOptions.map { it.json() }.json(), "compilerPlugins" to compilerPlugins.map(::scriptPluginJson).json(),
         "timeoutMillis" to timeoutMillis.json(), "environment" to JsonValue.Object(environment.mapValues { it.value.json() }),
     ) + (mainClass?.let { mapOf("mainClass" to it.json()) } ?: emptyMap()) +
-        (entryScript?.let { mapOf("entryScript" to it.value.json()) } ?: emptyMap()))
+        (entryScript?.let { mapOf("entryScript" to it.value.json()) } ?: emptyMap()) +
+        (generator?.let { mapOf("generator" to it.toJson()) } ?: emptyMap()))
     companion object {
         fun fromJson(value: JsonValue): ScriptSpec {
-            val fields = value.fields(setOf("sources"), setOf("resources", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "mainClass", "timeoutMillis", "environment", "entryScript"))
+            val fields = value.fields(setOf("sources"), setOf("resources", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "mainClass", "timeoutMillis", "environment", "entryScript", "generator"))
             return ScriptSpec(fields.getValue("sources").arrayValue().map { LogicalPath(it.stringValue()) },
                 fields["resources"]?.arrayValue()?.map { LogicalPath(it.stringValue()) } ?: emptyList(),
                 fields["profiles"]?.arrayValue()?.map(JsonValue::stringValue) ?: emptyList(),
                 scriptDependencies(fields), scriptOptions(fields), scriptPlugins(fields), fields["mainClass"]?.stringValue(),
                 fields["timeoutMillis"]?.longValue() ?: DEFAULT_SCRIPT_TIMEOUT_MILLIS,
                 fields["environment"]?.objectValue()?.mapValues { it.value.stringValue() } ?: emptyMap(),
-                fields["entryScript"]?.stringValue()?.let(::LogicalPath))
+                fields["entryScript"]?.stringValue()?.let(::LogicalPath), fields["generator"]?.let(ScriptGeneratorSpec::fromJson))
         }
     }
 }
@@ -172,6 +174,7 @@ fun parseStandaloneScriptConfiguration(document: JsonValue): StandaloneScriptCon
     val catalog = parseScriptCatalog(fields["dependencyCatalog"])
     val profiles = parseScriptProfiles(fields["dependencyProfiles"])
     val script = ScriptSpec.fromJson(fields.getValue("script"))
+    require(script.generator == null) { "Standalone scripts cannot attach a source generator to a workspace module" }
     val result = StandaloneScriptConfiguration(name, repositories, catalog, profiles, script, document as JsonValue.Object)
     validateProjectScripts(ProjectSpec(name, repositories, emptyList(), catalog, profiles))
     result.expanded()
@@ -192,6 +195,7 @@ internal fun validateProjectScripts(project: ProjectSpec) {
             "/dependencyProfiles/$name", checkInputOverlap = false)
     }
     project.scripts.keys.forEach { expandScript(project, it) }
+    validateScriptGenerators(project)
 }
 
 private fun expandScriptValues(name: String, script: ScriptSpec, catalog: Map<String, Coordinate>, profiles: Map<String, ScriptDependencyProfile>,
@@ -240,7 +244,7 @@ private fun expandScriptValues(name: String, script: ScriptSpec, catalog: Map<St
     }
     val outputRoots = plugins.flatMap { it.value.outputs }
     validateScriptRoots(outputRoots)
-    val inputRoots = (if (checkInputOverlap) script.sources + script.resources else emptyList()) + plugins.flatMap { it.value.inputs }
+    val inputRoots = (if (checkInputOverlap) script.sources + script.resources + script.generator?.inputs.orEmpty() else emptyList()) + plugins.flatMap { it.value.inputs }
     require(outputRoots.none { output -> inputRoots.any { scriptPathsOverlap(output, it) } }) { "Script plugin outputs overlap declared inputs" }
     return ExpandedScript(name, script, dependencies.toList(), options.toList(), plugins.toList())
 }

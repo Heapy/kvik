@@ -19,18 +19,24 @@ internal fun inspectFileResult(model: ProjectInspection, configurationPath: Logi
         checkpoint()
         val moduleDocument = modules[moduleIndex].objectValue()
         for (sourceSet in module.sourceSets) {
+            val scriptInputs = scriptGenerators(model.project.project, module.id, setOf(sourceSet.name)).filter { script ->
+                (script.declaration.sources + script.declaration.resources + script.declaration.generator!!.inputs +
+                    script.compilerPlugins.flatMap { it.value.inputs }).any(::matches)
+            }
             val roles = buildList {
                 if (sourceSet.directories.any(::matches)) add("source")
                 if (sourceSet.resources.any(::matches)) add("resource")
-                if (module.sqlDelight?.let { it.sourceSet == sourceSet.name && matches(it.sourceDirectory) } == true) add("generator-input")
+                if (scriptInputs.isNotEmpty() || module.sqlDelight?.let { it.sourceSet == sourceSet.name && matches(it.sourceDirectory) } == true) add("generator-input")
             }
             if (roles.isEmpty()) continue
             val targets = module.targets.filter { sourceSet in sourceSetClosure(module, listOfNotNull(it.main, it.test)) }
             owners += obj("module" to module.id.json(), "sourceSet" to sourceSet.name.json(), "roles" to roles.map { it.json() }.json(),
                 "targets" to targets.map { it.name.json() }.json(),
                 "origin" to model.origins.getValue("sourceSet:${module.id}:${sourceSet.name}").toJson())
-            if ("generator-input" in roles) generators += obj("module" to module.id.json(), "kind" to "sqldelight".json(),
+            if (module.sqlDelight?.let { it.sourceSet == sourceSet.name && matches(it.sourceDirectory) } == true) generators += obj("module" to module.id.json(), "kind" to "sqldelight".json(),
                 "sourceSet" to sourceSet.name.json(), "origin" to model.origins.getValue("generator:${module.id}:sqldelight").toJson())
+            for (script in scriptInputs) generators += obj("module" to module.id.json(), "kind" to "script".json(), "script" to script.name.json(),
+                "sourceSet" to sourceSet.name.json(), "origin" to ConfigurationOrigin(configurationPath, "/scripts/${script.name}/generator").toJson())
         }
         for ((targetIndex, target) in module.targets.withIndex()) {
             checkpoint()
@@ -55,6 +61,7 @@ internal fun inspectFileResult(model: ProjectInspection, configurationPath: Logi
             if (declaration.sources.any(::matches)) add("source")
             if (declaration.resources.any(::matches)) add("resource")
             if (expanded.compilerPlugins.any { plugin -> plugin.value.inputs.any(::matches) }) add("compiler-plugin-input")
+            if (declaration.generator?.inputs?.any(::matches) == true) add("generator-input")
         }
         if (roles.isEmpty()) null else obj("name" to name.json(), "roles" to roles.map { it.json() }.json(),
             "origin" to ConfigurationOrigin(configurationPath, "/scripts/$name").toJson())

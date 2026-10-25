@@ -121,6 +121,15 @@ fun ktsScriptAction(launch: KtsLaunch, inputs: TreeManifest, composition: Digest
         TreeManifest(inputs.files.toList()), emptyList(), launch.arguments.toList(), environment.toMap(), launch.toJson(), timeoutMillis, CachePolicy.NEVER)
 }
 
+/** The compiled script runs freshly; only validated generated Kotlin files become outputs. */
+fun ktsScriptGeneratorAction(launch: KtsLaunch, inputs: TreeManifest, composition: Digest,
+                            toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long): ActionSpec {
+    validateScriptGeneratorLayout(launch.arguments, inputs)
+    return ktsScriptAction(launch, inputs, composition, toolchains, environment, timeoutMillis).copy(
+        implementation = "kvik-kotlin-script-generator-v1", kind = ActionKind.GENERATE,
+        outputs = listOf(LogicalPath("generated")))
+}
+
 private fun List<LogicalPath>.ktsPaths() = map { it.value.json() }.json()
 private fun ktsDeclaredClasspath(paths: List<LogicalPath>, inputs: TreeManifest) {
     for (path in paths) require(inputs.files.any { it.path == path && path.value.endsWith(".jar") || it.path.value.startsWith(path.value + "/") }) {

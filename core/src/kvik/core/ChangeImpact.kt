@@ -72,7 +72,11 @@ fun selectAffectedChecks(
     fun matches(path: LogicalPath, root: LogicalPath): Boolean = path == root || path.value.startsWith(root.value + "/")
     val knownRoots = configuration.project.modules.flatMap { module ->
         module.sourceSets.flatMap { it.directories + it.resources } + module.compilerPlugins.flatMap { it.inputs } + listOfNotNull(module.sqlDelight?.sourceDirectory)
-    }.toSet()
+    }.toSet() + configuration.project.scripts.filterValues { it.generator != null }.keys.flatMap { name ->
+        val script = expandScript(configuration, name)
+        script.declaration.sources + script.declaration.resources + script.declaration.generator!!.inputs +
+            script.compilerPlugins.flatMap { it.value.inputs }
+    }
     val knownExact = configuration.project.modules.flatMap { module -> module.targets.mapNotNull { it.abi?.baseline } }.toSet()
     val effectiveFullReasons = fullReasons.toMutableSet()
     changedPaths.filter { path -> path !in knownExact && knownRoots.none { matches(path, it) } }.forEach {
@@ -98,12 +102,21 @@ fun selectAffectedChecks(
             roots += plugin.inputs
             plugin.module?.let { dependencies += ImpactCompilation(it, "jvm", "main") }
         }
-        ImpactInputs(roots, dependencies)
+        val generators = scriptGenerators(configuration.project, module.id, sources.map { it.name }.toSet())
+        for (script in generators) {
+            roots += script.declaration.sources + script.declaration.resources + script.declaration.generator!!.inputs
+            roots += script.compilerPlugins.flatMap { it.value.inputs }
+            val prerequisites = script.dependencies.mapNotNull { (it.value as? Dependency.Module)?.module } +
+                script.compilerPlugins.mapNotNull { it.value.module }
+            prerequisites.forEach { dependencies += ImpactCompilation(it, "jvm", "main") }
+        }
+        ImpactInputs(roots, dependencies, generators.map { it.name }.toSet())
     }
 
     val reasons = linkedMapOf<String, List<String>>()
     for ((check, request) in requested) {
         val roots = mutableSetOf<LogicalPath>()
+        val generators = mutableSetOf<String>()
         val reached = mutableSetOf<ImpactCompilation>()
         val pending = ArrayDeque<ImpactCompilation>()
         pending.addLast(request.compilation)
@@ -112,9 +125,12 @@ fun selectAffectedChecks(
             if (!reached.add(current)) continue
             val currentInputs = inputs(current)
             roots += currentInputs.roots
+            generators += currentInputs.generators
             currentInputs.dependencies.forEach { pending.addLast(it) }
         }
         val causes = effectiveFullReasons.map { "full:$it" }.toMutableSet()
+        // A script generator can observe undeclared side effects; a prior successful check is not reusable.
+        causes += generators.map { "generator-fresh:$it" }
         if (check !in baselineCompleted) causes += "baseline-missing"
         for (path in changedPaths) if (path in request.exact || roots.any { matches(path, it) }) causes += "changed:${path.value}"
         if (causes.isNotEmpty()) reasons[check] = causes.sorted()
@@ -135,4 +151,4 @@ fun selectAffectedTests(
 
 private data class ImpactRequest(val compilation: ImpactCompilation, val exact: Set<LogicalPath>)
 private data class ImpactCompilation(val module: String, val target: String, val scope: String)
-private data class ImpactInputs(val roots: Set<LogicalPath>, val dependencies: Set<ImpactCompilation>)
+private data class ImpactInputs(val roots: Set<LogicalPath>, val dependencies: Set<ImpactCompilation>, val generators: Set<String>)

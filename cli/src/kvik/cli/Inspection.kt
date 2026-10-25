@@ -118,6 +118,15 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             for (directory in (sourceSet.directories + sourceSet.resources + listOfNotNull(generated?.sourceDirectory)).distinct()) {
                 filesBelow(directory).forEach { owners.getOrPut(it) { mutableListOf() }.add(owner) }
             }
+            for (script in scriptGenerators(configuration.project, module.id, setOf(sourceSet.name))) {
+                origin("generator:script:${script.name}", "/scripts/${script.name}/generator")
+                val roots = script.declaration.sources + script.declaration.resources + script.declaration.generator!!.inputs +
+                    script.compilerPlugins.flatMap { it.value.inputs }
+                for (root in roots.distinct()) {
+                    val paths = if (existingFile(root)) listOf(root.value).filter { file == null || root == file } else filesBelow(root)
+                    paths.forEach { owners.getOrPut(it) { mutableListOf() }.add(owner) }
+                }
+            }
         }
     }
     for (path in if (file == null) configuration.project.fileTags.keys else setOf(file)) {

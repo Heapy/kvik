@@ -46,6 +46,22 @@ fun jvmScriptAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: 
         launch.toJson(), timeoutMillis, CachePolicy.NEVER)
 }
 
+/** Fresh generation with captured Kotlin outputs; arbitrary script effects are not cacheable. */
+fun jvmScriptGeneratorAction(launch: JvmScriptLaunch, inputs: TreeManifest, composition: Digest,
+                            toolchains: Map<String, Digest>, environment: Map<String, String>, timeoutMillis: Long): ActionSpec {
+    validateScriptGeneratorLayout(launch.arguments, inputs)
+    return jvmScriptAction(launch, inputs, composition, toolchains, environment, timeoutMillis).copy(
+        implementation = "kvik-jvm-script-generator-v1", kind = ActionKind.GENERATE,
+        outputs = listOf(LogicalPath("generated")))
+}
+
+internal fun validateScriptGeneratorLayout(arguments: List<String>, inputs: TreeManifest) {
+    require(arguments.take(2) == listOf("generated", "inputs")) { "Generator arguments must start with generated and inputs directories" }
+    require(inputs.files.none { it.path.value == "generated" || it.path.value.startsWith("generated/") || it.path.value == "inputs" }) {
+        "Generator input collides with a reserved directory"
+    }
+}
+
 internal fun validateScriptEnvironment(environment: Map<String, String>) {
     require(environment.size <= 128 && environment.all { (name, value) ->
         name.length <= 128 && name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) && !name.startsWith("KVIK_") &&

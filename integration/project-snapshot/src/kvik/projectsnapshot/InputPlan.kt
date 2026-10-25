@@ -68,7 +68,7 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
     val project = configuration.project
     val modules = project.modules.associateBy { it.id }
     val wholeProject = selection == SnapshotSelection.Project || selection is SnapshotSelection.AbiCheck || selection is SnapshotSelection.Documentation
-    val scripts = when (selection) {
+    val selectedScripts = when (selection) {
         SnapshotSelection.Project -> project.scripts.keys.map { expandScript(configuration, it) }
         is SnapshotSelection.AbiCheck -> project.scripts.keys.map { expandScript(configuration, it) }
         is SnapshotSelection.Documentation -> project.scripts.keys.map { expandScript(configuration, it) }
@@ -76,7 +76,10 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
         SnapshotSelection.StandaloneScript -> error("Standalone selection requires companion configuration")
     }
     val selected = if (wholeProject) project.modules else
-        scriptPrerequisiteModules(project, scripts.single()).map { modules.getValue(it) }
+        scriptPrerequisiteModules(project, selectedScripts.single()).map { modules.getValue(it) }
+    val scripts = (selectedScripts + if (wholeProject) emptyList() else selected.flatMap { module ->
+        scriptGenerators(project, module.id, sourceSetClosure(module, listOf(module.targets.single { it.name == "jvm" }.main)).map { it.name }.toSet())
+    }.map { expandScript(configuration, it.name) }).distinctBy { it.name }
     val sources = selected.flatMap { module ->
         if (wholeProject) module.sourceSets else
             sourceSetClosure(module, listOf(module.targets.single { it.name == "jvm" }.main))
@@ -97,7 +100,7 @@ fun projectInputPlan(configuration: ProjectConfiguration, selection: SnapshotSel
         requireNotNull(module.documentation) { "Declare documentation settings for $id before generating documentation" }.includes
     } else emptyList()
     return plan(sources.flatMap { it.directories + it.resources } + selected.mapNotNull { it.sqlDelight?.sourceDirectory }, plugins.flatMap { it.inputs } + baselines + documentation,
-        scripts.flatMap { it.declaration.sources + it.declaration.resources }).copy(
+        scripts.flatMap { it.declaration.sources + it.declaration.resources + it.declaration.generator?.inputs.orEmpty() }).copy(
             declarationRoots = project.scripts.values.filter { it.entryScript != null }.flatMap { it.sources }.distinct().sortedBy { it.value })
 }
 

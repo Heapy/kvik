@@ -100,6 +100,11 @@ directory, without the `nested/` prefix. Absolute paths and traversal are reject
 build/test/ABI impact and reasons, with target settings and configuration origins
 in `settings`. Unknown paths or custom build-plugin graphs widen the selection
 and explain why in `fullReasons`.
+Script generator inputs include their declared input paths, script sources,
+resources and compiler-plugin inputs. Their `generators` entries identify the
+script and consuming source set. `generator-fresh:<name>` keeps affected
+consumers selected because generator execution runs afresh, including when
+verification finds no changed paths.
 
 `observed` says whether inspection saw a regular file at that path. Declared
 ownership and impact also work for proposed/deleted paths. `checks` is a planning

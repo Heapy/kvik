@@ -4,7 +4,7 @@ import kvik.core.*
 import kvik.locking.*
 import kvik.compiler.jvm.*
 
-data class ScriptGraphRequest(val name: String, val arguments: List<String> = emptyList())
+data class ScriptGraphRequest(val name: String, val arguments: List<String> = emptyList(), val generator: Boolean = false)
 
 /** Shares real module prerequisites and locked artifacts; scripts never masquerade as modules. */
 fun scriptActionGraph(effective: EffectiveConfiguration, lock: DependencyLock, snapshot: TreeManifest,
@@ -165,6 +165,8 @@ private class ScriptGraphBuilder(
     }
 
     fun build(): ProjectActionGraph {
+        val generator = if (request.generator) requireNotNull(script.declaration.generator) { "Script has no generator attachment: ${script.name}" } else null
+        require(generator == null || request.arguments.isEmpty()) { "Generator arguments come from its declaration" }
         val sources = selectedRoots(script.declaration.sources, true)
         val primary = script.declaration.entryScript?.let { LogicalPath("src/${it.value}") }
         require(primary == null || sources.any { it.path == primary }) { "Missing script entryScript: ${script.declaration.entryScript?.value}" }
@@ -172,7 +174,7 @@ private class ScriptGraphBuilder(
         val compileArtifacts = entries(artifacts(compileClosure.external, "java-api"))
         val runtimeArtifacts = entries(artifacts(runtimeClosure.external, "java-runtime"))
         val compileId = "script:${script.name}:jvm:compile"
-        val runId = "script:${script.name}:jvm:run"
+        val runId = "script:${script.name}:jvm:${if (generator == null) "run" else "generate"}"
         val compileEdges = (compileClosure.modules + pluginModules).map(::moduleId).toSet()
         val compile = ActionNode(compileId, compileEdges) { results ->
             validate(results, compileEdges)
@@ -199,11 +201,20 @@ private class ScriptGraphBuilder(
             val moduleResources = runtimeClosure.modules.flatMap(::moduleResources)
             val classpath = listOf(root) + listOfNotNull(LogicalPath("scripts/${script.name}/resources").takeIf { resources.isNotEmpty() }) +
                 runtimeClosure.modules.flatMap { module -> listOfNotNull(moduleRoot(module), LogicalPath("runtime/$module/main").takeIf { p -> moduleResources.any { it.path.value.startsWith(p.value + "/") } }) } + runtimeArtifacts.map { it.path }
-            val inputs = merge(classes, resources, moduleResources, runtimeArtifacts)
-            if (primary != null) ktsScriptAction(KtsLaunch(script.name, root, classpath, request.arguments), inputs,
-                composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
-            else jvmScriptAction(JvmScriptLaunch(script.name, root, classpath, script.declaration.mainClass, request.arguments),
-                inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+            val generatorInputs = if (generator == null) emptyList() else files.filter { entry ->
+                generator.inputs.any { entry.path == it || entry.path.value.startsWith(it.value + "/") }
+            }.map { it.copy(path = LogicalPath("inputs/${it.path.value}")) }
+            val inputs = merge(classes, resources, moduleResources, runtimeArtifacts, generatorInputs)
+            val arguments = generator?.let { listOf("generated", "inputs") + it.arguments } ?: request.arguments
+            if (primary != null) {
+                val launch = KtsLaunch(script.name, root, classpath, arguments)
+                if (generator == null) ktsScriptAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+                else ktsScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+            } else {
+                val launch = JvmScriptLaunch(script.name, root, classpath, script.declaration.mainClass, arguments)
+                if (generator == null) jvmScriptAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+                else jvmScriptGeneratorAction(launch, inputs, composition, tools, script.declaration.environment, script.declaration.timeoutMillis)
+            }
         }
         return ProjectActionGraph(moduleGraph.nodes + compile + run, setOf(runId), mapOf(runId to runId))
     }

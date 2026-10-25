@@ -233,10 +233,17 @@ SCRIPT_COMPILATION = {
 }
 DEFS["scriptDependencyProfile"] = object_(SCRIPT_COMPILATION, optional=tuple(SCRIPT_COMPILATION))
 SCRIPT_ENV_RESERVED = ["PATH", "JAVA_HOME", "JAVACMD", "JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"]
+DEFS["scriptGenerator"] = object_({
+    "module": SCRIPT_ID, "sourceSet": SCRIPT_ID,
+    "inputs": array(SCRIPT_PATH, maxItems=256, uniqueItems=True),
+    "arguments": array({"type": "string", "maxLength": 4096, "not": {"pattern": "\u0000"}}, maxItems=256),
+}, optional=("inputs", "arguments"))
+DEFS["scriptGenerator"]["description"] = "Attach a fresh script execution to a module source set. The script receives generated and inputs directories before configured arguments, and emits Kotlin .kt sources under generated. Native validation rejects overlapping inputs and module-level generator prerequisite cycles."
 DEFS["script"] = object_({
     "sources": array(SCRIPT_PATH, minItems=1, maxItems=256, uniqueItems=True),
     "resources": array(SCRIPT_PATH, maxItems=256, uniqueItems=True),
     "mainClass": APPLICATION_ENTRY,
+    "generator": ref("scriptGenerator"),
     "entryScript": {"allOf": [SCRIPT_PATH, {"pattern": r"\.kts$(?![\s\S])"}]},
     "profiles": array(SCRIPT_ID, maxItems=32, uniqueItems=True),
     **SCRIPT_COMPILATION,
@@ -244,7 +251,7 @@ DEFS["script"] = object_({
     "environment": {**mapping(APPLICATION_TEXT), "maxProperties": 128,
         "propertyNames": {"type": "string", "maxLength": 128,
             "pattern": r"^(?!KVIK_)[A-Za-z_][A-Za-z0-9_]*(?![\s\S])", "not": {"enum": SCRIPT_ENV_RESERVED}}},
-}, optional=("resources", "mainClass", "entryScript", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "timeoutMillis", "environment"))
+}, optional=("resources", "mainClass", "generator", "entryScript", "profiles", "dependencies", "compilerOptions", "compilerPlugins", "timeoutMillis", "environment"))
 DEFS["script"]["allOf"] = [{
     "if": {"required": ["entryScript"]},
     "then": {"not": {"required": ["mainClass"]}, "properties": {
@@ -265,7 +272,7 @@ DEFS["project"] = versioned({"name": ID, "repositories": array(ref("repository")
     **SCRIPT_COLLECTIONS, "scripts": script_mapping(ref("script"), 256), "fileTags": MANUAL_FILE_TAGS},
     optional=("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags"))
 DEFS["standaloneScript"] = versioned({"name": SCRIPT_ID, "repositories": array(ref("repository"), minItems=1),
-    **SCRIPT_COLLECTIONS, "script": ref("script")}, optional=("dependencyCatalog", "dependencyProfiles"))
+    **SCRIPT_COLLECTIONS, "script": {"allOf": [ref("script"), {"not": {"required": ["generator"]}}]}}, optional=("dependencyCatalog", "dependencyProfiles"))
 DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt or <stem>.kts is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins. The selected file must be an explicit source; .kts selection must match entryScript."
 DEFS["action"] = versioned({
     "implementation": STRING, "composition": ref("digest"), "kind": enum("compile", "generate", "link", "package", "verify", "test", "script", "publish", "benchmark", "server"),
@@ -973,8 +980,11 @@ DEFS["fileInspectionResult"] = versioned({
     "configuration": ref("digest"), "composition": ref("digest"), "tags": array(STRING, uniqueItems=True),
     "owners": array(object_({"module": ID, "sourceSet": ID, "roles": array(enum("source", "resource", "generator-input"), minItems=1, uniqueItems=True),
         "targets": array(enum(*PROJECT_TARGETS), uniqueItems=True), "origin": FILE_ORIGIN})),
-    "scripts": array(object_({"name": ID, "roles": array(enum("source", "resource", "compiler-plugin-input"), minItems=1, uniqueItems=True), "origin": FILE_ORIGIN})),
-    "generators": array(object_({"module": ID, "kind": {"const": "sqldelight"}, "sourceSet": ID, "origin": FILE_ORIGIN})),
+    "scripts": array(object_({"name": ID, "roles": array(enum("source", "resource", "compiler-plugin-input", "generator-input"), minItems=1, uniqueItems=True), "origin": FILE_ORIGIN})),
+    "generators": array({"oneOf": [
+        object_({"module": ID, "kind": {"const": "sqldelight"}, "sourceSet": ID, "origin": FILE_ORIGIN}),
+        object_({"module": ID, "kind": {"const": "script"}, "script": ID, "sourceSet": ID, "origin": FILE_ORIGIN}),
+    ]}),
     "checks": array(object_({"id": STRING, "module": ID, "target": enum(*PROJECT_TARGETS), "kind": enum("build", "test", "abi-check"),
         "reasons": array(NONEMPTY, minItems=1, uniqueItems=True)})),
     "settings": mapping(object_({"declaration": ref("target"), "mainCompilerOptions": array(STRING),
