@@ -27,7 +27,8 @@ origins and capabilities. Kotlin consumers can parse it with
 inspection also carries the source revision, project root and manifest identity as
 one source context.
 
-Agents can query the same project model and package/dependency versions through
+Agents can query the project model, package/dependency versions, retained run
+results and foreground-session state through
 [`kvik mcp --project PATH`](docs/mcp.md), a foreground MCP stdio server with
 cancellable read-only tools and structured CLI results.
 

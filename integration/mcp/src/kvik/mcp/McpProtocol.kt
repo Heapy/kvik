@@ -86,7 +86,7 @@ class McpSession(private val operations: McpOperations) {
                 negotiated = true
                 mcpSuccess(id, obj("protocolVersion" to (if (requested in setOf("2025-06-18", MCP_VERSION)) requested else MCP_VERSION).json(),
                     "capabilities" to obj("tools" to obj()), "serverInfo" to obj("name" to "kvik".json(), "version" to "0.1.0".json()),
-                    "instructions" to "Read-only project and package queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims.".json()))
+                    "instructions" to "Read-only project, package, retained-run and foreground-session queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims. Historical explanations and statistics do not assess current freshness.".json()))
             } catch (failure: Exception) { mcpError(id, -32602, failure.message ?: "Invalid initialization") }
         }
         if (!initialized) return mcpError(id, -32002, "Initialize and send notifications/initialized first")

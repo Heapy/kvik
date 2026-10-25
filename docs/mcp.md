@@ -1,4 +1,4 @@
-# MCP project and dependency queries
+# MCP project, dependency and run queries
 
 Start Kvik as an MCP stdio server for one local project:
 
@@ -35,9 +35,14 @@ connection, send `notifications/initialized`, then use `tools/list` and
 | `kvik_dependencies` | Optional `modules`, `scripts`, `targets`, `compilation`, `usage`; `availableVersions` enables `packages`, `channel`, `limit`, `cursor`, `refresh` | Declared and locked dependency graph, optionally available versions |
 | `kvik_package_versions` | `package` as `group:artifact`; optional `channel`, `limit`, `cursor`, `offline`, `refresh` | Published versions with repository observations and freshness |
 | `kvik_package_dependencies` | `coordinate` as `group:artifact:version`, `target`, `usage`; optional `jvmTarget`, `pins`, `offline`, `refresh` | Dependency requirements and supported resolved selections |
+| `kvik_verification` | `run` | Retained checks, outcomes and test counts, with current input freshness |
+| `kvik_explain` | `run`, `action` | Historical action inputs, dependencies, result and cache decision |
+| `kvik_run_stats` | `run` | Historical action counts, timings, CPU/memory observations and remote transfers |
+| `kvik_session_status` | `session` | Foreground state and current owner liveness |
+| `kvik_session_events` | `session`; optional `cursor`, `limit` | Paginated foreground events, completeness and owner liveness |
 
 Repeated selectors and pins are arrays. `channel` is `all`, `stable` or
-`prerelease`; `limit` is 1–200. `kvik_dependencies` also accepts `offline`.
+`prerelease`; package query `limit` is 1–200. `kvik_dependencies` also accepts `offline`.
 Use the returned opaque cursor with the same query filters. Project version
 pagination requires exactly one package in `packages`.
 
@@ -46,7 +51,22 @@ JSON serialized in text content for clients that consume text. Check `status`,
 `freshness`, `diagnostics` and truncation fields: an incomplete result is returned
 with `isError: true` and retains its partial structured data. Available versions
 are candidates, not compatibility assessments. Each call reads current project
-files; the connection does not retain an obsolete imported model.
+files as needed; the connection does not retain an obsolete imported model.
+
+`run` and `session` are directory paths, absolute or relative to the configured
+project directory. Use the directories returned by build or foreground-session
+commands. Historical explanations and statistics do not read the original
+sources or installed tools and do not claim that a recorded result remains
+current. Use `kvik_verification` to recheck freshness; stale, indeterminate,
+failed or incomplete verification retains its structured result with
+`isError: true`. Once the MCP connection has started, retained-run and session
+queries still work if its configured project file is removed or becomes invalid.
+
+Session event `limit` is 1–256. Pass the returned `nextCursor` object unchanged
+as `cursor` on the next call. Check `hasMore` and `pendingTail`; a partial line
+from a live writer does not advance the cursor. A partial journal after its
+owner exits is incomplete and returns `isError: true`. Reading status or events
+does not restart a session, keep it alive or submit controls.
 
 Startup options `--lock`, `--store` and `--query-cache` have the same meanings and
 project-relative paths as their CLI counterparts. Repeated `--pin`, `--scope-pin`
@@ -62,9 +82,10 @@ connection permits network access.
 Queries do not modify project configuration, locks or the dependency artifact
 store, and never execute package code. Online package queries may update the
 metadata query cache. Per-request scratch files are removed after the owned
-process exits. The current tools address local projects; builds, mutations,
-source-provider selectors and retained-run queries remain available through
-the CLI.
+process exits. Project queries currently address local projects; builds,
+mutations, source-provider selectors and session controls remain available
+through the CLI. Retained-run queries can inspect results from either local
+projects or source-provider builds.
 
 The server allows four concurrent queries, each with a 120-second timeout.
 Excess calls return a tool error and can be retried when another call completes.

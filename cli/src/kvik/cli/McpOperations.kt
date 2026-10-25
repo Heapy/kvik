@@ -42,7 +42,7 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         require(pending.size < 4) { "At most four MCP queries may run at once; retry after a query completes" }
         require(id !in pending) { "Request id is already active" }
         val arguments = command.toMutableList()
-        arguments += listOf("--project", options.project)
+        if (tool.project) arguments += listOf("--project", options.project)
         val dependencyQuery = tool.name == "kvik_dependencies"
         if (dependencyQuery || tool.name == "kvik_inspect") arguments += options.policy
         if (dependencyQuery) {

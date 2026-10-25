@@ -3,7 +3,8 @@ package kvik.mcp
 import kvik.core.*
 
 internal data class Argument(val name: String, val flag: String, val schema: JsonValue.Object,
-                            val repeated: Boolean = false, val switch: Boolean = false)
+                            val repeated: Boolean = false, val switch: Boolean = false,
+                            val encode: ((RpcValue) -> String)? = null)
 
 private fun text(name: String, flag: String, description: String = name, choices: List<String> = emptyList()) = Argument(name, flag,
     JsonValue.Object(buildMap {
@@ -14,10 +15,13 @@ private fun repeated(name: String, flag: String) = Argument(name, flag,
     obj("type" to "array".json(), "maxItems" to 32.json(), "uniqueItems" to true.json(),
         "items" to text(name, flag).schema), repeated = true)
 private fun switch(name: String, flag: String) = Argument(name, flag, obj("type" to "boolean".json()), switch = true)
+private fun integer(name: String, flag: String, maximum: Int) = Argument(name, flag,
+    obj("type" to "integer".json(), "minimum" to 1.json(), "maximum" to maximum.json()))
 
 class McpTool internal constructor(val name: String, private val description: String, val command: List<String>,
                                   private val coordinate: String? = null, private val required: Set<String> = emptySet(),
-                                  private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false) {
+                                  private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false,
+                                  val project: Boolean = true) {
     fun definition(): JsonValue.Object = obj("name" to name.json(), "description" to description.json(),
         "inputSchema" to obj("type" to "object".json(), "additionalProperties" to false.json(),
             "properties" to JsonValue.Object(buildMap {
@@ -41,6 +45,7 @@ class McpTool internal constructor(val name: String, private val description: St
             for (spec in this@McpTool.arguments) {
                 val raw = arguments[spec.name] ?: continue
                 when {
+                    spec.encode != null -> { add(spec.flag); add(spec.encode(raw)) }
                     spec.switch -> {
                         require(raw is RpcValue.Literal && raw.value in setOf("true", "false")) { "${spec.name} must be boolean" }
                         if (raw.value == "true") add(spec.flag)
@@ -52,7 +57,8 @@ class McpTool internal constructor(val name: String, private val description: St
                     }
                     spec.schema.values["type"] == "integer".json() -> {
                         val number = (raw as? RpcValue.Number)?.literal?.toIntOrNull()
-                        require(number != null && number in 1..200) { "${spec.name} must be an integer from 1 to 200" }
+                        val maximum = spec.schema.values.getValue("maximum").longValue().toInt()
+                        require(number != null && number in 1..maximum) { "${spec.name} must be an integer from 1 to $maximum" }
                         add(spec.flag); add(number.toString())
                     }
                     else -> {
@@ -68,9 +74,28 @@ class McpTool internal constructor(val name: String, private val description: St
 
 private val versionArguments = listOf(
     text("channel", "--channel", choices = listOf("all", "stable", "prerelease")),
-    Argument("limit", "--limit", obj("type" to "integer".json(), "minimum" to 1.json(), "maximum" to 200.json())),
+    integer("limit", "--limit", 200),
     text("cursor", "--cursor", "Opaque cursor returned by the preceding page"))
 private val queryMode = listOf(switch("offline", "--offline"), switch("refresh", "--refresh"))
+private val retainedRun = text("run", "--run", "Retained run directory, absolute or relative to the configured project directory")
+private val sessionDirectory = text("session", "--session", "Foreground session directory, absolute or relative to the configured project directory")
+private val sessionCursor = Argument("cursor", "--cursor", obj("type" to "object".json(), "additionalProperties" to false.json(),
+    "description" to "Pass the preceding response's nextCursor unchanged".json(),
+    "required" to listOf("sessionId", "offset", "sequence").map { it.json() }.json(),
+    "properties" to obj("sessionId" to obj("type" to "string".json(), "minLength" to 1.json(), "maxLength" to 4096.json()),
+        "offset" to obj("type" to "integer".json(), "minimum" to 0.json()),
+        "sequence" to obj("type" to "integer".json(), "minimum" to 0.json()))), encode = { raw ->
+    val fields = raw.fields()
+    require(fields.keys == setOf("sessionId", "offset", "sequence")) { "Invalid session cursor fields" }
+    val id = fields.getValue("sessionId").string()
+    require(id.isNotBlank() && id.length <= 4096 && '\u0000' !in id) { "Invalid cursor sessionId" }
+    fun position(name: String): Long {
+        val value = (fields.getValue(name) as? RpcValue.Number)?.literal?.toLongOrNull()
+        require(value != null && value >= 0) { "Cursor $name must be a nonnegative 64-bit integer" }
+        return value
+    }
+    obj("sessionId" to id.json(), "offset" to position("offset").json(), "sequence" to position("sequence").json()).canonical()
+})
 
 val mcpTools: List<McpTool> = listOf(
     McpTool("kvik_inspect", "Inspect the configured local project, source ownership, targets and effective settings. Reads current files on every call.", listOf("inspect")),
@@ -84,4 +109,14 @@ val mcpTools: List<McpTool> = listOf(
         listOf("packages", "dependencies"), coordinate = "coordinate", required = setOf("target", "usage"), arguments = listOf(
             text("target", "--target", choices = listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64", "js", "wasmJs")),
             text("usage", "--usage"), text("jvmTarget", "--jvm-target", choices = listOf("11", "17", "21", "25")), repeated("pins", "--pin")) + queryMode, repositories = true),
+    McpTool("kvik_verification", "Read a retained run and recheck its input freshness. Preserves requested/actual checks, test counts and outcomes. Stale, indeterminate, failed or incomplete verification returns isError; this never executes checks.",
+        listOf("verification"), required = setOf("run"), arguments = listOf(retainedRun), project = false),
+    McpTool("kvik_explain", "Explain an action's recorded inputs, dependencies, outcome and cache decision. Historical data does not establish current freshness and needs no installed tools or original sources.",
+        listOf("explain"), required = setOf("run", "action"), arguments = listOf(retainedRun, text("action", "--action", "Exact actionId from the run's verification record")), project = false),
+    McpTool("kvik_run_stats", "Read historical action counts, timings, child CPU/memory measurements and remote cache transfers. Does not rerun work or assess current freshness.",
+        listOf("run-stats"), required = setOf("run"), arguments = listOf(retainedRun), project = false),
+    McpTool("kvik_session_status", "Read a foreground session's state and owner liveness. Reading retained state does not restart or keep a session alive.",
+        listOf("session", "status"), required = setOf("session"), arguments = listOf(sessionDirectory), project = false),
+    McpTool("kvik_session_events", "Read a bounded page of foreground session events. Continue with nextCursor; inspect ownerAlive, hasMore, pendingTail and status. An incomplete journal after owner exit returns isError.",
+        listOf("session", "events"), required = setOf("session"), arguments = listOf(sessionDirectory, sessionCursor, integer("limit", "--limit", 256)), project = false),
 )
