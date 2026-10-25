@@ -23,6 +23,7 @@ internal fun mcpCommand(arguments: List<String>): Int {
         val queries = NativeMcpOperations(options).also { operations = it }
         val session = McpSession(queries, mcpTools +
             (if (options.build != null) mcpBuildTools + mcpScriptTools + mcpGraphTools else emptyList()) +
+            (if (options.reports) mcpReportTools + (if (options.build != null) mcpCoverageReportTools else emptyList()) else emptyList()) +
             (if (options.configurationEdits) {
                 if (options.source == null) mcpConfigurationTools else mcpSourceConfigurationTools
             } else emptyList()) +

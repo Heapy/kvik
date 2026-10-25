@@ -84,6 +84,7 @@ results and foreground-session state through
 cancellable queries and structured CLI results. Add `--tools PATH` to enable
 build, test, change-aware `kvik_verify`, script inspection and script execution using the same executor, cache
 and retained run results.
+Add `--reports` for local test/coverage reports, aggregation, thresholds and exports.
 Add `--config-edits` for guarded local configuration/lock edits or Kode transaction plans through MCP.
 Add `--session-controls` to control an existing foreground `dev` session.
 MCP also accepts Kode source selectors for inspection, dependency/package queries, validation, builds, tests and scripts without a checkout; see [MCP usage](docs/mcp.md).

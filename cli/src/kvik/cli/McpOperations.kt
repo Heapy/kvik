@@ -10,13 +10,13 @@ import kotlin.time.TimeSource
 
 internal data class McpOptions(val project: String, val root: String, val lock: String?, val store: String?,
                                val queryCache: String?, val offline: Boolean, val policy: List<String>, val build: BuildOptions?,
-                               val configurationEdits: Boolean, val sessionControls: Boolean, val source: KodeProjectOptions? = null)
+                               val configurationEdits: Boolean, val sessionControls: Boolean, val reports: Boolean, val source: KodeProjectOptions? = null)
 
 internal fun mcpOptions(arguments: List<String>): McpOptions {
     val buildFlags = setOf("--tools", "--runs", "--jobs", "--memory-mib", "--remote-cache")
     val (source, remaining) = sourceProjectOptions(arguments)
     val options = queryArguments(remaining, setOf("--project", "--lock", "--store", "--query-cache") + buildFlags,
-        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline", "--config-edits", "--session-controls"))
+        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline", "--config-edits", "--session-controls", "--reports"))
     val projectName = options.values["--project"] ?: "kvik.json"
     val project = if (source == null) readProject(projectName, expandScriptDeclarations = false) else null
     if (source != null) {
@@ -30,13 +30,13 @@ internal fun mcpOptions(arguments: List<String>): McpOptions {
         (if ("--runs" in options.values) emptyList() else listOf("--runs", ".kvik/mcp-runs")) + listOf("--module", "mcp", "--target", "jvm")) else null
     return McpOptions(project?.path ?: projectName, project?.root ?: currentDirectory(), options.values["--lock"], options.values["--store"], options.values["--query-cache"],
         "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", policy, build,
-        "--config-edits" in options.flags, "--session-controls" in options.flags, source)
+        "--config-edits" in options.flags, "--session-controls" in options.flags, "--reports" in options.flags, source)
 }
 
 /** Each query owns a child of this foreground connection, keeping network and filesystem work cancellable. */
 internal class NativeMcpOperations(private val options: McpOptions) : McpOperations, AutoCloseable {
     private data class Pending(val id: JsonValue, val directory: String, val process: OwnedProcess, val build: McpBuildRequest?,
-                               val progressToken: JsonValue?, val mutating: Boolean, val sessionControl: Boolean,
+                               val progressToken: JsonValue?, val timeoutMillis: Long, val mutating: Boolean, val sessionControl: Boolean,
                                var cancelled: Boolean = false, var failure: String? = null,
                                var progress: Long = 0, var lastProgress: kotlin.time.TimeMark? = null) {
         val stdout: String get() = build?.stdout ?: "$directory/stdout.json"
@@ -81,6 +81,12 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             }
             if (options.offline) arguments += "--offline"
         }
+        if (tool.report) {
+            require(options.reports) { "Report tools require mcp --reports" }
+            arguments += listOf("--store", projectPath(options.root, options.store ?: ProjectOptions().store))
+            if (tool.name == "kvik_coverage_report") arguments += listOf("--tools",
+                projectPath(options.root, requireNotNull(options.build) { "Coverage analysis requires mcp --tools PATH" }.tools))
+        }
         val dependencyQuery = tool.name == "kvik_dependencies"
         val graphQuery = tool.name == "kvik_inspect_graph"
         if (graphQuery) arguments += listOf("--tools", projectPath(options.root, requireNotNull(options.build).tools))
@@ -108,9 +114,10 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "TMPDIR" to directory,
                 "KVIK_BOOTSTRAP_OFFLINE" to if (options.offline) "1" else "0") +
                 if (request != null) remoteSessionCredentials(options.root, request.options) else emptyMap()
+            val timeoutMillis = if (tool.build || tool.name == "kvik_coverage_report") 30 * 60_000L else 120_000L
             val process = owner.start(ProcessRequest(commandLine, options.root, environment,
-                request?.stdout ?: "$directory/stdout.json", request?.stderr ?: "$directory/stderr.log", if (tool.build) 30 * 60_000 else 120_000))
-            pending[id] = Pending(id, directory, process, request, progressToken, tool.mutating, tool.sessionControl)
+                request?.stdout ?: "$directory/stdout.json", request?.stderr ?: "$directory/stderr.log", timeoutMillis))
+            pending[id] = Pending(id, directory, process, request, progressToken, timeoutMillis, tool.mutating, tool.sessionControl)
         } catch (failure: Exception) {
             NativeFiles.removeTree(directory)
             if (request != null) error("Cannot start build; request retained at ${request.directory}: ${failure.message}")
@@ -147,7 +154,7 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             try {
                 if (state.cancelled) continue
                 val failure = state.failure ?: when {
-                    completed.timedOut -> if (state.build != null) "Build exceeded its 30-minute timeout" else "Query exceeded its 120-second timeout"
+                    completed.timedOut -> "Operation exceeded its ${state.timeoutMillis / 1000}-second timeout"
                     completed.cancelled -> "Query was cancelled by its process owner"
                     completed.setupFailure != null -> "Cannot start query worker: ${completed.setupFailure}"
                     else -> null

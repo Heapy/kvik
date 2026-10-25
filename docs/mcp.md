@@ -118,6 +118,39 @@ comes from declared source/resource paths and compiler-plugin inputs.
 `configurationScope: "declaration-and-resolver-policy"` identifies the scope of
 its configuration digest; it is not a digest of expanded script declarations.
 
+## Local test and coverage reports
+
+Add `--reports` to expose `kvik_test_report`, `kvik_test_aggregate`,
+`kvik_coverage_aggregate`, `kvik_coverage_check` and `kvik_coverage_export`.
+Adding `--tools PATH` also exposes `kvik_coverage_report` for JaCoCo analysis.
+These tools consume retained results, create a new `output` directory and use the
+server's configured `--store` (default `.kvik/cache`). They never rerun tests or
+publish to a service. Report creation is opt-in independently of configuration
+edits, session controls and build execution.
+
+For example, call `kvik_test_report` with
+`{"run":".kvik/runs/example","output":"reports/example","format":"junit-xml"}`.
+For a coverage gate, call `kvik_coverage_check` with
+`{"report":"reports/coverage/aggregate.json","output":"reports/gate","metric":"line","minimum":"80.00","allModules":true,"allTargets":true}`.
+The tool schemas describe selectors and required arguments. Percentages use
+strings to preserve exact decimal thresholds. Multiple-run aggregation requires
+explicit `expect` entries such as `library:jvm:test`.
+
+Paths resolve against the configured project directory, or the server's working
+directory in Kode source mode. Report calls do not read the current project or
+resolve a source revision. Existing output directories and overlap with retained
+inputs are rejected. Tool and cache locations come from the server configuration.
+Each operation owns its child processes and retains its output after completion;
+cancellation may leave a partial output directory, so retry with a new directory.
+
+Results use the CLI's versioned JSON contracts in `structuredContent`.
+`kvik_test_report` and `kvik_coverage_report` signal successful report generation;
+inspect their `sourceRunStatus` and `reportStatus` for the recorded test outcome.
+Aggregation, threshold and export failures or incomplete outcomes return
+`isError: true` while retaining structured results and artifact paths.
+Report tools advertise non-read-only, non-destructive, non-idempotent local
+operations because each call creates a new output directory.
+
 To enable graph inspection and execution tools, configure the server with the same pinned tools file
 used by CLI builds:
 
@@ -427,8 +460,9 @@ and `--exclude-metadata-edge` options set the policy for project inspection and
 locked dependency queries, matching the policy used when resolving the lock.
 Package dependency queries use their own optional `pins` argument.
 With `--tools`, startup also accepts `--jobs`, `--memory-mib` and `--remote-cache`
-with their CLI meanings. Execution settings require `--tools`; individual tool
-calls cannot override the configured tools or output/cache paths.
+with their CLI meanings. Execution settings require `--tools`; execution calls
+cannot override the configured tools or run/cache paths. Report calls select a
+new output directory while using the configured tools and cache.
 `--offline` at server startup
 (or the launcher's offline setting) prevents network queries for the whole
 connection; a tool's `offline: false` cannot override it. A tool can additionally
@@ -445,8 +479,8 @@ address existing local or source-provider owners. Retained-run queries can inspe
 projects or source-provider builds.
 
 The server allows four concurrent operations, with at most one build/test/verify/script run per
-connection. Queries have a 120-second timeout; execution has a 30-minute
-timeout. Read-only queries remain available while execution is running.
+connection. Queries and local report transforms have a 120-second timeout; execution and
+JaCoCo report analysis have a 30-minute timeout. Read-only queries remain available while execution is running.
 Excess calls return a tool error and can be retried when another call completes.
 Requests are limited to 1 MiB, or 32 MiB on `--config-edits` connections so a returned
 plan can be submitted for application. Child output is limited to 16 MiB per stream, and complete

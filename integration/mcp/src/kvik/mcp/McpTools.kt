@@ -6,15 +6,15 @@ internal data class Argument(val name: String, val flag: String, val schema: Jso
                             val repeated: Boolean = false, val switch: Boolean = false,
                             val encode: ((RpcValue) -> String)? = null, val tail: Boolean = false)
 
-private fun text(name: String, flag: String, description: String = name, choices: List<String> = emptyList(), maximum: Int = 4096) = Argument(name, flag,
+internal fun text(name: String, flag: String, description: String = name, choices: List<String> = emptyList(), maximum: Int = 4096) = Argument(name, flag,
     JsonValue.Object(buildMap {
         put("type", "string".json()); put("minLength", 1.json()); put("maxLength", maximum.json()); put("description", description.json())
         if (choices.isNotEmpty()) put("enum", choices.map { it.json() }.json())
     }))
-private fun repeated(name: String, flag: String, minimum: Int = 0, choices: List<String> = emptyList()) = Argument(name, flag,
-    obj("type" to "array".json(), "minItems" to minimum.json(), "maxItems" to 32.json(), "uniqueItems" to true.json(),
+internal fun repeated(name: String, flag: String, minimum: Int = 0, choices: List<String> = emptyList(), maximum: Int = 32) = Argument(name, flag,
+    obj("type" to "array".json(), "minItems" to minimum.json(), "maxItems" to maximum.json(), "uniqueItems" to true.json(),
         "items" to text(name, flag, choices = choices).schema), repeated = true)
-private fun switch(name: String, flag: String) = Argument(name, flag, obj("type" to "boolean".json()), switch = true)
+internal fun switch(name: String, flag: String) = Argument(name, flag, obj("type" to "boolean".json()), switch = true)
 private fun integer(name: String, flag: String, maximum: Int, minimum: Int = 1) = Argument(name, flag,
     obj("type" to "integer".json(), "minimum" to minimum.json(), "maximum" to maximum.json()))
 
@@ -50,7 +50,7 @@ class McpTool internal constructor(val name: String, private val description: St
                                   private val coordinate: String? = null, private val required: Set<String> = emptySet(),
                                   private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false,
                                   val project: Boolean = true, val build: Boolean = false, val mutating: Boolean = false,
-                                  val sessionControl: Boolean = false, val script: Boolean = false,
+                                  val sessionControl: Boolean = false, val script: Boolean = false, val report: Boolean = false,
                                   private val openWorld: Boolean = repositories || build || sessionControl) {
     fun definition(): JsonValue.Object = obj("name" to name.json(), "description" to description.json(),
         "inputSchema" to obj("type" to "object".json(), "additionalProperties" to false.json(),
@@ -61,8 +61,8 @@ class McpTool internal constructor(val name: String, private val description: St
                 if (!script) schema else JsonValue.Object(schema.values + ("oneOf" to listOf(
                     obj("required" to listOf("name".json()).json()), obj("required" to listOf("file".json()).json())).json()))
             },
-        "annotations" to obj("readOnlyHint" to (!build && !mutating && !sessionControl).json(), "destructiveHint" to (build || mutating || sessionControl).json(),
-            "idempotentHint" to (!build).json(), "openWorldHint" to openWorld.json()))
+        "annotations" to obj("readOnlyHint" to (!build && !mutating && !sessionControl && !report).json(), "destructiveHint" to (build || mutating || sessionControl).json(),
+            "idempotentHint" to (!build && !report).json(), "openWorldHint" to openWorld.json()))
 
     /** Convert a closed, typed tool schema to argv; never accept raw CLI flags or a shell command. */
     fun command(arguments: Map<String, RpcValue>): List<String> {
@@ -93,7 +93,8 @@ class McpTool internal constructor(val name: String, private val description: St
                     spec.repeated -> {
                         val entries = raw.array().map(::value)
                         val minimum = spec.schema.values.getValue("minItems").longValue().toInt()
-                        require(entries.size in minimum..32 && entries.distinct().size == entries.size) { "${spec.name} requires $minimum..32 distinct values" }
+                        val maximum = spec.schema.values.getValue("maxItems").longValue().toInt()
+                        require(entries.size in minimum..maximum && entries.distinct().size == entries.size) { "${spec.name} requires $minimum..$maximum distinct values" }
                         spec.schema.values.getValue("items").objectValue()["enum"]?.let { choices ->
                             require(entries.all { it.json() in choices.arrayValue() }) { "Unsupported ${spec.name}" }
                         }
