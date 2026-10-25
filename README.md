@@ -607,13 +607,16 @@ test action identity while preserving compilation and linking cache keys. Tests
 still execute on every requested invocation. See the runnable
 [scheduling fixture](tools/test_test_resources_cli.py).
 
-Set `testSettings.maxRetries` (0–9, default 0) to repeat the selected JVM/JUnit
-scope after leaf test failures. Each retry discovers a new plan in the same owned
+Set `testSettings.maxRetries` (0–9, default 0) to repeat the selected JVM scope
+with JUnit, Kotest or both engines after leaf test failures. Each retry discovers
+a new plan in the same owned
 JVM, reruns all selected classes and lifecycle callbacks, and preserves every
 attempt, including passing siblings and skips. Retries stop after a round without
 leaf failures or when the limit is reached. Container failures, incomplete discovery
-and infrastructure errors stop retries. The action's timeout and resource budget
-cover all attempts; coverage includes execution from all attempts.
+and infrastructure errors stop retries, as do changed test identities between
+attempts. The JVM and its static state remain shared across attempts. The action's
+timeout and resource budget cover all attempts; coverage includes execution from
+all attempts.
 
 The verification policy remains strict: any failed attempt makes the run fail,
 even if a later attempt passes. Unique test counts use identities, while reports
@@ -636,7 +639,7 @@ limit and strict failure policy. Every attempt starts a fresh Node process and
 reruns the selected scope; HOME and the working directory remain shared. Original
 reports, progress journals and stdout/stderr logs are retained separately for each
 attempt. The timeout covers all attempts, and changing the retry limit preserves
-compilation and linking cache entries. JVM/Kotest retries are not yet supported.
+compilation and linking cache entries.
 
 
 ### JS and WasmJS

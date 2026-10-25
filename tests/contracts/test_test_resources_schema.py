@@ -41,13 +41,13 @@ class TestResourcesSchemaTest(unittest.TestCase):
             self.assertFalse(VALIDATOR.is_valid(self.target(testSettings=dict(classes=['example.Tests'], engines=engines, parallelism=2))))
         VALIDATOR.validate(self.target(testSettings=dict(classes=['example.Tests'], engines=['kotest'], parallelism=1)))
 
-    def test_junit_retries_are_bounded_and_engine_specific(self):
+    def test_jvm_retries_are_bounded_for_all_engines(self):
         for retries in (0, 1, 9):
             VALIDATOR.validate(self.target(testSettings=dict(classes=['example.Tests'], maxRetries=retries)))
         for retries in (-1, 10, 4294967296, True, '1', 1.5, None):
             self.assertFalse(VALIDATOR.is_valid(self.target(testSettings=dict(classes=['example.Tests'], maxRetries=retries))))
         for engines in (['kotest'], ['junit', 'kotest']):
-            self.assertFalse(VALIDATOR.is_valid(self.target(testSettings=dict(classes=['example.Tests'], engines=engines, maxRetries=1))))
+            VALIDATOR.validate(self.target(testSettings=dict(classes=['example.Tests'], engines=engines, maxRetries=1)))
             VALIDATOR.validate(self.target(testSettings=dict(classes=['example.Tests'], engines=engines, maxRetries=0)))
 
     def test_invalid_resources_are_rejected(self):

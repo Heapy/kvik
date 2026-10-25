@@ -27,13 +27,16 @@ class TestLaunchesTest {
         }
     }
 
-    @Test fun retriesRoundTripAndRejectInvalidBudgetsAndEngines() {
+    @Test fun retriesRoundTripAndRejectInvalidBudgets() {
         val selection = JvmTestSelection("app", listOf(LogicalPath("classes")), listOf("app.Test"), maxRetries = 2)
         assertEquals(selection, JvmTestSelection.fromJson(selection.toJson()))
         assertEquals(2.json(), selection.toJson().values.getValue("maxRetries"))
         assertFalse("maxRetries" in selection.copy(maxRetries = 0).toJson().values)
         for (count in listOf(-1, 10)) assertFails { selection.copy(maxRetries = count) }
-        assertFails { selection.copy(engines = listOf("kotest")) }
+        for (engines in listOf(listOf("kotest"), listOf("junit-jupiter", "kotest"))) {
+            val mixed = selection.copy(engines = engines)
+            assertEquals(mixed, JvmTestSelection.fromJson(mixed.toJson()))
+        }
         assertFails { JvmTestSelection.fromJson(JsonValue.Object(selection.toJson().values + ("maxRetries" to 4294967296L.json()))) }
     }
 

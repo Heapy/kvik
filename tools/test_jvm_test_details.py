@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 
 from test_jvm import acquire, canonical
@@ -17,6 +18,7 @@ def main():
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--artifacts', type=Path, required=True)
+    parser.add_argument('--maven-cache', type=Path, default=Path.home() / 'Library/Caches/JetBrains/Kotlin/.m2.cache')
     args = parser.parse_args()
     base = ROOT / '.kvik/tests/jvm-test-details'
     base.mkdir(parents=True, exist_ok=True)
@@ -140,11 +142,60 @@ def main():
     for retries in (-1, 10, 4294967296):
         invalid = invoke('retry-invalid-' + str(retries), 'fixture.RetryTests', 'junit-jupiter', 1, maxRetries=retries)
         assert invalid['tests'] == [] and any(d['code'] == 'KVIK_TEST_INFRASTRUCTURE' for d in invalid['diagnostics'])
-    unsupported = invoke('retry-engine', 'fixture.Retry', 'kotest', 1, maxRetries=1)
-    assert unsupported['tests'] == []
+    engine = invoke('retry-engine', 'fixture.Retry', 'kotest', 1, maxRetries=1)
+    assert [a['status'] for a in engine['tests'][0]['details']['attempts']] == ['failed', 'passed']
     limit = invoke('limit', 'fixture.Limit', 'kotest', 1)
     assert len(limit['tests'][0]['details']['attempts']) == 1000
     assert any(d['code'] == 'KVIK_TEST_ATTEMPT_LIMIT' for d in limit['diagnostics'])
+    kotest_lock = json.loads((ROOT / 'compiler/jvm/kotaml-artifacts.lock.json').read_text())
+    seed = output / 'kotest-seed'
+    seed.mkdir()
+    for artifact in kotest_lock['artifacts']:
+        group, name, version = artifact['coordinate'].split(':')
+        source = args.maven_cache / group.replace('.', '/') / name / version / artifact['filename']
+        if source.is_file():
+            shutil.copyfile(source, seed / artifact['filename'])
+    dependencies = acquire(kotest_lock, output / 'kotest-lib', seed)
+    libraries = list(dependencies.values())
+    real_fixture = output / 'kotest-fixture'
+    run([java, '-cp', os.pathsep.join(map(str, compiler.values())), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
+         '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str, [junit, *libraries])),
+         '-d', real_fixture, ROOT / 'tests/jvm-reporting/KotestRetries.kt'], 'compile-kotest-fixture')
+    for label, classes, retries, expected_attempts, expected_failed, complete in (
+        ('kotest-default', ['RecoverSpec'], 0, 1, 1, True),
+        ('kotest-recover', ['RecoverSpec'], 2, 2, 0, True),
+        ('kotest-exhaust', ['AlwaysFailSpec'], 2, 3, 1, True),
+        ('kotest-nested', ['NestedSpec'], 2, 2, 0, True),
+        ('kotest-lifecycle', ['LifecycleSpec'], 2, 1, 2, True),
+        ('kotest-disappear', ['DisappearingSpec'], 2, 1, 1, False),
+        ('kotest-expand', ['ExpandingSpec'], 2, 2, 0, False),
+        ('kotest-mixed', ['RecoverSpec', 'JupiterSibling'], 2, 2, 0, True),
+    ):
+        classpath = [real_fixture, *libraries]
+        request = dict(schemaVersion=1, requestId=label, module='fixture', target='jvm',
+            classpath=[str(path.relative_to(output)) for path in classpath],
+            testClasses=['fixture.' + name for name in classes], engines=['junit-jupiter', 'kotest'] if label == 'kotest-mixed' else ['kotest'], maxRetries=retries)
+        (output / f'{label}.request.json').write_bytes(canonical(request))
+        run([java, '-cp', os.pathsep.join(map(str, [worker, junit, stdlib, *classpath])), 'kvik.jvm.TestWorker', output,
+             f'{label}.request.json', f'{label}.result.json'], label, 1)
+        result = json.loads((output / f'{label}.result.json').read_text())
+        assert result['status'] == 'failed' and result['testCounts']['discoveryComplete'] == complete, (label, result)
+        assert result['testCounts']['failed'] == expected_failed, (label, result)
+        flaky = [test for test in result['tests'] if any('original failure' in (a.get('failure') or {}).get('message', '')
+                 for a in test['details']['attempts'])]
+        assert len(flaky) == 1, (label, result)
+        assert len(flaky[0]['details']['attempts']) == expected_attempts, (label, result)
+        assert 'original failure' in flaky[0]['details']['attempts'][0]['failure']['message'], (label, result)
+        if label in ('kotest-recover', 'kotest-nested', 'kotest-mixed'):
+            assert all(len(test['details']['attempts']) == expected_attempts for test in result['tests']), (label, result)
+            assert result['testCounts']['discovered'] == len(result['tests']), (label, result)
+            assert any(d['code'] == 'KVIK_TEST_RETRY_FAILURE' for d in result['diagnostics']), (label, result)
+        if label == 'kotest-lifecycle':
+            assert any(d['code'] == 'KVIK_TEST_CONTAINER_FAILURE' for d in result['diagnostics']), result
+            assert all(len(test['details']['attempts']) == 1 for test in result['tests']), result
+        if not complete:
+            assert any(d['code'] == 'KVIK_TEST_RETRY_SCOPE_CHANGED' for d in result['diagnostics']), result
+        print('PASS', label, flush=True)
     run([args.konan_home / 'bin/konanc', '-target', 'macos_arm64', *core,
          ROOT / 'compiler/jvm/native/src/kvik/compiler/jvm/JvmReports.kt', ROOT / 'tests/jvm-native/ReportTest.kt',
          '-generate-test-runner', '-o', output / 'reports.kexe'], 'compile-native-reports')

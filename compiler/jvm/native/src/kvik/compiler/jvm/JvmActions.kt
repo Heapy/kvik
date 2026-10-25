@@ -168,7 +168,6 @@ data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>
         require(classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_.$]*")) })
         require(engines.isNotEmpty() && engines.distinct().size == engines.size && engines.all { it in setOf("junit-jupiter", "kotest") })
         require(maxRetries in 0..9) { "JVM test maxRetries must be an integer in 0..9" }
-        require(maxRetries == 0 || engines == listOf("junit-jupiter")) { "JVM test retries currently require only the junit-jupiter engine" }
         require(parallelism in 1..1024 && parallelism <= resources.cpuSlots) { "JVM test parallelism must be in 1..1024 and not exceed reserved CPU slots" }
         require(parallelism == 1 || engines == listOf("junit-jupiter")) { "Parallel JVM tests currently require only the junit-jupiter engine" }
         require(agents.size <= 16 && agents.map { it.id }.distinct().size == agents.size) { "Duplicate or too many test agents" }

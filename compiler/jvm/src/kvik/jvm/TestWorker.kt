@@ -43,7 +43,6 @@ object TestWorker {
             val maxRetries = (request["maxRetries"]?.longValue() ?: 0).also {
                 require(it in 0L..9L) { "Invalid JVM test maxRetries" }
             }.toInt()
-            require(maxRetries == 0 || engineIds == setOf("junit-jupiter")) { "JVM test retries require only junit-jupiter" }
             if (classes.isEmpty()) reject("KVIK_TEST_EMPTY_SELECTION", "No test classes were selected")
             // A test worker is a fresh JVM. Kotlin stdlib and kotlin-reflect must share its loader;
             // loading reflect only in a child loader breaks stdlib's ReflectionFactory discovery.
@@ -152,6 +151,7 @@ object TestWorker {
                         override fun testPlanExecutionFinished(testPlan: TestPlan) = synchronized(lock) { finished = true }
                     }
                     var complete = true
+                    var previousSelection: Set<String>? = null
                     for (round in 0..maxRetries) {
                         if (round > 0) {
                             // Retry the selected scope in this owned worker, with a new discovery plan.
@@ -162,13 +162,17 @@ object TestWorker {
                             val leaves = next.filterValues { it.isTest }
                             discovered.putAll(leaves)
                             roundDiscovered.clear()
-                            roundDiscovered.addAll(discovered.keys)
+                            roundDiscovered.addAll(leaves.keys)
                             roundReported.clear()
                             finished = false
                         }
                         launcher.execute(plan, listener)
+                        val sameSelection = previousSelection == null || previousSelection == roundDiscovered
+                        if (!sameSelection) diagnostics += Diagnostic("KVIK_TEST_RETRY_SCOPE_CHANGED", DiagnosticCategory.TEST,
+                            "Retry discovered different test identities", module = module, target = target)
                         val roundComplete = finished && started.isEmpty() && roundDiscovered == roundReported &&
-                            diagnostics.none { it.code == "KVIK_TEST_CONTAINER_ABORTED" }
+                            sameSelection && diagnostics.none { it.code == "KVIK_TEST_CONTAINER_ABORTED" }
+                        previousSelection = roundDiscovered.toSet()
                         complete = complete && roundComplete
                         // Do not retry incomplete discovery, container/lifecycle failures or infrastructure errors.
                         if (!roundComplete || diagnostics.isNotEmpty() || roundReported.none { tests[it]?.status == TestStatus.FAILED }) break

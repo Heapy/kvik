@@ -239,27 +239,6 @@
               }
             }
           }
-        },
-        {
-          "if": {
-            "properties": {
-              "maxRetries": {
-                "minimum": 1
-              }
-            },
-            "required": [
-              "maxRetries"
-            ]
-          },
-          "then": {
-            "properties": {
-              "engines": {
-                "const": [
-                  "junit"
-                ]
-              }
-            }
-          }
         }
       ]
     },

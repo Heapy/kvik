@@ -135,17 +135,19 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
 
 class ProjectGraphTest {
     @Test fun retryPolicyChangesTestActionWithoutInvalidatingCompilation() {
-        val ordinary = request(ProjectMode.TEST)
-        val retried = ordinary.copy(jvmTests = ordinary.jvmTests.mapValues { it.value.copy(maxRetries = 2) })
-        val first = resolved(graph(request = ordinary))
-        val second = resolved(graph(request = retried))
-        assertEquals(first.keys, second.keys)
-        for (id in first.keys) {
-            if (first.getValue(id).kind == ActionKind.TEST) {
-                assertNotEquals(first.getValue(id).key(Sha256), second.getValue(id).key(Sha256))
-                assertEquals(2, JvmTestSelection.fromJson(second.getValue(id).parameters).maxRetries)
-                assertEquals(CachePolicy.NEVER, second.getValue(id).cachePolicy)
-            } else assertEquals(first.getValue(id), second.getValue(id))
+        for (engines in listOf(listOf("junit-jupiter"), listOf("kotest"), listOf("junit-jupiter", "kotest"))) {
+            val ordinary = request(ProjectMode.TEST).let { request -> request.copy(jvmTests = request.jvmTests.mapValues { it.value.copy(engines = engines) }) }
+            val retried = ordinary.copy(jvmTests = ordinary.jvmTests.mapValues { it.value.copy(maxRetries = 2) })
+            val first = resolved(graph(request = ordinary))
+            val second = resolved(graph(request = retried))
+            assertEquals(first.keys, second.keys)
+            for (id in first.keys) {
+                if (first.getValue(id).kind == ActionKind.TEST) {
+                    assertNotEquals(first.getValue(id).key(Sha256), second.getValue(id).key(Sha256))
+                    assertEquals(2, JvmTestSelection.fromJson(second.getValue(id).parameters).maxRetries)
+                    assertEquals(CachePolicy.NEVER, second.getValue(id).cachePolicy)
+                } else assertEquals(first.getValue(id), second.getValue(id))
+            }
         }
     }
 

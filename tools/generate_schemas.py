@@ -64,8 +64,6 @@ DEFS["jvmTestSettings"] = object_({
 }, optional=("engines", "parallelism", "maxRetries"))
 DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"minimum": 2}}, "required": ["parallelism"]},
     "then": {"properties": {"engines": {"const": ["junit"]}}}}]
-DEFS["jvmTestSettings"]["allOf"].append({"if": {"properties": {"maxRetries": {"minimum": 1}}, "required": ["maxRetries"]},
-    "then": {"properties": {"engines": {"const": ["junit"]}}}})
 NATIVE_RETRIES = {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}
 DEFS["nativeTestSettings"] = {"oneOf": [
     object_({"engine": {"const": "kotlin"}, "maxRetries": NATIVE_RETRIES}, optional=("maxRetries",)),
