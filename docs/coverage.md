@@ -31,7 +31,7 @@ The output contains `coverage.json` (normalized data), `coverage/<module>/jacoco
 
 Coverage completeness is separate from test success. A failed, incomplete or cancelled test execution keeps that outcome; reporting cannot turn it into a passing run. Retained freshness describes completion time and does not verify today's source tree. Use `verification --run PATH` for current source/tool freshness.
 
-The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Exclusions through CLI settings and publishing to external services remain separate features. Compatible reports can be combined with `coverage-aggregate` as described below.
+The CLI response lists the output artifacts and both the source-run and report statuses. Its schema is `coverageReportExport`; `coverageReportGraph` describes `graph.json`. The data contracts are `coverageReport`, `jvmCoverageSpec`, `coverageSource`, `coverageClassRoot`, `sourceCoverage` and `coverageLine` in `schemas/v1/contracts.json`; `schemas/v1/coverage.json` selects the normalized report. Exclusions through CLI settings remain a separate feature. `coverage-publish` sends retained report summaries to GitHub Checks without rerunning tests. Compatible reports can be combined with `coverage-aggregate` as described below.
 
 ## Check a threshold
 
@@ -139,3 +139,57 @@ Original bytes and digests are preserved, including JaCoCo's [instruction, branc
 For this format, `complete` means all requested original XML files are available. Unknown or incomplete normalized line coverage does not prevent copying available originals; the source report's incomplete, failed or cancelled status is still preserved. Missing expected contributors on the selected target block export even when selecting fewer modules. A missing selected production root or original XML also yields no XML and an incomplete result; unsupported targets yield no XML and an unsupported result.
 
 All originals are verified against retained digests. Selected XML is bounded to 64 MiB in total. `report/export.json`, `graph.json`, stdout and exit codes follow the same contract as Sonar export. This is a local copy operation with no JDK, network, test execution or service publication.
+
+## Publish a GitHub Check
+
+Publish a retained single report or aggregate as a GitHub Check:
+
+```sh
+# Supply a token with repository Checks: write permission through the environment.
+kvik coverage-publish --report /path/to/coverage-directory/coverage.json \
+  --repository owner/repository --sha 0123456789abcdef0123456789abcdef01234567 \
+  --output /path/to/new-publication-attempt
+```
+
+An aggregate uses its `aggregate.json` or `report.json` instead. The whole report
+scope is published; use `coverage-aggregate` first to choose contributors and an
+expected matrix. The summary counts shared sources once per target, retains
+missing and unsupported contributors, and leaves incomplete counters unknown.
+Targets are never pooled. The check describes measurement completeness and the
+retained source-run outcome. It does not evaluate a coverage threshold; use
+`coverage-check` separately to enforce one.
+
+The default check name is `Kvik coverage`. `--name`, `--api-url` and `--token-env`
+follow the [test publication options](test-reports.md#publish-a-github-check),
+including the explicit commit association and single-attempt transport policy.
+The publisher uses GitHub's [Create a check run API](https://docs.github.com/en/rest/checks/runs#create-a-check-run).
+A passed, failed, incomplete or cancelled report produces a `success`, `failure`,
+`action_required` or `cancelled` conclusion respectively. No current project,
+compiler or test process is loaded, and publication never establishes that a
+historical report describes today's sources or the caller-supplied commit.
+
+Before the HTTP request, the attempt directory retains the original input bytes
+as `source/report.json`, every referenced original artifact under `source/`, and
+`request.json`, `action.json` and `intent.json`. Aggregate contributors retain
+their reports and originals under `source/contributors/<report-hash>/`.
+Every original is checked against its recorded digest before sending. Each file
+is bounded to 64 MiB and the retained attempt inputs to 256 MiB. The action is
+`publish` with cache policy `never`; the token is transport-only.
+
+`outcome/result.json` and stdout use the existing `githubCheckPublication` schema.
+Exit 0 means the check was published, independently of the coverage outcome in
+`sourceStatus`. Rejection or an unknown remote result returns 3; cancellation
+returns 130. Server response bodies and credentials are not retained.
+
+After checking whether an ambiguous attempt already created a remote check,
+retry from its self-contained inputs with a fresh attempt directory:
+
+```sh
+kvik coverage-publish --report /path/to/previous-attempt/source/report.json \
+  --repository owner/repository --sha 0123456789abcdef0123456789abcdef01234567 \
+  --output /path/to/another-attempt
+```
+
+This works even after the original report directory is removed. There is no
+automatic POST retry or deduplication; another attempt can create another check.
+The retained reports remain usable regardless of the publication result.

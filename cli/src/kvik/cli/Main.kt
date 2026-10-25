@@ -33,7 +33,7 @@ private fun command(args: Array<String>) {
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, dev, session, packages, dependencies, workspace, help
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
@@ -80,6 +80,7 @@ private fun command(args: Array<String>) {
             Coverage threshold: coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY
             Test aggregation: test-aggregate --run PATH ... [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--format json|junit-xml] --output NEW_DIRECTORY
             GitHub Checks: test-publish --run PATH ... --repository OWNER/REPO --sha SHA [--expect CHECK ...] [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY
+            Coverage Checks: coverage-publish --report PATH --repository OWNER/REPO --sha SHA [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY
             Coverage export: coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY
             Coverage aggregation: coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
@@ -134,6 +135,7 @@ private fun command(args: Array<String>) {
         "coverage-check" -> exitProcess(coverageCheckCommand(args.drop(1)).code)
         "test-publish" -> exitProcess(testPublishCommand(args.drop(1)).code)
         "test-aggregate" -> exitProcess(testAggregateCommand(args.drop(1)).code)
+        "coverage-publish" -> exitProcess(coveragePublishCommand(args.drop(1)).code)
         "coverage-export" -> exitProcess(coverageExportCommand(args.drop(1)).code)
         "coverage-aggregate" -> exitProcess(coverageAggregateCommand(args.drop(1)).code)
         else -> {
