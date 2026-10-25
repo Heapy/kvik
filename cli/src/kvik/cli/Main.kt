@@ -30,13 +30,15 @@ private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "jvm-classpath" -> exitProcess(jvmClasspathCommand(args.drop(1)).code)
         "bsp" -> exitProcess(bspCommand(args.drop(1)))
+        "mcp" -> exitProcess(mcpCommand(args.drop(1)))
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, doctor, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
             Tool diagnostics: doctor --tools PATH --target TARGET (repeatable) [--check build|test]; reads installed tools without launching or downloading them
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
+            Agent queries: mcp --project PATH [--lock PATH] [--store PATH] [--query-cache PATH] [--offline] serves MCP over foreground stdio
             Scoped pins: --scope-pin MODULE:TARGET:main|test:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline
