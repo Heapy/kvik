@@ -685,7 +685,17 @@ See [public API baselines](docs/abi.md).
 `docs --target js --target wasmJs` generates API documentation with shared and
 platform source sets. See [API documentation](docs/documentation.md).
 
-Browser and WASI runtimes, npm dependencies and application launching are still pending.
+Targets `js` and `wasmJs` also support Node applications through `prepare-application`,
+`run-application`, `run-prepared`, BSP run requests and `dev --mode application`.
+Declare `application.entryPoint` as a public top-level Kotlin function returning
+`Unit`, with either no parameters or one `Array<String>` parameter. The entry does
+not need `@JsExport` and can have a name other than `main`. Overloaded and suspend
+entries are not supported. Kvik compiles a small entry bridge against the ordinary
+main KLIB, links it and packages an ES-module launcher; Wasm files stay beside it.
+Only the selected entry is invoked. Arguments are read at execution time, so changes
+to arguments or environment reuse compilation and linking. A pinned Node declaration
+is required for application preparation and its installation is verified before launch.
+Browser and WASI runtimes and npm dependencies are still pending.
 See the [compiler adapter](compiler/js/README.md) for its current boundaries and the
 pinned compiler workaround that suppresses Wasm application startup during tests.
 
@@ -1114,7 +1124,7 @@ see [workspace compiler plugins](docs/workspace-compiler-plugins.md).
 
 For a runnable target, declare `application` with an `entryPoint`, optional ordered
 `arguments` and an `environment` map. JVM entry points name the main class, such
-as `example.MainKt`; macosArm64 entry points name the Kotlin function, such as
+as `example.MainKt`; Native and Node-backed JS/Wasm entry points name the Kotlin function, such as
 `example.main`. Select exactly one module and target:
 
 ```sh

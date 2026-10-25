@@ -93,15 +93,19 @@ APPLICATION_PATH = {"allOf": [ref("file/properties/path"),
     {"pattern": r"^[^\u0000-\u001f]*$(?![\s\S])"}]}
 DEFS["applicationLaunch"] = versioned({
     "module": {**ID, "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"},
-    "target": enum("jvm", "macosArm64", "linuxX64"), "application": ref("applicationSettings"),
+    "target": enum("jvm", "macosArm64", "linuxX64", "js", "wasmJs"), "application": ref("applicationSettings"),
     "classpath": array(APPLICATION_PATH, maxItems=1024, uniqueItems=True),
     "executable": nullable(APPLICATION_PATH),
-})
+    "moduleFile": {"allOf": [APPLICATION_PATH, {"pattern": r"\.mjs$(?![\s\S])"}]},
+}, optional=("moduleFile",))
 DEFS["applicationLaunch"]["allOf"] = [{
     "if": {"properties": {"target": {"const": "jvm"}}},
-    "then": {"properties": {"classpath": {"minItems": 1}, "executable": {"type": "null"}}},
-    "else": {"properties": {"classpath": {"maxItems": 0}, "executable": APPLICATION_PATH,
-        "application": {"properties": {"entryPoint": NATIVE_APPLICATION_ENTRY}}}},
+    "then": {"properties": {"classpath": {"minItems": 1}, "executable": {"type": "null"}}, "not": {"required": ["moduleFile"]}},
+    "else": {"properties": {"classpath": {"maxItems": 0},
+        "application": {"properties": {"entryPoint": NATIVE_APPLICATION_ENTRY}}},
+        "if": {"properties": {"target": enum("js", "wasmJs")}},
+        "then": {"required": ["moduleFile"], "properties": {"executable": {"type": "null"}}},
+        "else": {"properties": {"executable": APPLICATION_PATH}, "not": {"required": ["moduleFile"]}}},
 }]
 DEFS["applicationLaunch"]["description"] = "Canonical UTF-8 metadata must additionally fit 256 KiB; paths must bind to the declared input tree."
 DEFS["target"] = object_({"name": enum(*PROJECT_TARGETS), "main": ID, "test": nullable(ID), "compilerOptions": array(STRING), "testSettings": ref("jvmTestSettings"), "testCompilerOptions": array(STRING), "nativeTestSettings": ref("nativeTestSettings"), "nativeTimeouts": ref("nativeTimeouts")}, optional=("testSettings", "testCompilerOptions", "nativeTestSettings", "nativeTimeouts"))
@@ -144,14 +148,12 @@ DEFS["target"]["properties"]["nativeFramework"] = ref("nativeFramework")
 DEFS["target"]["allOf"] = [{"if": {"required": ["testSettings"]}, "then": {"properties": {"name": {"const": "jvm"}, "test": ID}}}]
 DEFS["target"]["allOf"].append({"if": {"required": ["benchmarkSettings"]}, "then": {"properties": {"name": {"const": "jvm"}}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["jsTestSettings"]}, "then": {"properties": {"name": enum(*JS_TARGETS), "test": ID}}})
-DEFS["target"]["allOf"].append({"if": {"properties": {"name": enum(*JS_TARGETS)}},
-    "then": {"not": {"anyOf": [{"required": [name]} for name in ("application",)]}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["testResources"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["testCompilerOptions"]}, "then": {"properties": {"test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTestSettings"]}, "then": {"properties": {"name": enum("macosArm64", "linuxX64"), "test": ID}}})
 DEFS["target"]["allOf"].append({"if": {"required": ["nativeTimeouts"]}, "then": {"properties": {"name": enum(*NATIVE_TARGETS)}}})
 DEFS["target"]["allOf"].append({
-    "if": {"properties": {"name": enum("macosArm64", "linuxX64")}, "required": ["name", "application"]},
+    "if": {"properties": {"name": enum("macosArm64", "linuxX64", "js", "wasmJs")}, "required": ["name", "application"]},
     "then": {"properties": {"application": {"properties": {"entryPoint": NATIVE_APPLICATION_ENTRY}}}},
 })
 DEFS["target"]["allOf"].extend([
@@ -455,7 +457,7 @@ DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|package))$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|application|package))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
 ]}
 DEFS["verification"] = versioned({"runId": STRING, "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True), "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "inputSnapshot": ref("digest"), "configuration": ref("digest"), "dependencyLock": ref("digest"), "composition": ref("digest"), "toolchains": mapping(ref("digest")), "actions": array(ref("actionResult")), "tests": array(ref("testResult")), "testCounts": ref("testCounts"), "status": enum("passed", "failed", "incomplete", "cancelled"), "freshnessAtCompletion": enum("current", "stale", "indeterminate"), "reproduction": array(STRING, minItems=1), "source": ref("sourceReference")}, optional=("source",))
@@ -765,7 +767,7 @@ DEFS["coverageConsumerExportGraph"] = versioned({"sourceReport": ref("digest"),
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=1, maxItems=1),
     "results": array(ref("actionResult"), minItems=1, maxItems=1), "events": array(ref("event"))})
 DEFS["verificationQuery"] = versioned({"verification": ref("verification"), "freshness": enum("current", "stale", "indeterminate"), "reason": nullable(STRING)})
-APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):application$(?![\s\S])"}
+APPLICATION_CHECK = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):application$(?![\s\S])"}
 DEFS["preparedApplication"] = versioned({
     "runId": {"type": "string", "pattern": r"^(?=[^\u0000-\u001f]*\S)[^\u0000-\u001f]+$(?![\s\S])"},
     "actionId": APPLICATION_CHECK, "verification": ref("digest"), "outputs": ref("digest"),
@@ -777,7 +779,7 @@ ACTIVATION_PATH = {"type": "string", "maxLength": 4096,
     "pattern": r"^/(?:(?!\.{1,2}(?:/|$))[^/\u0000-\u001f]+/)*(?!\.{1,2}(?:/|$))[^/\u0000-\u001f]+$(?![\s\S])"}
 DEFS["applicationReady"] = versioned({"token": ref("applicationActivationDigest"), "preparationDirectory": ACTIVATION_PATH,
     "descriptor": ref("applicationActivationDigest"), "verification": ref("applicationActivationDigest"), "composition": ref("applicationActivationDigest"),
-    "module": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"}, "target": enum("jvm", "macosArm64", "linuxX64")})
+    "module": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"}, "target": enum("jvm", "macosArm64", "linuxX64", "js", "wasmJs")})
 DEFS["applicationActivation"] = versioned({"token": ref("applicationActivationDigest"), "ready": ref("applicationActivationDigest")})
 DEFS["applicationStarted"] = versioned({"token": ref("applicationActivationDigest"), "ready": ref("applicationActivationDigest"), "executionDirectory": ACTIVATION_PATH})
 for name in ("applicationReady", "applicationActivation", "applicationStarted"):
@@ -912,7 +914,7 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "run-finished": ref("verification"), "session-state": object_({"state": enum("idle", "building", "testing", "failed", "restarting", "stopping"), "runningSnapshot": nullable(ref("digest"))}),
     "application-prepared": object_({"directory": NONEMPTY, "descriptor": ref("digest"), "actionId": APPLICATION_CHECK}),
     "application-started": object_({"preparationRun": NONEMPTY, "descriptor": ref("digest"),
-        "module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum("jvm", "macosArm64", "linuxX64"), "stdout": NONEMPTY, "stderr": NONEMPTY}),
+        "module": {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}, "target": enum("jvm", "macosArm64", "linuxX64", "js", "wasmJs"), "stdout": NONEMPTY, "stderr": NONEMPTY}),
     "application-finished": object_({"preparationRun": NONEMPTY, "exitCode": {"type": "integer", "minimum": 0, "maximum": 255},
         "cancelled": BOOL, "timedOut": BOOL, "stdout": NONEMPTY, "stderr": NONEMPTY}),
 }.items()]

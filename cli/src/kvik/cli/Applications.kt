@@ -195,6 +195,17 @@ private fun validateApplicationPlan(prepared: PreparedRun): ApplicationPlan {
             after.reason ?: "Application preparation changed during JDK validation", after.exitStatus)
         listOf(java, "--disable-@files", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp",
             launch.classpath.joinToString(":") { "$inputs/${it.value}" }, launch.application.entryPoint) + launch.application.arguments
+    } else if (KotlinJsTarget.find(launch.target) != null) {
+        val tools = BuildTools(checked.metadata.getValue("toolsPath").stringValue())
+        val node = tools.nodeProvider().verified(record.toolchains.getValue("${launch.target}:node")) {
+            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_APPLICATION_CANCELLED",
+                DiagnosticCategory.CANCELLATION, "Application Node verification cancelled", ExitStatus.CANCELLED)
+        }
+        val after = checkRun(directory)
+        require(Sha256.digest(after.record.toJson()) == descriptor.verification) { "Preparation verification changed during Node validation" }
+        if (after.exitStatus != ExitStatus.SUCCESS) throw CliFailure("KVIK_APPLICATION_PREPARATION_STALE", DiagnosticCategory.CONFIGURATION,
+            after.reason ?: "Application preparation changed during Node validation", after.exitStatus)
+        listOf(node, "--unhandled-rejections=strict", "$inputs/${checkNotNull(launch.moduleFile).value}") + launch.application.arguments
     } else listOf("$inputs/${checkNotNull(launch.executable).value}") + launch.application.arguments
     require(access(arguments.first(), X_OK) == 0) { "Application executable is not executable" }
     require("KVIK_APPLICATION_INPUTS" !in launch.application.environment) { "KVIK_APPLICATION_INPUTS is supplied by the application runner" }

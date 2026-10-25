@@ -21,8 +21,13 @@ data class JsCompilation(
     val warningsAsErrors: Boolean = false,
     val plugins: List<LogicalPath> = emptyList(),
     val pluginApplications: List<JvmPluginApplication> = emptyList(),
+    val applicationEntryPoint: String? = null,
 ) {
     init {
+        applicationEntryPoint?.let {
+            ApplicationSpec(it).requireTarget(target.projectName)
+            require(sources.isEmpty() && commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && !explicitApi)
+        }
         require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
         require(pluginApplications.all { plugin ->
             plugin.classpath.none { it in libraries } && plugin.outputs.all { root ->
@@ -39,7 +44,7 @@ data class JsCompilation(
         require(plugins.size <= 1 && plugins.all { it.value.endsWith(".jar") })
         require(optIns.distinct().size == optIns.size && optIns.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_.]*")) })
         if (includedLibrary == null) {
-            require(sources.isNotEmpty() && output.value.endsWith(".klib"))
+            require((sources.isNotEmpty() || applicationEntryPoint != null) && output.value.endsWith(".klib"))
         } else {
             require(includedLibrary.value.endsWith(".klib") && ':' !in includedLibrary.value && ',' !in includedLibrary.value)
             require(includedLibrary !in libraries && sources.isEmpty() && commonSources.isEmpty() && plugins.isEmpty() && pluginApplications.isEmpty() && optIns.isEmpty() && !explicitApi)
@@ -67,6 +72,7 @@ data class JsCompilation(
         if (warningsAsErrors) add("-Werror")
         if (libraries.isNotEmpty()) addAll(listOf("-libraries", libraries.joinToString(":") { "input/${it.value}" }))
         addAll(sources.map { "input/${it.value}" })
+        if (includedLibrary == null && applicationEntryPoint != null) add("prepared/Application.kt")
     }
     fun toJson(): JsonValue.Object = obj("module" to module.json(), "target" to target.projectName.json(),
         "sources" to sources.map { it.value.json() }.json(), "libraries" to libraries.map { it.value.json() }.json(),
@@ -75,13 +81,15 @@ data class JsCompilation(
         "optIns" to optIns.map { it.json() }.json(), "explicitApi" to explicitApi.json(),
         "warningsAsErrors" to warningsAsErrors.json(), "plugins" to plugins.map { it.value.json() }.json()).let {
             if (pluginApplications.isEmpty()) it else JsonValue.Object(it.values + ("pluginApplications" to pluginApplications.map(JvmPluginApplication::toJson).json()))
-        }
+        }.let(::withApplication)
+    private fun withApplication(value: JsonValue.Object): JsonValue.Object =
+        if (applicationEntryPoint == null) value else JsonValue.Object(value.values + ("applicationEntryPoint" to applicationEntryPoint.json()))
     companion object {
         fun fromJson(value: JsonValue): JsCompilation {
-            val d = value.fields(setOf("module", "target", "sources", "libraries", "output", "commonSources", "includedLibrary", "moduleName", "optIns", "explicitApi", "warningsAsErrors", "plugins"), setOf("pluginApplications"))
+            val d = value.fields(setOf("module", "target", "sources", "libraries", "output", "commonSources", "includedLibrary", "moduleName", "optIns", "explicitApi", "warningsAsErrors", "plugins"), setOf("pluginApplications", "applicationEntryPoint"))
             fun paths(key: String) = d.getValue(key).arrayValue().map { LogicalPath(it.stringValue()) }
             return JsCompilation(d.getValue("module").stringValue(), KotlinJsTarget.require(d.getValue("target").stringValue()), paths("sources"), paths("libraries"), LogicalPath(d.getValue("output").stringValue()), paths("commonSources"),
-                d.getValue("includedLibrary").let { if (it == JsonValue.Null) null else LogicalPath(it.stringValue()) }, d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), paths("plugins"), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList())
+                d.getValue("includedLibrary").let { if (it == JsonValue.Null) null else LogicalPath(it.stringValue()) }, d.getValue("moduleName").stringValue(), d.getValue("optIns").arrayValue().map { it.stringValue() }, d.getValue("explicitApi").booleanValue(), d.getValue("warningsAsErrors").booleanValue(), paths("plugins"), d["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson) ?: emptyList(), d["applicationEntryPoint"]?.stringValue())
         }
     }
 }

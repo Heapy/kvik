@@ -39,6 +39,22 @@ class ApplicationTest {
         assertFails { launch.copy(target = "linuxArm64") }
     }
 
+    @Test fun nodeApplicationsRequireAnExactNonExecutableModule() {
+        for (target in listOf("js", "wasmJs")) {
+            val path = LogicalPath("program/launch.mjs")
+            val launch = ApplicationLaunch("app", target, ApplicationSpec("sample.main"), moduleFile = path)
+            assertEquals(launch, ApplicationLaunch.fromJson(launch.toJson()))
+            launch.requireInputs(TreeManifest(listOf(FileEntry(path, digest))))
+            assertFails { launch.requireInputs(TreeManifest(emptyList())) }
+            assertFails { launch.requireInputs(TreeManifest(listOf(FileEntry(path, digest, true)))) }
+            assertFails { launch.copy(moduleFile = null) }
+            assertFails { launch.copy(moduleFile = LogicalPath("app.wasm")) }
+            assertFails { launch.copy(executable = path) }
+            assertFails { launch.copy(classpath = listOf(classes)) }
+            assertFails { launch.copy(target = "jvm") }
+        }
+    }
+
     @Test fun settingsRejectUnknownFieldsNulsInvalidUnicodeAndOversizedPayloads() {
         assertEquals(ApplicationSpec("MainKt"), ApplicationSpec.fromJson(parseJson("""{"entryPoint":"MainKt"}""")))
         for (text in listOf("null", "[]", "{}", """{"entryPoint":"MainKt","args":[]}""",

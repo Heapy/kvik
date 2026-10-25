@@ -849,7 +849,10 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "evidenceDirectory": {
@@ -903,7 +906,10 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "evidenceDirectory": {
@@ -961,7 +967,10 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "evidenceDirectory": {
@@ -1015,7 +1024,10 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "evidenceDirectory": {
@@ -1073,7 +1085,10 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "evidenceDirectory": {
@@ -1127,7 +1142,10 @@
                   "target": {
                     "enum": [
                       "jvm",
-                      "macosArm64"
+                      "macosArm64",
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "evidenceDirectory": {
@@ -1558,7 +1576,10 @@
         "applicationTarget": {
           "enum": [
             "jvm",
-            "macosArm64"
+            "macosArm64",
+            "linuxX64",
+            "js",
+            "wasmJs"
           ]
         },
         "terminalLease": {
@@ -1632,7 +1653,10 @@
                 "target": {
                   "enum": [
                     "jvm",
-                    "macosArm64"
+                    "macosArm64",
+                    "linuxX64",
+                    "js",
+                    "wasmJs"
                   ]
                 },
                 "evidenceDirectory": {
@@ -1684,7 +1708,10 @@
                 "target": {
                   "enum": [
                     "jvm",
-                    "macosArm64"
+                    "macosArm64",
+                    "linuxX64",
+                    "js",
+                    "wasmJs"
                   ]
                 },
                 "evidenceDirectory": {

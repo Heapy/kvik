@@ -386,7 +386,9 @@
           "enum": [
             "jvm",
             "macosArm64",
-            "linuxX64"
+            "linuxX64",
+            "js",
+            "wasmJs"
           ]
         },
         "application": {
@@ -423,6 +425,23 @@
               "type": "null"
             }
           ]
+        },
+        "moduleFile": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file/properties/path"
+                },
+                {
+                  "pattern": "^[^\\u0000-\\u001f]*$(?![\\s\\S])"
+                }
+              ]
+            },
+            {
+              "pattern": "\\.mjs$(?![\\s\\S])"
+            }
+          ]
         }
       },
       "required": [
@@ -451,22 +470,17 @@
               "executable": {
                 "type": "null"
               }
+            },
+            "not": {
+              "required": [
+                "moduleFile"
+              ]
             }
           },
           "else": {
             "properties": {
               "classpath": {
                 "maxItems": 0
-              },
-              "executable": {
-                "allOf": [
-                  {
-                    "$ref": "#/$defs/file/properties/path"
-                  },
-                  {
-                    "pattern": "^[^\\u0000-\\u001f]*$(?![\\s\\S])"
-                  }
-                ]
               },
               "application": {
                 "properties": {
@@ -475,6 +489,45 @@
                     "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$(?![\\s\\S])"
                   }
                 }
+              }
+            },
+            "if": {
+              "properties": {
+                "target": {
+                  "enum": [
+                    "js",
+                    "wasmJs"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "moduleFile"
+              ],
+              "properties": {
+                "executable": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "executable": {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/file/properties/path"
+                    },
+                    {
+                      "pattern": "^[^\\u0000-\\u001f]*$(?![\\s\\S])"
+                    }
+                  ]
+                }
+              },
+              "not": {
+                "required": [
+                  "moduleFile"
+                ]
               }
             }
           }
@@ -614,29 +667,6 @@
         },
         {
           "if": {
-            "properties": {
-              "name": {
-                "enum": [
-                  "js",
-                  "wasmJs"
-                ]
-              }
-            }
-          },
-          "then": {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "application"
-                  ]
-                }
-              ]
-            }
-          }
-        },
-        {
-          "if": {
             "required": [
               "testResources"
             ]
@@ -711,7 +741,9 @@
               "name": {
                 "enum": [
                   "macosArm64",
-                  "linuxX64"
+                  "linuxX64",
+                  "js",
+                  "wasmJs"
                 ]
               }
             },
@@ -5559,7 +5591,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|package))$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|application|package))$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -9573,7 +9605,7 @@
         },
         "actionId": {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):application$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):application$(?![\\s\\S])"
         },
         "verification": {
           "$ref": "#/$defs/digest"
@@ -9637,7 +9669,9 @@
           "enum": [
             "jvm",
             "macosArm64",
-            "linuxX64"
+            "linuxX64",
+            "js",
+            "wasmJs"
           ]
         }
       },
@@ -10729,7 +10763,7 @@
                   },
                   "actionId": {
                     "type": "string",
-                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):application$(?![\\s\\S])"
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):application$(?![\\s\\S])"
                   }
                 },
                 "required": [
@@ -10770,7 +10804,9 @@
                     "enum": [
                       "jvm",
                       "macosArm64",
-                      "linuxX64"
+                      "linuxX64",
+                      "js",
+                      "wasmJs"
                     ]
                   },
                   "stdout": {

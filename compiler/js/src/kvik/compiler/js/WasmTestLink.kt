@@ -1,9 +1,8 @@
 package kvik.compiler.js
 
 /**
- * Kotlin 2.4.20's WasmOutputGenerationPipelinePhase calls _start even with -main noCall. Source-free links in this
- * adapter are test links: retain module initialization and the exported test entry, but prevent
- * the generated loader from invoking the application's main. Reject an unfamiliar call shape.
+ * Kotlin 2.4.20's WasmOutputGenerationPipelinePhase calls _start even with -main noCall. Retain module initialization and exported entries, but prevent
+ * the generated loader from invoking the application's main implicitly. Reject an unfamiliar call shape.
  */
 internal fun wasmTestLoaderWithoutMain(source: String): String {
     val marker = "exports._start"

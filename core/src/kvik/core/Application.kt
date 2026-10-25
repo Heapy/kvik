@@ -8,7 +8,7 @@ data class ApplicationSpec(
 ) {
     init {
         require(entryPoint.length in 1..1024 && entryPoint.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*"))) {
-            "Application entryPoint must be an explicit qualified JVM class or Native function"
+            "Application entryPoint must be an explicit qualified JVM class or Kotlin function"
         }
         require(arguments.size <= 256 && arguments.all { it.length <= 4096 && '\u0000' !in it }) { "Invalid application arguments" }
         require(environment.size <= 128 && environment.all { (key, value) ->
@@ -17,9 +17,9 @@ data class ApplicationSpec(
         require(toJson().canonical().encodeToByteArray().size <= 64 * 1024) { "Application settings exceed 64 KiB" }
     }
     fun requireTarget(target: String) {
-        require(target == "jvm" || NativeTarget.find(target)?.supportsHostExecution == true) { "Unsupported application execution target" }
-        require(NativeTarget.find(target) == null || entryPoint.matches(Regex("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))) {
-            "Native application entryPoint must be a qualified function name"
+        require(target == "jvm" || KotlinJsTarget.find(target) != null || NativeTarget.find(target)?.supportsHostExecution == true) { "Unsupported application execution target" }
+        require(target == "jvm" || entryPoint.matches(Regex("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*"))) {
+            "Kotlin application entryPoint must be a qualified function name"
         }
     }
     fun toJson(): JsonValue.Object = obj("entryPoint" to entryPoint.json(), "arguments" to arguments.map { it.json() }.json(),
@@ -41,13 +41,18 @@ data class ApplicationLaunch(
     val application: ApplicationSpec,
     val classpath: List<LogicalPath> = emptyList(),
     val executable: LogicalPath? = null,
+    val moduleFile: LogicalPath? = null,
 ) {
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid application module" }
         application.requireTarget(target)
         require(classpath.distinct().size == classpath.size && classpath.size <= 1024) { "Invalid application classpath" }
-        require(if (target == "jvm") classpath.isNotEmpty() && executable == null else classpath.isEmpty() && executable != null) {
-            "JVM applications require a classpath; Native applications require an executable"
+        require(when {
+            target == "jvm" -> classpath.isNotEmpty() && executable == null && moduleFile == null
+            KotlinJsTarget.find(target) != null -> classpath.isEmpty() && executable == null && moduleFile?.value?.endsWith(".mjs") == true
+            else -> classpath.isEmpty() && executable != null && moduleFile == null
+        }) {
+            "Applications require a JVM classpath, Native executable or JS/Wasm ES module"
         }
         require(toJson().canonical().encodeToByteArray().size <= 256 * 1024) { "Application launch metadata exceeds 256 KiB" }
     }
@@ -55,21 +60,27 @@ data class ApplicationLaunch(
         for (path in classpath) require(inputs.files.any { it.path == path || it.path.value.startsWith(path.value + "/") }) {
             "Undeclared application classpath: ${path.value}"
         }
+        moduleFile?.let { path -> require(inputs.files.singleOrNull { it.path == path }?.executable == false) {
+            "Application ES module must be a non-executable input"
+        } }
         executable?.let { path -> require(inputs.files.singleOrNull { it.path == path }?.executable == true) {
             "Application executable must be an executable input"
         } }
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "module" to module.json(), "target" to target.json(),
         "application" to application.toJson(), "classpath" to classpath.map { it.value.json() }.json(),
-        "executable" to (executable?.value?.json() ?: JsonValue.Null))
+        "executable" to (executable?.value?.json() ?: JsonValue.Null)).let {
+            if (moduleFile == null) it else JsonValue.Object(it.values + ("moduleFile" to moduleFile.value.json()))
+        }
     companion object {
         fun fromJson(value: JsonValue): ApplicationLaunch {
-            val fields = value.fields(setOf("schemaVersion", "module", "target", "application", "classpath", "executable"))
+            val fields = value.fields(setOf("schemaVersion", "module", "target", "application", "classpath", "executable"), setOf("moduleFile"))
             fields.requireVersion()
             return ApplicationLaunch(fields.getValue("module").stringValue(), fields.getValue("target").stringValue(),
                 ApplicationSpec.fromJson(fields.getValue("application")),
                 fields.getValue("classpath").arrayValue().map { LogicalPath(it.stringValue()) },
-                fields.getValue("executable").let { if (it == JsonValue.Null) null else LogicalPath(it.stringValue()) })
+                fields.getValue("executable").let { if (it == JsonValue.Null) null else LogicalPath(it.stringValue()) },
+                fields["moduleFile"]?.let { LogicalPath(it.stringValue()) })
         }
     }
 }

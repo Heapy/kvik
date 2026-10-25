@@ -76,7 +76,8 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     "kvik-js-compiler-v1" -> JsCompilation.fromJson(action.parameters).let { compilation ->
         if (compilation.includedLibrary == null) listOf(FileEntry(compilation.output, digest(salt))) +
             compilation.pluginApplications.flatMap { it.outputs }.map { FileEntry(LogicalPath(it.value + "/report.txt"), digest("report:$salt")) }
-        else listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.mjs"), digest(salt))) +
+        else (if (compilation.applicationEntryPoint != null) listOf(FileEntry(LogicalPath("${compilation.output.value}/launch.mjs"), digest("launcher:$salt"))) else emptyList()) +
+            listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.mjs"), digest(salt))) +
             if (compilation.target == KotlinJsTarget.WASM_JS) listOf(FileEntry(LogicalPath("${compilation.output.value}/${compilation.moduleName}.wasm"), digest("wasm:$salt"))) else emptyList()
     }
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
@@ -842,6 +843,36 @@ class ProjectGraphTest {
         val packaged = actions.getValue("app:jvm:package")
         assertFalse(LibraryPackage.fromJson(packaged.parameters).dependencies.any { it.coordinate.name.contains("producer") || it.coordinate.name.contains("compiler") })
         assertTrue(packaged.inputs.files.all { it.path.value.startsWith("classes/") })
+    }
+
+    @Test fun nodeApplicationsSeparateEntryLinkBundleAndRuntimeSettings() {
+        for (target in listOf("js", "wasmJs")) {
+            val base = module("app", listOf(external("g:library:1")))
+            fun project(spec: ApplicationSpec) = configuration(base.copy(targets = listOf(
+                TargetSpec(target, "commonMain", null, listOf("-opt-in=sample.Experimental"), application = spec))))
+            val spec = ApplicationSpec("fixture.start", listOf("first"))
+            val config = project(spec)
+            val plan = graph(config, snapshot(), request(ProjectMode.APPLICATION, target))
+            val actions = resolved(plan)
+            val entry = actions.getValue("app:$target:application-entry")
+            assertEquals("fixture.start", JsCompilation.fromJson(entry.parameters).applicationEntryPoint)
+            assertEquals(listOf("sample.Experimental"), JsCompilation.fromJson(entry.parameters).optIns)
+            assertEquals(setOf("app:$target:main"), plan.nodes.single { it.id == "app:$target:application-entry" }.dependencies)
+            val link = actions.getValue("app:$target:application-link")
+            assertEquals(LogicalPath("application-entry.klib"), JsCompilation.fromJson(link.parameters).includedLibrary)
+            assertFalse("node" in entry.toolchains || "node" in link.toolchains)
+            val bundle = actions.getValue("app:$target:application")
+            val launch = ApplicationLaunch.fromJson(bundle.parameters)
+            launch.requireInputs(bundle.inputs)
+            assertEquals(LogicalPath("modules/app/$target/program/launch.mjs"), launch.moduleFile)
+            assertTrue("node" in bundle.toolchains)
+            assertEquals("web-modules", plan.requireArtifact("app", target, "main", "web-modules").output.kind)
+            val changed = resolved(graph(project(spec.copy(arguments = listOf("changed"))), snapshot(), request(ProjectMode.APPLICATION, target)))
+            for ((id, action) in actions) assertEquals(id.endsWith(":application"), action.key(Sha256) != changed.getValue(id).key(Sha256))
+            val effective = effectiveConfiguration(config)
+            assertFails { projectActionGraph(effective, lock(effective), snapshot(), composition,
+                tools.mapValues { (_, ids) -> ids - "node" }, request(ProjectMode.APPLICATION, target)) }
+        }
     }
 
     @Test fun applicationRuntimeClosuresPreservePrivateAndRuntimeOnlyBoundaries() {

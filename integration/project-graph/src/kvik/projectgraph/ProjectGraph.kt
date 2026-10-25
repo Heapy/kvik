@@ -148,8 +148,8 @@ private class Builder(
         require(selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Dependency lock request identities differ" }
         require(this.request.modules.isNotEmpty() && this.request.targets.isNotEmpty()) { "Select modules and targets explicitly" }
         require(this.request.modules.all { it in modules } && this.request.targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) { "Unknown project module/target selection" }
-        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.PACKAGE, ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK, ProjectMode.DOCUMENTATION)) {
-            "JS/Wasm currently supports build, test, compile-tests, packaging, ABI checks and documentation; application mode requires its own adapter"
+        require(this.request.targets.none { KotlinJsTarget.find(it) != null } || this.request.mode in setOf(ProjectMode.BUILD, ProjectMode.TEST, ProjectMode.COMPILE_TESTS, ProjectMode.PACKAGE, ProjectMode.ABI_DUMP, ProjectMode.ABI_CHECK, ProjectMode.DOCUMENTATION, ProjectMode.APPLICATION)) {
+            "JS/Wasm currently supports build, test, compile-tests, packaging, ABI checks and documentation; unsupported JS/Wasm operation"
         }
         require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
         require(!this.request.mode.isBenchmark() || this.request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
@@ -158,8 +158,8 @@ private class Builder(
         for (module in this.request.modules) for (target in this.request.targets) {
             target(module, target)
             val webTarget = KotlinJsTarget.find(target) != null
-            if (webTarget && this.request.mode == ProjectMode.TEST) require(tools[target]?.containsKey("node") == true) {
-                "JS/Wasm test execution requires node.root and node.identity in tools: $target"
+            if (webTarget && this.request.mode in setOf(ProjectMode.TEST, ProjectMode.APPLICATION)) require(tools[target]?.containsKey("node") == true) {
+                "JS/Wasm execution requires node.root and node.identity in tools: $target"
             }
             val compilerKeys = if (target == "jvm" || webTarget) setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
                 else NativeTarget.require(target).toolIdentityNames
@@ -1110,6 +1110,45 @@ private class Builder(
                     LogicalPath("runtime/$producer/main").takeIf { root -> resource.paths.any { it.value.startsWith(root.value + "/") } }) } + artifacts.map { it.path }
                 applicationBundleAction(ApplicationLaunch(module, target, application, classpath),
                     merge(classes, resource.resolve(results), artifacts), composition, tools.getValue(target))
+            }
+        } else if (KotlinJsTarget.find(target) != null) {
+            val jsTarget = KotlinJsTarget.require(target)
+            val entryId = "$module:$target:application-entry"
+            val linkId = "$module:$target:application-link"
+            var entryModule = "_kvik_application_$module"
+            while (entryModule in modules) entryModule += "_"
+            val entryEdges = runtimeIds.map { mainId(it, target) }.toSet()
+            val entryOptions = compilerOptions(module, target, target(module, target).compilerOptions)
+            val libraries = runtimeIds.map { modulePath(it, target, "main") } + artifacts.map { it.path }
+            nodes[entryId] = ActionNode(entryId, entryEdges, ActionOutputContract(fileOutput("application-entry.klib", "klib"))) { results ->
+                validateResults(results, entryEdges)
+                jsCompileAction(JsCompilation(module, jsTarget, emptyList(), libraries,
+                    LogicalPath("application-entry.klib"), moduleName = entryModule, optIns = entryOptions.optIns, applicationEntryPoint = application.entryPoint),
+                    merge(runtimeIds.flatMap { remap(results, it, target, "main") }, artifacts), composition, jsCompilerTools(target))
+            }
+            val linkEdges = entryEdges + entryId
+            nodes[linkId] = ActionNode(linkId, linkEdges, ActionOutputContract(treeOutput("program", "web-modules"))) { results ->
+                validateResults(results, linkEdges)
+                jsCompileAction(JsCompilation(module, jsTarget, emptyList(), libraries, LogicalPath("program"),
+                    includedLibrary = LogicalPath("application-entry.klib"), moduleName = entryModule, applicationEntryPoint = application.entryPoint),
+                    merge(results.getValue(entryId).outputs.files, runtimeIds.flatMap { remap(results, it, target, "main") }, artifacts),
+                    composition, jsCompilerTools(target))
+            }
+            exposeArtifacts(module, target, "main", linkId)
+            nodes[id] = ActionNode(id, setOf(linkId) + resource.dependencies,
+                ActionOutputContract(treeOutput("application", "application-bundle"))) { results ->
+                validateResults(results, setOf(linkId) + resource.dependencies)
+                val linked = results.getValue(linkId).outputs.files
+                require(linked.all { !it.executable && it.path.value.startsWith("program/") } &&
+                    linked.any { it.path.value == "program/$entryModule.mjs" } &&
+                    linked.any { it.path.value == "program/launch.mjs" } &&
+                    (jsTarget != KotlinJsTarget.WASM_JS || linked.any { it.path.value == "program/$entryModule.wasm" })) {
+                    "Missing JS/Wasm application module outputs"
+                }
+                val prefix = "modules/$module/$target/"
+                val program = linked.map { it.copy(path = LogicalPath(prefix + it.path.value)) }
+                applicationBundleAction(ApplicationLaunch(module, target, application,
+                    moduleFile = LogicalPath(prefix + "program/launch.mjs")), merge(program, resource.resolve(results)), composition, tools.getValue(target))
             }
         } else {
             val linkId = "$module:$target:application-link"

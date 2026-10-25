@@ -26,12 +26,12 @@ incomplete, and never invents an outcome for the interrupted test. Cancellation 
 cancelled; other interrupted runs with observed failures remain failed. Only a validated
 final report from a normally completed process can establish success.
 
-Executable links currently serve tests. They suppress application `main()`. The 2.4.20 Wasm
+Executable links serve tests and explicit application entry bridges. They suppress implicit application `main()`. The 2.4.20 Wasm
 compiler ignores `-main noCall` when writing the loader (`WasmOutputGenerationPipelinePhase`
 in upstream `compiler/cli/cli-js/src/org/jetbrains/kotlin/cli/pipeline/web/wasm`). The adapter
 therefore removes the single exact generated `exports._start();` footer before capturing the
 link output. An unfamiliar or repeated call fails validation; Wasm module initialization and
-the test entry export are preserved. The integration fixture has a throwing application main.
+explicit entry exports are preserved. The integration fixture has a throwing application main.
 
 Workspace plugins are compiled as JVM modules and loaded through `JsPluginWorker`
 using verified compiler tools and the shared typed plugin bridge. Options preserve order,
@@ -43,8 +43,20 @@ includes production sources. Only one plugin per compilation is supported, witho
 published and workspace plugins. See `tools/test_js_workspace_plugins_cli.py` for a real
 IR transformation on both targets.
 
-Browser execution, npm dependencies, Wasm-WASI, application launching and packaging are
-separate capabilities. Arbitrary compiler flags are not accepted.
+Node applications use a separate generated entry KLIB and a source-free link. The
+bridge invokes the configured public top-level `() -> Unit` or `(Array<String>) -> Unit`
+function; callers do not need export annotations. The pinned backends expose its
+`kvikApplicationMain` as a named ES export. `launch.mjs` invokes it once, while the
+bridge reads Node arguments at runtime. The normal application bundle retains the
+ES modules, Wasm binary and declared resources. Node is verified and launched through
+the shared application owner, including BSP cancellation and foreground replacement.
+Compilation and linking exclude Node identity and runtime arguments; packaging records
+launch settings and the desired Node identity. Preparation never executes Node.
+
+Browser execution, npm dependencies and Wasm-WASI are separate capabilities.
+Arbitrary compiler flags are not accepted. Overloaded and suspend application entries
+are not supported. `tools/test_js_application_cli.py` exercises preparation, cached
+replay, arguments, explicit entry selection, failures and BSP cancellation on both targets.
 
 Run `tools/test_js_compiler.py --help` for the offline integration checks. Supply explicit
 compiler artifacts, Maven cache and Node paths. `--konan-home` also runs native contract tests.

@@ -161,7 +161,7 @@ class Tests {
         assert not any(event.get('type') == 'action-started' for event in rejected), rejected
         diagnostics = [event['payload'] for event in rejected if event.get('type') == 'diagnostic']
         diagnostics += [event['diagnostic'] for event in rejected if 'diagnostic' in event]
-        assert any(item['message'] == 'JS/Wasm test execution requires node.root and node.identity in tools: ' + target
+        assert any(item['message'] == 'JS/Wasm execution requires node.root and node.identity in tools: ' + target
                    and item['category'] in ('configuration', 'toolchain') for item in diagnostics), diagnostics
         for event in rejected:
             if event.get('type') == 'run-finished':
@@ -207,7 +207,7 @@ class Tests {
                       '--since', root / 'runs' / second['runId'], expected=None)
     assert not any(event.get('kind') == 'change-verification' and event['status'] == 'unchanged'
                    for event in rejected), rejected
-    assert any('JS/Wasm test execution requires node.root and node.identity' in str(event)
+    assert any('JS/Wasm execution requires node.root and node.identity' in str(event)
                for event in rejected), rejected
     tools['node'] = pinned_node | {'identity': digest(b'a different Node installation')}
     write('tools.json', json.dumps(tools))

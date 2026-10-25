@@ -18,7 +18,7 @@ data class ApplicationReady(
     init {
         activationPath(preparationDirectory)
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid application readiness module" }
-        require(target in setOf("jvm", "macosArm64", "linuxX64")) { "Invalid application readiness target" }
+        require(target in setOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) { "Invalid application readiness target" }
         boundedActivation(toJson())
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to 1.json(), "token" to token.toJson(),

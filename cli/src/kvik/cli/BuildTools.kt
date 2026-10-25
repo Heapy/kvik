@@ -44,7 +44,7 @@ internal class BuildTools(path: String) {
                 "jvm-worker" to worker.identity, "junit" to worker.junitIdentity)
             for (target in targets.filter { KotlinJsTarget.find(it) != null }) {
                 val nodeIdentity = if (target in nodeTargets) mapOf("node" to requireNotNull(node) {
-                    "JS/Wasm test execution requires node.root and node.identity in tools: $target"
+                    "JS/Wasm execution requires node.root and node.identity in tools: $target"
                 }.second) else emptyMap()
                 result[target] = result.getValue("jvm") + nodeIdentity
             }
@@ -82,7 +82,7 @@ internal class BuildTools(path: String) {
     fun jvmProvider() = InstalledJvmToolchainProvider(lock, roots, "${runtimeDirectory()}/jvm",
         Digest(runtimeJvmWorkerHash, runtimeJvmWorkerSize), artifacts)
     fun nodeProvider() = NodeToolchainProvider { expected, checkpoint ->
-        val (root, identity) = requireNotNull(node) { "JS/Wasm test execution requires node.root and node.identity in tools" }
+        val (root, identity) = requireNotNull(node) { "JS/Wasm execution requires node.root and node.identity in tools" }
         InstalledNodeToolchainProvider(root, identity).verified(expected, checkpoint)
     }
     fun nativeProvider(target: NativeTarget = if (ToolComponent.SYSTEM in roots) NativeTarget.LINUX_X64 else NativeTarget.MACOS_ARM64) =

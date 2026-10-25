@@ -13,7 +13,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     private val hostTarget = if (terminalLeasePlatform() == "macos-arm64") "macosArm64" else "linuxX64"
     override val compileTargets = setOf("jvm", "js", "wasmJs", hostTarget) + if (hostTarget == "macosArm64") setOf("iosArm64", "iosSimulatorArm64") else emptySet()
     override val testTargets = setOf("jvm", "js", "wasmJs", hostTarget)
-    override val runTargets = setOf("jvm", hostTarget)
+    override val runTargets = setOf("jvm", hostTarget, "js", "wasmJs")
     override val generatedSourcesProvider = true
     private var host: ProcessHost? = null
     private data class Child(val target: BspTarget, val directory: String, val task: String, val process: OwnedProcess, val output: BspApplicationOutput? = null)

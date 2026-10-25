@@ -14,7 +14,7 @@ class ApplicationSchemaTest(unittest.TestCase):
         return dict(name=platform, main='main', test=None, compilerOptions=[], application=settings or {'entryPoint':'sample.MainKt'})
 
     def test_optional_application_settings_and_target_specific_entries(self):
-        for platform in ('jvm', 'macosArm64'):
+        for platform in ('jvm', 'macosArm64', 'js', 'wasmJs'):
             original=self.target(platform);del original['application'];TARGET.validate(original)
             TARGET.validate(self.target(platform, dict(entryPoint='sample.main',arguments=['--input','space value','@literal',''],environment={'MODE':'dev'})))
         TARGET.validate(self.target(settings=dict(entryPoint='sample.Outer$Nested')))
@@ -39,6 +39,17 @@ class ApplicationSchemaTest(unittest.TestCase):
             self.assertFalse(LAUNCH.is_valid({**jvm,**change}),change)
         for change in [dict(classpath=['classes']),dict(executable=None),dict(application={'entryPoint':'Outer$Nested'}),dict(executable='/absolute'),dict(executable='x\n')]:
             self.assertFalse(LAUNCH.is_valid({**native,**change}),change)
+
+    def test_node_module_launch(self):
+        for target in ('js', 'wasmJs'):
+            launch=dict(schemaVersion=1,module='app',target=target,application={'entryPoint':'sample.main'},
+                        classpath=[],executable=None,moduleFile='program/launch.mjs')
+            LAUNCH.validate(launch)
+            for change in [dict(moduleFile=None),dict(moduleFile='program/app.wasm'),dict(executable='app'),
+                           dict(classpath=['classes']),dict(target='jvm'),dict(target='macosArm64')]:
+                self.assertFalse(LAUNCH.is_valid({**launch,**change}),change)
+            del launch['moduleFile']
+            self.assertFalse(LAUNCH.is_valid(launch))
 
 
 if __name__=='__main__':unittest.main()

@@ -68,6 +68,10 @@ class JsCompilerExecutor(
             var path = "$directory/output"
             parent.split('/').filter { it.isNotEmpty() }.forEach { path += "/$it"; makeDirectory(path) }
         }
+        if (compile?.applicationEntryPoint != null && compile.includedLibrary == null) {
+            makeDirectory("$directory/prepared")
+            writeFile("$directory/prepared/Application.kt", jsApplicationBridge(compile.applicationEntryPoint).encodeToByteArray())
+        }
         val command = if (compile != null) {
             val arguments = action.arguments.map { argument ->
                 if (compile.includedLibrary != null && argument == "-Xinclude=input/${compile.includedLibrary.value}") "-Xinclude=$directory/input/${compile.includedLibrary.value}" else argument
@@ -146,6 +150,9 @@ class JsCompilerExecutor(
                             val loader = "$directory/output/${compile.output.value}/${compile.moduleName}.mjs"
                             val original = readFile(loader).decodeToString(throwOnInvalidSequence = true)
                             replaceFile(loader, wasmTestLoaderWithoutMain(original).encodeToByteArray())
+                        }
+                        if (compile?.applicationEntryPoint != null && compile.includedLibrary != null) {
+                            writeFile("$directory/output/${compile.output.value}/launch.mjs", jsApplicationLoader(compile.moduleName).encodeToByteArray())
                         }
                         outputs = trees.capture("$directory/output")
                         require(outputs.files.all { file -> action.outputs.any { file.path == it || file.path.value.startsWith(it.value + "/") } } &&

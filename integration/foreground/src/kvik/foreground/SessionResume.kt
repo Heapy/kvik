@@ -84,7 +84,7 @@ data class SessionResume(
             val module = if (version == 3L) fields.getValue("applicationModule").stringValue().also {
                 require(it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")))
             } else null
-            val target = if (version == 3L) fields.getValue("applicationTarget").stringValue().also { require(it in setOf("jvm", "macosArm64", "linuxX64")) } else null
+            val target = if (version == 3L) fields.getValue("applicationTarget").stringValue().also { require(it in setOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) } else null
             if (version == 3L) {
                 require(watched == Operation.APPLICATION && pending == (intents.firstOrNull() ?: Operation.APPLICATION))
                 prepared?.let { require(it.module == module && it.target == target && it.composition == launchContext.composition) }

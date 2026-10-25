@@ -83,7 +83,7 @@ private fun inspectGraph(options: BuildOptions, mode: ProjectMode, project: Proj
     val request = ProjectGraphRequest(options.modules, options.targets, mode, tests)
     val targets = projectToolTargets(snapshot.configuration.project, request)
     val tools = BuildTools(toolsPath)
-    val identities = tools.desiredIdentities(targets, if (mode == ProjectMode.TEST)
+    val identities = tools.desiredIdentities(targets, if (mode in setOf(ProjectMode.TEST, ProjectMode.APPLICATION))
         options.targets.filter { KotlinJsTarget.find(it) != null }.toSet() else emptySet())
     val composition = Digest(runtimeComposition, runtimeCompositionSize)
     val graph = composedProjectActionGraph(buildPlugins, ProjectBuildContext(effective, lock, snapshot.inputs, composition, identities), request)
