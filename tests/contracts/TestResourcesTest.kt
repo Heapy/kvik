@@ -14,6 +14,12 @@ class TestResourcesTest {
         assertEquals(TestResources(exclusiveResources = setOf("db")), TestResources.fromJson(parseJson("""{"exclusiveResources":["db"]}""")))
         TestResources(1_048_576, (1..64).map { "r$it" }.toSet())
         TestResources(exclusiveResources = setOf("A".repeat(128)))
+        val parallel = TestResources(768, setOf("db"), cpuSlots = 3)
+        assertEquals(ResourceRequest(768, setOf("db"), cpuSlots = 3), parallel.resourceRequest())
+        assertEquals(parallel, TestResources.fromJson(parallel.toJson()))
+        assertEquals(3, parallel.toJson().values.getValue("cpuSlots").longValue().toInt())
+        assertEquals(TestResources().toJson(), TestResources.fromJson(parseJson("""{"cpuSlots":1}""")).toJson())
+        assertEquals(1024, TestResources.fromJson(parseJson("""{"cpuSlots":1024}""")).cpuSlots)
     }
 
     @Test fun resourcesAreStrictAndBounded() {
@@ -21,6 +27,10 @@ class TestResourcesTest {
             assertFails("Accepted $json") { TestResources.fromJson(parseJson(json)) }
         for (value in listOf("null", "true", "\"512\"", "1.5", "[]", "{}", "0", "-1", "1048577", "9223372036854775808"))
             assertFails("Accepted memoryMiB=$value") { TestResources.fromJson(parseJson("""{"memoryMiB":$value}""")) }
+        for (value in listOf("null", "true", "\"2\"", "1.5", "[]", "{}", "0", "-1", "1025", "4294967297", "9223372036854775808"))
+            assertFails("Accepted cpuSlots=$value") { TestResources.fromJson(parseJson("""{"cpuSlots":$value}""")) }
+        for (slots in listOf(0, -1, 1025)) assertFails { TestResources(cpuSlots = slots) }
+        assertFails { ResourceRequest(cpuSlots = 0) }
         for (value in listOf("null", "true", "\"db\"", "{}", "[null]", "[1]"))
             assertFails("Accepted exclusiveResources=$value") { TestResources.fromJson(parseJson("""{"exclusiveResources":$value}""")) }
         for (name in listOf("", ".db", "-db", "_db", ":db", "db host", "db/host", "db\\host", "db\n", "ä", "A".repeat(129))) {
@@ -35,7 +45,7 @@ class TestResourcesTest {
         for (name in listOf("jvm", "macosArm64", "linuxX64", "js", "wasmJs")) {
             val absent = project(name)
             assertNull(absent.project.modules.single().targets.single().testResources)
-            for (settings in listOf("{}", """{"memoryMiB":2048,"exclusiveResources":["db"]}""")) {
+            for (settings in listOf("{}", """{"memoryMiB":2048,"exclusiveResources":["db"]}""", """{"cpuSlots":2}""")) {
                 val configuration = project(name, settings)
                 assertEquals(TestResources.fromJson(parseJson(settings)), configuration.project.modules.single().targets.single().testResources)
                 assertEquals(configuration, parseProjectConfiguration(configuration.document))

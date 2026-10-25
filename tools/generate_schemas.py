@@ -67,9 +67,10 @@ DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maxim
 DEFS["nativeTimeouts"]["minProperties"] = 1
 DEFS["testResources"] = object_({
     "memoryMiB": {"type": "integer", "minimum": 1, "maximum": 1048576, "default": 512},
+    "cpuSlots": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
     "exclusiveResources": array({"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\s\S])"},
         maxItems=64, uniqueItems=True, default=[]),
-}, optional=("memoryMiB", "exclusiveResources"))
+}, optional=("memoryMiB", "exclusiveResources", "cpuSlots"))
 APPLICATION_ENTRY = {"type": "string", "minLength": 1, "maxLength": 1024,
     "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$(?![\s\S])"}
 NATIVE_APPLICATION_ENTRY = {"type": "string",

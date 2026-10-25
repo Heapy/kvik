@@ -107,9 +107,15 @@ class SchedulerRun(
                     complete(ActionResult(id, action.key, ActionStatus.FAILED, diagnostic = "Memory request exceeds run budget"))
                     continue
                 }
+                if (action.resources.cpuSlots > budget.maxParallel) {
+                    complete(ActionResult(id, action.key, ActionStatus.FAILED, diagnostic = "CPU slot request exceeds run jobs budget"))
+                    continue
+                }
                 val memory = active.values.sumOf { it.resolved.resources.memoryMiB }
+                val cpuSlots = active.values.sumOf { it.resolved.resources.cpuSlots }
                 val exclusive = active.values.flatMap { it.resolved.resources.exclusive }.toSet()
                 if (active.size >= budget.maxParallel || action.resources.memoryMiB > budget.memoryMiB - memory ||
+                    action.resources.cpuSlots > budget.maxParallel - cpuSlots ||
                     action.resources.exclusive.any { it in exclusive }) continue
                 try {
                     val startedAfterNanos = timeOrigin.elapsedNow().inWholeNanoseconds

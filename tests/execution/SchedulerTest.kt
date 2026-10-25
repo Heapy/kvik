@@ -132,6 +132,57 @@ class SchedulerTest {
         run.close(); assertTrue(executor.running.values.all { it.closed })
     }
 
+    @Test fun cpuReservationsShareCapacityWithCompilersAndReleaseAfterFailure() {
+        val executor = ManualExecutor()
+        executor.request = { ResourceRequest(1, cpuSlots = if (it.implementation.startsWith("test")) 2 else 1) }
+        val nodes = listOf(ActionNode("a", emptySet()) { spec("test-a", effect = true) },
+            ActionNode("b", emptySet()) { spec("test-b", effect = true) },
+            ActionNode("c", emptySet()) { spec("compiler") })
+        SchedulerRun("cpu", nodes, executor, ResourceBudget(3, 10), EventJournal {}).use { run ->
+            run.tick()
+            assertEquals(listOf("a", "c"), executor.started)
+            executor.finish("a", ActionStatus.FAILED)
+            run.tick()
+            assertEquals(listOf("a", "c", "b"), executor.started)
+            executor.finish("b"); executor.finish("c")
+            assertTrue(run.tick())
+            assertEquals(ActionStatus.FAILED, run.results.getValue("a").status)
+            assertTrue(run.results.getValue("b").successful)
+            assertTrue(executor.running.values.all { it.closed })
+        }
+    }
+
+    @Test fun impossibleCpuRequestFailsWithoutBlockingOtherWork() {
+        val executor = ManualExecutor()
+        executor.request = { ResourceRequest(1, cpuSlots = if (it.implementation == "large") Int.MAX_VALUE else 1) }
+        val nodes = listOf(ActionNode("a", emptySet()) { spec("large", effect = true) },
+            ActionNode("b", setOf("a")) { error("must not resolve") },
+            ActionNode("c", emptySet()) { spec("small") })
+        SchedulerRun("cpu", nodes, executor, ResourceBudget(2, 10), EventJournal {}).use { run ->
+            run.tick()
+            assertEquals(listOf("c"), executor.started)
+            assertEquals(ActionStatus.FAILED, run.results.getValue("a").status)
+            assertEquals("CPU slot request exceeds run jobs budget", run.results.getValue("a").diagnostic)
+            assertEquals(ActionStatus.BLOCKED, run.results.getValue("b").status)
+            executor.finish("c")
+            assertTrue(run.tick())
+        }
+    }
+
+    @Test fun cpuReservationTotalsDoNotOverflowAndCancellationClosesActiveWork() {
+        val executor = ManualExecutor()
+        executor.request = { ResourceRequest(1, cpuSlots = Int.MAX_VALUE) }
+        val nodes = listOf("a", "b").map { id -> ActionNode(id, emptySet()) { spec(id, effect = true) } }
+        SchedulerRun("cpu", nodes, executor, ResourceBudget(Int.MAX_VALUE, 10), EventJournal {}).use { run ->
+            run.tick()
+            assertEquals(listOf("a"), executor.started)
+            run.cancel()
+            assertTrue(run.tick())
+            assertTrue(run.results.values.all { it.status == ActionStatus.CANCELLED })
+            assertTrue(executor.running.getValue("a").closed)
+        }
+    }
+
     @Test fun failureBlocksDependentsButRetainsIndependentFailures() {
         val executor = ManualExecutor()
         val nodes = listOf(ActionNode("a", emptySet()) { spec("a") }, ActionNode("b", setOf("a")) { error("must not resolve") },

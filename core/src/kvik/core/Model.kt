@@ -116,12 +116,13 @@ data class ActionResult(
 /** Implementations resolve only declared predecessor outputs, never mutable build directories. */
 data class ActionNode(val id: String, val dependencies: Set<String>, val resolve: (Map<String, ActionResult>) -> ActionSpec)
 
+/** maxParallel bounds both active actions and their total CPU slot reservations. */
 data class ResourceBudget(val maxParallel: Int, val memoryMiB: Long) {
     init { require(maxParallel >= 1 && memoryMiB >= 1) }
 }
 
-data class ResourceRequest(val memoryMiB: Long = 512, val exclusive: Set<String> = emptySet()) {
-    init { require(memoryMiB >= 1) }
+data class ResourceRequest(val memoryMiB: Long = 512, val exclusive: Set<String> = emptySet(), val cpuSlots: Int = 1) {
+    init { require(memoryMiB >= 1 && cpuSlots >= 1) }
 }
 
 /** Native workers poll without blocking the scheduler; close reaps all owned processes. */

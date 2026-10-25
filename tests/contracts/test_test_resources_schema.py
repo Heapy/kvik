@@ -17,7 +17,7 @@ class TestResourcesSchemaTest(unittest.TestCase):
     def test_defaults_and_bounded_resources_for_all_test_platforms(self):
         for name in ['jvm', 'macosArm64', 'linuxX64', 'js', 'wasmJs']:
             VALIDATOR.validate(self.target(name))
-            for settings in [{}, {'memoryMiB': 1}, {'memoryMiB': 1048576},
+            for settings in [{}, {'memoryMiB': 1}, {'memoryMiB': 1048576}, {'cpuSlots': 1}, {'cpuSlots': 1024},
                              {'exclusiveResources': []}, {'exclusiveResources': ['db.integration', 'port:8080', '0_device-A']},
                              {'exclusiveResources': ['A' * 128]}, {'exclusiveResources': [f'r{i}' for i in range(64)]},
                              {'memoryMiB': 2048, 'exclusiveResources': ['db']}]:
@@ -34,6 +34,7 @@ class TestResourcesSchemaTest(unittest.TestCase):
     def test_invalid_resources_are_rejected(self):
         invalid = [None, [], True, 1, {'typo': 1}]
         invalid += [{'memoryMiB': value} for value in [None, True, '512', 1.5, [], {}, 0, -1, 1048577]]
+        invalid += [{'cpuSlots': value} for value in [None, True, '2', 1.5, [], {}, 0, -1, 1025, 4294967297]]
         invalid += [{'exclusiveResources': value} for value in [None, True, 'db', {}, [None], [1], ['db', 'db'],
                     [f'r{i}' for i in range(65)]]]
         invalid += [{'exclusiveResources': [name]} for name in ['', '.db', '-db', '_db', ':db', 'db host', 'db/host',

@@ -385,11 +385,13 @@ dependencies and tools; missing source data never falls back to local files.
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM test targets declare `testSettings.classes` and optionally `testSettings.engines` (`junit` by default). Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
 
 Independent module/target test actions run in parallel within `--jobs` and
-`--memory-mib` budgets (defaults: two actions and 4096 MiB). A target with tests
-can reserve memory and declare shared resources:
+`--memory-mib` budgets (defaults: two CPU slots and 4096 MiB). Actions reserve one
+CPU slot by default. A target with tests can reserve more slots, reserve memory
+and declare shared resources:
 
 ```json
 "testResources": {
+  "cpuSlots": 2,
   "memoryMiB": 768,
   "exclusiveResources": ["database:integration", "port:5432"]
 }
@@ -398,11 +400,17 @@ can reserve memory and declare shared resources:
 Tests sharing any resource name run sequentially within the same Kvik run;
 unrelated tests remain eligible for parallel execution. Names are case-sensitive
 and shared across modules and targets. Give all tests the same name to serialize
-their execution, or use `--jobs 1` to serialize the whole build. Resource ownership
+their execution, or use `--jobs 1` for a build whose actions each need one slot. Resource ownership
 ends when the test action stops, including failure or cancellation. Separate Kvik
 invocations have separate resource pools.
 
 These settings apply to JVM, Native (including Kotest), JS and WasmJS tests.
+`cpuSlots` defaults to 1 and accepts integers from 1 to 1024. The sum of active
+action reservations cannot exceed `--jobs`: with `--jobs 4`, two tests reserving
+two slots each may run together. A request larger than `--jobs` fails before test
+launch; increase that budget or lower the declared test concurrency. CPU slots
+reserve scheduler capacity; they do not limit OS threads or configure a test
+framework. Match reservations to the concurrency configured in the tests.
 `memoryMiB` defaults to 512 and is a scheduler reservation, not a process heap
 limit; requests exceeding the run's memory budget fail before test launch.
 `exclusiveResources` defaults to an empty list. Names must be unique, start with

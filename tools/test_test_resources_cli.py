@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise default parallel tests and declared exclusive/memory resources with real JVMs."""
+"""Exercise default parallel tests and declared CPU, memory and exclusive resources with real JVMs."""
 import argparse
 import hashlib
 import json
@@ -181,6 +181,28 @@ class Tests {
     assert_schedule(events, {f'{module}:jvm:test': {'suite'} for module in ('a', 'b', 'c')})
     assert all((control / f'{module}.finished').exists() for module in ('b', 'c'))
     print('PASS serial suite and release after a failed test preserve independent test execution', flush=True)
+
+    targets[0]['testResources'] = dict(cpuSlots=2)
+    targets[1]['testResources'] = dict(cpuSlots=2)
+    targets[2]['testResources'] = dict(cpuSlots=1)
+    resolve()
+    cpu, events = run('cpu-sharing', mode='exclusive', extra=('--jobs', '3'))
+    assert_reused_compilation(cpu)
+    # a/b each need two slots, but c fits beside either in the three-slot budget.
+    assert_schedule(events, {'a:jvm:test': {'large-cpu'}, 'b:jvm:test': {'large-cpu'},
+                             'c:jvm:test': set()}, overlap=True)
+    assert test_parameters(cpu, 'a')['resources']['cpuSlots'] == 2
+    assert actions(cpu)['a:jvm:test']['key'] != actions(parallel)['a:jvm:test']['key']
+    two, events = run('cpu-two-large-tests', modules=('a', 'b'), mode='parallel', extra=('--jobs', '4'))
+    assert_reused_compilation(two)
+    assert_schedule(events, {'a:jvm:test': set(), 'b:jvm:test': set()}, overlap=True)
+    serial_cpu, events = run('cpu-serialization', modules=('a', 'b'), extra=('--jobs', '3'))
+    assert_schedule(events, {'a:jvm:test': set(), 'b:jvm:test': set()})
+    oversized_cpu, events = run('oversized-cpu', modules=('a',), passed=False, extra=('--jobs', '1'))
+    test = actions(oversized_cpu)['a:jvm:test']
+    assert test['status'] == 'failed' and test['diagnostic'] == 'CPU slot request exceeds run jobs budget', test
+    assert not (control / 'a.started').exists() and oversized_cpu['testCounts']['executed'] == 0
+    print('PASS CPU reservations share the jobs budget, release capacity and reject oversized tests before launch', flush=True)
 
     for target in targets:
         target['testResources'] = dict(memoryMiB=3000)

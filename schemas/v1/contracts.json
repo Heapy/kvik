@@ -254,6 +254,12 @@
           "maximum": 1048576,
           "default": 512
         },
+        "cpuSlots": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "default": 1
+        },
         "exclusiveResources": {
           "type": "array",
           "items": {
