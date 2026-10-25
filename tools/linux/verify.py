@@ -109,7 +109,8 @@ def main():
         raise RuntimeError('Expected one JVM fixture for parallel test measurements')
     run([sys.executable, ROOT/'tools/test_test_resources_cli.py', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache',
-         '--output-dir', ROOT/'.kvik/tests/test-resources'])
+         '--output-dir', ROOT/'.kvik/tests/test-resources',
+         '--comparison-output', ROOT/'.kvik/ci-artifacts/parallel-comparison.json'])
     run([sys.executable, ROOT/'tools/test_native_build_cli.py', '--java-home', java,
          '--konan-home', native, '--konan-data', data, '--runtime', executable,
          *(['--link-timeout-ms', args.native_link_timeout_ms] if args.native_link_timeout_ms is not None else [])])

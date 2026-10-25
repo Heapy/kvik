@@ -65,6 +65,8 @@ def main():
     parser.add_argument('--store', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, default=Path(tempfile.gettempdir()) / 'kvik-test-resource-tests')
     parser.add_argument('--performance-trials', type=int, default=4, help='Paired serial/default-parallel measurements')
+    parser.add_argument('--comparison-output', type=Path,
+                        help='Also export the measurement JSON outside the private fixture (for CI artifact collection)')
     args = parser.parse_args()
     if args.performance_trials < 1:
         parser.error('--performance-trials must be positive')
@@ -243,6 +245,9 @@ class Tests {
             'Memory is the largest individual test child peak RSS, not simultaneous process-tree or orchestrator peak memory.',
             'Invocation wall time includes input capture and setup; test action windows include worker preparation and shutdown.'
         ]), indent=2))
+    if args.comparison_output is not None:
+        args.comparison_output.parent.mkdir(parents=True, exist_ok=True)
+        args.comparison_output.write_bytes((root/'parallel-comparison.json').read_bytes())
     print('PASS serial/default-parallel comparison: identical tests and action keys, fresh execution, timing and process usage', flush=True)
 
     targets = [module['targets'][0] for module in document['modules']]
