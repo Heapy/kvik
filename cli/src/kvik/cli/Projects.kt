@@ -21,6 +21,13 @@ internal fun currentDirectory(): String = memScoped {
         getcwd(buffer, 4096u)?.toKString() ?: error("Cannot read working directory: errno=$errno")
 }
 
+internal fun validatedPluginConfiguration(configuration: ProjectConfiguration): ProjectConfiguration = configuration.also {
+    validatePluginSettings(buildPlugins, it.pluginSettings)
+}
+
+internal fun parseBuildProjectConfiguration(bytes: ByteArray): ProjectConfiguration =
+    validatedPluginConfiguration(parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true))))
+
 internal fun readProject(projectPath: String, parse: (ByteArray) -> ProjectConfiguration = {
     parseProjectConfiguration(parseJson(it.decodeToString(throwOnInvalidSequence = true)))
 }, expandScriptDeclarations: Boolean = true): ProjectFile {
@@ -33,7 +40,7 @@ internal fun readProject(projectPath: String, parse: (ByteArray) -> ProjectConfi
     NativeFiles.ensureDirectory(root, create = false)
     val name = LogicalPath(absolute.substringAfterLast('/'))
     val bytes = NativeFiles.read("$root/${name.value}", 4 * 1024 * 1024)
-    val configuration = parse(bytes)
+    val configuration = validatedPluginConfiguration(parse(bytes))
     return ProjectFile(root, name, bytes, if (expandScriptDeclarations)
         configuration.withScriptDeclarations(localScriptSourceReader(root)) else configuration)
 }

@@ -62,7 +62,7 @@ private fun inspectGraph(options: BuildOptions, mode: ProjectMode, project: Proj
         override fun put(bytes: ByteArray) = Sha256.digest(bytes)
         override fun get(digest: Digest) = store.get(digest)
     }
-    val observer = NativeProjectSnapshotter(project.root, observed)
+    val observer = NativeProjectSnapshotter(project.root, observed, parseConfiguration = ::parseBuildProjectConfiguration)
     val snapshot = if (source != null) source.capture(observed, LogicalPath(lockPath), selection, ::sourceCheckpoint)
         else when (val captured = observer.capture(project.name, lockPath, Sha256.digest(project.bytes), selection)) {
             is SnapshotCapture.Captured -> captured.snapshot

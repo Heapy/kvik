@@ -172,7 +172,7 @@ private fun executeChangeVerification(parsed: ChangeVerificationOptions, options
     val initial = effectiveConfiguration(project.configuration, policy)
     val content = NativeContentStore(storePath, maxBlobBytes = initial.maxArtifactBytes)
     if (sourceProject != null) content.put(project.bytes)
-    val snapshots = if (sourceProject == null) NativeProjectSnapshotter(root, content) else null
+    val snapshots = if (sourceProject == null) NativeProjectSnapshotter(root, content, parseConfiguration = ::parseBuildProjectConfiguration) else null
     val snapshot = sourceProject?.capture(content, LogicalPath(options.project.lock), inputSelection, ::sourceCheckpoint)
         ?: when (val captured = checkNotNull(snapshots).capture(project.name, lockPath, Sha256.digest(project.bytes), inputSelection)) {
         is SnapshotCapture.Captured -> captured.snapshot

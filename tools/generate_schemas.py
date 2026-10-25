@@ -272,9 +272,12 @@ MANUAL_FILE_TAGS = {**mapping(array({"type": "string", "maxLength": 128,
     "pattern": r"^manual:[A-Za-z0-9_.-][A-Za-z0-9_.:-]*(?![\s\S])"}, minItems=1, maxItems=64, uniqueItems=True)),
     "maxProperties": 4096, "propertyNames": PATH,
     "description": "Manual tags on exact configuration-relative files, additive to derived tags. Absent files and directories are omitted; no glob or recursive matching."}
+PLUGIN_ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,127}(?![\s\S])"}
+DEFS["pluginSettings"] = {**mapping({"type": "object"}), "maxProperties": 128, "propertyNames": PLUGIN_ID,
+    "description": "Settings keyed by composed build-plugin ID. Each object is limited to 256 KiB canonical UTF-8; the plugin validates its own settings and publishes settingsSchema in runtime-info."}
 DEFS["project"] = versioned({"name": ID, "repositories": array(ref("repository"), minItems=1), "modules": array(ref("module")),
-    **SCRIPT_COLLECTIONS, "scripts": script_mapping(ref("script"), 256), "fileTags": MANUAL_FILE_TAGS},
-    optional=("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags"))
+    **SCRIPT_COLLECTIONS, "scripts": script_mapping(ref("script"), 256), "fileTags": MANUAL_FILE_TAGS, "pluginSettings": ref("pluginSettings")},
+    optional=("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags", "pluginSettings"))
 DEFS["standaloneScript"] = versioned({"name": SCRIPT_ID, "repositories": array(ref("repository"), minItems=1),
     **SCRIPT_COLLECTIONS, "script": {"allOf": [ref("script"), {"not": {"required": ["generator"]}}]}}, optional=("dependencyCatalog", "dependencyProfiles"))
 DEFS["standaloneScript"]["description"] = "The companion for <stem>.kt or <stem>.kts is <stem>.kvik.json; durable lock is <stem>.kvik.lock.json. Native validation rejects workspace dependencies/plugins. The selected file must be an explicit source; .kts selection must match entryScript."
@@ -845,6 +848,8 @@ DEFS["configurationEditOperation"] = {"oneOf": [
     object_({"op": {"const": "remove-dependency-profile"}, "name": SCRIPT_ID}),
     object_({"op": {"const": "set-script"}, "name": SCRIPT_ID, "script": ref("script")}),
     object_({"op": {"const": "remove-script"}, "name": SCRIPT_ID}),
+    object_({"op": {"const": "set-plugin-settings"}, "plugin": PLUGIN_ID, "settings": {"type": "object"}}),
+    object_({"op": {"const": "remove-plugin-settings"}, "plugin": PLUGIN_ID}),
 ]}
 DEFS["configurationEdits"] = versioned({"operations": array(ref("configurationEditOperation"), minItems=1, maxItems=128)})
 DEFS["configurationValidation"] = versioned({"kind": {"const": "configuration-validation"}, "status": {"const": "valid"},

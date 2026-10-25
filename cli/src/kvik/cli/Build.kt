@@ -165,7 +165,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     // This store is used only by synchronous capture; execution uses the unmeasured store above.
     val captureContent = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes, hasher = inputHasher)
     if (sourceProject != null) captureContent.put(sourceBytes)
-    val snapshots = if (sourceProject != null) null else if (sessionCache == null) NativeProjectSnapshotter(root, captureContent)
+    val snapshots = if (sourceProject != null) null else if (sessionCache == null) NativeProjectSnapshotter(root, captureContent, parseConfiguration = ::parseBuildProjectConfiguration)
         else NativeProjectSnapshotter(root, captureContent, parseConfiguration = sessionCache::configuration)
     val snapshot = if (sourceProject != null) try {
         sourceProject.capture(captureContent, LogicalPath(lockPath), selection, inputHasher, ::sourceCheckpoint)

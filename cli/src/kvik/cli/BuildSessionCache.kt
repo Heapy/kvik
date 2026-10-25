@@ -16,7 +16,7 @@ internal class BuildSessionCache {
     fun configuration(bytes: ByteArray): ProjectConfiguration {
         val key = Sha256.digest(bytes)
         models[key]?.let { if (key in previousModels) modelReused = true; return it }
-        val model = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+        val model = parseBuildProjectConfiguration(bytes)
         if (models.size == 2) models.remove(models.keys.first())
         models[key] = model
         return model
@@ -28,7 +28,7 @@ internal class BuildSessionCache {
               plugins: List<BuildPlugin>): ProjectActionGraph {
         val key = Sha256.digest(obj("configuration" to effective.digest.toJson(), "lock" to Sha256.digest(lockBytes).toJson(),
             "snapshot" to snapshotIdentity.toJson(), "toolsDocument" to toolsDocument.toJson(), "composition" to composition.toJson(),
-            "plugins" to plugins.sortedBy { it.id }.map { obj("id" to it.id.json(), "apiVersion" to it.apiVersion.json(), "schema" to it.configurationSchema) }.json(),
+            "plugins" to plugins.sortedBy { it.id }.map { it.descriptor() }.json(),
             "tools" to JsonValue.Object(tools.mapValues { (_, values) -> JsonValue.Object(values.mapValues { it.value.toJson() }) }),
             "modules" to request.modules.sorted().map { it.json() }.json(), "targets" to request.targets.sorted().map { it.json() }.json(),
             "mode" to request.mode.name.json(), "tests" to JsonValue.Object(request.jvmTests.mapValues { (_, tests) ->

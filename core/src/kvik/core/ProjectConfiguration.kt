@@ -18,8 +18,9 @@ private fun <T> List<T>.unique(label: String): List<T> = also {
 
 /** Reject unsupported authoring features rather than silently dropping their dependencies. */
 fun parseProjectConfiguration(document: JsonValue): ProjectConfiguration {
-    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags"))
+    val fields = document.fields(setOf("schemaVersion", "name", "repositories", "modules"), setOf("dependencyCatalog", "dependencyProfiles", "scripts", "fileTags", "pluginSettings"))
     fields.requireVersion()
+    parsePluginSettings(fields["pluginSettings"])
     val repositories = fields.getValue("repositories").arrayValue().map { value ->
         val entry = value.fields(setOf("id", "url"))
         Repository(entry.getValue("id").identifier(), entry.getValue("url").stringValue())

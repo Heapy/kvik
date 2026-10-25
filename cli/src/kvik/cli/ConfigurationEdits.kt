@@ -120,7 +120,7 @@ private fun editPaths(project: ProjectFile, lock: String, store: String) {
 }
 
 private fun planConfigurationEdit(project: ProjectFile, options: ProjectOptions, edits: JsonValue): JsonValue {
-    val changed = editProjectConfiguration(project.configuration, edits).withScriptDeclarations(localScriptSourceReader(project.root))
+    val changed = validatedPluginConfiguration(editProjectConfiguration(project.configuration, edits)).withScriptDeclarations(localScriptSourceReader(project.root))
     val bytes = if (changed.document == project.configuration.document) project.bytes else (changed.document.canonical() + "\n").encodeToByteArray()
     require(bytes.size <= CONFIG_LIMIT) { "Edited configuration exceeds 4 MiB" }
     val effective = effectiveConfiguration(changed, options.resolverPolicy())
@@ -176,9 +176,9 @@ private fun applyConfigurationPlan(value: JsonValue): JsonValue {
     }
     val configFile = entry("$root/${name.value}", fields.getValue("configuration"), CONFIG_LIMIT, true)
     val lockFile = entry("$root/${lockName.value}", fields.getValue("dependencyLock"), EDIT_LOCK_LIMIT)
-    val original = parseProjectConfiguration(parseJson(beforeBytes.decodeToString(throwOnInvalidSequence = true)))
+    val original = parseBuildProjectConfiguration(beforeBytes)
         .withScriptDeclarations(localScriptSourceReader(root))
-    val changed = parseProjectConfiguration(parseJson(configFile.bytes.decodeToString(throwOnInvalidSequence = true)))
+    val changed = parseBuildProjectConfiguration(configFile.bytes)
         .withScriptDeclarations(localScriptSourceReader(root))
     require(editProjectConfiguration(original, fields.getValue("edits")).document == changed.document) { "Plan content does not match its declared edits" }
     val effective = effectiveConfiguration(changed, editPolicy(fields.getValue("policy")))

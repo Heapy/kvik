@@ -176,7 +176,7 @@ private fun inspectScript(options: ScriptOptions, file: ScriptFile, source: Prep
         override fun put(bytes: ByteArray) = Sha256.digest(bytes)
         override fun get(digest: Digest) = store.get(digest)
     }
-    val observer = NativeProjectSnapshotter(file.root, observedContent)
+    val observer = NativeProjectSnapshotter(file.root, observedContent, parseConfiguration = ::parseBuildProjectConfiguration)
     val snapshot = if (source != null) source.capture(observedContent, LogicalPath(lockPath), file.selection, ::sourceCheckpoint)
         else when (val captured = observer.capture(file.name, lockPath, Sha256.digest(file.bytes), file.selection)) {
         is SnapshotCapture.Captured -> captured.snapshot

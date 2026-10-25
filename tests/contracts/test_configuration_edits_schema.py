@@ -10,6 +10,19 @@ SCHEMA = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
 
 
 class ConfigurationEditsSchemaTest(unittest.TestCase):
+    def test_plugin_settings_operations(self):
+        validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/configurationEditOperation'})
+        addition = {'op': 'set-plugin-settings', 'plugin': 'example.assets', 'settings': {'label': 'release'}}
+        validator.validate(addition)
+        validator.validate({'op': 'remove-plugin-settings', 'plugin': 'example.assets'})
+        for invalid in [{**addition, 'settings': []}, {**addition, 'plugin': '../plugin'},
+                        {**addition, 'plugin': 'a' * 129}, {**addition, 'extra': True}]:
+            self.assertFalse(validator.is_valid(invalid), invalid)
+        settings = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/pluginSettings'})
+        settings.validate({'example.assets': {}})
+        for invalid in [None, [], {'plugin': None}, {'bad/id': {}}, {f'p{i}': {} for i in range(129)}]:
+            self.assertFalse(settings.is_valid(invalid), invalid)
+
     def test_source_set_operations(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/configurationEditOperation'})
         source = {'name': 'jsMain', 'directories': ['src/jsMain'], 'resources': [],

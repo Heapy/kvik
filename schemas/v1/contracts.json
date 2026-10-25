@@ -2343,6 +2343,18 @@
       ],
       "description": "Canonical UTF-8 declaration must fit 256 KiB. Native semantics additionally validate expansion, reference conflicts, path overlaps, prerequisite targets and total expanded bounds."
     },
+    "pluginSettings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      },
+      "maxProperties": 128,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}(?![\\s\\S])"
+      },
+      "description": "Settings keyed by composed build-plugin ID. Each object is limited to 256 KiB canonical UTF-8; the plugin validates its own settings and publishes settingsSchema in runtime-info."
+    },
     "project": {
       "type": "object",
       "properties": {
@@ -2423,6 +2435,9 @@
             "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
           },
           "description": "Manual tags on exact configuration-relative files, additive to derived tags. Absent files and directories are omitted; no glob or recursive matching."
+        },
+        "pluginSettings": {
+          "$ref": "#/$defs/pluginSettings"
         }
       },
       "required": [
@@ -11152,6 +11167,44 @@
           "required": [
             "op",
             "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "set-plugin-settings"
+            },
+            "plugin": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}(?![\\s\\S])"
+            },
+            "settings": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "op",
+            "plugin",
+            "settings"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "remove-plugin-settings"
+            },
+            "plugin": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "op",
+            "plugin"
           ],
           "additionalProperties": false
         }

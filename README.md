@@ -265,6 +265,8 @@ The operations are:
 - `set-script`: supply `name` and a complete `script` object from the project schema.
   Adds or replaces the named script.
 - `remove-script`: supply `name`. Requires an existing script.
+- `set-plugin-settings`: supply `plugin` (composed build-plugin ID) and a complete `settings` object.
+- `remove-plugin-settings`: supply `plugin`. Requires existing settings.
 
 The entire batch must produce a valid project; coordinated edits can temporarily
 invalidate the graph between operations. Unrelated authoring fields are preserved.
@@ -1169,6 +1171,25 @@ including BSP requests and foreground sessions. Exactly one `ProjectBuildPlugin`
 provides the graph; the bundled `KotlinBuildPlugin` supplies Kotlin compilation,
 tests, packaging and script actions through the ordinary adapters.
 
+A source build plugin can implement `ConfigurableBuildPlugin` to accept project-local
+settings, for example `"pluginSettings": {"example.assets": {"format": "compact"}}`
+in `kvik.json`. Its `settingsSchema` is discoverable through `runtime-info`, alongside
+its existing authoring schema. `validateSettings(settings)` must be pure and bounded;
+it receives an empty object when settings are omitted and should reject unknown
+fields and invalid values. Unknown plugin IDs and settings for plugins without this
+contract are rejected before resolution, inspection or configuration publication.
+The core schema bounds the settings map to 128 plugins, IDs to 128 characters and
+each settings object to 256 KiB of canonical UTF-8. Standalone script companions do
+not accept this project-level field; named project scripts share project settings.
+
+Graph callbacks read `context.settings(id)`. Lower every setting that affects task
+execution into the action's `parameters`, arguments, environment or declared inputs,
+so action caching reflects the behavior. Executors consume those captured action
+values. Settings already participate in project/lock identity and foreground graph
+invalidation; editing them does not rebuild the native runtime. The
+`set-plugin-settings` and `remove-plugin-settings` edit operations validate the final
+configuration with the composed plugins before publishing a configuration/lock plan.
+
 Additional `ProjectGraphContributor` plugins receive the locked configuration,
 captured input manifest, tool identities and current graph. They can add actions
 that consume declared predecessor artifacts. Contributors run in plugin-ID order;
@@ -1183,7 +1204,7 @@ such as `example.assets:manifest-v1` to the existing `ActionExecutor` contract.
 Names must belong to the registering plugin's namespace, so plugins cannot
 replace built-in executors or another plugin's implementations. Registration runs
 once per invocation, before scheduling, and must not execute tasks or launch
-processes. Additional project-configuration fields still require schema support.
+processes. Plugin settings use the declarative `pluginSettings` field.
 Graph construction must be deterministic and perform no external effects.
 
 `ProjectExecutionContext` supplies the run ID, composition identity, a private

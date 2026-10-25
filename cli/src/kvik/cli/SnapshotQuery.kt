@@ -19,7 +19,7 @@ internal fun snapshotQueryCommand(args: List<String>): JsonValue {
     }
     fun tools() = Sha256.digest(NativeFiles.read(args[5], 1024 * 1024))
     val before = tools()
-    val inputs = NativeProjectSnapshotter(project.root, store).currentFingerprint(project.name, args[3], Sha256.digest(project.bytes))
+    val inputs = NativeProjectSnapshotter(project.root, store, parseConfiguration = ::parseBuildProjectConfiguration).currentFingerprint(project.name, args[3], Sha256.digest(project.bytes))
     val after = tools()
     val fingerprint = if (inputs != null && before == after) Sha256.digest(obj("inputs" to inputs.toJson(), "toolsDocument" to after.toJson())) else null
     return obj("schemaVersion" to 1.json(), "fingerprint" to (fingerprint?.toJson() ?: JsonValue.Null))

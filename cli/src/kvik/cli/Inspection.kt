@@ -70,7 +70,7 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
     val root = fileName.value.substringBeforeLast('/', "")
     val prefix = if (root.isEmpty()) "" else "$root/"
     val sourceFiles = manifest.files.associateBy { it.path.value }
-    val declaration = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+    val declaration = parseBuildProjectConfiguration(bytes)
     val configuration = if (file != null) declaration else declaration.withScriptDeclarations(boundedScriptSourceReader { path ->
             checkpoint()
             val source = sourceFiles[prefix + path.value] ?: error("Script source is absent from revision: ${path.value}")

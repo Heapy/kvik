@@ -47,7 +47,7 @@ internal fun checkRun(directory: String): CheckedRun {
             override fun get(digest: Digest): ByteArray? = null
             override fun put(bytes: ByteArray): Digest = error("A verification query cannot publish content")
         }
-        val snapshots = if (record.source == null) NativeProjectSnapshotter(metadata.getValue("projectRoot").stringValue(), store) else null
+        val snapshots = if (record.source == null) NativeProjectSnapshotter(metadata.getValue("projectRoot").stringValue(), store, parseConfiguration = ::parseBuildProjectConfiguration) else null
         fun fingerprint() = record.source?.let { retainedSourceFingerprint(metadata, it, record.sourceClaims) }
             ?: checkNotNull(snapshots).currentFingerprint(LogicalPath(metadata.getValue("configurationPath").stringValue()), metadata.getValue("lockPath").stringValue(),
                 selection = metadata["inputSelection"]?.let(SnapshotSelection::fromJson) ?: SnapshotSelection.Project)

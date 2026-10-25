@@ -5,10 +5,17 @@ import kvik.core.*
 import kvik.execution.ProcessActionExecutor
 import kvik.projectgraph.*
 
-class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor {
+class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor, ConfigurableBuildPlugin {
     override val id = "fixture.executors"
     override val apiVersion = CONTRACT_VERSION
     override val configurationSchema = obj("type" to "object".json())
+
+    override val settingsSchema = obj("type" to "object".json(), "additionalProperties" to false.json(),
+        "properties" to obj("label" to obj("type" to "string".json(), "minLength" to 1.json())))
+    override fun validateSettings(settings: JsonValue.Object) {
+        val fields = settings.fields(emptySet(), setOf("label"))
+        fields["label"]?.let { require(it.stringValue().isNotBlank()) { "label must not be blank" } }
+    }
 
     override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> {
         val compile = "app:jvm:main"
@@ -18,7 +25,7 @@ class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor {
             outputContract = ActionOutputContract(listOf(OutputArtifact(LogicalPath("manifest.json"), "plugin-manifest", ArtifactShape.FILE)))) { results ->
             ActionSpec("$id:manifest-v1", context.composition, ActionKind.GENERATE, mapOf("os" to "macos", "arch" to "arm64"), "jvm",
                 mapOf("native-runtime" to context.composition), TreeManifest(results.getValue(compile).outputs.files + resources),
-                listOf(LogicalPath("manifest.json")), emptyList(), emptyMap())
+                listOf(LogicalPath("manifest.json")), emptyList(), emptyMap(), parameters = context.settings(id))
         }
         val mode = listOf("fail", "timeout", "cancel").singleOrNull { mode -> resources.any { it.path.value.endsWith("/$mode.txt") } }
         val process = mode?.let {
@@ -45,7 +52,7 @@ class ExecutorPlugin : ProjectGraphContributor, ProjectExecutorContributor {
                             val bytes = requireNotNull(context.content.get(file.digest))
                             require(Sha256.digest(bytes) == file.digest)
                         }
-                        val bytes = obj("kind" to "native-plugin-manifest".json(), "inputs" to action.inputs.toJson()).canonical().encodeToByteArray()
+                        val bytes = obj("kind" to "native-plugin-manifest".json(), "inputs" to action.inputs.toJson(), "settings" to action.parameters).canonical().encodeToByteArray()
                         val outputs = TreeManifest(listOf(FileEntry(LogicalPath("manifest.json"), context.content.put(bytes))))
                         return ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED, outputs, 0)
                     }

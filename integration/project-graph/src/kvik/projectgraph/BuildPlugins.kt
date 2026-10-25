@@ -10,7 +10,12 @@ data class ProjectBuildContext(
     val snapshot: TreeManifest,
     val composition: Digest,
     val toolchains: Map<String, Map<String, Digest>>,
-)
+) {
+    /** Settings affecting execution must be lowered into action parameters/inputs by the plugin. */
+    fun settings(pluginId: String): JsonValue.Object =
+        parsePluginSettings(effective.document.objectValue()["project"]?.objectValue()?.get("pluginSettings"))[pluginId] ?: obj()
+}
+
 
 /** Exactly one plugin owns the requested project and script compilation graph. */
 interface ProjectBuildPlugin : BuildPlugin {
@@ -49,6 +54,8 @@ private fun compose(
     require(ordered.all { it.id.isNotBlank() }) { "Build plugin IDs must not be blank" }
     require(ordered.map { it.id }.distinct().size == ordered.size) { "Duplicate build plugin ID" }
     require(ordered.all { it.apiVersion == CONTRACT_VERSION }) { "Incompatible build plugin API version" }
+    validatePluginSettings(ordered, parsePluginSettings(
+        context.effective.document.objectValue()["project"]?.objectValue()?.get("pluginSettings")))
     val providers = ordered.filterIsInstance<ProjectBuildPlugin>()
     require(providers.size == 1) { "Exactly one project build plugin is required" }
     val provider = providers.single()

@@ -18,6 +18,7 @@ fun editProjectConfiguration(configuration: ProjectConfiguration, edits: JsonVal
             "set-catalog-entry", "set-catalog-version", "remove-catalog-entry" -> "dependencyCatalog"
             "set-dependency-profile", "remove-dependency-profile" -> "dependencyProfiles"
             "set-script", "remove-script" -> "scripts"
+            "set-plugin-settings", "remove-plugin-settings" -> "pluginSettings"
             else -> null
         }
         if (collection != null) {
@@ -99,12 +100,17 @@ fun editProjectConfiguration(configuration: ProjectConfiguration, edits: JsonVal
 private fun editNamedConfiguration(
     document: JsonValue.Object, operation: JsonValue, name: String, collection: String,
 ): JsonValue.Object {
-    val identityField = if (collection == "dependencyCatalog") "alias" else "name"
+    val identityField = when (collection) {
+        "dependencyCatalog" -> "alias"
+        "pluginSettings" -> "plugin"
+        else -> "name"
+    }
     val payloadField = when (name) {
         "set-catalog-entry" -> "coordinate"
         "set-catalog-version" -> "version"
         "set-dependency-profile" -> "profile"
         "set-script" -> "script"
+        "set-plugin-settings" -> "settings"
         else -> null
     }
     val fields = operation.fields(setOf("op", identityField) + listOfNotNull(payloadField))

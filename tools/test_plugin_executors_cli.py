@@ -54,7 +54,7 @@ def main():
     resources = project/'other/resources'
     resources.mkdir(parents=True)
     (project/'other/src').mkdir()
-    (resources/'input.txt').write_text('first')
+    (resources/'input.txt').write_text(f'first:{root.name}')
     # Pin the actual binaries as captured inputs; the plugin verifies the host tools before launch.
     shutil.copyfile('/bin/sh', resources/'sh')
     shutil.copyfile('/bin/sleep', resources/'sleep')
@@ -95,7 +95,52 @@ def main():
     warm, warm_actions = build('warm')
     assert warm_actions[MANIFEST]['status'] == 'local_hit' and warm_actions[MANIFEST]['key'] == cold_actions[MANIFEST]['key']
     assert not list((runs/warm['runId']).glob('plugins/*/manifest-started'))
-    (resources/'input.txt').write_text('changed')
+    # Plugin settings are runtime authoring data, validated before resolution or plan publication.
+    descriptor = next(p for p in invoke('runtime-info', ['runtime-info'])[0]['plugins'] if p['id'] == 'fixture.executors')
+    assert descriptor['settingsSchema']['properties']['label']['type'] == 'string'
+    authored = json.loads(config.read_bytes())
+    for index, settings in enumerate([{'missing.plugin': {}}, {'kvik.kotlin': {}},
+                                      {'fixture.executors': {'lable': 'typo'}}, {'fixture.executors': {'label': 2}}]):
+        config.write_text(json.dumps({**authored, 'pluginSettings': settings}))
+        for name, command in [('validate', ['config', 'validate']), ('inspect', ['inspect']),
+                              ('resolve', ['resolve']), ('check-lock', ['check-lock'])]:
+            invoke(f'invalid-settings-{index}-{name}', [*command, *common], expected=2)
+    config.write_text(json.dumps(authored))
+    edits = root/'edits.json'
+    edits.write_text(json.dumps(dict(schemaVersion=1, operations=[
+        dict(op='set-plugin-settings', plugin='fixture.executors', settings=dict(label='release'))])))
+    before = config.read_bytes()
+    proposal = invoke('settings-plan', ['config', 'plan', *common, '--edits', str(edits)])[0]
+    assert config.read_bytes() == before
+    plan = root/'plan.json'
+    plan.write_text(json.dumps(proposal))
+    assert invoke('settings-apply', ['config', 'apply', '--plan', str(plan)])[0]['status'] == 'applied'
+    invoke('settings-check-lock', ['check-lock', *common, '--offline'])
+    _, configured = build('configured')
+    assert configured[MANIFEST]['status'] == 'executed' and configured[MANIFEST]['key'] != warm_actions[MANIFEST]['key']
+    assert configured['app:jvm:main']['status'] == 'local_hit'
+    digest = configured[MANIFEST]['outputs']['files'][0]['digest']
+    output = json.loads((store/'blobs'/f"{digest['hash']}-{digest['sizeBytes']}").read_bytes())
+    assert output['settings'] == {'label': 'release'}
+    _, configured_warm = build('configured-warm')
+    assert configured_warm[MANIFEST]['status'] == 'local_hit'
+    # An invalid edit must leave both project and lock untouched.
+    lock = project/'kvik.lock.json'
+    unchanged = (config.read_bytes(), lock.read_bytes())
+    edits.write_text(json.dumps(dict(schemaVersion=1, operations=[
+        dict(op='set-plugin-settings', plugin='fixture.executors', settings=dict(label=''))])))
+    invoke('invalid-settings-plan', ['config', 'plan', *common, '--edits', str(edits), '--offline'], expected=2)
+    assert unchanged == (config.read_bytes(), lock.read_bytes())
+    # Removing settings restores the previous native action cache entry without recompiling the runtime.
+    edits.write_text(json.dumps(dict(schemaVersion=1, operations=[
+        dict(op='remove-plugin-settings', plugin='fixture.executors')])))
+    proposal = invoke('settings-remove-plan', ['config', 'plan', *common, '--edits', str(edits)])[0]
+    plan.write_text(json.dumps(proposal))
+    invoke('settings-remove-apply', ['config', 'apply', '--plan', str(plan)])
+    _, restored = build('settings-restored')
+    assert restored[MANIFEST]['status'] == 'local_hit' and restored[MANIFEST]['key'] == warm_actions[MANIFEST]['key']
+    print('PASS plugin settings discovery, validation, edit publication and native action cache invalidation', flush=True)
+    (resources/'input.txt').write_text(f'changed:{root.name}')
     _, changed = build('changed')
     assert changed[MANIFEST]['status'] == 'executed' and changed[MANIFEST]['key'] != cold_actions[MANIFEST]['key']
     assert changed['app:jvm:main']['status'] == 'local_hit'

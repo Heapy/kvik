@@ -27,7 +27,7 @@ internal class PreparedSourceProject(
 
     val project: ProjectFile by lazy {
         ProjectFile(configuration.root, configuration.name, configuration.bytes,
-            parseProjectConfiguration(parseJson(configuration.bytes.decodeToString(throwOnInvalidSequence = true)))
+            parseBuildProjectConfiguration(configuration.bytes)
                 .withScriptDeclarations(scriptSourceReader()))
     }
 

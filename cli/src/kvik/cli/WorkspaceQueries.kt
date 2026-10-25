@@ -84,7 +84,7 @@ internal fun workspaceCommand(args: List<String>): JsonValue.Object {
                             .also { resolved.verify(file.blob, it, ::sourceCheckpoint) }
                     }
                     val configurationBytes = read(configPath, 4 * 1024 * 1024)
-                    val parsed = parseProjectConfiguration(parseJson(configurationBytes.decodeToString(throwOnInvalidSequence = true)))
+                    val parsed = parseBuildProjectConfiguration(configurationBytes)
                         .withScriptDeclarations(boundedScriptSourceReader { path ->
                             val data = read(LogicalPath(if (root.isEmpty()) path.value else "$root/${path.value}"), 4 * 1024 * 1024)
                             retainedBytes += data.size

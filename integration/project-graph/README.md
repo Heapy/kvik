@@ -132,3 +132,15 @@ by this contract. Registration is side-effect-free, callbacks are cooperative,
 and running handles must reap their work on close. The wrapper validates action
 ownership, enforces deadlines/cancellation and closes before cache publication.
 See the root README's source-plugin section for lifecycle and caching rules.
+
+### Declarative plugin settings
+
+Implement `ConfigurableBuildPlugin` alongside a graph provider or contributor.
+Publish `settingsSchema` and implement pure, bounded `validateSettings(settings)`;
+use strict field/type checks and validate the empty object as your defaults.
+Project `pluginSettings` maps composed plugin IDs to objects. The CLI validates these
+before resolution and edits, and graph composition validates them again before callbacks.
+`ProjectBuildContext.settings(id)` returns that plugin's object or an empty object.
+Lower execution-relevant values into action parameters/inputs so executors use the
+same values included in action keys. Settings change the effective configuration and
+foreground graph identity without changing the source runtime composition.

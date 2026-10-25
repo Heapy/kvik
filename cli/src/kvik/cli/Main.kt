@@ -106,7 +106,7 @@ private fun command(args: Array<String>) {
             val worker = verifiedRuntimeJvmWorker()
             println(obj(
             "schemaVersion" to CONTRACT_VERSION.json(), "backend" to "kotlin-native".json(),
-            "composition" to runtimeComposition.json(), "plugins" to buildPlugins.map { obj("id" to it.id.json(), "apiVersion" to it.apiVersion.json(), "schema" to it.configurationSchema) }.json(),
+            "composition" to runtimeComposition.json(), "plugins" to buildPlugins.map { it.descriptor() }.json(),
             "guardian" to Digest(runtimeGuardianHash, runtimeGuardianSize).toJson(),
             "jvmWorker" to worker.identity.toJson(), "jvmCompiler" to worker.compiler.toJson(),
             ).canonical())
