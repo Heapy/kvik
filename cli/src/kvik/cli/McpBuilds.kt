@@ -5,10 +5,12 @@ import kvik.core.*
 import kvik.execution.NativeRunDirectory
 import kvik.mcp.mcpToolResult
 import kvik.projectsnapshot.projectInputPlan
+import kvik.projectsnapshot.SnapshotSelection
 import kvik.runevidence.committedRunEvents
 import kvik.runevidence.verificationRecordFromJson
 
-internal data class McpBuildRequest(val directory: String, val options: BuildOptions, val operation: String) {
+internal data class McpBuildRequest(val directory: String, val options: BuildOptions, val operation: String,
+                                  val verification: ChangeVerificationOptions? = null) {
     val stdout: String get() = "$directory/stdout.jsonl"
     val stderr: String get() = "$directory/stderr.log"
 }
@@ -16,17 +18,20 @@ internal data class McpBuildRequest(val directory: String, val options: BuildOpt
 /** Allocate retained output only after validating selectors and disjoint project/cache/tool paths. */
 internal fun prepareMcpBuild(arguments: List<String>, options: McpOptions, id: JsonValue): Pair<McpBuildRequest, List<String>> {
     val configured = requireNotNull(options.build) { "Build tools require mcp --tools PATH" }
-    val selected = buildOptions(arguments.drop(1) + listOf("--tools", configured.tools,
+    val selectionArguments = arguments.drop(1) + listOf("--tools", configured.tools,
         "--jobs", configured.budget.maxParallel.toString(), "--memory-mib", configured.budget.memoryMiB.toString()) +
-        configured.remoteCache?.let { listOf("--remote-cache", it) }.orEmpty())
-    require(!selected.coverage || arguments.first() == "test" && selected.targets == setOf("jvm")) { "Coverage requires JVM-only tests" }
+        configured.remoteCache?.let { listOf("--remote-cache", it) }.orEmpty()
+    val verification = if (arguments.first() == "verify") changeVerificationOptions(selectionArguments) else null
+    val selected = verification?.build ?: buildOptions(selectionArguments)
+    require(!selected.coverage || (arguments.first() == "test" || verification?.checks?.contains("test") == true) && selected.targets == setOf("jvm")) { "Coverage requires JVM-only tests" }
     val project = readProject(selected.project.project)
     val lock = projectPath(project.root, selected.project.lock)
     val store = projectPath(project.root, selected.project.store)
     val tools = projectPath(project.root, selected.tools)
     val parent = projectPath(project.root, configured.runs)
-    requireDisjointStore(project, store, lock, tools)
-    requireDisjointInputPath(project.root, project.path, projectInputPlan(project.configuration), parent,
+    val inputSelection = if (verification?.checks?.contains("abi-check") == true) SnapshotSelection.AbiCheck(selected.modules, selected.targets) else SnapshotSelection.Project
+    requireDisjointStore(project, store, lock, tools, inputSelection)
+    requireDisjointInputPath(project.root, project.path, projectInputPlan(project.configuration, inputSelection), parent,
         listOf(lock, store, tools) + listOfNotNull(selected.remoteCache?.let { projectPath(project.root, it) }))
     NativeFiles.ensureDirectory(parent)
     val directory = NativeRunDirectory(parent).path
@@ -36,11 +41,12 @@ internal fun prepareMcpBuild(arguments: List<String>, options: McpOptions, id: J
     NativeFiles.writeNew("$directory/request.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to id,
         "command" to command.map { it.json() }.json()).canonical().encodeToByteArray())
     NativeFiles.syncDirectory(directory)
-    return McpBuildRequest(directory, selected, arguments.first()) to command
+    return McpBuildRequest(directory, selected, arguments.first(), verification) to command
 }
 
 /** A zero exit code alone never establishes build success. Bind the response to the committed journal. */
 internal fun mcpBuildResult(request: McpBuildRequest, process: ProcessResult, problem: String?): JsonValue.Object {
+    if (request.verification != null) return mcpVerifyResult(request, process, problem)
     var record: VerificationRecord? = null
     var directory: String? = null
     val diagnostics = mutableListOf<JsonValue>()

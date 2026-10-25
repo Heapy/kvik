@@ -53,6 +53,7 @@ used by CLI builds:
 | --- | --- | --- |
 | `kvik_build` | Nonempty `modules` and `targets` arrays | Build result, verification record, diagnostics and retained output paths |
 | `kvik_test` | Nonempty `modules` and `targets` arrays; optional `coverage`, `coverageExcludes` | Fresh test execution with eligible compilation cache reuse, counts and retained output paths |
+| `kvik_verify` | Nonempty `modules` and `targets`; `since` baseline directories or `full: true`; optional `checks`, `planOnly`, `coverage`, `coverageExcludes` | Affected-check selection, omission reasons and execution results |
 
 These tools execute project code, including compiler plugins, generators and
 tests. They use the CLI executor, configured dependency lock, cache and resolver
@@ -94,6 +95,44 @@ approximately every five seconds. The progress counter is a heartbeat, not a
 completion percentage. `notifications/cancelled` stops the request's owned
 processes and suppresses its final response. The directory received in progress
 remains available for inspecting partial output.
+
+`kvik_verify` exposes the CLI's change-aware verification. `checks` defaults to
+`["test"]` and can contain `build`, `test` and `abi-check`. `since` accepts up to
+32 retained build/test/ABI run directories, absolute or relative to the configured
+project directory. Supply `executionRuns[].directory` from a previous verification
+as baselines; the verification selection directory itself is not a baseline.
+Compatible baselines can omit completed, unaffected checks. Invalid baselines or
+uncertain impact widen selection. `full: true` selects every requested check.
+
+For example, inspect affected checks first:
+
+```json
+{
+  "name": "kvik_verify",
+  "arguments": {
+    "modules": ["library"],
+    "targets": ["jvm"],
+    "since": ["/absolute/path/to/previous/run"],
+    "checks": ["build", "test"],
+    "planOnly": true
+  }
+}
+```
+
+Call again with `planOnly: false` to select against current inputs and execute
+the affected checks. Selected tests run freshly. The response has
+`kind: "mcp-verify-result"`, `selection` containing the CLI selection document,
+and `result` containing the CLI change-verification result. It retains the same
+request/log fields as build results. `complete` means the final result was read,
+including failed or incomplete verification. `isError: false` accepts `planned`
+for planning, or `passed`/`unchanged` for execution. `planned` ran no checks;
+`unchanged` omitted checks using retained baselines. `freshChecks` lists newly
+completed checks; compilation and ABI checks may use the artifact cache.
+
+Selection and result documents remain under the project's `.kvik/verification`;
+execution runs are retained under the MCP request directory. Both locations
+survive connection closure. Progress, cancellation, execution limits and
+concurrent-query behavior are the same as for `kvik_build` and `kvik_test`.
 
 Repeated selectors and pins are arrays. `channel` is `all`, `stable` or
 `prerelease`; package query `limit` is 1–200. `kvik_dependencies` also accepts `offline`.
@@ -144,7 +183,7 @@ mutations, source-provider selectors and session controls remain available
 through the CLI. Retained-run queries can inspect results from either local
 projects or source-provider builds.
 
-The server allows four concurrent operations, with at most one build/test per
+The server allows four concurrent operations, with at most one build/test/verify per
 connection. Queries have a 120-second timeout; builds and tests have a 30-minute
 timeout. Read-only queries remain available while a build or test is running.
 Excess calls return a tool error and can be retried when another call completes.

@@ -18,9 +18,9 @@ import kvik.projectsnapshot.*
 import kvik.runevidence.committedRunEvents
 import kvik.runevidence.verificationRecordFromJson
 
-private data class ChangeVerificationOptions(val build: BuildOptions, val baselines: List<String>, val checks: Set<String>, val full: Boolean, val planOnly: Boolean)
+internal data class ChangeVerificationOptions(val build: BuildOptions, val baselines: List<String>, val checks: Set<String>, val full: Boolean, val planOnly: Boolean)
 
-private fun changeVerificationOptions(args: List<String>): ChangeVerificationOptions {
+internal fun changeVerificationOptions(args: List<String>): ChangeVerificationOptions {
     val remaining = mutableListOf<String>()
     val baselines = mutableListOf<String>()
     val checks = linkedSetOf<String>()

@@ -87,7 +87,7 @@ class McpSession(private val operations: McpOperations, private val tools: List<
                 mcpSuccess(id, obj("protocolVersion" to (if (requested in setOf("2025-06-18", MCP_VERSION)) requested else MCP_VERSION).json(),
                     "capabilities" to obj("tools" to obj()), "serverInfo" to obj("name" to "kvik".json(), "version" to "0.1.0".json()),
                     "instructions" to ("Project, package, retained-run and foreground-session queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims. Historical explanations and statistics do not assess current freshness." +
-                        if (tools.any { it.build }) " Build/test tools execute project code and retain results. Supply _meta.progressToken for progress and the request directory; only one build runs per connection." else " This connection exposes read-only tools.").json()))
+                        if (tools.any { it.build }) " Build/test/verify tools execute project code and retain results. Supply _meta.progressToken for progress and the request directory; only one execution request runs per connection. A verification plan executes no checks; unchanged verification uses retained baselines." else " This connection exposes read-only tools.").json()))
             } catch (failure: Exception) { mcpError(id, -32602, failure.message ?: "Invalid initialization") }
         }
         if (!initialized) return mcpError(id, -32002, "Initialize and send notifications/initialized first")

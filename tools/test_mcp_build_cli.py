@@ -97,8 +97,8 @@ def main():
         while not gone(pid) and time.monotonic() < deadline:
             time.sleep(.05)
         assert gone(pid), f'Test worker {pid} survived cancellation'
-    def slow(c):
-        ident = invoke(c, 'kvik_test', common, progress=True)
+    def slow(c, tool='kvik_test'):
+        ident = invoke(c, tool, common | (dict(full=True) if tool == 'kvik_verify' else {}), progress=True)
         # Initial progress makes the request directory available before the build finishes.
         notice = c.response(timeout=30)
         assert notice['method'] == 'notifications/progress', notice
@@ -116,15 +116,18 @@ def main():
         raise AssertionError(f'Slow test did not start: {directory}')
     try:
         readonly = client([])
-        assert 'kvik_build' not in {tool['name'] for tool in readonly.request('tools/list')['tools']}
+        assert not {'kvik_build', 'kvik_test', 'kvik_verify'} & {tool['name'] for tool in readonly.request('tools/list')['tools']}
         readonly.request('tools/call', dict(name='kvik_build', arguments=common), error=-32602)
         readonly.stop()
         c = client()
         tools = {tool['name']: tool for tool in c.request('tools/list')['tools']}
-        for name in ('kvik_build', 'kvik_test'):
+        for name in ('kvik_build', 'kvik_test', 'kvik_verify'):
             assert tools[name]['annotations'] == dict(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
         for arguments in [dict(modules=[], targets=['jvm']), dict(modules=['consumer'], targets=[]), common | dict(tools='/tmp/tools')]:
             call(c, 'kvik_build', arguments, failed=True)
+        for arguments in [common, common | dict(full=False), common | dict(since=[]),
+                          common | dict(full=True, checks=[]), common | dict(full=True, checks=['publish'])]:
+            call(c, 'kvik_verify', arguments, failed=True)
         assert not request_root.exists()
         unsafe = client(['--tools', str(args.tools.resolve()), '--runs', str(root/'consumer/main')])
         before = set((root/'consumer/main').iterdir())
@@ -150,11 +153,63 @@ def main():
         assert any(d['category'] == 'compilation' for d in failed['diagnostics'])
         source.write_bytes(original)
         build(c, 'test')
+
+        def verify(arguments, status, failed=False):
+            value = call(c, 'kvik_verify', common | arguments, failed=failed, progress=True)
+            assert value['kind'] == 'mcp-verify-result' and value['complete'], value
+            plan, result = value['selection'], value['result']
+            for document, definition in [(plan, 'changeVerificationPlan'), (result, 'changeVerificationResult')]:
+                jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/'+definition}).validate(document)
+            directory = Path(result['directory'])
+            assert json.loads((directory/'selection.json').read_text()) == plan
+            assert json.loads((directory/'result.json').read_text()) == result
+            assert result['status'] == status, value
+            assert set(result['selectedChecks']) | set(result['omittedChecks']) == {
+                'consumer:jvm:'+check for check in arguments.get('checks', ['test'])}
+            assert Path(value['stdout']).exists() and Path(value['stderr']).exists()
+            for run in result['executionRuns']:
+                assert Path(run['directory']).parent == Path(value['requestDirectory'])/'runs'
+            return value
+
+        unchanged = verify(dict(since=[tested['runDirectory']]), 'unchanged')
+        assert unchanged['result']['freshChecks'] == [] and unchanged['result']['executionRuns'] == []
+        assert unchanged['result']['omittedChecks'] == ['consumer:jvm:test']
+        mixed = dict(full=True, checks=['build', 'test'])
+        planned = verify(mixed | dict(planOnly=True), 'planned')
+        assert planned['result']['executionRuns'] == [] and planned['result']['freshChecks'] == []
+        assert 'requested-full' in planned['selection']['selection']['fullReasons']
+        completed = verify(mixed, 'passed')
+        assert len(completed['result']['executionRuns']) == 2
+        baselines = [run['directory'] for run in completed['result']['executionRuns']]
+        baseline_args = dict(since=[str(Path(path).relative_to(root)) for path in baselines], checks=['build', 'test'])
+        assert verify(baseline_args, 'unchanged')['result']['freshChecks'] == []
+        test_source = root/'consumer/test/Tests.kt'
+        test_original = test_source.read_bytes()
+        test_source.write_bytes(test_original + b'\n// MCP test selection\n')
+        selected = verify(baseline_args | dict(planOnly=True), 'planned')['selection']['selection']
+        assert selected['selectedChecks'] == ['consumer:jvm:test'] and selected['omittedChecks'] == ['consumer:jvm:build']
+        affected = verify(baseline_args, 'passed')
+        assert affected['result']['freshChecks'] == ['consumer:jvm:test']
+        run = Path(affected['result']['executionRuns'][0]['directory'])
+        assert json.loads((run/'verification.json').read_text())['testCounts']['executed'] == 1
+        test_source.write_bytes(test_original)
+        source.write_text('package fixture\nfun message() = missingMcpSymbol()\n')
+        failure = verify(baseline_args, 'failed', failed=True)
+        assert failure['result']['freshChecks'] == []
+        assert any(d['category'] == 'compilation' for d in failure['diagnostics'])
+        source.write_bytes(original)
+        invalid = verify(dict(since=[str(root/'missing-baseline')], planOnly=True), 'planned')
+        assert 'baseline-invalid' in invalid['selection']['selection']['fullReasons']
+        print('PASS MCP affected-check selection, plans, full/mixed execution, omissions and failures', flush=True)
+
         broken = client(['--tools', str(root/'missing-tools.json'), '--runs', str(request_root)])
         missing = call(broken, 'kvik_build', common, failed=True)
         assert not missing['complete'] and missing['verification'] is None
         assert any(d['code'] == 'KVIK_TOOLCHAIN_CONFIGURATION' for d in missing['diagnostics'])
         assert Path(missing['stdout']).exists()
+        missing_verification = call(broken, 'kvik_verify', common | dict(full=True), failed=True)
+        assert not missing_verification['complete'] and missing_verification['result'] is None
+        assert missing_verification['diagnostics'] and Path(missing_verification['stdout']).exists()
         broken.stop()
 
         tests = root/'consumer/test/Tests.kt'
@@ -167,11 +222,12 @@ class PassingTests { @Test fun slow() {
     Thread.sleep(60000)
 } }
 ''')
-        ident, directory, pid = slow(c)
+        ident, directory, pid = slow(c, 'kvik_verify')
         # Read-only work stays usable while the execution budget is occupied.
         call(c, 'kvik_inspect', {})
         busy = call(c, 'kvik_build', common, failed=True)
         assert 'One build/test request' in busy['content'][0]['text']
+        call(c, 'kvik_verify', common | dict(full=True), failed=True)
         c.send(dict(jsonrpc='2.0', method='notifications/cancelled', params=dict(requestId=ident)))
         wait_gone(pid)
         call(c, 'kvik_inspect', {})

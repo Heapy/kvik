@@ -11,9 +11,9 @@ private fun text(name: String, flag: String, description: String = name, choices
         put("type", "string".json()); put("minLength", 1.json()); put("maxLength", 4096.json()); put("description", description.json())
         if (choices.isNotEmpty()) put("enum", choices.map { it.json() }.json())
     }))
-private fun repeated(name: String, flag: String, minimum: Int = 0) = Argument(name, flag,
+private fun repeated(name: String, flag: String, minimum: Int = 0, choices: List<String> = emptyList()) = Argument(name, flag,
     obj("type" to "array".json(), "minItems" to minimum.json(), "maxItems" to 32.json(), "uniqueItems" to true.json(),
-        "items" to text(name, flag).schema), repeated = true)
+        "items" to text(name, flag, choices = choices).schema), repeated = true)
 private fun switch(name: String, flag: String) = Argument(name, flag, obj("type" to "boolean".json()), switch = true)
 private fun integer(name: String, flag: String, maximum: Int) = Argument(name, flag,
     obj("type" to "integer".json(), "minimum" to 1.json(), "maximum" to maximum.json()))
@@ -54,6 +54,9 @@ class McpTool internal constructor(val name: String, private val description: St
                         val entries = raw.array().map(::value)
                         val minimum = spec.schema.values.getValue("minItems").longValue().toInt()
                         require(entries.size in minimum..32 && entries.distinct().size == entries.size) { "${spec.name} requires $minimum..32 distinct values" }
+                        spec.schema.values.getValue("items").objectValue()["enum"]?.let { choices ->
+                            require(entries.all { it.json() in choices.arrayValue() }) { "Unsupported ${spec.name}" }
+                        }
                         entries.forEach { add(spec.flag); add(it) }
                     }
                     spec.schema.values["type"] == "integer".json() -> {
@@ -128,5 +131,10 @@ val mcpBuildTools: List<McpTool> = listOf(
         listOf("build"), required = setOf("modules", "targets"), arguments = listOf(repeated("modules", "--module", 1), repeated("targets", "--target", 1)), build = true),
     McpTool("kvik_test", "Run fresh tests for explicitly selected modules and targets, reusing eligible compilation outputs. Executes project code. Returns committed verification, counts, diagnostics and retained run paths; a cached compilation is not a test execution.",
         listOf("test"), required = setOf("modules", "targets"), arguments = listOf(repeated("modules", "--module", 1), repeated("targets", "--target", 1),
+            switch("coverage", "--coverage"), repeated("coverageExcludes", "--coverage-exclude")), build = true),
+    McpTool("kvik_verify", "Select and execute affected build, test or ABI checks since retained baseline runs. Supply since or full=true. planOnly=true returns the selection without executing checks. Selected tests run freshly; unchanged means checks were omitted using compatible baselines. Returns selection reasons, omissions and execution run paths.",
+        listOf("verify"), required = setOf("modules", "targets"), arguments = listOf(
+            repeated("modules", "--module", 1), repeated("targets", "--target", 1), repeated("since", "--since", 1),
+            repeated("checks", "--check", 1, listOf("build", "test", "abi-check")), switch("full", "--full"), switch("planOnly", "--plan-only"),
             switch("coverage", "--coverage"), repeated("coverageExcludes", "--coverage-exclude")), build = true),
 )

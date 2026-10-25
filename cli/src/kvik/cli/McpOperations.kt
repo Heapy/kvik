@@ -74,7 +74,7 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             val commandLine = listOf("${runtimeDirectory()}/kvik.kexe") + actualArguments
             val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "TMPDIR" to directory,
                 "KVIK_BOOTSTRAP_OFFLINE" to if (options.offline) "1" else "0") +
-                if (tool.build) remoteOperationEnvironment(options.root, commandLine) else emptyMap()
+                if (request != null) remoteSessionCredentials(options.root, request.options) else emptyMap()
             val process = owner.start(ProcessRequest(commandLine, options.root, environment,
                 request?.stdout ?: "$directory/stdout.json", request?.stderr ?: "$directory/stderr.log", if (tool.build) 30 * 60_000 else 120_000))
             pending[id] = Pending(id, directory, process, request, progressToken)
