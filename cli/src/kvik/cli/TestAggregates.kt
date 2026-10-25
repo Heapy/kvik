@@ -90,8 +90,8 @@ internal fun testAggregateCommand(args: List<String>): ExitStatus {
             }
         }
         val matrix = if (expected.isEmpty()) baseline.requestedChecks.filter { it.endsWith(":test") }.toSet() else expected
-        if (matrix.size !in 1..1000 || matrix.any { !it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):test")) })
-            arguments("Expected matrix must contain valid MODULE:(jvm|macosArm64|linuxX64):test checks")
+        if (matrix.size !in 1..1000 || matrix.any { !it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|js|wasmJs):test")) })
+            arguments("Expected matrix must contain valid MODULE:(jvm|macosArm64|linuxX64|js|wasmJs):test checks")
         if (modules.any { module -> matrix.none { it.substringBefore(':') == module } } ||
             targets.any { target -> matrix.none { it.split(':')[1] == target } }) arguments("Selector is absent from expected matrix")
         val selected = matrix.filter { (modules.isEmpty() || it.substringBefore(':') in modules) &&

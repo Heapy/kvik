@@ -15,6 +15,41 @@ sys.path.insert(0, str(ROOT))
 from bootstrap.identity import canonical, digest, inventory
 
 
+def check_test_aggregation(runtime, run, output, schema):
+    """Report a real mixed JS/Wasm run without needing Node or compiler tools."""
+    runtime, run, output = runtime.resolve(strict=True), run.resolve(strict=True), output.resolve()
+    record = json.loads((run / 'verification.json').read_bytes())
+    originals = {name: (run / name).read_bytes() for name in ('verification.json', 'completion.json', 'events.jsonl')}
+    checks = sorted(record['requestedChecks'])
+    assert checks == ['app:js:test', 'app:wasmJs:test'] and record['status'] == 'passed'
+    env = dict(os.environ, PATH='/nonexistent', JAVA_HOME='/nonexistent', KONAN_HOME='/nonexistent')
+    for label, options, selected in (
+        ('default', [], checks),
+        ('explicit', [part for check in checks for part in ('--expect', check)], checks),
+        ('js', ['--target', 'js'], ['app:js:test']),
+        ('wasm', ['--target', 'wasmJs'], ['app:wasmJs:test']),
+    ):
+        destination = output / label
+        process = subprocess.run([str(runtime), 'test-aggregate', '--run', str(run), '--format', 'json',
+                                  '--output', str(destination), *options], env=env, capture_output=True, timeout=30)
+        assert process.returncode == 0, (label, process.stdout, process.stderr)
+        response = json.loads(process.stdout)
+        jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/testAggregateExport'}).validate(response)
+        aggregate = json.loads((destination / 'aggregate.json').read_bytes())
+        jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/testAggregate'}).validate(aggregate)
+        assert aggregate['status'] == 'passed' and aggregate['complete']
+        assert aggregate['scope']['expectedChecks'] == aggregate['actualChecks'] == selected
+        assert not aggregate['missingChecks']
+        wanted = [test for test in record['tests'] if f"{test['module']}:{test['target']}:test" in selected]
+        observed = [test for entry in aggregate['checks'] for test in entry['scope']['tests']]
+        assert sorted(observed, key=lambda test: (test['target'], test['id'])) == sorted(
+            wanted, key=lambda test: (test['target'], test['id']))
+        assert aggregate['uniqueCounts']['executed'] == sum(test['status'] != 'skipped' for test in wanted)
+        assert aggregate['uniqueCounts']['skipped'] == sum(test['status'] == 'skipped' for test in wanted)
+    assert {name: (run / name).read_bytes() for name in originals} == originals
+    print('PASS JS/Wasm test aggregation: default and explicit matrix, target selection and retained test identities', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', required=True, type=Path)
@@ -150,6 +185,7 @@ class Tests {
         else:
             assert action['status'] == 'local_hit' and action['key'] == prepared_actions[action['actionId']]['key'], action
     assert all(f'{target}:node' in first['toolchains'] for target in ('js', 'wasmJs')), first['toolchains']
+    check_test_aggregation(runtime, root / 'runs' / first['runId'], root / 'test-aggregates', schema)
     second = run()
     compiled = [action for action in second['actions'] if not action['actionId'].endswith(':test')]
     assert compiled and all(action['status'] == 'local_hit' for action in compiled), compiled

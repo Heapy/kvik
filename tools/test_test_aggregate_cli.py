@@ -164,13 +164,15 @@ def main():
     assert json_export == combined
     selected = invoke('selected-consumer', selection=('--module', 'consumer', '--target', 'jvm'))
     assert selected['scope']['expectedChecks'] == ['consumer:jvm:test'] and selected['uniqueCounts']['executed'] == 1
-    for label, missing in [('missing-third', 'third:jvm:test'), ('missing-native', 'consumer:macosArm64:test')]:
+    for label, missing in [('missing-third', 'third:jvm:test'), ('missing-native', 'consumer:macosArm64:test'),
+                           ('missing-js', 'consumer:js:test'), ('missing-wasm', 'consumer:wasmJs:test')]:
         aggregate = invoke(label, expected_checks=[*checks, missing], expected=3)
         assert aggregate['missingChecks'] == [missing] and not aggregate['complete'] and aggregate['status'] == 'incomplete'
         assert aggregate['uniqueCounts']['executed'] == aggregate['attempts']['known'] == 2
     invoke('requires-matrix', expected_checks=[], expected=2, refusal=True)
     invoke('unknown-module', selection=('--module', 'absent'), expected=2, refusal=True)
     invoke('unknown-target', selection=('--target', 'absent'), expected=2, refusal=True)
+    invoke('unsupported-target', expected_checks=[*checks, 'consumer:iosArm64:test'], expected=2, refusal=True)
     invoke('duplicate-input', inputs=[runs[0], runs[0]], expected=2, refusal=True)
     copied = output/'copied-corrupt'/runs[0].name
     shutil.copytree(runs[0], copied)

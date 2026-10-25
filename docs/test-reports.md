@@ -37,7 +37,7 @@ kvik test-aggregate --run /path/to/run-a --run /path/to/run-b \
   --output /path/to/new-test-aggregate
 ```
 
-A single run defaults to its requested test checks. Multiple runs require repeatable `--expect MODULE:TARGET:test`; available results never define the expected matrix. Up to 100 runs and 1,000 expected checks are supported; expected targets are `jvm` or `macosArm64`. Repeat `--module ID` and `--target ID` to filter the matrix. Unmatched selectors are errors.
+A single run defaults to its requested test checks. Multiple runs require repeatable `--expect MODULE:TARGET:test`; available results never define the expected matrix. Up to 100 runs and 1,000 expected checks are supported; expected targets are `jvm`, `macosArm64`, `linuxX64`, `js` and `wasmJs`. Repeat `--module ID` and `--target ID` to filter the matrix. Unmatched selectors are errors.
 
 All contributors must agree on the input snapshot, configuration, dependency lock and runtime composition. Toolchain identities shared by multiple runs must agree. Each selected check can have only one contributor; duplicate checks or contributors are rejected. Repeated runs are not interpreted as retries. A contributor's failed, incomplete or cancelled status is retained even when selection narrows its tests.
 
