@@ -11856,7 +11856,8 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "maxItems": 1
         },
         "options": {
           "type": "array",
@@ -11905,19 +11906,24 @@
       "allOf": [
         {
           "if": {
-            "required": [
-              "pluginApplications"
-            ],
             "properties": {
-              "pluginApplications": {
+              "pluginClasspath": {
                 "minItems": 1
               }
             }
           },
           "then": {
             "properties": {
-              "pluginClasspath": {
-                "maxItems": 0
+              "pluginApplications": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "not": {
+                        "const": "org.jetbrains.kotlinx.serialization"
+                      }
+                    }
+                  }
+                }
               }
             }
           }

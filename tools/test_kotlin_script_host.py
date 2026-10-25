@@ -13,12 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bootstrap import jvm_worker
 from bootstrap.identity import file_digest
+from tools.test_jvm import acquire
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--artifact-cache', type=Path, required=True)
+    parser.add_argument('--maven-cache', type=Path, default=Path.home() / 'Library/Caches/JetBrains/Kotlin/.m2.cache')
     args = parser.parse_args()
     java = args.java_home.resolve() / 'bin/java'
     cache = args.artifact_cache.resolve()
@@ -213,6 +215,55 @@ println("EFFECT literal declarations")
     ordinary_result = process('ordinary-run', ['-cp', str(ordinary / 'output/classes') + ':' + cp[0], 'MainKt'])
     assert ordinary_result.stdout.decode().strip() == 'worker-transformed'
     print('PASS ordinary Kotlin compiler worker retains typed plugin behavior with scripting jars present', flush=True)
+
+    serialization = json.loads((ROOT / 'compiler/jvm/test-artifacts.lock.json').read_text())
+    serialization['artifacts'] = [item for item in serialization['artifacts'] if item['coordinate'].split(':')[1] in {
+        'kotlin-serialization-compiler-plugin-embeddable', 'kotlinx-serialization-core-jvm', 'kotlinx-serialization-json-jvm'}]
+    seed = case / 'serialization-seed'
+    seed.mkdir()
+    for item in serialization['artifacts']:
+        group, name, version = item['coordinate'].split(':')
+        for source in (cache / item['filename'], args.maven_cache / group.replace('.', '/') / name / version / item['filename']):
+            if source.is_file():
+                shutil.copy2(source, seed / item['filename'])
+                break
+    serial_jars = acquire(serialization, case / 'serialization', seed)
+    for extension in ('kt', 'kts'):
+        mixed = case / ('mixed-' + extension)
+        (mixed / 'input').mkdir(parents=True)
+        (mixed / 'output').mkdir()
+        shutil.copy2(plugin, mixed / 'input/plugin.jar')
+        shutil.copy2(cache / 'kotlin-stdlib-2.4.20.jar', mixed / 'input/stdlib.jar')
+        runtime_paths = ['input/stdlib.jar']
+        for coordinate, jar in serial_jars.items():
+            if 'compiler-plugin' in coordinate:
+                shutil.copy2(jar, mixed / 'input/serialization.jar')
+            else:
+                shutil.copy2(jar, mixed / 'input' / jar.name)
+                runtime_paths.append('input/' + jar.name)
+        # K2 scripting 2.4.20 needs an explicit companion for serializer() lookup.
+        # The plugin must still generate the serializer method and implementation.
+        companion = ' { companion object }' if extension == 'kts' else ''
+        declarations = 'import kotlinx.serialization.*\nimport kotlinx.serialization.json.Json\n@Serializable data class Payload(val value: String)' + companion + '\n'
+        body = 'println(Json.encodeToString(Payload.serializer(), Payload("PLUGIN_MARKER")))'
+        (mixed / ('input/Main.' + extension)).write_text(declarations + (body if extension == 'kts' else 'fun main() { ' + body + ' }'))
+        mixed_request = {**(worker_request if extension == 'kts' else ordinary_request),
+            'sources': ['input/Main.' + extension], 'classpath': runtime_paths, 'pluginClasspath': ['input/serialization.jar']}
+        (mixed / 'request.json').write_text(json.dumps(mixed_request))
+        worker_class = 'kvik.jvm.KotlinScriptCompileWorker' if extension == 'kts' else 'kvik.jvm.CompilerWorkerKt'
+        process('mixed-' + extension, ['-cp', bootstrap_cp, worker_class, mixed, 'request.json', 'result.json', cache, manifest])
+        assert json.loads((mixed / 'result.json').read_text())['status'] == 'success'
+        assert list((mixed / 'output/classes').rglob('*Payload$$serializer.class'))
+        if extension == 'kts':
+            shutil.copytree(mixed / 'output/classes', mixed / 'input/classes')
+            (mixed / 'evaluate.json').write_text(json.dumps(dict(schemaVersion=1, requestId='mixed-evaluate', compiler=file_digest(manifest),
+                bundle='input/classes', classpath=runtime_paths, arguments=[])))
+            evaluated = process('mixed-kts-run', ['-cp', bootstrap_cp, 'kvik.jvm.KotlinScriptEvaluationWorker', mixed,
+                'evaluate.json', 'evaluate-result.json', cache, manifest])
+        else:
+            evaluated = process('mixed-kt-run', ['-cp', ':'.join(map(str, [mixed / 'output/classes', *[mixed / p for p in runtime_paths]])), 'MainKt'])
+        assert json.loads(evaluated.stdout) == {'value': 'worker-transformed'}, evaluated.stdout
+    print('PASS workspace transformation and published serialization together for .kt and .kts', flush=True)
 
     _, failure = compile_script('annotation-cycle', {'main/Main.kts': '@file:Import("../helpers/Helper.kts")',
         'helpers/Helper.kts': '@file:Import("../main/Main.kts")'})

@@ -278,6 +278,37 @@ class ScriptGraphTest {
         assertNotEquals(compile.key(Sha256), scriptActions(graph, "plugin:jvm:main").getValue(scriptCompile).key(Sha256))
     }
 
+    @Test fun workspaceAndPublishedPluginsComposeForBothScriptAdapters() {
+        val workspace = CompilerPluginSpec(module = "plugin", coordinate = null, targets = setOf("jvm"), scopes = setOf("script"),
+            options = listOf("text=original"), inputs = listOf(LogicalPath("plugin-input.txt")), id = "fixture.plugin", compilerVersion = "2.4.20")
+        val coordinate = Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20")
+        val serialization = CompilerPluginSpec(null, coordinate, setOf("jvm"), setOf("script"), emptyList(), emptyList())
+        val modules = listOf(scriptModule("plugin", listOf(obj("coordinate" to "g:plugin-runtime:1".json()))))
+        for (kts in listOf(false, true)) for (plugins in listOf(listOf(workspace, serialization), listOf(serialization, workspace))) {
+            val primary = LogicalPath(if (kts) "task.kts" else "task.kt")
+            val spec = ScriptSpec(listOf(primary), entryScript = primary.takeIf { kts }, compilerPlugins = plugins)
+            val files = scriptFiles(primary.value, "plugin/src/Plugin.kt", "plugin/resources/META-INF/services/Registrar", "plugin-input.txt")
+            val graph = scriptPlan(spec, files, modules)
+            assertEquals(setOf("plugin:jvm:main"), graph.nodes.single { it.id == scriptCompile }.dependencies)
+            val actions = scriptActions(graph)
+            val compilation = actions.getValue(scriptCompile)
+            val published = if (kts) KtsCompilation.fromJson(compilation.parameters).plugins else JvmCompilation.fromJson(compilation.parameters).plugins
+            val applications = if (kts) KtsCompilation.fromJson(compilation.parameters).pluginApplications else JvmCompilation.fromJson(compilation.parameters).pluginApplications
+            assertEquals(1, published.size)
+            assertEquals("fixture.plugin", applications.single().id)
+            assertTrue(compilation.inputs.files.any { it.path == published.single() && it.digest == scriptDigest(coordinate.toString()) })
+            assertTrue(compilation.inputs.files.any { it.digest == scriptDigest("g:plugin-runtime:1") })
+            assertFalse(actions.getValue(scriptRun).inputs.files.any { it.path.value.startsWith("plugins/") || it.path.value.startsWith("plugin-inputs/") })
+            assertEquals(CachePolicy.NEVER, actions.getValue(scriptRun).cachePolicy)
+            assertNotEquals(compilation.key(Sha256), scriptActions(graph, "plugin:jvm:main").getValue(scriptCompile).key(Sha256))
+            val changed = spec.copy(compilerPlugins = plugins.map { if (it.module != null) it.copy(options = listOf("text=changed")) else it })
+            assertNotEquals(compilation.key(Sha256), scriptActions(scriptPlan(changed, files, modules)).getValue(scriptCompile).key(Sha256))
+            assertFailsWith<IllegalArgumentException> {
+                scriptPlan(spec.copy(compilerPlugins = listOf(workspace.copy(id = "org.jetbrains.kotlinx.serialization"), serialization)), files, modules)
+            }
+        }
+    }
+
     @Test fun standaloneCompanionHasNoImplicitWorkspaceOrSyntheticModule() {
         val configuration = parseStandaloneScriptConfiguration(obj("schemaVersion" to 1.json(), "name" to "task".json(),
             "repositories" to listOf(obj("id" to "central".json(), "url" to "https://repo.maven.apache.org/maven2".json())).json(), "script" to scriptSpec.toJson()))

@@ -16,7 +16,10 @@ class CompilerPluginsTest {
         val legacy = request.copy(pluginApplications = emptyList())
         assertFalse("pluginApplications" in legacy.toJson().objectValue())
         assertEquals(legacy, WorkerRequest.fromJson(legacy.toJson()))
-        assertFails { request.copy(pluginClasspath = listOf("serialization.jar")) }
+        val combined = request.copy(pluginClasspath = listOf("serialization.jar"))
+        assertEquals(combined, WorkerRequest.fromJson(combined.toJson()))
+        assertFails { combined.copy(pluginApplications = listOf(plugin.copy(id = "org.jetbrains.kotlinx.serialization"))) }
+        assertFails { combined.copy(pluginClasspath = listOf("serialization.jar", "another.jar")) }
         assertFails { request.copy(pluginApplications = listOf(plugin, plugin)) }
     }
 

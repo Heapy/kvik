@@ -35,7 +35,7 @@ private class ScriptGraphBuilder(
     private val plugins = script.compilerPlugins.map { it.value }
     private val compileClosure = scriptDependencyClosure(project, script, DependencyUsage.COMPILE)
     private val runtimeClosure = scriptDependencyClosure(project, script, DependencyUsage.RUNTIME)
-    private val pluginModules = plugins.singleOrNull()?.module?.let {
+    private val pluginModules = plugins.singleOrNull { it.module != null }?.module?.let {
         listOf(it) + dependencyClosure(project, it, "jvm", "main", DependencyUsage.RUNTIME).modules
     } ?: emptyList()
     private val moduleGraph: ProjectActionGraph
@@ -45,7 +45,12 @@ private class ScriptGraphBuilder(
         require(lock.configuration == effective.digest && selections.size == lock.selections.size && lock.selections.map { it.request() } == effective.requests) { "Stale or mismatched script lock" }
         require(tools.keys == setOf("jdk", "jvm-compiler", "jvm-worker", "junit")) { "Missing/incompatible JVM tools" }
         require(!options.multiplatform) { "Script sources do not declare common fragments" }
-        require(plugins.size <= 1) { "Multiple compiler plugins per script are unsupported" }
+        require(plugins.count { it.module != null } <= 1 && plugins.count { it.coordinate != null } <= 1) {
+            "Scripts support at most one workspace plugin and one published serialization plugin"
+        }
+        require(plugins.none { it.coordinate != null } || plugins.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
+            "Workspace and published plugins cannot share the serialization plugin ID"
+        }
         for (usage in listOf("java-api", "java-runtime")) require(ResolutionDomain.script(script.name, usage) in authorized) { "Unauthorized script dependency scope: $usage" }
         if (plugins.isNotEmpty()) require(ResolutionDomain.script(script.name, "java-runtime", "compiler-plugin") in authorized) { "Unauthorized script plugin scope" }
         val prerequisites = (compileClosure.modules + runtimeClosure.modules + pluginModules).toSet()
@@ -106,7 +111,10 @@ private class ScriptGraphBuilder(
     }
     private data class PluginInputs(val files: List<FileEntry>, val published: List<LogicalPath>, val applications: List<JvmPluginApplication>)
     private fun pluginInputs(results: Map<String, ActionResult>): PluginInputs {
-        val plugin = plugins.singleOrNull() ?: return PluginInputs(emptyList(), emptyList(), emptyList())
+        val inputs = plugins.map { pluginInputs(results, it) }
+        return PluginInputs(inputs.flatMap { it.files }, inputs.flatMap { it.published }, inputs.flatMap { it.applications })
+    }
+    private fun pluginInputs(results: Map<String, ActionResult>, plugin: CompilerPluginSpec): PluginInputs {
         plugin.coordinate?.let { coordinate ->
             val supported = Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")
             require(coordinate.group == supported.group && coordinate.name == supported.name) {

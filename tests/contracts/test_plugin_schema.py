@@ -67,13 +67,16 @@ class PluginSchemaTest(unittest.TestCase):
             for targets in [['macosArm64'], ['linuxX64'], ['js'], ['wasmJs'], ['jvm', 'macosArm64', 'linuxX64', 'js', 'wasmJs']]:
                 self.assertFalse(validator.is_valid({**plugin, 'targets': targets}))
 
-    def test_worker_rejects_mixed_plugin_representations(self):
+    def test_worker_accepts_workspace_plus_serialization_without_duplicate_ids(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/workerRequest'})
         request = dict(schemaVersion=1, requestId='compile', operation='jvm-compile', compiler=dict(hash='a' * 64, sizeBytes=0), sources=['input/a.kt'], classpath=[], pluginClasspath=[], options=[], outputDirectory='output/classes')
         validator.validate(request)
         plugin = dict(id='example.plugin', compilerVersion='2.4.20', classpath=['input/plugin'], options=[], inputs=[], pathOptions=[], outputs=[])
         validator.validate({**request, 'pluginApplications': [plugin]})
-        self.assertFalse(validator.is_valid({**request, 'pluginClasspath': ['serialization.jar'], 'pluginApplications': [plugin]}))
+        combined = {**request, 'pluginClasspath': ['serialization.jar'], 'pluginApplications': [plugin]}
+        validator.validate(combined)
+        self.assertFalse(validator.is_valid({**combined, 'pluginApplications': [{**plugin, 'id': 'org.jetbrains.kotlinx.serialization'}]}))
+        self.assertFalse(validator.is_valid({**combined, 'pluginClasspath': ['serialization.jar', 'other.jar']}))
         self.assertFalse(validator.is_valid({**request, 'pluginApplications': [plugin, plugin]}))
 
 

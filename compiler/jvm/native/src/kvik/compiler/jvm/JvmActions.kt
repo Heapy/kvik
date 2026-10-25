@@ -51,7 +51,8 @@ data class JvmCompilation(
         }
         require(commonSources.all { it in sources } && friendPaths.all { it in classpath })
         require(plugins.size <= 1 && plugins.all { it.value.endsWith(".jar") && it !in classpath })
-        require(pluginApplications.size <= 1 && (pluginApplications.isEmpty() || plugins.isEmpty())) { "Only one plugin application/representation is supported" }
+        require(pluginApplications.size <= 1) { "At most one workspace plugin is supported" }
+        require(plugins.isEmpty() || pluginApplications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
         require(pluginApplications.all { plugin -> plugin.classpath.none { it in classpath } && plugin.outputs.none { pathsOverlap(it, output) } }) { "Plugin paths overlap compilation classpath/output" }
         require(jvmTarget in setOf(11, 17, 21, 25))
         require(jdkRelease == null || jdkRelease == jvmTarget) { "JDK release must equal JVM target" }

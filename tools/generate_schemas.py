@@ -921,8 +921,9 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "application-finished": object_({"preparationRun": NONEMPTY, "exitCode": {"type": "integer", "minimum": 0, "maximum": 255},
         "cancelled": BOOL, "timedOut": BOOL, "stdout": NONEMPTY, "stderr": NONEMPTY}),
 }.items()]
-DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum(*PROJECT_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
-DEFS["workerRequest"]["allOf"] = [{"if": {"required": ["pluginApplications"], "properties": {"pluginApplications": {"minItems": 1}}}, "then": {"properties": {"pluginClasspath": {"maxItems": 0}}}}]
+DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING, maxItems=1), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=1), "metadataTargets": array(enum(*PROJECT_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
+DEFS["workerRequest"]["allOf"] = [{"if": {"properties": {"pluginClasspath": {"minItems": 1}}},
+    "then": {"properties": {"pluginApplications": {"items": {"properties": {"id": {"not": {"const": "org.jetbrains.kotlinx.serialization"}}}}}}}}]
 DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-compile"}}},
     "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": len(PROJECT_TARGETS)}}},
     "else": {"properties": {"metadataTargets": {"maxItems": 0}}}})

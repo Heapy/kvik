@@ -156,8 +156,9 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
                 it.compilerArguments[JvmCompilerArguments.CLASSPATH] = classpath
             }
         }
-        if (plugins.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
+        val publishedPlugins = if (plugins.isEmpty()) emptyList() else
             listOf(CompilerPlugin(SERIALIZATION_ID, plugins, emptyList(), emptySet()))
+        if (publishedPlugins.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] = publishedPlugins
         builder[BaseCompilationOperation.COMPILER_MESSAGE_RENDERER] = object : CompilerMessageRenderer {
             override fun render(severity: CompilerMessageRenderer.Severity, message: String, location: CompilerMessageRenderer.SourceLocation?): String {
                 if (severity == CompilerMessageRenderer.Severity.ERROR || severity == CompilerMessageRenderer.Severity.WARNING) {
@@ -188,7 +189,7 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
                 toolchains.javaClass.classLoader, distribution.classpath).single()
             withTypedWorkspacePlugin(plugin, toolchains.javaClass.classLoader, workspace) { service ->
                 builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
-                    listOf(CompilerPlugin(plugin.id, listOf(service), emptyList(), emptySet()))
+                    publishedPlugins + CompilerPlugin(plugin.id, listOf(service), emptyList(), emptySet())
                 execute()
             }
         } else execute()

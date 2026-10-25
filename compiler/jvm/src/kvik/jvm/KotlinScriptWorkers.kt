@@ -97,7 +97,8 @@ object KotlinScriptWorkerSession {
                 require(logical.startsWith("input/"))
                 workspace.classpath(logical)
             }
-            require(applications.size <= 1 && (applications.isEmpty() || pluginPaths.isEmpty())) { "Only one script compiler plugin is supported" }
+            require(applications.size <= 1) { "At most one workspace script compiler plugin is supported" }
+            require(pluginPaths.isEmpty() || applications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
             if (pluginPaths.isNotEmpty()) require(pluginPaths.size == 1 && pinned.serialization != null && fileDigest(pluginPaths.single()) == pinned.serialization) {
                 "Only the pinned serialization plugin is supported without a typed plugin application"
             }
@@ -118,7 +119,7 @@ object KotlinScriptWorkerSession {
                     val loader = KotlinScriptWorkerSession::class.java.classLoader
                     val plugin = validatedWorkspacePlugins(applications, classpath, workspace, outputRoots, loader, pinned.classpath).single()
                     withTypedWorkspacePlugin(plugin, loader, workspace) { service ->
-                        scriptBlocking { KotlinScriptHost.compile(base.copy(pluginClasspath = listOf(service))) }
+                        scriptBlocking { KotlinScriptHost.compile(base.copy(pluginClasspath = pluginPaths + listOf(service))) }
                     }
                 }
                 if (compiled.successful) {
