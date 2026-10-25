@@ -98,12 +98,12 @@ private fun parseModule(value: JsonValue): ModuleSpec {
                 }.toInt(), discover = "classes" !in selection, tags = JvmTestTags.fromFields(selection))
         }
         val nativeSettings = entry["nativeTestSettings"]?.let { value ->
-            val selection = value.fields(setOf("engine"), setOf("kspVersion", "processor", "maxRetries"))
+            val selection = value.fields(setOf("engine"), setOf("kspVersion", "processor", "maxRetries", "filter"))
             NativeTestSettings(selection.getValue("engine").stringValue(), selection["kspVersion"]?.stringValue(),
                 selection["processor"]?.stringValue()?.let(Coordinate::parse),
                 (selection["maxRetries"]?.longValue() ?: 0).also {
                     require(it in 0L..9L) { "Native test maxRetries must be an integer in 0..9" }
-                }.toInt())
+                }.toInt(), selection["filter"]?.let { if (it == JsonValue.Null) null else it.stringValue() })
         }
         val nativeTimeouts = entry["nativeTimeouts"]?.let { value ->
             val timeouts = value.fields(emptySet(), setOf("compileMillis", "linkMillis"))

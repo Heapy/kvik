@@ -75,10 +75,11 @@ DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"mini
     "then": {"properties": {"engines": {"const": ["junit"]}}}}, tag_engine_constraint("junit")]
 NATIVE_RETRIES = {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}
 DEFS["nativeTestSettings"] = {"oneOf": [
-    object_({"engine": {"const": "kotlin"}, "maxRetries": NATIVE_RETRIES}, optional=("maxRetries",)),
+    object_({"engine": {"const": "kotlin"}, "maxRetries": NATIVE_RETRIES,
+             "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"})}, optional=("maxRetries", "filter")),
     object_({"engine": {"const": "kotest"}, "kspVersion": {"const": "2.3.12"},
              "processor": {"const": "io.kotest:kotest-framework-symbol-processor:6.2.5"},
-             "maxRetries": NATIVE_RETRIES}, optional=("maxRetries",))]}
+             "maxRetries": NATIVE_RETRIES, "filter": {"type": "null"}}, optional=("maxRetries", "filter"))]}
 DEFS["nativeTimeouts"] = object_({name: {"type": "integer", "minimum": 1, "maximum": 3600000}
     for name in ("compileMillis", "linkMillis")}, optional=("compileMillis", "linkMillis"))
 DEFS["nativeTimeouts"]["minProperties"] = 1

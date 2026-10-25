@@ -48,6 +48,11 @@ class ProjectSettingsSchemaTest(unittest.TestCase):
         settings = dict(engine='kotest', kspVersion='2.3.12', processor='io.kotest:kotest-framework-symbol-processor:6.2.5')
         target = {**self.target(), 'name': 'macosArm64', 'nativeTestSettings': settings}
         VALIDATOR.validate(target)
+        for pattern in (None, '*', 'fixture.Checks.fast*', 'fixture.*.passing'):
+            VALIDATOR.validate({**target, 'nativeTestSettings': dict(engine='kotlin', filter=pattern)})
+        VALIDATOR.validate({**target, 'nativeTestSettings': {**settings, 'filter': None}})
+        for pattern in ('', ' ', 'a?', 'a:b', 'a-b', 'a\nb', 'a/b', 'é', 1, True):
+            self.assertFalse(VALIDATOR.is_valid({**target, 'nativeTestSettings': dict(engine='kotlin', filter=pattern)}))
         for engine in [dict(engine='kotlin'), settings]:
             for count in (0, 1, 9):
                 VALIDATOR.validate({**target, 'nativeTestSettings': {**engine, 'maxRetries': count}})

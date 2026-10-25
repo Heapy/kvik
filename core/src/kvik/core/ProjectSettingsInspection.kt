@@ -49,7 +49,8 @@ fun projectSettingsInspection(configuration: ProjectConfiguration, file: Logical
             }
             if (target.test != null && NativeTarget.find(target.name) != null) {
                 val native = target.nativeTestSettings ?: NativeTestSettings("kotlin")
-                settings("nativeTestSettings", JsonValue.Object(obj("engine" to native.engine.json(), "maxRetries" to native.maxRetries.json()).values +
+                settings("nativeTestSettings", JsonValue.Object(obj("engine" to native.engine.json(), "maxRetries" to native.maxRetries.json(),
+                    "filter" to (native.filter?.json() ?: JsonValue.Null)).values +
                     listOfNotNull(native.kspVersion?.let { "kspVersion" to it.json() }, native.processor?.let { "processor" to it.toString().json() }).toMap()))
             }
             if (target.test != null) (target.testResources ?: TestResources()).let {

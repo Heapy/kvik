@@ -1334,7 +1334,8 @@ private class Builder(
             JvmTestLaunch(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, testResources,
                 parallelism = testSelection.parallelism, maxRetries = testSelection.maxRetries,
                 discoveryRoots = if (testSelection.discover && hasTestCompile) listOf(modulePath(module, target, "test")) else emptyList(), tags = testSelection.tags))
-        } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources, maxRetries = nativeSettings?.maxRetries ?: 0)
+        } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null,
+            filter = nativeSettings?.filter, resources = testResources, maxRetries = nativeSettings?.maxRetries ?: 0)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, edges,
             launch.outputContract) { results ->

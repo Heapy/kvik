@@ -304,6 +304,17 @@
               "minimum": 0,
               "maximum": 9,
               "default": 0
+            },
+            "filter": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.*]+(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -328,6 +339,9 @@
               "minimum": 0,
               "maximum": 9,
               "default": 0
+            },
+            "filter": {
+              "type": "null"
             }
           },
           "required": [

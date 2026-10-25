@@ -61,8 +61,11 @@ data class JvmTestSettings(val classes: List<String>, val engines: List<String> 
 }
 
 /** Built-in Native tests need no generator; Kotest pins its generator/runtime protocol explicitly. */
-data class NativeTestSettings(val engine: String, val kspVersion: String? = null, val processor: Coordinate? = null, val maxRetries: Int = 0) {
+data class NativeTestSettings(val engine: String, val kspVersion: String? = null, val processor: Coordinate? = null, val maxRetries: Int = 0, val filter: String? = null) {
     init {
+        require(filter == null || engine == "kotlin" && filter.matches(Regex("[A-Za-z0-9_.*]+"))) {
+            "Native test filters require the kotlin engine and a pattern containing only letters, digits, underscores, dots and *"
+        }
         require(maxRetries in 0..9) { "Native test maxRetries must be an integer in 0..9" }
         require(engine == "kotlin" && kspVersion == null && processor == null ||
             engine == "kotest" && kspVersion == "2.3.12" &&

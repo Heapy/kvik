@@ -1073,6 +1073,22 @@ class ProjectGraphTest {
     }
 
 
+    @Test fun nativeFiltersChangeOnlyTheTestInvocation() {
+        val filtered = parseProjectConfiguration(parseJson(project.document.canonical().replace("\"name\":\"macosArm64\"",
+            "\"name\":\"macosArm64\",\"nativeTestSettings\":{\"engine\":\"kotlin\",\"filter\":\"fixture.Checks.fast*\"}")))
+        val before = resolved(graph(request = request(ProjectMode.TEST, "macosArm64")))
+        val after = resolved(graph(filtered, request = request(ProjectMode.TEST, "macosArm64")))
+        assertEquals(before.keys, after.keys)
+        for ((id, action) in before) {
+            if (action.kind == ActionKind.TEST) {
+                assertEquals("fixture.Checks.fast*".json(), after.getValue(id).parameters.objectValue().getValue("filter"))
+                assertTrue("--ktest_filter=fixture.Checks.fast*" in after.getValue(id).arguments)
+                assertNotEquals(action.key(Sha256), after.getValue(id).key(Sha256))
+                assertEquals(CachePolicy.NEVER, after.getValue(id).cachePolicy)
+            } else assertEquals(action, after.getValue(id))
+        }
+    }
+
     @Test fun nativeRetriesDoNotAddBuiltinGeneratorDependenciesOrRecompileCode() {
         for (kotest in listOf(false, true)) {
             val settings = if (kotest) """"engine":"kotest","kspVersion":"2.3.12","processor":"io.kotest:kotest-framework-symbol-processor:6.2.5"""" else """"engine":"kotlin""""

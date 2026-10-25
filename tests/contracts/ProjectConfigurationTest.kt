@@ -81,6 +81,13 @@ class ProjectConfigurationTest {
         assertEquals(NativeTestSettings("kotlin", maxRetries = 2), builtin.project.modules.single().targets.single().nativeTestSettings)
         val inspected = projectSettingsInspection(builtin, LogicalPath("kvik.json"))
         assertEquals(2.json(), inspected.getValue("target:library:macosArm64:nativeTestSettings:maxRetries").value)
+        val filtered = parse(selected("""{"engine":"kotlin","filter":"fixture.Checks.fast*"}"""))
+        assertEquals(NativeTestSettings("kotlin", filter = "fixture.Checks.fast*"), filtered.project.modules.single().targets.single().nativeTestSettings)
+        val setting = projectSettingsInspection(filtered, LogicalPath("kvik.json")).getValue("target:library:macosArm64:nativeTestSettings:filter")
+        assertEquals("fixture.Checks.fast*".json(), setting.value)
+        assertEquals("configuration", setting.source)
+        for (filter in listOf("", " ", "a?", "a:b", "a-b", "a\nb", "a/b", "é"))
+            assertFails { NativeTestSettings("kotlin", filter = filter) }
         for (count in listOf(-1, 10, 4294967296L)) assertFails { parse(selected("""{"engine":"kotlin","maxRetries":$count}""")) }
         assertFails { parse(selected(settings.replace("kotest", "kotlin"))) }
         assertFails { parse(selected("""{"engine":"kotest","maxRetries":1}""")) }

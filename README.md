@@ -648,7 +648,17 @@ even if a later attempt passes. Unique test counts use identities, while reports
 retain all attempts and initial failures. `inspect-graph` exposes the retry limit
 in test launch parameters; changing it does not invalidate compilation.
 
-Host Native tests support the same bounded policy through
+For host Native targets using the built-in `kotlin.test` runner, select test
+names with `"nativeTestSettings": {"engine": "kotlin", "filter": "fixture.Checks.fast*"}`.
+The pattern matches the qualified suite and test name, with `*` as a wildcard;
+ASCII letters, digits, underscores and dots are also accepted. Omit `filter` or set it
+to `null` to run the full declared test scope. Filtering is not supported for
+Kotest Native. The graph exposes the filter, and changing it reuses compilation
+and linking outputs while executing the selected tests afresh. An empty match
+returns `incomplete`. Counts describe the selected scope, excluding filtered-out
+tests. Run `resolve` after changing configuration.
+
+Host Native tests support the same bounded retry policy through
 `"nativeTestSettings": {"engine": "kotlin", "maxRetries": 2}`. For Kotest, add
 `"maxRetries": 2` to the existing pinned Kotest `nativeTestSettings`. Each Native
 attempt starts a fresh owned process and reruns the selected scope, including
