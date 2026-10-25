@@ -17,23 +17,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check the cache gate harness
         run: python3 -m unittest discover -s tools -p 'test_*cross_machine*unit.py'
-      - name: Diagnose pinned Maven response
-        run: |
-          python3 - <<'PY'
-          import json, urllib.request, urllib.error
-          from urllib.parse import urlsplit
-          class NoRedirect(urllib.request.HTTPRedirectHandler):
-              def redirect_request(self, *args):
-                  return None
-          item = json.load(open('bootstrap/jvm-artifacts.lock.json'))['compilerArtifacts'][0]
-          try:
-              with urllib.request.build_opener(NoRedirect()).open(item['url'], timeout=20) as response:
-                  print(item['filename'], response.status)
-          except urllib.error.HTTPError as error:
-              target = urlsplit(error.headers.get('Location', ''))
-              print(item['filename'], error.code, target.scheme, target.hostname, target.path)
-              raise
-          PY
       - name: Build the common tool image
         run: |
           docker build --platform linux/amd64 --tag kvik-cross-machine tools/linux

@@ -44,7 +44,7 @@ def read_lock(root):
             raise ValueError("Unsupported documentation artifact distribution")
     artifacts = all_artifacts(lock)
     for item in artifacts:
-        if (not isinstance(item, dict) or set(item) != {"coordinate", "filename", "url", "sha256", "size"} | ({"classifier"} if item is lock["jacocoAgent"] or item is lock["jacocoCli"] else set())
+        if (not isinstance(item, dict) or set(item) - {"releaseUrl"} != {"coordinate", "filename", "url", "sha256", "size"} | ({"classifier"} if item is lock["jacocoAgent"] or item is lock["jacocoCli"] else set())
                 or not isinstance(item["coordinate"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+", item["coordinate"])
                 or not isinstance(item["filename"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.jar", item["filename"])
                 or not isinstance(item["sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", item["sha256"])
@@ -58,6 +58,9 @@ def read_lock(root):
         expected_url = f"https://repo.maven.apache.org/maven2/{group.replace('.', '/')}/{name}/{version}/{expected_name}"
         if item["filename"] != expected_name or item["url"] != expected_url:
             raise ValueError("JVM artifact URL/name differs from its Maven coordinate")
+        if "releaseUrl" in item and (group != "org.jetbrains.kotlin" or version != lock["kotlinVersion"] or
+                item["releaseUrl"] != f"https://github.com/JetBrains/kotlin/releases/download/v{version}/{expected_name}"):
+            raise ValueError("JVM artifact release URL differs from its pinned Kotlin coordinate")
     if len({a["filename"] for a in artifacts}) != len(artifacts) or len({a["coordinate"] for a in artifacts}) != len(artifacts):
         raise ValueError("Duplicate JVM artifact")
     for name in ("kotlin-build-tools-api", "kotlin-stdlib", "kotlin-compiler-embeddable", "kotlin-script-runtime",
@@ -145,9 +148,21 @@ def valid_artifact(path, item):
 
 
 class LockedRedirects(urllib.request.HTTPRedirectHandler):
+    def __init__(self, source_url=None, release_url=None):
+        super().__init__()
+        self.source_url = source_url
+        self.release_url = release_url
+
     def redirect_request(self, request, fp, code, message, headers, new_url):
-        source = urlsplit(request.full_url).path.rsplit('/', 1)[-1]
         destination = urlsplit(new_url)
+        pinned_release = self.release_url is not None and request.full_url == self.source_url and new_url == self.release_url
+        release_asset = (self.release_url is not None and request.full_url == self.release_url and
+                         destination.scheme == 'https' and destination.netloc == 'release-assets.githubusercontent.com' and
+                         destination.path.startswith('/github-production-release-asset/3432266/') and
+                         not destination.fragment)
+        if pinned_release or release_asset:
+            return super().redirect_request(request, fp, code, message, headers, new_url)
+        source = urlsplit(request.full_url).path.rsplit('/', 1)[-1]
         # Report enough to diagnose CDN/repository redirects without logging signed
         # destination paths, credentials or query parameters.
         raise ValueError(f"Pinned JVM artifact {source} URL redirected (HTTP {code}, "
@@ -193,7 +208,7 @@ def acquire(lock, directory, offline):
             try:
                 hasher = hashlib.sha256()
                 size = 0
-                opener = urllib.request.build_opener(LockedRedirects())
+                opener = urllib.request.build_opener(LockedRedirects(item['url'], item.get('releaseUrl')))
                 with transfer_deadline(120), opener.open(item["url"], timeout=15) as source, tempfile.NamedTemporaryFile(dir=directory, delete=False) as output:
                     temporary = Path(output.name)
                     while True:

@@ -21,6 +21,24 @@ from bootstrap import jvm_worker
 
 
 class ArtifactBoundaryTest(unittest.TestCase):
+    def test_only_locked_kotlin_release_and_its_asset_redirects_are_allowed(self):
+        item = jvm_worker.read_lock(ROOT)['compilerArtifacts'][0]
+        handler = jvm_worker.LockedRedirects(item['url'], item['releaseUrl'])
+        asset = 'https://release-assets.githubusercontent.com/github-production-release-asset/3432266/id?signature=secret'
+        for source, target in ((item['url'], item['releaseUrl']), (item['releaseUrl'], asset)):
+            redirected = handler.redirect_request(jvm_worker.urllib.request.Request(source), None, 302, 'Found', {}, target)
+            self.assertEqual(redirected.full_url, target)
+        for source, target in ((item['url'], asset), (asset, item['releaseUrl']),
+                               (item['url'], item['releaseUrl'].replace('/v2.4.20/', '/v2.4.10/')),
+                               (item['releaseUrl'], asset.replace('https:', 'http:')),
+                               (item['releaseUrl'], asset.replace('/3432266/', '/another-repository/')),
+                               (item['releaseUrl'], asset.replace('release-assets.githubusercontent.com', 'cdn.example'))):
+            with self.subTest(source=source, target=target), self.assertRaises(ValueError):
+                handler.redirect_request(jvm_worker.urllib.request.Request(source), None, 302, 'Found', {}, target)
+        with self.assertRaises(ValueError):
+            jvm_worker.LockedRedirects(item['url']).redirect_request(
+                jvm_worker.urllib.request.Request(item['url']), None, 302, 'Found', {}, item['releaseUrl'])
+
     def test_redirect_error_identifies_artifact_without_leaking_destination_credentials(self):
         request = jvm_worker.urllib.request.Request('https://repo.maven.apache.org/maven2/example/tool.jar')
         with self.assertRaises(ValueError) as raised:
@@ -99,6 +117,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
                        lambda x: x["jacocoAgent"].pop("classifier"),
                        lambda x: x["compilerArtifacts"][0].update(classifier="runtime"),
                        lambda x: x["compilerArtifacts"][0].update(url="http://example.org/compiler.jar"),
+                       lambda x: x["compilerArtifacts"][0].update(releaseUrl="https://github.com/other/repository/releases/download/v2.4.20/tool.jar"),
                        lambda x: x["compilerArtifacts"][0].update(filename="../compiler.jar"),
                        lambda x: x["compilerArtifacts"][0].update(size=True),
                        lambda x: x["compilerArtifacts"].__setitem__(0, x["compilerArtifacts"][1])]:

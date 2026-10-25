@@ -5,6 +5,7 @@
     {
       "coordinate": "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20",
       "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-embeddable/2.4.20/kotlin-compiler-embeddable-2.4.20.jar",
+      "releaseUrl": "https://github.com/JetBrains/kotlin/releases/download/v2.4.20/kotlin-compiler-embeddable-2.4.20.jar",
       "filename": "kotlin-compiler-embeddable-2.4.20.jar",
       "sha256": "cf97161430683fb9af96dc6a7017ffae1fe8737b80d12eee11f2fe3e76f8ded8",
       "size": 58593245
