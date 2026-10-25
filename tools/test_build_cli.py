@@ -27,6 +27,8 @@ def main():
                         help='Existing compiler artifact cache used by the tool installation.')
     parser.add_argument('--output-dir', type=Path, default=ROOT/'.kvik/tests/build-cli',
                         help='Parent directory for a fresh isolated fixture and retained evidence.')
+    parser.add_argument('--prepare-only', action='store_true',
+                        help='Create and resolve the fixture without compiling or running its tests.')
     args = parser.parse_args()
     if args.runtime is None:
         result = subprocess.run([ROOT/'kvik', '--offline', '--no-build', '--print-runtime'], check=True, capture_output=True, text=True)
@@ -143,6 +145,9 @@ class PassingTests {
         return values[0]
     print('Fixture:', project, flush=True)
     invoke('resolve', 'resolve')
+    if args.prepare_only:
+        print('Prepared locked JVM fixture:', project, flush=True)
+        return
     cold = invoke('cold-build', 'build')
     assert all(action['status'] == 'executed' for action in cold['actions'])
     warm = invoke('repeated-build', 'build')

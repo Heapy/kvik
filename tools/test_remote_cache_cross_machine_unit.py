@@ -250,6 +250,33 @@ class CrossMachineGateTests(unittest.TestCase):
         self.assertEqual(value['scope'], 'same-host/non-cross-machine')
         self.assertEqual(gate.document(new_output / 'remote-cache.json')['mode'], 'read')
 
+    def test_snapshot_on_another_machine_does_not_claim_shared_service_gate(self):
+        output, _, _ = self.retained_run()
+        observed = gate.inspect_run(output, 'remote_hit', self.composition)
+        baseline = self.root / 'baseline.json'
+        tools = self.root / 'tools.json'
+        archive = self.root / 'cache.tar.gz'
+        archive.write_bytes(b'server-snapshot')
+        gate.write_json(tools, self.tools)
+        gate.write_json(self.config_path, dict(schemaVersion=1, url='http://127.0.0.1:9002', trustedWriters=True))
+        inputs = gate.input_identity(self.fixture, self.tools, self.runtime)
+        gate.write_json(baseline, dict(schemaVersion=1, phase='writer',
+            machine={**self.machine, 'fingerprint': 'b' * 64},
+            remote=dict(url='http://127.0.0.1:9001', instance=''), inputs=inputs,
+            cacheSnapshot=gate.digest(archive.read_bytes()), verification=observed))
+        new_output = self.root / 'new-output'
+        argv = ['gate', 'reader', '--runtime', str(self.runtime), '--fixture', str(self.fixture),
+                '--tools', str(tools), '--remote-cache', str(self.config_path), '--output', str(new_output),
+                '--baseline', str(baseline), '--cache-snapshot', str(archive)]
+        with patch.object(sys, 'argv', argv), patch.object(gate, 'machine_identity', return_value=self.machine), \
+                patch.object(gate, 'run', return_value=gate.subprocess.CompletedProcess([], 0, b'', b'')), \
+                patch.object(gate, 'inspect_run', return_value=observed), contextlib.redirect_stdout(io.StringIO()):
+            gate.main()
+        value = gate.document(new_output / 'result.json')
+        self.assertEqual(value['scope'], 'cross-machine-cache-snapshot')
+        self.assertTrue(value['crossMachineSnapshotPassed'])
+        self.assertFalse(value['crossMachineGatePassed'])
+
 
 if __name__ == '__main__':
     unittest.main()

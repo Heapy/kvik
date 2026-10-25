@@ -1,0 +1,80 @@
+name: Cross-machine compilation cache
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  writer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the cache gate harness
+        run: python3 -m unittest discover -s tools -p 'test_*cross_machine*unit.py'
+      - name: Build the common tool image
+        run: |
+          docker build --platform linux/amd64 --tag kvik-cross-machine tools/linux
+          mkdir -p .kvik
+          docker save kvik-cross-machine | gzip > .kvik/cross-machine-tools.tar.gz
+      - name: Compile and populate the remote cache
+        run: |
+          docker run --rm --init --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/work/writer-kvik" --workdir /work/writer-kvik \
+            kvik-cross-machine python3 tools/linux/cross_machine_cache.py writer --output .kvik/ci/writer
+      - name: Share the tool image (contains no project build outputs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-machine-tools
+          path: .kvik/cross-machine-tools.tar.gz
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Share the cache-server snapshot and writer baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-machine-cache
+          path: |
+            .kvik/ci/writer/run/baseline.json
+            .kvik/ci/writer/cache.tar.gz
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  reader:
+    needs: writer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cross-machine-tools
+          path: .kvik/ci-image
+      - uses: actions/download-artifact@v4
+        with:
+          name: cross-machine-cache
+          path: .kvik/ci-transfer
+      - name: Load the identical tool image
+        run: gunzip -c .kvik/ci-image/cross-machine-tools.tar.gz | docker load
+      - name: Restore compilations remotely and execute tests freshly
+        run: |
+          docker run --rm --init --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/work/reader-kvik" --workdir /work/reader-kvik \
+            kvik-cross-machine python3 tools/linux/cross_machine_cache.py reader --output .kvik/ci/reader \
+              --baseline .kvik/ci-transfer/run/baseline.json --cache-snapshot .kvik/ci-transfer/cache.tar.gz
+      - name: Retain the reader result
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-machine-result
+          path: .kvik/ci/reader/run/result.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error

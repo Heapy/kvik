@@ -147,6 +147,15 @@ def check_reader_endpoint(endpoint, baseline, allow_same_host):
             'Loopback endpoints cannot pass the cross-machine gate; use --allow-same-host for local validation')
 
 
+def check_transported_cache(archive, endpoint, baseline):
+    """A transported server snapshot proves portability, not a shared HTTPS service."""
+    require('cacheSnapshot' in baseline and digest(read(archive)) == baseline['cacheSnapshot'],
+            'Transported cache archive differs from the writer snapshot')
+    require(loopback_endpoint(endpoint) and loopback_endpoint(baseline['remote']) and
+            endpoint['instance'] == baseline['remote']['instance'],
+            'Transported cache requires loopback servers with the same instance')
+
+
 def inspect_cache_events(path, actions, expected_status):
     events = [json.loads(line) for line in read(path).splitlines()]
     require(events and events[-1]['type'] == 'run-finished', 'Retained event journal is incomplete')
@@ -266,6 +275,8 @@ def main():
         if phase == 'reader':
             sub.add_argument('--baseline', type=Path, required=True)
             sub.add_argument('--allow-same-host', action='store_true', help='Local harness validation only; never passes the cross-machine gate')
+            sub.add_argument('--cache-snapshot', type=Path,
+                             help='Verified writer server snapshot transported between machines; distinct from the shared-endpoint gate')
     args = parser.parse_args()
     require(1 <= args.timeout <= 3600, 'Build timeout must be between 1 and 3600 seconds')
     runtime, fixture, output = args.runtime.resolve(), args.fixture.resolve(), args.output.resolve()
@@ -285,7 +296,10 @@ def main():
     config, token = remote_configuration(args.remote_cache, 'read-write' if args.phase == 'writer' else 'read')
     endpoint = endpoint_identity(config)
     if baseline is not None:
-        check_reader_endpoint(endpoint, baseline, args.allow_same_host)
+        if args.cache_snapshot is not None:
+            check_transported_cache(args.cache_snapshot, endpoint, baseline)
+        else:
+            check_reader_endpoint(endpoint, baseline, args.allow_same_host)
     tools = document(args.tools)
     inputs = input_identity(fixture, tools, runtime)
     if baseline is not None:
@@ -312,12 +326,19 @@ def main():
         write_json(output / 'baseline.json', value)
         print('Writer complete; transfer baseline.json to the reader host. Cross-machine gate not yet evaluated.')
     else:
-        passed = not same_host and not args.allow_same_host
+        different_machine = not same_host and not args.allow_same_host
+        snapshot = args.cache_snapshot is not None
+        passed = different_machine and not snapshot
         value = dict(schemaVersion=1, phase='reader', machine=machine, writerMachine=baseline['machine'], remote=endpoint,
-                     scope='cross-machine' if passed else 'same-host/non-cross-machine',
+                     scope='cross-machine-cache-snapshot' if different_machine and snapshot else
+                           'cross-machine' if passed else 'same-host/non-cross-machine',
                      crossMachineGatePassed=passed, verification=observed)
+        if snapshot:
+            value['cacheSnapshot'] = baseline['cacheSnapshot']
+            value['crossMachineSnapshotPassed'] = different_machine
         write_json(output / 'result.json', value)
-        print('PASS cross-machine remote-cache gate' if passed else
+        print('PASS cross-machine cache snapshot (shared HTTPS service not evaluated)' if different_machine and snapshot else
+              'PASS cross-machine remote-cache gate' if passed else
               'PASS local harness validation (same-host/non-cross-machine); cross-machine gate NOT passed')
 
 

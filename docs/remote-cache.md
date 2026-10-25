@@ -71,3 +71,35 @@ default. For local harness development, `--allow-same-host` permits a same-host
 reader and explicitly records that the cross-machine gate did not pass. A local
 validation cannot establish cross-machine portability. A real cross-machine pass
 requires a shared HTTPS endpoint; loopback servers are only for local validation.
+
+## GitHub Actions cross-machine check
+
+The **Cross-machine compilation cache** workflow runs on pull requests, pushes to
+`main`, and manual dispatches. Its writer and reader use separate `ubuntu-24.04`
+runners. No external cache URL or credentials are needed: GitHub
+[workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts)
+transport a snapshot of the cache server's storage between the jobs.
+
+The writer builds the tool image once and transfers that image to the reader.
+The image contains tools, not the repository or consumer build outputs. Each job
+independently prepares its native Kvik runtime and resolves the fixture;
+preparation does not compile the consumer project. The projects live under
+different absolute paths, and neither job restores a local Kvik action cache.
+
+The writer starts an invocation-owned bazel-remote server, compiles all three
+fixture actions, runs the test, then stops the server before archiving its storage.
+The baseline binds the archive's digest. The reader verifies that digest, restores
+the server snapshot, and starts a new local server. Its fresh project contains only
+locked dependencies: all three compilations must be fetched through REAPI, and
+the test must execute freshly. Reader compiler installation paths are deliberately
+unavailable, so a cache miss cannot silently compile locally. The backend is
+stopped on success or failure.
+
+The gate compares machine UUID hashes, input/tool/runtime identities and output
+manifests. Same-machine execution, incompatible environments, archive corruption,
+local hits, compilation fallback, or missing fresh test execution fail the job.
+The reader result records `scope: cross-machine-cache-snapshot` and
+`crossMachineSnapshotPassed: true` only on success. It retains
+`crossMachineGatePassed: false`: this workflow verifies JVM cache portability
+across Linux x64 runners, while the shared HTTPS service gate above remains a
+separate integration test. Native and cross-architecture reuse are outside its scope.

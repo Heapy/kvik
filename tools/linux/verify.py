@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the Linux host runtime and exercise JVM compilation, tests and cache reuse."""
 import argparse
+import json
 import os
 from pathlib import Path
 import platform
@@ -24,7 +25,11 @@ def main():
                         help='Run JVM remote restoration, relocation and outage checks with this bazel-remote executable.')
     parser.add_argument('--pin-tools', action='store_true',
                         help='Acquire Native dependencies and replace bootstrap/toolchains.lock.json in this disposable checkout.')
+    parser.add_argument('--prepare-only', type=Path, metavar='STATE_JSON',
+                        help='Prepare the runtime and locked JVM fixture without consumer compilation; write their paths to STATE_JSON.')
     args = parser.parse_args()
+    if args.prepare_only is not None and args.remote_cache_backend is not None:
+        parser.error('--prepare-only cannot be combined with --remote-cache-backend')
     if not 1 <= args.bootstrap_command_timeout <= 3600:
         parser.error('--bootstrap-command-timeout must be from 1 to 3600 seconds')
     if args.native_link_timeout_ms is not None and not 1 <= args.native_link_timeout_ms <= 3_600_000:
@@ -64,9 +69,10 @@ def main():
         run([sys.executable, ROOT/'bootstrap/pin_tools.py', '--java-home', java,
              '--konan-home', native, '--konan-data', data])
 
-    run([sys.executable, ROOT/'tools/test_files_platform.py'])
-    run([sys.executable, ROOT/'tools/test_foreground_keys_boundary.py'])
-    run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/bootstrap', '-p', 'test_linux*.py'])
+    if args.prepare_only is None:
+        run([sys.executable, ROOT/'tools/test_files_platform.py'])
+        run([sys.executable, ROOT/'tools/test_foreground_keys_boundary.py'])
+        run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/bootstrap', '-p', 'test_linux*.py'])
     bootstrap = [ROOT/'kvik', '--java-home', java, '--konan-home', native, '--konan-data', data,
                  '--bootstrap-command-timeout', str(args.bootstrap_command_timeout)]
     built = run([*bootstrap, '--print-runtime'], stdout=subprocess.PIPE, text=True)
@@ -80,7 +86,16 @@ def main():
     fixture_output = Path(tempfile.mkdtemp(prefix='run-', dir=fixture_parent))
     run([sys.executable, ROOT/'tools/test_build_cli.py', '--java-home', java,
          '--konan-home', native, '--konan-data', data, '--runtime', executable,
-         '--output-dir', fixture_output])
+         '--output-dir', fixture_output, *(['--prepare-only'] if args.prepare_only is not None else [])])
+    if args.prepare_only is not None:
+        fixtures = list(fixture_output.glob('case-*'))
+        if len(fixtures) != 1:
+            raise RuntimeError('Expected one prepared JVM fixture')
+        args.prepare_only.parent.mkdir(parents=True, exist_ok=True)
+        args.prepare_only.write_text(json.dumps(dict(runtime=str(executable), fixture=str(fixtures[0]),
+                                                     tools=str(fixtures[0]/'tools.json'))) + '\n')
+        print('Prepared Linux runtime and locked JVM fixture; consumer compilation has not run', flush=True)
+        return
     if args.remote_cache_backend is not None:
         fixtures = list(fixture_output.glob('case-*'))
         if len(fixtures) != 1:
