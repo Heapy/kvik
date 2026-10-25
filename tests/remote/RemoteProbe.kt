@@ -38,7 +38,7 @@ fun main(args: Array<String>) {
         "executor-missing" -> executorFallbackCheck(root, endpoint, action, "remote-miss")
         "identity" -> println("IDENTITY ${mapping.localKey.hash} ${mapping.actionDigest.hash} ${mapping.actionDigest.sizeBytes}")
         "publish", "unapproved", "test", "failed", "oversize", "undeclared" -> {
-            content.put("fixture-input".encodeToByteArray())
+            // Publication must work without raw input blobs in the local CAS.
             val output = content.put(if (operation == "oversize") ByteArray(1024 * 1024 + 1) { 1 } else "output-$label".encodeToByteArray())
             val outputs = if (operation == "undeclared") TreeManifest(listOf(FileEntry(LogicalPath("unrelated"), output))) else TreeManifest(listOf(FileEntry(LogicalPath("out/bin/run"), output, true),
                 FileEntry(LogicalPath("out/share/data"), output), FileEntry(LogicalPath("single.txt"), output)))

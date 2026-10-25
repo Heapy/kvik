@@ -115,7 +115,9 @@ class RemoteActionCache(
             val encodedResult = mapping.result(snapshot)
             session.capabilities(writing = true)
             // Validate all local payloads before the first upload; uploads themselves are idempotent.
-            val data = (mapping.action.inputs.files + snapshot.files).map { it.digest }.distinct()
+            // Cache readers need outputs, not remote execution inputs. Their digests remain
+            // bound by the uploaded input directories, Command and Action metadata.
+            val data = snapshot.files.map { it.digest }.distinct()
             demand(data.sumOf { it.sizeBytes } + mapping.blobs.values.sumOf { it.size.toLong() } <= limits.totalBytes / 2,
                 "Publication exceeds aggregate payload budget")
             for (digest in data) {

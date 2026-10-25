@@ -33,6 +33,7 @@ def main():
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
     event_schema = Draft202012Validator({**schema, '$ref': '#/$defs/event'})
     explanation_schema = Draft202012Validator({**schema, '$ref': '#/$defs/actionExplanation'})
+    statistics_schema = Draft202012Validator({**schema, '$ref': '#/$defs/runStatistics'})
     parent = ROOT / '.kvik/tests/remote-cache-cli'; parent.mkdir(parents=True, exist_ok=True)
     case = args.restore_only.resolve() if args.restore_only else Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
     grpc, http = free_port(), free_port()
@@ -41,6 +42,7 @@ def main():
     env = dict(PATH='/usr/bin:/bin:/usr/sbin:/sbin', HOME=str(Path.home()), LANG='C', LC_ALL='C', TZ='UTC')
     secret = 'fixture-remote-token'
     env['KVIK_TEST_CACHE_TOKEN'] = secret
+    measurements = []
     with (case / 'backend.log').open('w') as log:
         server = subprocess.Popen([str(backend), '--dir', str(case / 'backend'), '--max_size', '1',
             '--storage_mode', 'uncompressed', '--http_address', f'127.0.0.1:{http}', '--grpc_address', f'127.0.0.1:{grpc}'],
@@ -71,6 +73,16 @@ def main():
                 (root / 'remote.json').write_text(json.dumps(config))
                 return root
 
+            def hide_compiler_installations(root):
+                # Keep pinned identities, but make every compiler installation path unavailable.
+                path = root / 'tools.json'
+                tools = json.loads(path.read_text())
+                tools['roots'] = {name: value if name == 'jdk' else str(root / '.kvik/absent-tools' / name)
+                                  for name, value in tools['roots'].items()}
+                tools['compilerArtifacts'] = str(root / '.kvik/absent-tools/compiler-artifacts')
+                tools['konanData'] = str(root / '.kvik/absent-tools/konan-data')
+                path.write_text(json.dumps(tools))
+
             def run(root, label, expected, offline=False):
                 output = root / '.kvik' / label
                 command = [str(runtime), 'test', '--project', str(root / 'kvik.json'),
@@ -79,7 +91,9 @@ def main():
                 if offline:
                     command.append('--offline')
                 child_env = {key: value for key, value in env.items() if not (offline and key == 'KVIK_TEST_CACHE_TOKEN')}
+                started = time.monotonic()
                 result = subprocess.run(command, env=child_env, capture_output=True, text=True, timeout=180)
+                elapsed = time.monotonic() - started
                 (root / f'{label}.jsonl').write_text(result.stdout)
                 (root / f'{label}.stderr').write_text(result.stderr)
                 assert result.returncode == 0, (label, result.stderr, result.stdout[-6000:])
@@ -123,6 +137,22 @@ def main():
                     explained = json.loads(explanation.stdout)
                     explanation_schema.validate(explained)
                     assert explained['cacheTransfers'] == observed, explained
+                queried = subprocess.run([str(runtime), 'run-stats', '--run', str(records[0].parent)],
+                    env=env, capture_output=True, text=True, timeout=20, check=True)
+                statistics = json.loads(queried.stdout)
+                statistics_schema.validate(statistics)
+                measured = statistics['remoteCache']
+                assert measured['recordedOperations'] == len(transfers)
+                if transfers:
+                    assert measured['coverage'] == 'complete'
+                    for field, source in [('measuredRequests', 'requests'), ('measuredUploadedBytes', 'uploadedBytes'),
+                                          ('measuredDownloadedBytes', 'downloadedBytes')]:
+                        assert measured[field] == sum(item['stats'][source] for item in transfers)
+                if expected == 'remote_hit':
+                    assert statistics['actions']['startedOutcomes']['remote_hit'] == 3
+                    assert statistics['actions']['startedOutcomes']['executed'] == 1
+                measurements.append(dict(project=root.name, phase=label, seconds=elapsed,
+                    run=str(records[0].parent), statistics=statistics))
                 return {action['actionId']: (action['key'], action['outputs']) for action in compilations}
 
             if args.restore_only:
@@ -130,15 +160,18 @@ def main():
                 written = json.loads(records[0].read_text())
                 produced = {a['actionId']: (a['key'], a['outputs']) for a in written['actions'] if a['actionId'] != 'consumer:jvm:test'}
                 fresh = project('fresh-reader', 'read')
+                hide_compiler_installations(fresh)
                 assert run(fresh, 'restore', 'remote_hit') == produced
-                print(f'PASS remote compilation outputs restored into dependency-only CAS: {fresh}')
+                print(f'PASS remote compilation outputs restored into dependency-only CAS without compilers: {fresh}')
                 return
             writer = project('writer', 'read-write')
             produced = run(writer, 'publish', 'executed')
             reader = project('reader', 'read')
+            hide_compiler_installations(reader)
             assert run(reader, 'restore', 'remote_hit') == produced
             # A foreground coordinator must preserve online policy and receive its configured token.
             development = project('development', 'read')
+            hide_compiler_installations(development)
             commands = [str(runtime), 'dev', '--control', 'jsonl', '--initial', 'test',
                 '--project', str(development / 'kvik.json'), '--tools', str(development / 'tools.json'),
                 '--module', 'consumer', '--target', 'jvm', '--remote-cache', str(development / 'remote.json')]
@@ -183,7 +216,7 @@ def main():
             assert run(reader, 'offline', 'local_hit', offline=True) == produced
             outage = project('outage', 'read-write', 'http://127.0.0.1:1')
             assert run(outage, 'fallback', 'executed') == produced
-            print(f'PASS public/foreground remote restore, offline local reuse, outage fallback and fresh tests: {case}')
+            print(f'PASS public/foreground remote restore without compilers, offline local reuse, outage fallback and fresh tests: {case}')
         finally:
             if server.poll() is None:
                 server.terminate()
@@ -191,6 +224,7 @@ def main():
                     server.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     server.kill(); server.wait()
+            (case / 'measurements.json').write_text(json.dumps(dict(scope='same-host loopback backend', runs=measurements), indent=2) + '\n')
 
 
 if __name__ == '__main__':

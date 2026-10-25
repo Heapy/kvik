@@ -11,6 +11,7 @@ import tempfile
 import time
 import sys
 import urllib.request
+import urllib.error
 import threading
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +83,12 @@ def main():
 
                 published = run('publish', 'writer')
                 assert 'PUBLISHED true' in published, published
+                input_hash = hashlib.sha256(b'fixture-input').hexdigest()
+                try:
+                    with urllib.request.urlopen(f'http://127.0.0.1:{http}/cas/{input_hash}', timeout=2):
+                        raise AssertionError('Cache-only publication uploaded raw input bytes')
+                except urllib.error.HTTPError as failure:
+                    assert failure.code == 404, failure
                 restored = run('lookup', 'reader')
                 assert 'HIT remote' in restored, restored
                 assert (root / 'reader/restored/out/bin/run').read_bytes() == b'output-default'
@@ -117,7 +124,8 @@ def main():
                 src = fields(input_root[2][0])
                 assert src[1] == [b'src']
                 input_file = fields(fields(cas(src[2][0]))[1][0])
-                assert input_file[1] == [b'input.txt'] and cas(input_file[2][0]) == b'fixture-input'
+                assert input_file[1] == [b'input.txt']
+                assert fields(input_file[2][0]) == {1: [input_hash.encode()], 2: [len(b'fixture-input')]}
                 print('PASS independent actual Action/Command/Directory graph and canonical digest inspection', flush=True)
 
                 for operation in ['unapproved', 'test', 'failed', 'undeclared']:

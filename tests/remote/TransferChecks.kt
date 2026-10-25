@@ -30,7 +30,10 @@ internal fun transferChecks(root: String, endpoint: RemoteEndpoint, original: Ac
         "Capabilities body counters: $first; expected upload=${request.size + 5L}, download=${response.size + 5L}"
     }
     check(first.durationNanos > 0) { "Capabilities duration was not measured: $first" }
-    val missingAction = original.copy(arguments = original.arguments + "transfer-statistics-missing")
+    // Inputs may exceed the blob transfer limit and need not be present locally.
+    val largeInput = Sha256.digest(ByteArray(1024 * 1024 + 1) { 7 })
+    val missingAction = original.copy(arguments = original.arguments + "transfer-statistics-missing",
+        inputs = TreeManifest(listOf(FileEntry(LogicalPath("src/input.txt"), largeInput))))
     val missing = session.request { bytes(2, ReapiMapping(missingAction, limits).actionDigest.wire()) }
     try {
         session.rpc("ActionCache", "GetActionResult", missing)
@@ -74,7 +77,6 @@ internal fun transferChecks(root: String, endpoint: RemoteEndpoint, original: Ac
     check(requireNotNull(miss.stats).let { it.requests == 2 && it.uploadedBytes > 0 && it.downloadedBytes > 0 }) {
         "Missing remote miss counters: $miss"
     }
-    content.put("fixture-input".encodeToByteArray())
     val payload = content.put("transfer-statistics-payload".encodeToByteArray())
     val outputs = TreeManifest(listOf(FileEntry(LogicalPath("out/value"), payload), FileEntry(LogicalPath("single.txt"), payload)))
     val result = ActionResult("fixture", missingAction.key(Sha256), ActionStatus.EXECUTED, outputs, 0)
@@ -90,6 +92,12 @@ internal fun transferChecks(root: String, endpoint: RemoteEndpoint, original: Ac
     }
     check(requireNotNull(hit.stats).let { it.requests > 2 && it.uploadedBytes > 0 && it.downloadedBytes > payload.sizeBytes }) {
         "Missing restored hit counters: $hit; payload=${payload.sizeBytes}"
+    }
+    val changedInput = missingAction.copy(inputs = original.inputs)
+    check(changedInput.key(Sha256) != missingAction.key(Sha256))
+    val changedLookup = fresh.lookupRemote(changedInput)
+    check(changedLookup.action == null && changedLookup.diagnostic == null) {
+        "Changed input digest must miss even when input bytes are not uploaded: $changedLookup"
     }
 
     val unavailable = RemoteEndpoint("http://127.0.0.1:1", trustedWriters = true)
