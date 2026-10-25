@@ -21,6 +21,18 @@ from bootstrap import jvm_worker
 
 
 class ArtifactBoundaryTest(unittest.TestCase):
+    def test_redirect_error_identifies_artifact_without_leaking_destination_credentials(self):
+        request = jvm_worker.urllib.request.Request('https://repo.maven.apache.org/maven2/example/tool.jar')
+        with self.assertRaises(ValueError) as raised:
+            jvm_worker.LockedRedirects().redirect_request(request, None, 302, 'Found', {},
+                'https://user:password@cdn.example/private/token-path?signature=secret')
+        message = str(raised.exception)
+        self.assertIn('tool.jar', message)
+        self.assertIn('HTTP 302', message)
+        self.assertIn('https://cdn.example', message)
+        for secret in ('password', 'token-path', 'signature', 'secret'):
+            self.assertNotIn(secret, message)
+
     def test_transfer_deadline_covers_open_and_body_and_restores_handler(self):
         import io
         class SlowBody(io.BytesIO):

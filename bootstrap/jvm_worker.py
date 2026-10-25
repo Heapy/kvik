@@ -14,6 +14,7 @@ import signal
 import stat
 import tempfile
 import urllib.request
+from urllib.parse import urlsplit
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular, parse_json
 
@@ -145,7 +146,13 @@ def valid_artifact(path, item):
 
 class LockedRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, new_url):
-        raise ValueError("Pinned JVM artifact URL redirected; explicitly review and update the lock")
+        source = urlsplit(request.full_url).path.rsplit('/', 1)[-1]
+        destination = urlsplit(new_url)
+        # Report enough to diagnose CDN/repository redirects without logging signed
+        # destination paths, credentials or query parameters.
+        raise ValueError(f"Pinned JVM artifact {source} URL redirected (HTTP {code}, "
+                         f"destination {destination.scheme}://{destination.hostname}); "
+                         "explicitly review and update the lock")
 
 
 @contextmanager
