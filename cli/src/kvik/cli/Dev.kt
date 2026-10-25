@@ -5,17 +5,20 @@ import kvik.cache.NativeFiles
 import kvik.core.*
 import kvik.execution.platform.kvik_foreground_terminal_lease_bytes
 import kvik.execution.platform.kvik_process_ownership_version
+import kvik.execution.platform.kvik_interrupt_install
+import kvik.execution.platform.kvik_interrupt_restore
 import kvik.execution.NativeRunDirectory
 import kvik.foreground.*
 import platform.posix.*
 
 internal fun devCommand(args: List<String>): Int {
     if (args.firstOrNull() == "--resume") return resumeDev(args)
-    if (args == listOf("--session-capabilities")) {
-        println(obj("schemaVersion" to 1.json(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
+    if (args == listOf("--session-capabilities") || args == listOf("--session-capabilities", "--source-revisions")) {
+        val capabilities = obj("schemaVersion" to 1.json(), "composition" to Digest(runtimeComposition, runtimeCompositionSize).toJson(),
             "runtime" to "${runtimeDirectory()}/kvik.kexe".json(), "processOwnershipVersion" to kvik_process_ownership_version().json(), "resumeVersions" to listOf(1.json(), 2.json(), 3.json()).json(),
             "terminalLease" to obj("schemaVersion" to 1.json(), "platform" to terminalLeasePlatform().json(),
-                "sizeBytes" to kvik_foreground_terminal_lease_bytes().json())).canonical())
+                "sizeBytes" to kvik_foreground_terminal_lease_bytes().json()))
+        println((if ("--source-revisions" in args) JsonValue.Object(capabilities.values + ("sourceRevisions" to true.json())) else capabilities).canonical())
         return 0
     }
     val bootstrap = bootstrapContext()
@@ -43,9 +46,14 @@ internal fun devCommand(args: List<String>): Int {
     require(mode != SessionMode.APPLICATION || kvik_process_ownership_version() == 1) { "Application sessions require recursive process ownership version 1" }
     if (mode == SessionMode.APPLICATION) bootstrap?.requireApplicationOwnership()
     val initial = when (session["--initial"] ?: "build") { "build" -> if (mode == SessionMode.APPLICATION) Operation.APPLICATION else Operation.BUILD; "test" -> Operation.TEST; else -> error("Invalid initial operation") }
-    val options = buildOptions(build)
+    val (source, buildArguments) = sourceProjectOptions(build)
+    val options = buildOptions(buildArguments)
     require(!options.coverage || options.targets == setOf("jvm")) { "--coverage currently supports JVM tests only" }
-    val project = readProject(options.project.project)
+    val project = if (source == null) readProject(options.project.project) else {
+        check(kvik_interrupt_install() == 0) { "Cannot install source session preflight handlers" }
+        try { withPreparedSourceProject(source, options.project) { it.project } }
+        finally { kvik_interrupt_restore() }
+    }
     if (mode == SessionMode.APPLICATION) {
         require(options.modules.size == 1 && options.targets.size == 1) { "Application sessions require exactly one --module and --target" }
         val selected = project.configuration.project.modules.singleOrNull { it.id == options.modules.single() }
@@ -55,24 +63,29 @@ internal fun devCommand(args: List<String>): Int {
     // Validate arguments before any session output writes; actual lock/tool validation stays in children.
     kvik.locking.effectiveConfiguration(project.configuration, options.project.resolverPolicy())
     val tools = projectPath(project.root, options.tools)
-    val lock = projectPath(project.root, options.project.lock)
+    val lock = if (source == null) projectPath(project.root, options.project.lock) else LogicalPath(options.project.lock).value
     val store = projectPath(project.root, options.project.store)
-    requireDisjointStore(project, store, lock, tools)
-    val arguments = listOf("--project", project.path, "--lock", lock, "--store", store, "--tools", tools,
+    val parent = "${project.root}/.kvik/sessions"
+    if (source == null) requireDisjointStore(project, store, lock, tools)
+    else for (output in listOf(store, parent)) for (input in listOf(source.executable, source.home, tools))
+        require(!pathsPhysicallyOverlap(output, input)) { "Session output overlaps source provider or tools: $input" }
+    val projectArgument = if (source == null) project.path else options.project.project
+    val arguments = source?.arguments().orEmpty() + listOf("--project", projectArgument, "--lock", lock, "--store", store, "--tools", tools,
         "--jobs", options.budget.maxParallel.toString(), "--memory-mib", options.budget.memoryMiB.toString()) +
         (options.remoteCache?.let { listOf("--remote-cache", projectPath(project.root, it)) } ?: emptyList()) +
         (if (options.coverage) listOf("--coverage") else emptyList()) +
+        options.coverageExcludes.flatMap { listOf("--coverage-exclude", it) } +
         (if (options.project.offline) listOf("--offline") else emptyList()) +
         options.project.pins.flatMap { listOf("--pin", it.toString()) } +
         options.project.scopedPins.flatMap { listOf("--scope-pin", it.argument()) } +
         options.project.metadataExclusions.flatMap { listOf("--exclude-metadata-edge", it.toJson().canonical()) } +
         options.modules.sorted().flatMap { listOf("--module", it) } + options.targets.sorted().flatMap { listOf("--target", it) }
-    val parent = "${project.root}/.kvik/sessions"
     NativeFiles.ensureDirectory(parent)
     val directory = NativeRunDirectory(parent).path
     return runtimeProcessHost().use { host ->
         ForegroundSession(host, "${runtimeDirectory()}/kvik.kexe", directory, project.root, arguments,
-            listOf("--project", project.path, "--lock", lock, "--tools", tools, "--store", store), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession, keys = control == "keys", mode = mode,
+            source?.arguments().orEmpty() + listOf("--project", projectArgument, "--lock", lock, "--tools", tools, "--store", store) +
+                (if (source != null && options.project.offline) listOf("--offline") else emptyList()), control == "jsonl", interval, initial, bootstrap, bootstrapEnvironment(), restart = ::replaceSession, keys = control == "keys", mode = mode,
             currentComposition = Digest(runtimeComposition, runtimeCompositionSize),
             applicationModule = if (mode == SessionMode.APPLICATION) options.modules.single() else null,
             applicationTarget = if (mode == SessionMode.APPLICATION) options.targets.single() else null,

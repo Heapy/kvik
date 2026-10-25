@@ -33,7 +33,7 @@ internal fun sessionCoordinatorCommand(args: List<String>): Int {
             var prepared: PreparedRun? = null
             val exit = withOperationLogs(request.directory) {
                 try {
-                    val options = buildOptions(request.arguments)
+                    val options = buildOptions(sourceProjectOptions(request.arguments).second)
                     // Builds consume the existing lock; remote output access never enables dependency resolution.
                     require(options.runs == "${request.directory}/runs") { "Coordinator requires dedicated run directories" }
                     val mode = when (request.operation) {

@@ -80,19 +80,20 @@ internal fun benchmarkCommand(args: List<String>): ExitStatus {
 }
 
 private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStatus {
-    val (source, remaining) = sourceProjectOptions(args)
-    if (source == null) return executeBuild(remaining, mode).status
-    val options = buildOptions(remaining)
-    check(kvik_interrupt_install() == 0) { "Cannot install source build interruption handlers" }
-    try {
-        return withPreparedSourceProject(source, options) { prepared ->
-            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared).status
-        }
-    } finally { kvik_interrupt_restore() }
+    return executeBuild(args, mode).status
 }
 
-internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null): BuildOutcome =
-    executeBuildOptions(buildOptions(args), mode, ownInterrupts, sessionCache = sessionCache)
+internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null): BuildOutcome {
+    val (source, remaining) = sourceProjectOptions(args)
+    if (source == null) return executeBuildOptions(buildOptions(remaining), mode, ownInterrupts, sessionCache = sessionCache)
+    val options = buildOptions(remaining)
+    if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install source build interruption handlers" }
+    try {
+        return withPreparedSourceProject(source, options) { prepared ->
+            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared, sessionCache = sessionCache)
+        }
+    } finally { if (ownInterrupts) kvik_interrupt_restore() }
+}
 
 internal fun executeScriptBuild(options: ScriptOptions, file: ScriptFile, sourceProject: PreparedSourceProject? = null,
                                 ownInterrupts: Boolean = true): BuildOutcome = executeBuildOptions(
@@ -613,6 +614,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         }
         if (mode == ProjectMode.APPLICATION && record.status == VerificationStatus.PASSED) {
             try {
+                // The prepared descriptor binds the final verification, including source claims.
+                if (sourceProject != null) record = record.copy(sourceClaims = assessSourceClaims(sourceProject.claims, record))
                 val descriptor = materializePreparedApplication(record, content, run.path)
                 val current = inputFreshness()
                 cancelled = kvik_interrupt_requested() != 0

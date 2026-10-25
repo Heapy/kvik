@@ -62,7 +62,8 @@ class ApplicationLifecycleTest {
         val host = Host()
         val digest = Sha256.digest("composition".encodeToByteArray())
         val events = mutableListOf<Pair<String, JsonValue.Object>>()
-        val lifecycle = ApplicationLifecycle(host, directory, "/project", listOf("--project", "/project/kvik.json"), "app", "jvm") { type, payload -> events += type to payload }
+        val lifecycle = ApplicationLifecycle(host, directory, "/project", listOf("--project", "/project/kvik.json"), "app", "jvm",
+            event = { type, payload -> events += type to payload })
         fun start(revision: Long = 1, generation: Long = host.requests.size + 1L, replacement: Boolean = false, prepared: ApplicationReady? = null) {
             lifecycle.start("/runtime", digest, revision, generation, replacement, prepared)
             assertEquals(0L, host.requests.last().timeoutMillis)

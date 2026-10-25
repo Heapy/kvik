@@ -57,7 +57,8 @@ internal fun remoteSessionCredentials(root: String, options: BuildOptions): Map<
 
 internal fun remoteOperationEnvironment(root: String, arguments: List<String>): Map<String, String> {
     val start = if (arguments.getOrNull(1) == "stage-application") 6 else 2
-    val options = buildOptions(arguments.drop(start))
+    val (source, remaining) = sourceProjectOptions(arguments.drop(start))
+    val options = buildOptions(remaining)
     return remoteSessionCredentials(root, options) +
-        if (options.remoteCache != null && !options.project.offline) mapOf("KVIK_BOOTSTRAP_OFFLINE" to "0") else emptyMap()
+        if ((options.remoteCache != null || source != null) && !options.project.offline) mapOf("KVIK_BOOTSTRAP_OFFLINE" to "0") else emptyMap()
 }

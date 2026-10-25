@@ -19,3 +19,27 @@ The session emits structured events and retains operation results under `.kvik/s
 A preparation worker retains up to two parsed project models and three action graphs for this session. Every operation still captures current inputs, replays the dependency lock and verifies tools. Source, configuration, lock, tool or runtime changes invalidate the matching graph. Reusing the graph does not reuse test execution.
 
 Workers belong to the foreground session; independent invocations share disk artifacts. Runtime source changes build a new Kotlin/Native executable and explicitly replace the session after its owned work has stopped.
+
+To follow a project reference in Kode, run the session from a local working directory:
+
+```sh
+./kvik -- dev --kode /path/to/kode --kode-home /path/to/store \
+  --source-project my-library --revision main --project kvik.json \
+  --module library --target jvm --tools /path/to/tools.json --control jsonl
+```
+
+The observer resolves the reference at each watch interval. Each build or test
+receives the observed immutable revision, so later edits cannot change a run's
+inputs. Repeated changes are coalesced before the next operation. `inputs-observed`
+events include the source revision; run results retain the same source provenance.
+Reference, configuration or provider failures make the observation unavailable and
+hold queued work until a valid revision is observed. No local source checkout is
+used as a fallback. `r`, `t`, application reload and runtime replacement keep the
+same behavior as filesystem sessions.
+
+`--project` and `--lock` identify paths inside the source revision (the lock is
+relative to the configuration directory). Tool, cache and output paths resolve
+against the local working directory; session results live in its `.kvik/sessions`.
+The observer watches the full revision, including changes outside the selected
+module. Offline sessions require an immutable revision and previously cached
+source data; following a moving reference requires access to Kode.

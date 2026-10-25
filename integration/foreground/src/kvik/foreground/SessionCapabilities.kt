@@ -15,11 +15,12 @@ fun requireKeySessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, l
 }
 
 /** Application continuation support is required even for line/JSON controls. */
-fun requireSessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, version: Int, leaseBytes: Int? = null) {
+fun requireSessionCapabilities(bytes: ByteArray, selected: BootstrapLaunch, version: Int, leaseBytes: Int? = null, sourceRevisions: Boolean = false) {
     require(bytes.size <= 8192) { "Session capabilities exceed 8 KiB" }
     val fields = parseJson(bytes.decodeToString(throwOnInvalidSequence = true)).fields(
-        setOf("schemaVersion", "composition", "runtime", "resumeVersions", "terminalLease"), setOf("processOwnershipVersion"))
+        setOf("schemaVersion", "composition", "runtime", "resumeVersions", "terminalLease"), setOf("processOwnershipVersion", "sourceRevisions"))
     fields.requireVersion()
+    if (sourceRevisions) require(fields["sourceRevisions"]?.booleanValue() == true) { "Replacement cannot follow source revisions" }
     require(Digest.fromJson(fields.getValue("composition")) == selected.composition &&
         fields.getValue("runtime").stringValue() == selected.runtime) { "Session capability composition/runtime mismatch" }
     val versions = fields.getValue("resumeVersions").arrayValue().map { it.longValue() }

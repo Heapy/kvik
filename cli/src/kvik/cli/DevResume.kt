@@ -32,7 +32,7 @@ internal fun replaceSession(state: SessionResume) {
     NativeFiles.syncDirectory(state.directory)
     val launch = BootstrapLaunch.parse(state.launchBytes)
     val arguments = listOf(launch.runtime, "dev", "--resume", path, "--resume-hash", Sha256.digest(bytes).hash)
-    val environment = bootstrapEnvironment() + remoteSessionCredentials(state.workingDirectory, buildOptions(state.arguments)) +
+    val environment = bootstrapEnvironment() + remoteSessionCredentials(state.workingDirectory, buildOptions(sourceProjectOptions(state.arguments).second)) +
         ("KVIK_BOOTSTRAP_LAUNCH" to state.launchBytes.decodeToString(throwOnInvalidSequence = true))
     memScoped {
         fun strings(values: List<String>) = allocArray<CPointerVar<ByteVar>>(values.size + 1).also { array ->
@@ -57,10 +57,19 @@ internal fun resumeDev(args: List<String>): Int {
         state.previousDirectory.substringBeforeLast('/') == state.directory.substringBeforeLast('/')) { "Invalid linked session directories" }
     NativeFiles.ensureDirectory(state.directory, create = false)
     NativeFiles.ensureDirectory(state.workingDirectory, create = false)
-    val options = buildOptions(state.arguments)
+    val (source, remaining) = sourceProjectOptions(state.arguments)
+    val options = buildOptions(remaining)
     val paths = listOf(options.project.project, options.project.lock, options.project.store, options.tools)
-    paths.forEach(NativeFiles::validateAbsolute)
-    require(options.project.project.substringBeforeLast('/') == state.workingDirectory) { "Resume project binding changed" }
+    if (source == null) {
+        paths.forEach(NativeFiles::validateAbsolute)
+        require(options.project.project.substringBeforeLast('/') == state.workingDirectory) { "Resume project binding changed" }
+    } else {
+        LogicalPath(paths[0]); LogicalPath(paths[1])
+        paths.drop(2).forEach(NativeFiles::validateAbsolute)
+        require(currentDirectory() == state.workingDirectory) { "Resume source session working directory changed" }
+        for (output in listOf(options.project.store, state.directory)) for (input in listOf(source.home, source.executable, options.tools))
+            require(!pathsPhysicallyOverlap(output, input)) { "Resumed source session output overlaps provider or tools" }
+    }
     if (state.mode == SessionMode.APPLICATION) require(options.modules == setOf(state.applicationModule) && options.targets == setOf(state.applicationTarget)) {
         "Resumed application selection changed"
     }
@@ -71,7 +80,8 @@ internal fun resumeDev(args: List<String>): Int {
     // performs the current configuration/store preflight, so broken configuration is recoverable.
     return runtimeProcessHost().use { host ->
         try { ForegroundSession(host, launch.runtime, state.directory, state.workingDirectory, state.arguments,
-            listOf("--project", paths[0], "--lock", paths[1], "--tools", paths[3], "--store", paths[2]), state.jsonControls,
+            source?.arguments().orEmpty() + listOf("--project", paths[0], "--lock", paths[1], "--tools", paths[3], "--store", paths[2]) +
+                (if (source != null && options.project.offline) listOf("--offline") else emptyList()), state.jsonControls,
             state.watchMillis, state.pending, launch, bootstrapEnvironment(), state.watched, state.partialInput,
             state.previousDirectory, resumed = true, restart = ::replaceSession, keys = state.terminalLease != null, inheritedTerminalLease = state.terminalLease,
             mode = state.mode, currentComposition = launch.composition, applicationModule = state.applicationModule,

@@ -60,9 +60,10 @@ class ForegroundSession(
         require(mode != SessionMode.APPLICATION || kvik_process_ownership_version() == 1) { "Application sessions require recursive process ownership version 1" }
     }
     private val pending = PendingOperation(initial, mode, initialIntents)
-    private val applications = if (mode == SessionMode.APPLICATION) ApplicationLifecycle(host, directory, workingDirectory, arguments.filter { it != "--coverage" },
+    private val applications = if (mode == SessionMode.APPLICATION) ApplicationLifecycle(host, directory, workingDirectory, withoutTestOptions(arguments),
         checkNotNull(applicationModule), checkNotNull(applicationTarget),
-        startProcess = operations?.let { it::start } ?: host::start, event = ::event) else null
+        startProcess = operations?.let { it::start } ?: host::start, event = ::event,
+        selectArguments = { pinSessionSource(withoutTestOptions(arguments), observedSource) }) else null
     private var resumePrepared = preparedApplication
     private var replacementAttempt: Pair<Digest, Long>? = null
     private var observedRuntime: String? = null
@@ -72,6 +73,7 @@ class ForegroundSession(
     private var revision = 0L
     private var generation = 0L
     private var observed: String? = null
+    private var observedSource: SourceReference? = null
     private var observedOnce = false
     private var stableObserved: String? = null
     private var watchPending = false
@@ -85,7 +87,7 @@ class ForegroundSession(
     private var outputBytes = 0
     private var outputOffset = 0
     private var line = initialPartialInput.toMutableList()
-    private val sources = bootstrap?.let { Recomposition(it, host, directory, bootstrapEnvironment, watchMillis, ::event, if (keys) kvik_foreground_terminal_lease_bytes() else null, mode == SessionMode.APPLICATION) }
+    private val sources = bootstrap?.let { Recomposition(it, host, directory, bootstrapEnvironment, watchMillis, ::event, if (keys) kvik_foreground_terminal_lease_bytes() else null, mode == SessionMode.APPLICATION, "--kode" in arguments) }
     private var sourceGated = false
     private var nextSessionDirectory: String? = null
     private var handoffStarted = 0L
@@ -156,12 +158,13 @@ class ForegroundSession(
     }
     private fun launch(kind: Operation?, runtime: String = executable): Child {
         val path = NativeRunDirectory(directory).path
+        val selected = if (kind == null) snapshotArguments else pinSessionSource(
+            if (kind == Operation.TEST) arguments else withoutTestOptions(arguments), observedSource)
         val command = if (kind == null) listOf(runtime, "snapshot-query") + snapshotArguments
-            else listOf(executable, kind.command) + (if (kind == Operation.TEST) arguments else arguments.filter { it != "--coverage" }) + listOf("--runs", "$path/runs") +
-                (if ("--remote-cache" in arguments || "--offline" in arguments) emptyList() else listOf("--offline"))
+            else listOf(executable, kind.command) + selected + listOf("--runs", "$path/runs") + sessionOfflineArguments(selected)
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         val request = ProcessRequest(command, workingDirectory,
-            mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to "1"),
+            mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to sessionOfflineEnvironment(selected)),
             "$path/stdout.jsonl", "$path/stderr.log", if (kind == null) 60_000 else 30 * 60_000)
         val process = if (kind == null || operations == null) host.start(request) else operations.start(request)
         return Child(process, path, revision, kind, runtime)
@@ -238,16 +241,20 @@ class ForegroundSession(
             if (mode == SessionMode.APPLICATION && result.cancelled) return@scannerResult
             observedRuntime = child.runtime
             var fingerprint: String? = null
+            var source: SourceReference? = null
             var observationError: String? = if (result.exitCode != 0 || result.timedOut) "Snapshot worker did not complete successfully" else null
             if (result.exitCode == 0 && !result.cancelled && !result.timedOut) {
                 try {
-                    val fields = parseJson(NativeFiles.read("${child.path}/stdout.jsonl", 8192).decodeToString()).fields(setOf("schemaVersion", "fingerprint"))
+                    val fields = parseJson(NativeFiles.read("${child.path}/stdout.jsonl", 32768).decodeToString()).fields(setOf("schemaVersion", "fingerprint"), setOf("source"))
                     fields.requireVersion()
+                    source = fields["source"]?.let(SourceReference::fromJson)
+                    if (fields.getValue("fingerprint") != JsonValue.Null) pinSessionSource(arguments, source)
                     fingerprint = fields.getValue("fingerprint").let { if (it == JsonValue.Null) null else Digest.fromJson(it).toJson().canonical() }
                 } catch (failure: Exception) { observationError = failure.message ?: "Invalid snapshot observation" }
             }
             val firstObservation = !observedOnce
             val changed = observedOnce && fingerprint != observed
+            observedSource = source.takeIf { fingerprint != null }
             if ((firstObservation || changed) && fingerprint == null) {
                 val retained = obj("schemaVersion" to 1.json(), "exitCode" to result.exitCode.json(),
                     "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(),
@@ -261,8 +268,10 @@ class ForegroundSession(
             if (!observedOnce || changed) {
                 observed = fingerprint; observedOnce = true; revision++
                 applications?.observeRevision(revision)
-                event("inputs-observed", obj("revision" to revision.json(), "available" to (fingerprint != null).json(),
-                    "fingerprint" to (fingerprint?.let(::parseJson) ?: JsonValue.Null), "scope" to "project-inputs-and-tools-document-only".json()))
+                val payload = obj("revision" to revision.json(), "available" to (fingerprint != null).json(),
+                    "fingerprint" to (fingerprint?.let(::parseJson) ?: JsonValue.Null),
+                    "scope" to (if ("--kode" in arguments) "source-revision-and-tools-document-only" else "project-inputs-and-tools-document-only").json())
+                event("inputs-observed", if (observedSource == null) payload else JsonValue.Object(payload.values + ("source" to observedSource!!.toJson())))
                 if (firstObservation) stableObserved = fingerprint
                 if (changed && closing == null) watchPending = true
             } else if (watchPending && closing == null) {
@@ -311,6 +320,7 @@ class ForegroundSession(
         }
         if (handoffApplication != null) { scanner?.process?.cancel(); return }
         if (closing != null || runtime == null || composition == null || observedRuntime != runtime || !observedOnce || operation != null || apps.preparing) return
+        if ("--kode" in arguments && (observedSource == null || watchPending)) return
         if (!gate) {
             val attempt = composition to revision
             if (observed != null && !watchPending && attempt != replacementAttempt) {
@@ -354,7 +364,8 @@ class ForegroundSession(
             event("session-started", obj("control" to (if (keys) "keys" else if (jsonControls) "jsonl" else "lines").json(),
                 "directory" to directory.json(), "previousSessionDirectory" to (previousDirectory?.json() ?: JsonValue.Null),
                 "composition" to (bootstrap?.composition?.toJson() ?: JsonValue.Null),
-                "capabilities" to (listOf("library-build", "library-test", "input-watch", "session-query", "session-events", "session-control", "cancel-operation") + (if (mode == SessionMode.APPLICATION) listOf("application-reload") else emptyList()) + if (bootstrap != null) listOf("source-recomposition") else emptyList()).map { it.json() }.json(),
+                "capabilities" to (listOf("library-build", "library-test", "input-watch", "session-query", "session-events", "session-control", "cancel-operation") +
+                    (if ("--kode" in arguments) listOf("source-revision-watch") else emptyList()) + (if (mode == SessionMode.APPLICATION) listOf("application-reload") else emptyList()) + if (bootstrap != null) listOf("source-recomposition") else emptyList()).map { it.json() }.json(),
                 "limitations" to ((if (mode == SessionMode.LIBRARY) listOf("no-application-restart") else emptyList()) + listOf("no-continuous-tool-verification") + if (bootstrap == null) listOf("source-recomposition-unsupported-without-bootstrap-context") else emptyList()).map { it.json() }.json()))
             while (true) {
                 pollInput()
@@ -374,7 +385,8 @@ class ForegroundSession(
                 if (mode == SessionMode.APPLICATION) tickApplications(gate)
                 else if (closing == null && gate) {
                     if (scanner == null && now() >= nextScan) scanner = launch(null)
-                    if (operation == null && observedOnce) pending.take()?.let { kind -> startOperation(kind) }
+                    if (operation == null && observedOnce && ("--kode" !in arguments || observedSource != null && !watchPending))
+                        pending.take()?.let { kind -> startOperation(kind) }
                 }
                 if (closing == null && operation == null && scanner == null && sources?.ready != null &&
                     (mode == SessionMode.LIBRARY || handoffApplication != null && applications?.busy == false)) {

@@ -11,6 +11,9 @@ import platform.posix.*
 
 internal data class KodeProjectOptions(val executable: String, val home: String, val project: String, val revision: String)
 
+internal fun KodeProjectOptions.arguments() = listOf("--kode", executable, "--kode-home", home,
+    "--source-project", project, "--revision", revision)
+
 /** These options are explicitly enabled per command; other commands keep rejecting them. */
 internal fun sourceProjectOptions(args: List<String>): Pair<KodeProjectOptions?, List<String>> {
     val flags = setOf("--kode", "--kode-home", "--source-project", "--revision")

@@ -14,13 +14,14 @@ class Recomposition(
     private val event: (String, JsonValue.Object) -> Unit,
     private val terminalLeaseBytes: Int? = null,
     private val applicationMode: Boolean = false,
+    private val sourceRevisions: Boolean = false,
 ) {
     private data class Child(val process: OwnedProcess, val directory: String, val composition: Digest?, val epoch: Int)
     private var epoch = 0
     private var query: Child? = null
     private var build: Child? = null
     private var compatibility: Child? = null
-    private var compatible = terminalLeaseBytes == null && !applicationMode
+    private var compatible = terminalLeaseBytes == null && !applicationMode && !sourceRevisions
     private var nextQuery = 0L
     private var candidate: Digest? = null
     private var observed = false
@@ -34,7 +35,7 @@ class Recomposition(
     val ready: Pair<BootstrapLaunch, ByteArray>? get() = replacement.takeIf { confirmed && compatible && !busy }
     val selected: Pair<BootstrapLaunch, ByteArray>? get() = replacement.takeIf { confirmed && compatible }
     fun retry() { attempted = null; nextQuery = 0 }
-    fun replacementFailed() { replacement = null; confirmed = false; compatible = terminalLeaseBytes == null && !applicationMode }
+    fun replacementFailed() { replacement = null; confirmed = false; compatible = terminalLeaseBytes == null && !applicationMode && !sourceRevisions }
     fun cancel() { query?.process?.cancel(); build?.process?.cancel(); compatibility?.process?.cancel() }
 
     private fun start(kind: BootstrapQuery, composition: Digest?): Child = startCommand(launch.command(kind), composition,
@@ -85,7 +86,7 @@ class Recomposition(
                 else error = "Source composition changed during rebuild"
             } catch (failure: Exception) { error = failure.message ?: "Invalid replacement descriptor" }
             else error = "Bootstrap did not produce a replacement"
-            replacement = selected; confirmed = false; compatible = terminalLeaseBytes == null && !applicationMode; nextQuery = 0
+            replacement = selected; confirmed = false; compatible = terminalLeaseBytes == null && !applicationMode && !sourceRevisions; nextQuery = 0
             epoch++; query?.process?.cancel()
             event("rebuild-finished", obj("composition" to child.composition!!.toJson(), "exitCode" to result.exitCode.json(),
                 "cancelled" to result.cancelled.json(), "timedOut" to result.timedOut.json(), "accepted" to (selected != null).json(),
@@ -96,7 +97,8 @@ class Recomposition(
             var error: String? = null
             val selected = replacement?.first
             val accepted = if (result.exitCode == 0 && !result.cancelled && !result.timedOut && selected != null && selected.composition == child.composition) try {
-                requireSessionCapabilities(NativeFiles.read("${child.directory}/stdout.jsonl", 8192), selected, if (applicationMode) 3 else 2, terminalLeaseBytes)
+                requireSessionCapabilities(NativeFiles.read("${child.directory}/stdout.jsonl", 8192), selected,
+                    if (applicationMode) 3 else if (terminalLeaseBytes != null) 2 else 1, terminalLeaseBytes, sourceRevisions)
                 true
             } catch (failure: Exception) { error = failure.message ?: "Invalid session capabilities"; false }
             else { error = "Replacement did not accept terminal handoff"; false }
@@ -108,7 +110,8 @@ class Recomposition(
         if (stopping) { cancel(); return }
         if (ready != null && !applicationMode) return
         if (confirmed && !compatible && compatibility == null) replacement?.first?.let { selected ->
-            compatibility = startCommand(listOf(selected.runtime, "dev", "--session-capabilities"), selected.composition, 60_000)
+            compatibility = startCommand(listOf(selected.runtime, "dev", "--session-capabilities") +
+                (if (sourceRevisions) listOf("--source-revisions") else emptyList()), selected.composition, 60_000)
         }
         if (query == null && now >= nextQuery) query = start(BootstrapQuery.COMPOSITION, null)
         val desired = candidate

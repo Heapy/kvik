@@ -14,6 +14,7 @@ internal class ApplicationLifecycle(
     private val target: String,
     private val startProcess: (ProcessRequest) -> OwnedProcess = host::start,
     private val event: (String, JsonValue.Object) -> Unit,
+    private val selectArguments: () -> List<String> = { arguments },
 ) {
     private data class Child(
         val process: OwnedProcess, val path: String, val gate: String, val token: Digest,
@@ -91,13 +92,13 @@ internal class ApplicationLifecycle(
         NativeFiles.ensureDirectory(gate)
         val token = Sha256.digest(obj("directory" to path.json(), "revision" to revision.json(), "generation" to generation.json(),
             "composition" to composition.toJson(), "module" to module.json(), "target" to target.json()))
+        val selected = if (prepared == null) selectArguments() else arguments
         val command = listOf(runtime, if (prepared == null) "stage-application" else "stage-prepared", "--activation", gate,
-            "--token", token.toJson().canonical()) + if (prepared == null) arguments + listOf("--runs", "$path/runs") +
-                (if ("--remote-cache" in arguments || "--offline" in arguments) emptyList() else listOf("--offline"))
+            "--token", token.toJson().canonical()) + if (prepared == null) selected + listOf("--runs", "$path/runs") + sessionOfflineArguments(selected)
             else listOf("--run", prepared.preparationDirectory, "--descriptor", prepared.descriptor.toJson().canonical())
         NativeFiles.writeNew("$path/command.json", command.map { it.json() }.json().canonical().encodeToByteArray())
         val process = startProcess(ProcessRequest(command, workingDirectory,
-            mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to "1"),
+            mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "KVIK_BOOTSTRAP_OFFLINE" to sessionOfflineEnvironment(selected)),
             "$path/stdout.jsonl", "$path/stderr.log", 0))
         candidate = Child(process, path, gate, token, revision, generation, composition, replacement, prepared)
         event("application-preparing", identity(candidate!!))

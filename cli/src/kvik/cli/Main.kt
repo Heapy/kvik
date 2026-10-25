@@ -42,6 +42,7 @@ private fun command(args: Array<String>) {
             Lock options: --lock PATH --store PATH --offline
             Revision inspection: inspect --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF [--project LOGICAL_PATH]
             Revision build/test: same source flags plus build options; --lock is relative to the configuration directory; --offline requires a cached immutable revision
+            Revision dev: the same source flags follow a reference in foreground library/application mode; each operation pins its observed revision
             Revision locks: resolve/check-lock accept source flags; resolve returns a guarded Kode transaction; --replace-project FILE includes configuration changes
             Revision view: view with source flags and --role production|tests|all [--tag TAG] [--exclude-tag TAG]; emits a pinned view for kode --view FILE
             Role policy: view also accepts --policy-name NAME [--edit-tag TAG] [--edit-any-tag TAG] [--exclude-edit-tag TAG] [--allow-all-edits] [--allow CAPABILITY]; emits a pinned policy for kode --policy FILE
