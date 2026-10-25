@@ -167,9 +167,18 @@ class ProjectConfigurationTest {
         assertEquals(parseJson(example), parse().document)
     }
 
+    @Test fun omittedClassesEnableDiscoveryAndPreserveEngineSettings() {
+        assertEquals(JvmTestSettings(emptyList(), discover = true), parse(withSettings("{}")).project.modules.single().targets.single().testSettings)
+        val settings = parse(withSettings("""{"engines":["kotest"],"maxRetries":1}""")).project.modules.single().targets.single().testSettings!!
+        assertTrue(settings.discover)
+        assertEquals(listOf("kotest"), settings.engines)
+        assertEquals(1, settings.maxRetries)
+        assertFalse(parse(withSettings("""{"classes":[]}""")).project.modules.single().targets.single().testSettings!!.discover)
+    }
+
     @Test fun invalidTestSelectionsFailBeforeExecution() {
         for (settings in listOf(
-            "null", "[]", "{}", """{"classes":null}""", """{"classes":[],"typo":true}""",
+            "null", "[]", """{"classes":null}""", """{"classes":[],"typo":true}""",
             """{"classes":["a.Test","a.Test"]}""", """{"classes":[],"engines":[]}""",
             """{"classes":[],"engines":["junit","junit"]}""", """{"classes":[],"engines":["junit-jupiter"]}""",
             """{"classes":[],"engines":["unknown"]}""", """{"classes":[],"engines":null}""",

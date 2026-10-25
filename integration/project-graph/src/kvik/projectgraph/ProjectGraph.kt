@@ -20,7 +20,7 @@ data class JvmCoverageTools(val version: String, val agent: Digest, val reporter
     fun toJson(): JsonValue.Object = obj("version" to version.json(), "agent" to agent.toJson(), "reporter" to reporter.toJson(),
         "excludes" to excludes.map { it.json() }.json())
 }
-data class JvmTests(val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageTools? = null, val parallelism: Int = 1, val maxRetries: Int = 0)
+data class JvmTests(val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageTools? = null, val parallelism: Int = 1, val maxRetries: Int = 0, val discover: Boolean = false)
 data class ProjectGraphRequest(
     val modules: Set<String>,
     val targets: Set<String>,
@@ -1331,7 +1331,9 @@ private class Builder(
             fun resourceRoot(id: String, scope: String) = LogicalPath("runtime/$id/$scope").takeIf { prefix -> allResources.paths.any { it.value.startsWith(prefix.value + "/") } }
             val classpath = listOfNotNull(if (hasTestCompile) modulePath(module, target, "test") else null, resourceRoot(module, "test")) +
                 runtimeIds.flatMap { listOfNotNull(modulePath(it, target, "main"), resourceRoot(it, "main")) } + runtime.map { it.path }
-            JvmTestLaunch(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, testResources, parallelism = testSelection.parallelism, maxRetries = testSelection.maxRetries))
+            JvmTestLaunch(JvmTestSelection(module, classpath, testSelection!!.classes, testSelection.engines, coverage, testResources,
+                parallelism = testSelection.parallelism, maxRetries = testSelection.maxRetries,
+                discoveryRoots = if (testSelection.discover && hasTestCompile) listOf(modulePath(module, target, "test")) else emptyList()))
         } else NativeTestLaunch(module, NativeTarget.require(target), modulePath(module, target, "test"), kotest = kotest != null, resources = testResources, maxRetries = nativeSettings?.maxRetries ?: 0)
         testLaunches[id] = launch
         nodes[id] = ActionNode(id, edges,

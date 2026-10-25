@@ -43,9 +43,10 @@ data class SourceSet(
     val dependencies: List<Dependency>,
 )
 
-/** Exact JVM binary class names; an empty selection deliberately requests no discovery. */
-data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1, val maxRetries: Int = 0) {
+/** Omitted classes discover compiled tests; an explicit empty selection still selects nothing. */
+data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1, val maxRetries: Int = 0, val discover: Boolean = false) {
     init {
+        require(!discover || classes.isEmpty()) { "JVM test discovery cannot be combined with explicit classes" }
         require(maxRetries in 0..9) { "JVM test maxRetries must be an integer in 0..9" }
         require(parallelism in 1..1024) { "JVM test parallelism must be an integer in 1..1024" }
         require(parallelism == 1 || engines == listOf("junit")) { "Parallel JVM tests currently require only the junit engine" }

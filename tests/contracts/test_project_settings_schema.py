@@ -96,6 +96,8 @@ class ProjectSettingsSchemaTest(unittest.TestCase):
     def test_old_documents_and_ordered_or_empty_selections(self):
         for value in [
             self.target(),
+            self.target(testSettings={}),
+            self.target(testSettings={"engines": ["kotest"]}),
             self.target(testSettings={"classes": []}),
             self.target(testSettings={"classes": ["sample.ZTest", "sample.Outer$Nested", "DefaultPackageTest"], "engines": ["kotest", "junit"]}),
             {**self.target(), "name": "macosArm64"},
@@ -105,7 +107,7 @@ class ProjectSettingsSchemaTest(unittest.TestCase):
                 VALIDATOR.validate(value)
 
     def test_invalid_settings_and_unsupported_target_scope(self):
-        invalid = [None, [], {}, {"classes": None}, {"classes": [], "typo": True},
+        invalid = [None, [], {"classes": None}, {"classes": [], "typo": True},
                    {"classes": ["a.Test", "a.Test"]}]
         invalid += [{"classes": [], "engines": engines} for engines in
                     [[], ["junit", "junit"], ["junit-jupiter"], ["unknown"], None]]

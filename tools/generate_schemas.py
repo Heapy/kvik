@@ -61,7 +61,7 @@ DEFS["jvmTestSettings"] = object_({
     "engines": array(enum("junit", "kotest"), minItems=1, uniqueItems=True),
     "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
     "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
-}, optional=("engines", "parallelism", "maxRetries"))
+}, optional=("classes", "engines", "parallelism", "maxRetries"))
 DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"minimum": 2}}, "required": ["parallelism"]},
     "then": {"properties": {"engines": {"const": ["junit"]}}}}]
 NATIVE_RETRIES = {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}
@@ -1116,11 +1116,12 @@ DEFS["testLaunch"] = {"oneOf": [
     test_launch("kvik-jvm-tests-v1", ("jvm",), object_({"module": NONEMPTY,
         "classpath": array(PATH, minItems=1, uniqueItems=True),
         "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_.$]*(?![\s\S])"}, uniqueItems=True),
+        "discoveryRoots": array(PATH, uniqueItems=True),
         "engines": array(enum("junit-jupiter", "kotest"), minItems=1, uniqueItems=True),
         "coverage": ref("jvmCoverageSpec"), "resources": ref("testResources"),
         "agents": array(ref("jvmTestAgent"), maxItems=16),
         "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
-        "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("coverage", "resources", "agents", "parallelism", "maxRetries"))),
+        "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("coverage", "resources", "agents", "parallelism", "maxRetries", "discoveryRoots"))),
     test_launch("kvik-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
         "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"}),
         "resources": ref("testResources"), "maxRetries": NATIVE_RETRIES}, optional=("resources", "maxRetries"))),

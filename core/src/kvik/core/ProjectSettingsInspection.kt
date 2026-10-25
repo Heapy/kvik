@@ -41,8 +41,11 @@ fun projectSettingsInspection(configuration: ProjectConfiguration, file: Logical
             }
             fun settings(name: String, value: JsonValue.Object) = tree("$key:$name", value,
                 declaration.values[name] as? JsonValue.Object, "$pointer/$name")
-            target.testSettings?.let { settings("testSettings", obj("classes" to it.classes.map(String::json).json(),
-                "engines" to it.engines.map(String::json).json(), "parallelism" to it.parallelism.json(), "maxRetries" to it.maxRetries.json())) }
+            if (target.test != null && target.name == "jvm") {
+                val tests = target.testSettings ?: JvmTestSettings(emptyList(), discover = true)
+                settings("testSettings", obj("classes" to (if (tests.discover) JsonValue.Null else tests.classes.map(String::json).json()),
+                    "engines" to tests.engines.map(String::json).json(), "parallelism" to tests.parallelism.json(), "maxRetries" to tests.maxRetries.json()))
+            }
             if (target.test != null && NativeTarget.find(target.name) != null) {
                 val native = target.nativeTestSettings ?: NativeTestSettings("kotlin")
                 settings("nativeTestSettings", JsonValue.Object(obj("engine" to native.engine.json(), "maxRetries" to native.maxRetries.json()).values +

@@ -6,11 +6,13 @@ import java.nio.channels.FileChannel
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardOpenOption.*
 import java.nio.file.Path
+import java.nio.file.Files
 import java.util.ServiceLoader
 import kotlin.system.exitProcess
 import org.junit.platform.engine.TestEngine
 import org.junit.platform.engine.TestExecutionResult
 import org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
+import org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots
 import org.junit.platform.launcher.*
 import org.junit.platform.launcher.core.LauncherConfig
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder
@@ -33,7 +35,7 @@ object TestWorker {
         var status = "incomplete"
         var exit = 3
         try {
-            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism", "maxRetries"))
+            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism", "maxRetries", "discoveryRoots"))
             request.requireVersion()
             requestId = request.getValue("requestId").stringValue()
             val module = request.getValue("module").stringValue()
@@ -43,6 +45,11 @@ object TestWorker {
             require(classpath.isNotEmpty() && classpath.distinct().size == classpath.size)
             val classes = request.getValue("testClasses").arrayValue().map { it.stringValue() }
             require(classes.distinct().size == classes.size && classes.all { it.matches(Regex("[A-Za-z_$][A-Za-z0-9_.$]*")) })
+            val roots = request["discoveryRoots"]?.arrayValue()?.map { workspace.path(it.stringValue()).toRealPath() }.orEmpty()
+            require(roots.distinct().size == roots.size && roots.all { it in classpath && Files.isDirectory(it, NOFOLLOW_LINKS) }) {
+                "Test discovery roots must be unique declared classpath directories"
+            }
+            require(roots.isEmpty() || classes.isEmpty()) { "Test discovery cannot be combined with explicit classes" }
             val engineIds = request.getValue("engines").arrayValue().map { it.stringValue() }.toSet()
             require(engineIds.isNotEmpty() && engineIds.all { it in setOf("junit-jupiter", "kotest") })
             val parallelism = (request["parallelism"]?.longValue() ?: 1).also {
@@ -52,7 +59,7 @@ object TestWorker {
             val maxRetries = (request["maxRetries"]?.longValue() ?: 0).also {
                 require(it in 0L..9L) { "Invalid JVM test maxRetries" }
             }.toInt()
-            if (classes.isEmpty()) reject("KVIK_TEST_EMPTY_SELECTION", "No test classes were selected")
+            if (classes.isEmpty() && roots.isEmpty()) reject("KVIK_TEST_EMPTY_SELECTION", "No test classes or compiled test roots were selected")
             // A test worker is a fresh JVM. Kotlin stdlib and kotlin-reflect must share its loader;
             // loading reflect only in a child loader breaks stdlib's ReflectionFactory discovery.
             fun codeSource(type: Class<*>): Path = Path.of(type.protectionDomain.codeSource.location.toURI()).toRealPath()
@@ -79,7 +86,7 @@ object TestWorker {
                         .addTestEngines(*engines.toTypedArray()).build()
                     val launcher = LauncherFactory.create(config)
                     val discovery = LauncherDiscoveryRequestBuilder.request().enableImplicitConfigurationParameters(false)
-                        .selectors(classes.map(::selectClass))
+                        .selectors(classes.map(::selectClass) + selectClasspathRoots(roots.toSet()))
                         .configurationParameter("junit.jupiter.execution.parallel.enabled", (parallelism > 1).toString())
                         .configurationParameter("junit.jupiter.execution.parallel.mode.default", "concurrent")
                         .configurationParameter("junit.jupiter.execution.parallel.mode.classes.default", "concurrent")

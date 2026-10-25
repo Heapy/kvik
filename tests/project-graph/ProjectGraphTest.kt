@@ -134,6 +134,27 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun discoveryUsesOnlyCompiledTestOutputAndDoesNotChangeCompilation() {
+        val explicit = request(ProjectMode.TEST)
+        val automatic = explicit.copy(jvmTests = explicit.jvmTests.mapValues { it.value.copy(classes = emptyList(), discover = true) })
+        val before = resolved(graph(request = explicit))
+        val after = resolved(graph(request = automatic))
+        for (id in before.keys) {
+            if (before.getValue(id).kind != ActionKind.TEST) assertEquals(before.getValue(id), after.getValue(id))
+            else {
+                val selection = JvmTestSelection.fromJson(after.getValue(id).parameters)
+                assertEquals(listOf(LogicalPath("modules/app/jvm/test")), selection.discoveryRoots)
+                assertTrue(selection.classes.isEmpty())
+                assertTrue(selection.discoveryRoots.all { it in selection.classpath })
+                assertEquals(selection, JvmTestSelection.fromJson(selection.toJson()))
+                assertFails { selection.copy(classes = listOf("fixture.Tests")) }
+                assertFails { selection.copy(discoveryRoots = listOf(LogicalPath("not-declared"))) }
+                assertNotEquals(before.getValue(id).key(Sha256), after.getValue(id).key(Sha256))
+                assertEquals(CachePolicy.NEVER, after.getValue(id).cachePolicy)
+            }
+        }
+    }
+
     @Test fun retryPolicyChangesTestActionWithoutInvalidatingCompilation() {
         for (engines in listOf(listOf("junit-jupiter"), listOf("kotest"), listOf("junit-jupiter", "kotest"))) {
             val ordinary = request(ProjectMode.TEST).let { request -> request.copy(jvmTests = request.jvmTests.mapValues { it.value.copy(engines = engines) }) }

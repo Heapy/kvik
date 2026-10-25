@@ -214,9 +214,7 @@
           "default": 0
         }
       },
-      "required": [
-        "classes"
-      ],
+      "required": [],
       "additionalProperties": false,
       "allOf": [
         {
@@ -14789,6 +14787,15 @@
                   "items": {
                     "type": "string",
                     "pattern": "^[A-Za-z_$][A-Za-z0-9_.$]*(?![\\s\\S])"
+                  },
+                  "uniqueItems": true
+                },
+                "discoveryRoots": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
                   },
                   "uniqueItems": true
                 },
