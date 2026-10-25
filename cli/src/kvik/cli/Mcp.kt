@@ -21,8 +21,12 @@ internal fun mcpCommand(arguments: List<String>): Int {
         boundary = kvik_foreground_open()
         check(boundary != null) { "Cannot establish MCP stream ownership" }
         val queries = NativeMcpOperations(options).also { operations = it }
-        val session = McpSession(queries, mcpTools + if (options.build != null) mcpBuildTools else emptyList())
-        val decoder = McpLines()
+        val session = McpSession(queries, mcpTools +
+            (if (options.build != null) mcpBuildTools else emptyList()) +
+            (if (options.configurationEdits) mcpConfigurationTools else emptyList()))
+        // A returned plan appears twice in a response (structured and text); this input budget
+        // accepts its single structured copy plus the apply request envelope.
+        val decoder = McpLines(if (options.configurationEdits) MCP_MAX_OUTPUT else MCP_MAX_INPUT)
         val output = ArrayDeque<ByteArray>()
         var queuedBytes = 0
         var offset = 0

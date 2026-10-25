@@ -33,6 +33,7 @@ connection, send `notifications/initialized`, then use `tools/list` and
 | Tool | Inputs | Result |
 | --- | --- | --- |
 | `kvik_inspect` | None | Current project model, source ownership, targets and effective settings from `inspect` |
+| `kvik_config_validate` | None | Configuration, project graph and configured resolver policy validation; no lock check or repository access |
 | `kvik_dependencies` | Optional `modules`, `scripts`, `targets`, `compilation`, `usage`; `availableVersions` enables `packages`, `channel`, `limit`, `cursor`, `refresh` | Declared and locked dependency graph, optionally available versions |
 | `kvik_package_versions` | `package` as `group:artifact`; optional `channel`, `limit`, `cursor`, `offline`, `refresh` | Published versions with repository observations and freshness |
 | `kvik_package_dependencies` | `coordinate` as `group:artifact:version`, `target`, `usage`; optional `jvmTarget`, `pins`, `offline`, `refresh` | Dependency requirements and supported resolved selections |
@@ -134,6 +135,54 @@ execution runs are retained under the MCP request directory. Both locations
 survive connection closure. Progress, cancellation, execution limits and
 concurrent-query behavior are the same as for `kvik_build` and `kvik_test`.
 
+Enable configuration planning and application independently of compiler tools:
+
+```sh
+./kvik -- mcp --project /absolute/path/to/kvik.json --config-edits
+```
+
+This adds `kvik_config_plan` and `kvik_config_apply`. Planning accepts the same
+[structured edit operations as the CLI](../README.md#configuration-changes),
+including dependencies, targets, source sets, catalog entries, profiles and scripts:
+
+```json
+{
+  "name": "kvik_config_plan",
+  "arguments": {
+    "edits": {
+      "schemaVersion": 1,
+      "operations": [{
+        "op": "set-dependency-version",
+        "module": "library",
+        "sourceSet": "main",
+        "package": "org.example:dependency",
+        "version": "1.2.0"
+      }]
+    }
+  }
+}
+```
+
+Planning returns the CLI `configuration-edit-plan` in `structuredContent`.
+Inspect its `configuration.content` and `dependencyLock.content`, then call
+`kvik_config_apply` with `{"plan": <complete structuredContent object>}`.
+Inline documents are staged in request-owned scratch and removed after the
+worker exits. Configuration and lock contents remain unchanged during planning;
+online resolution can populate the dependency store. Startup `--offline` requires
+an existing compatible lock and does not resolve new dependencies.
+
+Application accepts only local plans for the configured project, lock, store
+and resolver policy. It verifies original-file digests, returning
+`KVIK_EDIT_CONFLICT` if either file changed. Repeat the same plan to resume
+interrupted publication or receive `status: "unchanged"` after completion.
+Publication retains its recovery journal under `.kvik/configuration-edits`.
+Cancellation stops the worker; it does not roll back already published files.
+Retain the plan before applying it so that it can be retried after disconnect.
+
+Configuration application cannot overlap another application or build/test/verify
+request on the same connection. Queries remain available. Other connections and
+CLI invocations use the existing publication locks and file preconditions.
+
 Repeated selectors and pins are arrays. `channel` is `all`, `stable` or
 `prerelease`; package query `limit` is 1–200. `kvik_dependencies` also accepts `offline`.
 Use the returned opaque cursor with the same query filters. Project version
@@ -177,9 +226,11 @@ connection permits network access.
 
 Queries do not modify project configuration, locks or the dependency artifact
 store, and never execute package code. Online package queries may update the
-metadata query cache. Per-request scratch files are removed after the owned
+metadata query cache. Opt-in configuration planning may also populate the
+dependency store; configuration application replaces project and lock files.
+Per-request scratch files are removed after the owned
 process exits. Project queries and MCP builds currently address local projects;
-mutations, source-provider selectors and session controls remain available
+source-provider selectors and session controls remain available
 through the CLI. Retained-run queries can inspect results from either local
 projects or source-provider builds.
 
@@ -187,7 +238,8 @@ The server allows four concurrent operations, with at most one build/test/verify
 connection. Queries have a 120-second timeout; builds and tests have a 30-minute
 timeout. Read-only queries remain available while a build or test is running.
 Excess calls return a tool error and can be retried when another call completes.
-Requests are limited to 1 MiB, child output to 16 MiB per stream, and complete
+Requests are limited to 1 MiB, or 32 MiB on `--config-edits` connections so a returned
+plan can be submitted for application. Child output is limited to 16 MiB per stream, and complete
 MCP responses to 32 MiB. Excess child output stops the operation. Oversized
 results return an error; build errors include the retained output directory.
 Invalid framing or an oversized input closes the connection; malformed

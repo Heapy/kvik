@@ -38,7 +38,7 @@ def main():
     env = dict(os.environ, TMPDIR=str(scratch))
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     base = [str(runtime), 'mcp', '--project', str(config), '--offline', '--store', str(args.store.resolve(strict=True))]
-    execution = ['--tools', str(args.tools.resolve(strict=True)), '--runs', str(request_root), '--jobs', '2']
+    execution = ['--tools', str(args.tools.resolve(strict=True)), '--runs', str(request_root), '--jobs', '2', '--config-edits']
     clients = []
     def client(extra=execution):
         c = Client(base+extra, env); clients.append(c); c.initialize(); return c
@@ -222,12 +222,18 @@ class PassingTests { @Test fun slow() {
     Thread.sleep(60000)
 } }
 ''')
+        configuration_bytes = config.read_bytes()
+        consumer = next(module for module in json.loads(configuration_bytes)['modules'] if module['id'] == 'consumer')
+        edit_plan = call(c, 'kvik_config_plan', dict(edits=dict(schemaVersion=1, operations=[
+            dict(op='set-target', module='consumer', target=consumer['targets'][0])])))
         ident, directory, pid = slow(c, 'kvik_verify')
         # Read-only work stays usable while the execution budget is occupied.
         call(c, 'kvik_inspect', {})
         busy = call(c, 'kvik_build', common, failed=True)
         assert 'One build/test request' in busy['content'][0]['text']
         call(c, 'kvik_verify', common | dict(full=True), failed=True)
+        conflict = call(c, 'kvik_config_apply', dict(plan=edit_plan), failed=True)
+        assert 'cannot overlap' in conflict['content'][0]['text'] and config.read_bytes() == configuration_bytes
         c.send(dict(jsonrpc='2.0', method='notifications/cancelled', params=dict(requestId=ident)))
         wait_gone(pid)
         call(c, 'kvik_inspect', {})

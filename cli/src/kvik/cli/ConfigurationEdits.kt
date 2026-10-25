@@ -29,7 +29,7 @@ private fun fileDigest(path: String, limit: Int): Digest? {
     return Sha256.digest(NativeFiles.read(path, limit))
 }
 
-private fun policyDocument(options: ProjectOptions): JsonValue = obj(
+internal fun policyDocument(options: ProjectOptions): JsonValue = obj(
     "pins" to options.pins.map { it.toString().json() }.json(),
     "scopedPins" to options.scopedPins.map { it.argument().json() }.json(),
     "metadataExclusions" to options.metadataExclusions.map { it.toJson() }.json())

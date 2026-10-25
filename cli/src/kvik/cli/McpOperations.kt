@@ -9,12 +9,13 @@ import platform.posix.*
 import kotlin.time.TimeSource
 
 internal data class McpOptions(val project: String, val root: String, val lock: String?, val store: String?,
-                               val queryCache: String?, val offline: Boolean, val policy: List<String>, val build: BuildOptions?)
+                               val queryCache: String?, val offline: Boolean, val policy: List<String>, val build: BuildOptions?,
+                               val configurationEdits: Boolean)
 
 internal fun mcpOptions(arguments: List<String>): McpOptions {
     val buildFlags = setOf("--tools", "--runs", "--jobs", "--memory-mib", "--remote-cache")
     val options = queryArguments(arguments, setOf("--project", "--lock", "--store", "--query-cache") + buildFlags,
-        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline"))
+        repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline", "--config-edits"))
     val project = readProject(options.values["--project"] ?: "kvik.json")
     val policy = options.repeats.flatMap { (flag, values) -> values.flatMap { listOf(flag, it) } }
     projectOptions(policy, lockOptions = false).resolverPolicy()
@@ -22,13 +23,13 @@ internal fun mcpOptions(arguments: List<String>): McpOptions {
     val build = if ("--tools" in options.values) buildOptions(options.values.filterKeys { it in buildFlags }.flatMap { (key, value) -> listOf(key, value) } +
         (if ("--runs" in options.values) emptyList() else listOf("--runs", ".kvik/mcp-runs")) + listOf("--module", "mcp", "--target", "jvm")) else null
     return McpOptions(project.path, project.root, options.values["--lock"], options.values["--store"], options.values["--query-cache"],
-        "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", policy, build)
+        "--offline" in options.flags || getenv("KVIK_BOOTSTRAP_OFFLINE")?.toKString() == "1", policy, build, "--config-edits" in options.flags)
 }
 
 /** Each query owns a child of this foreground connection, keeping network and filesystem work cancellable. */
 internal class NativeMcpOperations(private val options: McpOptions) : McpOperations, AutoCloseable {
     private data class Pending(val id: JsonValue, val directory: String, val process: OwnedProcess, val build: McpBuildRequest?,
-                               val progressToken: JsonValue?, var cancelled: Boolean = false, var failure: String? = null,
+                               val progressToken: JsonValue?, val mutating: Boolean, var cancelled: Boolean = false, var failure: String? = null,
                                var progress: Long = 0, var lastProgress: kotlin.time.TimeMark? = null) {
         val stdout: String get() = build?.stdout ?: "$directory/stdout.json"
         val stderr: String get() = build?.stderr ?: "$directory/stderr.log"
@@ -52,11 +53,15 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
         require(id !in pending) { "Request id is already active" }
         require(progressToken == null || pending.values.none { it.progressToken == progressToken }) { "Progress token is already active" }
         require(!tool.build || pending.values.none { it.build != null }) { "One build/test request may run at a time; retry when it completes" }
+        require(!(tool.build || tool.mutating) || pending.values.none { it.mutating || tool.mutating && it.build != null }) {
+            "Configuration application and build/test/verify requests cannot overlap on one connection"
+        }
         val arguments = command.toMutableList()
         if (tool.project) arguments += listOf("--project", options.project)
         val dependencyQuery = tool.name == "kvik_dependencies"
-        if (dependencyQuery || tool.name == "kvik_inspect" || tool.build) arguments += options.policy
-        if (dependencyQuery || tool.build) {
+        val configurationPlan = tool.name == "kvik_config_plan"
+        if (dependencyQuery || tool.name in setOf("kvik_inspect", "kvik_config_validate") || configurationPlan || tool.build) arguments += options.policy
+        if (dependencyQuery || configurationPlan || tool.build) {
             options.lock?.let { arguments += listOf("--lock", it) }
             options.store?.let { arguments += listOf("--store", it) }
         }
@@ -64,12 +69,12 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
             if (!dependencyQuery || "--available-versions" in command) options.queryCache?.let { arguments += listOf("--query-cache", it) }
             if (options.offline && "--offline" !in arguments) arguments += "--offline"
         }
-        if (tool.build && options.offline) arguments += "--offline"
+        if ((tool.build || configurationPlan) && options.offline) arguments += "--offline"
         val prepared = if (tool.build) prepareMcpBuild(arguments, options, id) else null
-        val actualArguments = prepared?.second ?: arguments
         val request = prepared?.first
         val directory = NativeFiles.tempDirectory(workspace())
         try {
+            val actualArguments = prepared?.second ?: mcpConfigurationArguments(tool, arguments, options, directory)
             val owner = host ?: runtimeProcessHost().also { host = it }
             val commandLine = listOf("${runtimeDirectory()}/kvik.kexe") + actualArguments
             val environment = mapOf("LANG" to "C", "LC_ALL" to "C", "TZ" to "UTC", "TMPDIR" to directory,
@@ -77,7 +82,7 @@ internal class NativeMcpOperations(private val options: McpOptions) : McpOperati
                 if (request != null) remoteSessionCredentials(options.root, request.options) else emptyMap()
             val process = owner.start(ProcessRequest(commandLine, options.root, environment,
                 request?.stdout ?: "$directory/stdout.json", request?.stderr ?: "$directory/stderr.log", if (tool.build) 30 * 60_000 else 120_000))
-            pending[id] = Pending(id, directory, process, request, progressToken)
+            pending[id] = Pending(id, directory, process, request, progressToken, tool.mutating)
         } catch (failure: Exception) {
             NativeFiles.removeTree(directory)
             if (request != null) error("Cannot start build; request retained at ${request.directory}: ${failure.message}")

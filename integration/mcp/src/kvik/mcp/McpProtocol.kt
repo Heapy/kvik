@@ -7,7 +7,7 @@ const val MCP_MAX_INPUT = 1024 * 1024
 const val MCP_MAX_OUTPUT = 32 * 1024 * 1024
 
 /** Newline-delimited UTF-8; one bounded buffer survives partial pipe reads. */
-class McpLines {
+class McpLines(private val maximum: Int = MCP_MAX_INPUT) {
     private var buffer = ByteArray(4096)
     private var size = 0
     val incomplete: Boolean get() = size != 0
@@ -16,8 +16,8 @@ class McpLines {
             if (byte == 10.toByte()) {
                 val line = buffer.copyOf(size); size = 0; consume(line)
             } else {
-                require(size < MCP_MAX_INPUT) { "MCP request exceeds 1 MiB" }
-                if (size == buffer.size) buffer = buffer.copyOf(minOf(buffer.size * 2, MCP_MAX_INPUT))
+                require(size < maximum) { "MCP request exceeds ${maximum / (1024 * 1024)} MiB" }
+                if (size == buffer.size) buffer = buffer.copyOf(minOf(buffer.size * 2, maximum))
                 buffer[size++] = byte
             }
         }
@@ -87,7 +87,8 @@ class McpSession(private val operations: McpOperations, private val tools: List<
                 mcpSuccess(id, obj("protocolVersion" to (if (requested in setOf("2025-06-18", MCP_VERSION)) requested else MCP_VERSION).json(),
                     "capabilities" to obj("tools" to obj()), "serverInfo" to obj("name" to "kvik".json(), "version" to "0.1.0".json()),
                     "instructions" to ("Project, package, retained-run and foreground-session queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims. Historical explanations and statistics do not assess current freshness." +
-                        if (tools.any { it.build }) " Build/test/verify tools execute project code and retain results. Supply _meta.progressToken for progress and the request directory; only one execution request runs per connection. A verification plan executes no checks; unchanged verification uses retained baselines." else " This connection exposes read-only tools.").json()))
+                        (if (tools.any { it.build }) " Build/test/verify tools execute project code and retain results. Supply _meta.progressToken for progress and the request directory; only one execution request runs per connection. A verification plan executes no checks; unchanged verification uses retained baselines." else "") +
+                        (if (tools.any { it.mutating }) " Configuration edits are enabled. Plan first, inspect configuration and lock contents, then pass the complete plan to config apply. Changed input files cause a conflict." else if (tools.none { it.build }) " This connection exposes read-only tools." else "")).json()))
             } catch (failure: Exception) { mcpError(id, -32602, failure.message ?: "Invalid initialization") }
         }
         if (!initialized) return mcpError(id, -32002, "Initialize and send notifications/initialized first")

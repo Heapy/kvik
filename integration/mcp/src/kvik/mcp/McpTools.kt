@@ -18,18 +18,47 @@ private fun switch(name: String, flag: String) = Argument(name, flag, obj("type"
 private fun integer(name: String, flag: String, maximum: Int) = Argument(name, flag,
     obj("type" to "integer".json(), "minimum" to 1.json(), "maximum" to maximum.json()))
 
+/** Kvik documents use integer JSON numbers; JSON-RPC extension decimals remain unsupported here. */
+private fun RpcValue.configurationJson(): JsonValue = when (this) {
+    is RpcValue.Object -> JsonValue.Object(fields.mapValues { it.value.configurationJson() })
+    is RpcValue.Array -> items.map { it.configurationJson() }.json()
+    is RpcValue.Text -> value.json()
+    is RpcValue.Number -> (literal.toLongOrNull() ?: error("Configuration documents require 64-bit integers")).json()
+    is RpcValue.Literal -> when (value) { "true" -> true.json(); "false" -> false.json(); "null" -> JsonValue.Null; else -> error("Invalid literal") }
+}
+
+private fun configurationDocument(name: String, flag: String, description: String, fields: List<String>) = Argument(name, flag,
+    JsonValue.Object(buildMap {
+        put("type", "object".json()); put("description", description.json()); put("required", fields.map { it.json() }.json())
+        if (name == "edits") {
+            put("additionalProperties", false.json())
+            put("properties", obj("schemaVersion" to obj("const" to 1.json()),
+                "operations" to obj("type" to "array".json(), "minItems" to 1.json(), "maxItems" to 128.json(),
+                    "items" to obj("type" to "object".json(), "required" to listOf("op".json()).json(),
+                        "properties" to obj("op" to obj("type" to "string".json(), "enum" to listOf(
+                            "set-dependency", "set-dependency-version", "remove-dependency", "set-target", "remove-target",
+                            "set-source-set", "remove-source-set", "set-catalog-entry", "set-catalog-version", "remove-catalog-entry",
+                            "set-dependency-profile", "remove-dependency-profile", "set-script", "remove-script").map { it.json() }.json()))))))
+        }
+    }),
+    encode = { raw ->
+        require(raw.fields().keys.containsAll(fields)) { "Missing $name fields" }
+        raw.configurationJson().canonical()
+    })
+
 class McpTool internal constructor(val name: String, private val description: String, val command: List<String>,
                                   private val coordinate: String? = null, private val required: Set<String> = emptySet(),
                                   private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false,
-                                  val project: Boolean = true, val build: Boolean = false) {
+                                  val project: Boolean = true, val build: Boolean = false, val mutating: Boolean = false,
+                                  private val openWorld: Boolean = repositories || build) {
     fun definition(): JsonValue.Object = obj("name" to name.json(), "description" to description.json(),
         "inputSchema" to obj("type" to "object".json(), "additionalProperties" to false.json(),
             "properties" to JsonValue.Object(buildMap {
                 coordinate?.let { put(it, text(it, "", if (it == "package") "Maven group:artifact" else "Maven group:artifact:version").schema) }
                 arguments.forEach { put(it.name, it.schema) }
             }), "required" to (required + listOfNotNull(coordinate)).sorted().map { it.json() }.json()),
-        "annotations" to obj("readOnlyHint" to (!build).json(), "destructiveHint" to build.json(),
-            "idempotentHint" to (!build).json(), "openWorldHint" to (repositories || build).json()))
+        "annotations" to obj("readOnlyHint" to (!build && !mutating).json(), "destructiveHint" to (build || mutating).json(),
+            "idempotentHint" to (!build).json(), "openWorldHint" to openWorld.json()))
 
     /** Convert a closed, typed tool schema to argv; never accept raw CLI flags or a shell command. */
     fun command(arguments: Map<String, RpcValue>): List<String> {
@@ -103,6 +132,7 @@ private val sessionCursor = Argument("cursor", "--cursor", obj("type" to "object
 
 val mcpTools: List<McpTool> = listOf(
     McpTool("kvik_inspect", "Inspect the configured local project, source ownership, targets and effective settings. Reads current files on every call.", listOf("inspect")),
+    McpTool("kvik_config_validate", "Validate the current project configuration, graph and configured resolver policy. Does not check the dependency lock, download dependencies or execute project code.", listOf("config", "validate")),
     McpTool("kvik_dependencies", "Read declared and locked project dependencies. Optional availableVersions queries configured repositories; available versions do not establish compatibility. Incomplete results retain diagnostics.",
         listOf("dependencies"), arguments = listOf(repeated("modules", "--module"), repeated("scripts", "--script"), repeated("targets", "--target"),
             text("compilation", "--compilation", choices = listOf("main", "test", "script")), text("usage", "--usage"),
@@ -123,6 +153,17 @@ val mcpTools: List<McpTool> = listOf(
         listOf("session", "status"), required = setOf("session"), arguments = listOf(sessionDirectory), project = false),
     McpTool("kvik_session_events", "Read a bounded page of foreground session events. Continue with nextCursor; inspect ownerAlive, hasMore, pendingTail and status. An incomplete journal after owner exit returns isError.",
         listOf("session", "events"), required = setOf("session"), arguments = listOf(sessionDirectory, sessionCursor, integer("limit", "--limit", 256)), project = false),
+)
+
+/** Configuration changes are opt-in independently of build execution. */
+val mcpConfigurationTools: List<McpTool> = listOf(
+    McpTool("kvik_config_plan", "Prepare a validated configuration/lock plan without changing either file. Pass an edits object with schemaVersion=1 and 1..128 operations using the CLI configurationEdits contract. Resolution can populate the dependency store. Inspect the returned configuration.content and dependencyLock.content before applying the complete plan.",
+        listOf("config", "plan"), required = setOf("edits"), arguments = listOf(configurationDocument("edits", "--edits-json",
+            "CLI configurationEdits document: schemaVersion=1 and operations such as set-dependency-version, set-target, set-source-set, set-catalog-version or set-script. Each operation has an op field and its CLI payload fields.", listOf("schemaVersion", "operations"))), openWorld = true),
+    McpTool("kvik_config_apply", "Apply the complete configuration-edit-plan returned by kvik_config_plan. Restricted to this connection's project, lock, store and resolver policy. File digests guard concurrent edits. Repeating the same plan resumes interrupted publication or returns unchanged; no dependency downloads or project code execution.",
+        listOf("config", "apply"), required = setOf("plan"), arguments = listOf(configurationDocument("plan", "--plan-json",
+            "Pass the complete, unchanged structuredContent object from kvik_config_plan. Inputs must still match the plan's preconditions.",
+            listOf("schemaVersion", "kind", "root", "project", "lock", "store", "policy", "edits", "effectiveConfiguration", "configuration", "dependencyLock"))), project = false, mutating = true),
 )
 
 /** Execution tools are advertised only when the foreground server was configured with pinned tools. */
