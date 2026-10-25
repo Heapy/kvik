@@ -1265,20 +1265,21 @@ class ProjectGraphTest {
         assertFails { graph(project, files = TreeManifest(files.files.filter { it.path.value != "config.txt" }), request = request(ProjectMode.TEST)).let(::resolved) }
     }
 
-    @Test fun workspaceAndSerializationPluginsComposeForModuleMainAndTests() {
+    @Test fun multipleWorkspaceAndSerializationPluginsComposeForModuleMainAndTests() {
         val workspace = CompilerPluginSpec("producer", null, setOf("jvm", "macosArm64", "js", "wasmJs"), setOf("main", "test"),
             listOf("text=first"), listOf(LogicalPath("config.txt")), "example.plugin", "2.4.20")
         val serialization = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
             workspace.targets, workspace.scopes, emptyList(), emptyList())
+        val second = workspace.copy(module = "second", id = "example.second")
         fun web(module: ModuleSpec) = module.copy(targets = module.targets + listOf("js", "wasmJs").map {
             TargetSpec(it, "commonMain", "commonTest", emptyList())
         })
         val producer = module("producer")
-        val files = TreeManifest(snapshot().files + listOf("producer/common/Plugin.kt", "producer/jvm/Actual.kt", "config.txt")
+        val files = TreeManifest(snapshot().files + listOf("producer/common/Plugin.kt", "producer/jvm/Actual.kt", "second/common/Plugin.kt", "second/jvm/Actual.kt", "config.txt")
             .map { FileEntry(LogicalPath(it), digest(it)) })
-        for (target in workspace.targets) for (plugins in listOf(listOf(workspace, serialization), listOf(serialization, workspace))) {
+        for (target in workspace.targets) for (plugins in listOf(listOf(workspace, second, serialization), listOf(serialization, second, workspace))) {
             fun plan(selected: List<CompilerPluginSpec> = plugins, changedPublished: Boolean = false): ProjectActionGraph {
-                val effective = effectiveConfiguration(configuration(web(base), producer, web(app).copy(compilerPlugins = selected)))
+                val effective = effectiveConfiguration(configuration(web(base), producer, module("second"), web(app).copy(compilerPlugins = selected)))
                 val original = lock(effective)
                 val pinned = if (!changedPublished) original else original.copy(selections = original.selections.map { selection ->
                     if (selection.requested != serialization.coordinate) selection else selection.copy(selection = selection.selection.copy(
@@ -1292,12 +1293,19 @@ class ProjectGraphTest {
                 val action = actions.getValue(id)
                 val parameters = action.parameters.objectValue()
                 val published = parameters.getValue("plugins").arrayValue().map { LogicalPath(it.stringValue()) }.single()
-                val applied = parameters.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson).single()
-                assertEquals(workspace.id, applied.id)
+                val applied = parameters.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
+                assertEquals(plugins.mapNotNull { it.id }, applied.map { it.id })
                 assertContains(action.inputs.files.map { it.path }, published)
-                assertTrue(applied.classpath.none { it == published })
-                assertContains(graph.nodes.single { it.id == id }.dependencies, "producer:jvm:main")
-                assertNotEquals(action.key(Sha256), resolved(graph, "producer:jvm:main").getValue(id).key(Sha256))
+                assertTrue(applied.flatMap { it.classpath }.none { it == published })
+                for (plugin in applied) {
+                    val own = if (plugin.id == workspace.id) "producer" else "second"
+                    val other = if (own == "producer") "second" else "producer"
+                    assertTrue(plugin.classpath.any { "/modules/$own/" in it.value })
+                    assertFalse(plugin.classpath.any { "/modules/$other/" in it.value })
+                    assertContains(graph.nodes.single { it.id == id }.dependencies, "$own:jvm:main")
+                    assertNotEquals(action.key(Sha256), resolved(graph, "$own:jvm:main").getValue(id).key(Sha256))
+                }
+                assertNotEquals(action.key(Sha256), resolved(plan(plugins.reversed())).getValue(id).key(Sha256))
                 assertNotEquals(action.key(Sha256), resolved(plan(changedPublished = true)).getValue(id).key(Sha256))
                 assertNotEquals(action.key(Sha256), resolved(plan(plugins.map {
                     if (it.module == null) it else it.copy(options = listOf("text=second"))
@@ -1305,6 +1313,7 @@ class ProjectGraphTest {
             }
             assertTrue(actions.getValue("app:$target:test").inputs.files.none { it.path.value.startsWith("plugins/") })
             assertFails { plan(listOf(workspace.copy(id = "org.jetbrains.kotlinx.serialization"), serialization)) }
+            assertFails { plan(listOf(workspace, second.copy(id = workspace.id))) }
         }
     }
 

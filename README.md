@@ -724,8 +724,9 @@ plugins also apply when tests recompile production sources.
 Workspace compiler plugins can select `js` and `wasmJs` targets. Kvik builds the
 plugin's JVM module and runtime dependencies before the consumer, then loads them
 in the owned compiler process. Declare `id`, `compilerVersion`, ordered `options`,
-`inputs`, `pathOptions` and `outputs` as for JVM/Native workspace plugins. One plugin
-per compilation is supported; published and workspace plugins cannot be combined.
+`inputs`, `pathOptions` and `outputs` as for JVM/Native workspace plugins. Up to 16
+workspace plugins can be combined with the pinned serialization plugin. Workspace
+plugins keep separate classpaths and are installed in declaration order.
 Main-scoped plugins also apply to tests because JS/Wasm tests recompile production
 sources. Plugin inputs and outputs affect compilation caching; source-free links
 consume the resulting KLIB without the plugin or its reports. The

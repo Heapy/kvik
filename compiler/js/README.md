@@ -39,7 +39,7 @@ repetition, commas and newlines. Declared input files and output directories are
 the compilation workspace; plugin outputs are checked before publication. Plugin classes,
 runtime dependencies, options and files participate in the compilation key. Source-free
 links consume only KLIBs. Main-scoped plugins are inherited by test compilation, which
-includes production sources. A compilation can combine one workspace plugin with the
+includes production sources. A compilation can combine up to 16 isolated workspace plugins with the
 pinned serialization plugin; their classpaths stay separate from consumer dependencies.
 See `tools/test_js_workspace_plugins_cli.py` for a real IR transformation on both targets
 and `tools/test_module_plugin_composition_cli.py` for composition with serialization.

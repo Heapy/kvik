@@ -517,9 +517,10 @@ private class Builder(
     private fun selectedPlugins(module: String, target: String, scope: String): List<CompilerPluginSpec> =
         modules.getValue(module).compilerPlugins.filter { it.appliesTo(target, scope) }.distinct()
             .also { selected ->
-                require(selected.count { it.module != null } <= 1 && selected.count { it.coordinate != null } <= 1) {
-                    "Compilations support at most one workspace plugin and one published serialization plugin"
+                require(selected.count { it.module != null } <= 16 && selected.count { it.coordinate != null } <= 1) {
+                    "Compilations support at most 16 workspace plugins and one published serialization plugin"
                 }
+                require(selected.mapNotNull { it.id }.let { it.distinct().size == it.size }) { "Duplicate compiler plugin ID" }
                 require(selected.none { it.coordinate != null } || selected.none { it.id == "org.jetbrains.kotlinx.serialization" }) {
                     "Workspace and published plugins cannot share the serialization plugin ID"
                 }
@@ -546,12 +547,15 @@ private class Builder(
     private data class WorkspacePlugin(val entries: List<FileEntry>, val applications: List<JvmPluginApplication>)
     private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>,
                                 selected: List<CompilerPluginSpec> = selectedPlugins(module, target, scope)): WorkspacePlugin {
-        val plugin = selected.singleOrNull { it.module != null }
-            ?: return WorkspacePlugin(emptyList(), emptyList())
+        val inputs = selected.filter { it.module != null }.map { workspacePlugin(module, target, scope, results, it) }
+        return WorkspacePlugin(inputs.flatMap { it.entries }, inputs.flatMap { it.applications })
+    }
+    private fun workspacePlugin(module: String, target: String, scope: String, results: Map<String, ActionResult>,
+                                plugin: CompilerPluginSpec): WorkspacePlugin {
         val prefix = "plugins/${plugin.id!!}"
         val entries = mutableListOf<FileEntry>()
         val classpath = mutableListOf<LogicalPath>()
-        for (producer in pluginModules(module, target, scope, selected)) {
+        for (producer in pluginModules(module, target, scope, listOf(plugin))) {
             val root = LogicalPath("$prefix/modules/$producer/classes")
             classpath += root
             val original = modulePath(producer, "jvm", "main").value

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run source-built and published compiler plugins together across Kotlin module targets."""
+"""Run two isolated source-built plugins and serialization across Kotlin module targets."""
 import argparse
 import json
 import os
@@ -41,26 +41,31 @@ def main():
         destination.write_text(text)
 
     write('plugin/Plugin.kt', (ROOT / 'tests/jvm-kts/Plugin.kt').read_text())
+    write('second/Plugin.kt', (ROOT / 'tests/jvm-kts/Plugin.kt').read_text()
+          .replace('kvik.fixture.kts', 'kvik.fixture.second').replace('PLUGIN_MARKER', 'SECOND_PLUGIN_MARKER'))
     for service, provider in (('CompilerPluginRegistrar', 'Registrar'), ('CommandLineProcessor', 'Processor')):
         write('resources/META-INF/services/org.jetbrains.kotlin.compiler.plugin.' + service, 'kvik.kts.fixture.' + provider + '\n')
+        write('second-resources/META-INF/services/org.jetbrains.kotlin.compiler.plugin.' + service, 'kvik.kts.fixture.' + provider + '\n')
     write('main/Main.kt', '''package fixture
 import kotlinx.serialization.*
 import kotlinx.serialization.json.Json
-@Serializable data class Payload(val value: String)
-fun mainJson() = Json.encodeToString(Payload.serializer(), Payload("PLUGIN_MARKER"))
+@Serializable data class Payload(val value: String, val extra: String)
+fun mainJson() = Json.encodeToString(Payload.serializer(), Payload("PLUGIN_MARKER", "SECOND_PLUGIN_MARKER"))
 ''')
     write('test/Tests.kt', '''package fixture
 import kotlin.test.*
 import kotlinx.serialization.*
 import kotlinx.serialization.json.Json
-@Serializable data class TestPayload(val value: String)
+@Serializable data class TestPayload(val value: String, val extra: String)
 class Tests {
     @Test fun composed() {
         val main = Json.decodeFromString(Payload.serializer(), mainJson())
         val test = Json.decodeFromString(TestPayload.serializer(),
-            Json.encodeToString(TestPayload.serializer(), TestPayload("PLUGIN_MARKER")))
+            Json.encodeToString(TestPayload.serializer(), TestPayload("PLUGIN_MARKER", "SECOND_PLUGIN_MARKER")))
         assertTrue(main.value.startsWith("composed-"))
         assertEquals(main.value, test.value)
+        assertEquals("extra", main.extra)
+        assertEquals("extra", test.extra)
         println("MAIN:" + main.value)
         println("TEST:" + test.value)
     }
@@ -73,6 +78,7 @@ class Tests {
 
     workspace = dict(module='producer', id='kvik.fixture.kts', compilerVersion='2.4.20', targets=targets,
                      scopes=['main', 'test'], options=['text=composed-first'], inputs=[])
+    second = {**workspace, 'module': 'second', 'id': 'kvik.fixture.second', 'options': ['text=extra']}
     published = dict(coordinate='org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20',
                      targets=targets, scopes=['main', 'test'], options=[], inputs=[])
     source_sets = [source('commonMain', ['main'], [stdlib, dict(coordinate='org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0')]),
@@ -89,7 +95,9 @@ class Tests {
     document = dict(schemaVersion=1, name='modulePlugins', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[
         dict(id='producer', sourceSets=[source('main', ['plugin'], [stdlib, dict(coordinate='org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20')], resources=['resources'])],
              targets=[dict(name='jvm', main='main', test=None, compilerOptions=['-Xjdk-release=25'])], compilerPlugins=[]),
-        dict(id='consumer', sourceSets=source_sets, targets=declarations, compilerPlugins=[workspace, published],
+        dict(id='second', sourceSets=[source('main', ['second'], [stdlib, dict(coordinate='org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20')], resources=['second-resources'])],
+             targets=[dict(name='jvm', main='main', test=None, compilerOptions=['-Xjdk-release=25'])], compilerPlugins=[]),
+        dict(id='consumer', sourceSets=source_sets, targets=declarations, compilerPlugins=[workspace, second, published],
              publication=dict(coordinate='fixture:composed:1'))])
     config = project / 'kvik.json'
     runs = case / 'runs'
@@ -148,6 +156,8 @@ class Tests {
             assert actions['producer:jvm:main']['status'] == 'local_hit'
         if phase == 'source-change':
             assert actions['producer:jvm:main']['key'] != previous['producer:jvm:main']['key']
+        if phase != 'cold':
+            assert actions['second:jvm:main']['status'] == 'local_hit'
         previous = actions
         print('PASS', phase, 'tests', ','.join(targets), flush=True)
         if args.with_metadata:

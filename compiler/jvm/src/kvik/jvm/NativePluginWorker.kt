@@ -7,7 +7,6 @@ import java.lang.reflect.Proxy
 import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.ServiceLoader
 import kotlin.system.exitProcess
 
 /** One owned JVM, one Native compilation. Typed plugin arrays bypass the CLI comma splitter. */
@@ -22,7 +21,8 @@ object NativePluginWorker {
             requestId = fields.getValue("requestId").stringValue()
             val pinned = distribution(Path.of(args[3]), parseJson(Files.readString(Path.of(args[4]))), Digest.fromJson(fields.getValue("compiler")))
             val applications = fields.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
-            require(applications.size == 1) { "Exactly one workspace plugin application is required" }
+            require(applications.isNotEmpty()) { "Workspace plugin applications are required" }
+            validateJvmPluginApplications(applications)
             val requestedArguments = fields.getValue("arguments").arrayValue().map(JsonValue::stringValue)
             val published = validatedPublishedPluginPaths(requestedArguments, applications, workspace, pinned)
             val arguments = requestedArguments.filterNot { it.startsWith("-Xplugin=") }
@@ -122,7 +122,7 @@ object NativePluginWorker {
             "equals" -> proxy === values?.get(0)
             else -> error("Unsupported MessageCollector method: ${method.name}")
         } }
-        val result = withTypedPlugin(plugins.single(), loader, workspace) { serviceDirectory ->
+        val result = withTypedWorkspacePlugins(plugins, loader, workspace) { serviceDirectory ->
             val classpaths = (published.map(Path::toString) + serviceDirectory.toString()).toTypedArray()
             argumentObject.javaClass.getMethod("setPluginClasspaths", Array<String>::class.java).invoke(argumentObject, classpaths as Any)
             argumentObject.javaClass.getMethod("setPluginOptions", Array<String>::class.java).invoke(argumentObject, emptyArray<String>() as Any)
@@ -135,28 +135,4 @@ object NativePluginWorker {
         return WorkerResult(requestId, if (code == 0) WorkerStatus.SUCCESS else WorkerStatus.COMPILATION_ERROR, code, diagnostics)
     }
 
-    /** Private service discovery delegates to the full original loader; user values never enter a CLI parser. */
-    private fun <T> withTypedPlugin(plugin: PreparedWorkspacePlugin, compilerLoader: ClassLoader, workspace: Workspace,
-        operation: (Path) -> T): T =
-        URLClassLoader(plugin.classpath.map { it.toUri().toURL() }.toTypedArray(), compilerLoader).use { pluginLoader ->
-            val registrarType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar")
-            val processorType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor")
-            val registrars = ServiceLoader.load(registrarType, pluginLoader).toList()
-            val processors = ServiceLoader.load(processorType, pluginLoader).toList()
-            require(registrars.size == 1 && processors.size <= 1) { "Validated plugin services changed" }
-            val valueType = compilerLoader.loadClass("org.jetbrains.kotlin.compiler.plugin.CliOptionValue")
-            val values = plugin.options.map { value -> valueType.getConstructor(String::class.java, String::class.java, String::class.java)
-                .newInstance(plugin.id, value.substringBefore('='), value.substringAfter('=')) }
-            val bridgeType = compilerLoader.loadClass("kvik.jvm.NativeTypedPlugin")
-            val origin = Path.of(bridgeType.protectionDomain.codeSource.location.toURI()).toRealPath()
-            val worker = Path.of(NativePluginWorker::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()
-            require(origin == worker) { "Native plugin adapter did not originate from the verified worker bundle" }
-            val serviceDirectory = Files.createDirectory(workspace.root.resolve("native-plugin-service"))
-            val descriptor = serviceDirectory.resolve("META-INF/services/" + registrarType.name)
-            Files.createDirectories(descriptor.parent)
-            Files.writeString(descriptor, bridgeType.name + "\n")
-            bridgeType.getMethod("bind", registrarType, processorType, List::class.java).invoke(null, registrars.single(), processors.singleOrNull(), values)
-            try { operation(serviceDirectory) }
-            finally { bridgeType.getMethod("clear").invoke(null) }
-        }
 }
