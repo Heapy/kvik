@@ -31,7 +31,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='kvik-test-report-') as temporary:
         root = Path(temporary).resolve()
         def invoke(output, *options, expected=0):
-            result = subprocess.run([str(runtime), 'test-report', '--run', str(run), '--output', str(output), *options],
+            result = subprocess.run([str(runtime), 'test-report', '--run', str(run), '--output', str(output), '--store', str(root/'cache'), *options],
                                     env=env, capture_output=True, text=True, timeout=30)
             assert result.returncode == expected, (result.returncode, result.stdout, result.stderr)
             return json.loads(result.stdout)
@@ -47,11 +47,22 @@ def main():
         assert [a['actionId'] for a in graph['actions']] == ['test-report:aggregate', 'test-report:export']
         assert graph['actions'][1]['dependencies'] == ['test-report:aggregate']
         assert all(a['status'] == 'executed' for a in graph['results'])
+        invoke(root/'repeat')
+        repeated = json.loads((root/'repeat/graph.json').read_bytes())
+        assert all(a['status'] == 'local_hit' for a in repeated['results'])
+        assert (root/'xml/junit.xml').read_bytes() == (root/'repeat/junit.xml').read_bytes()
         aggregate = (root/'xml/report.json').read_bytes()
         export_input = graph['actions'][1]['action']['inputs']['files'][0]
         assert export_input['digest'] == dict(hash=hashlib.sha256(aggregate).hexdigest(), sizeBytes=len(aggregate))
         invoke(root/'json', '--format', 'json')
         assert (root/'json/export.json').read_bytes() == aggregate
+        changed_format = json.loads((root/'json/graph.json').read_bytes())
+        assert [a['status'] for a in changed_format['results']] == ['local_hit', 'executed']
+        # Export must recover solely from the normalized cached artifact.
+        key = graph['results'][1]['key']
+        (root/'cache/actions'/f"{key['hash']}-{key['sizeBytes']}.json").unlink()
+        invoke(root/'export-repaired')
+        assert [a['status'] for a in json.loads((root/'export-repaired/graph.json').read_bytes())['results']] == ['local_hit', 'executed']
         invoke(root/'selected', '--module', module, '--target', target)
         invoke(root/'missing', '--module', 'missingModuleForReportTest', expected=2)
         assert not (root/'missing').exists()

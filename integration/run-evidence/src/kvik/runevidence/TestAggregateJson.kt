@@ -12,14 +12,14 @@ fun testAggregateFromJson(value: JsonValue): TestAggregate {
         Digest.fromJson(selected.getValue("composition")), selected.getValue("expectedChecks").strings().toSet())
     val reports = fields.getValue("contributors").arrayValue().map { contribution ->
         val source = contribution.fields(setOf("digest", "report"))
-        TestReportContribution(Digest.fromJson(source.getValue("digest")), retainedTestReport(source.getValue("report")))
+        TestReportContribution(Digest.fromJson(source.getValue("digest")), testReportFromJson(source.getValue("report")))
     }
     return aggregateTestReports(scope, reports).also {
         require(it.toJson() == value) { "Test aggregate contains contradictory or unsupported fields" }
     }
 }
 
-private fun retainedTestReport(value: JsonValue): TestReport {
+fun testReportFromJson(value: JsonValue): TestReport {
     val fields = value.objectValue()
     fields.requireVersion()
     fun text(name: String) = fields.getValue(name).stringValue()

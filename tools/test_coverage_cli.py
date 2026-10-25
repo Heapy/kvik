@@ -100,7 +100,7 @@ def main():
             ET.parse(path)
         graph = json.loads((output/'graph.json').read_bytes())
         assert [a['actionId'] for a in graph['actions']] == ['coverage-analyze', 'coverage-normalize']
-        assert all(a['status'] == 'executed' for a in graph['results'])
+        assert all(a['status'] == ('executed' if name == 'first' else 'local_hit') for a in graph['results'])
         reports.append(report)
     assert reports[0] == reports[1]
     assert effects == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in effects}

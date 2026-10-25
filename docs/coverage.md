@@ -18,6 +18,17 @@ kvik coverage-report --run /path/to/.kvik/runs/RUN_ID \
 
 Select a module when the run contains multiple JVM test scopes. Each report describes one test scope, including the production modules recorded in that scope's coverage specification. The output directory must be new and outside the retained run. The tools file selects the verified JDK and pinned coverage reporter. Report generation analyzes retained execution data, classes and sources; it does not rerun tests or compile current sources.
 
+Analysis and normalization have separate local cache entries. `coverage-report`
+accepts `--store PATH`, defaulting to `.kvik/cache` under the current working
+directory. Keep the cache outside the retained run, tools file and output
+directory. The command validates retained classes, sources, execution data and
+run metadata on every request. A cache hit skips JaCoCo execution and staging of
+analysis inputs. The tools declaration and bundled worker identities are still
+required; the JDK installation is verified only when analysis must execute.
+Changing tool identities invalidates reuse. `graph.json` records each cache
+decision and whether analysis or normalization executed. Output directories must
+still be new, and a cache hit preserves the original report status.
+
 The normalized report preserves original source paths, modules, source sets and content digests. Each source line has one of five states:
 
 - `covered`: at least one measured instruction on the line executed.

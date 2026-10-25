@@ -10,12 +10,13 @@ import kvik.runevidence.*
 internal fun testReportCommand(args: List<String>): JsonValue.Object {
     var runPath: String? = null
     var outputPath: String? = null
+    var storeArgument: String? = null
     var format = "junit-xml"
     val modules = linkedSetOf<String>()
     val targets = linkedSetOf<String>()
     val seen = mutableSetOf<String>()
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_TEST_REPORT_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use test-report --run PATH --output DIRECTORY [--format json|junit-xml] [--module ID] [--target TARGET]", ExitStatus.INVALID_CONFIGURATION)
+        "$message. Use test-report --run PATH --output DIRECTORY [--format json|junit-xml] [--module ID] [--target TARGET] [--store PATH]", ExitStatus.INVALID_CONFIGURATION)
     var index = 0
     while (index < args.size) {
         val flag = args[index++]
@@ -25,6 +26,7 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
         when (flag) {
             "--run" -> runPath = value
             "--output" -> outputPath = value
+            "--store" -> storeArgument = value
             "--format" -> format = value
             "--module" -> modules.add(value)
             "--target" -> targets.add(value)
@@ -36,6 +38,9 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
     if (format !in setOf("json", "junit-xml")) arguments("Unsupported report format $format")
     if (pathsPhysicallyOverlap(output, directory)) arguments("Output must be outside the retained run")
     if (NativeFiles.info(output) != null) arguments("Output directory already exists: $output")
+    val store = try { reportStorePath(storeArgument, listOf(directory), output) } catch (failure: IllegalArgumentException) {
+        arguments(failure.message ?: "Invalid report cache path")
+    }
     try {
         NativeFiles.ensureDirectory(directory, create = false)
         fun read(name: String) = NativeFiles.read("$directory/$name", 16 * 1024 * 1024)
@@ -54,14 +59,13 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
         val composition = Digest(runtimeComposition, runtimeCompositionSize)
         val retainedInputs = TreeManifest(listOf("verification.json" to verificationBytes, "completion.json" to completionBytes, "events.jsonl" to journalBytes)
             .map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
-        var report: TestReport? = null
         val artifacts = mutableMapOf<String, ByteArray>()
         val recipes = linkedMapOf<String, ActionSpec>()
         val exportName = if (format == "json") "export.json" else "junit.xml"
         fun action(id: String, implementation: String, inputs: TreeManifest, name: String, parameters: JsonValue.Object) = ActionSpec(
             implementation, composition, ActionKind.GENERATE, mapOf("os" to "portable", "arch" to "any"), "reports",
             mapOf("kvik" to composition), inputs, listOf(LogicalPath(name)), emptyList(), emptyMap(), parameters,
-            cachePolicy = CachePolicy.NEVER).also { recipes[id] = it }
+            cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
         val nodes = listOf(
             ActionNode("test-report:aggregate", emptySet()) {
                 action("test-report:aggregate", "kvik-test-report-aggregate-v1", retainedInputs, "report.json",
@@ -72,32 +76,23 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
                     exportName, obj("format" to format.json()))
             },
         )
-        val executor = object : ActionExecutor {
-            override fun resources(action: ActionSpec) = ResourceRequest(memoryMiB = 128)
-            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-                val bytes = when (actionId) {
-                    "test-report:aggregate" -> testReport(record, events, modules, targets).also { report = it }.toJson().canonical().encodeToByteArray()
-                    "test-report:export" -> {
-                        val input = artifacts.getValue("report.json")
-                        require(action.inputs.files.single().digest == Sha256.digest(input)) { "Report export input mismatch" }
-                        if (format == "json") input else junitXml(checkNotNull(report)).encodeToByteArray()
-                    }
-                    else -> error("Unknown report action")
-                }
-                require(bytes.size <= 64 * 1024 * 1024) { "Report exceeds 64 MiB limit" }
-                val name = action.outputs.single()
-                artifacts[name.value] = bytes
-                val result = ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED,
-                    TreeManifest(listOf(FileEntry(name, Sha256.digest(bytes)))), 0)
-                return object : RunningAction {
-                    override fun poll() = result
-                    override fun cancel() = Unit
-                    override fun close() = Unit
-                }
-            }
-        }
         val actionEvents = mutableListOf<RunEvent>()
-        val results = SchedulerRun("report-${record.runId}", nodes, executor, ResourceBudget(1, 128), EventJournal { actionEvents.add(it) }).use { run ->
+        val runId = "report-${record.runId}"
+        val executor = cachedReportExecutor(store, 128, { name, bytes -> artifacts[name] = bytes }, {},
+            { type, payload -> actionEvents.add(RunEvent(runId, actionEvents.size + 1L, type, payload)) }) { actionId, action ->
+            val bytes = when (actionId) {
+                "test-report:aggregate" -> testReport(record, events, modules, targets).toJson().canonical().encodeToByteArray()
+                "test-report:export" -> {
+                    val input = artifacts.getValue("report.json")
+                    require(action.inputs.files.single().digest == Sha256.digest(input)) { "Report export input mismatch" }
+                    if (format == "json") input else junitXml(testReportFromJson(json(input))).encodeToByteArray()
+                }
+                else -> error("Unknown report action")
+            }
+            require(bytes.size <= 64 * 1024 * 1024) { "Report exceeds 64 MiB limit" }
+            mapOf(action.outputs.single().value to bytes)
+        }
+        val results = SchedulerRun(runId, nodes, executor, ResourceBudget(1, 128), EventJournal { actionEvents.add(it.copy(sequence = actionEvents.size + 1L)) }).use { run ->
             while (!run.tick()) { /* Only bounded synchronous transformations run here. */ }
             run.results.values.toList().also { values -> require(values.all { it.successful }) {
                 values.filter { !it.successful }.joinToString { "${it.actionId}: ${it.diagnostic}" }
@@ -118,7 +113,7 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
         } finally { NativeFiles.removeTree(stage) }
         return obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to record.runId.json(), "outputDirectory" to output.json(),
             "format" to format.json(), "artifacts" to TreeManifest(artifacts.map { (name, bytes) -> FileEntry(LogicalPath(name), Sha256.digest(bytes)) }).toJson(),
-            "sourceRunStatus" to record.status.name.lowercase().json(), "reportStatus" to checkNotNull(report).status.name.lowercase().json())
+            "sourceRunStatus" to record.status.name.lowercase().json(), "reportStatus" to retainedReportJson(artifacts, "report.json").values.getValue("status"))
     } catch (failure: CliFailure) { throw failure
     } catch (failure: Exception) {
         throw CliFailure("KVIK_TEST_REPORT_FAILED", DiagnosticCategory.INFRASTRUCTURE,

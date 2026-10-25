@@ -96,7 +96,7 @@ private fun command(args: Array<String>) {
             Coverage Checks: coverage-publish --report PATH --repository OWNER/REPO --sha SHA [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY
             Coverage export: coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY
             Coverage aggregation: coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY
-            Report cache: test-aggregate, coverage-aggregate, coverage-check and coverage-export accept --store PATH (default: .kvik/cache in the current directory)
+            Report cache: test-report, test-aggregate, coverage-report, coverage-aggregate, coverage-check and coverage-export accept --store PATH (default: .kvik/cache in the current directory)
             Launcher options before --: --java-home PATH --konan-home PATH --cache-dir PATH --offline
         """.trimIndent())
         "doctor" -> exitProcess(doctorCommand(args.drop(1)).code)

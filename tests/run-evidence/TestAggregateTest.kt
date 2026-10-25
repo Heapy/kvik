@@ -8,6 +8,9 @@ class TestAggregateTest {
         val retry = test().copy(details = TestDetails("Suite", "retry", listOf(
             TestAttempt(1, TestStatus.FAILED, failure = TestFailure(TestFailureKind.ASSERTION, message = "original failure")),
             TestAttempt(2, TestStatus.PASSED))))
+        val single = report("single-run", listOf(retry), completed = emptySet(), status = VerificationStatus.FAILED)
+        assertEquals(single.toJson(), testReportFromJson(single.toJson()).toJson())
+        assertEquals(junitXml(single), junitXml(testReportFromJson(single.toJson())))
         val result = aggregate(report("retry-run", listOf(retry), completed = emptySet(), status = VerificationStatus.FAILED),
             expected = setOf("a:jvm:test", "missing:linuxX64:test"))
         val restored = testAggregateFromJson(parseJson(result.toJson().canonical()))

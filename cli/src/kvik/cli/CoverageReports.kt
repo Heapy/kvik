@@ -14,12 +14,12 @@ import platform.posix.usleep
 /** Analyze the classes and sources retained by a test launch, independently of today's project. */
 internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_COVERAGE_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY", ExitStatus.INVALID_CONFIGURATION)
+        "$message. Use coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY [--store PATH]", ExitStatus.INVALID_CONFIGURATION)
     val options = linkedMapOf<String, String>()
     var index = 0
     while (index < args.size) {
         val flag = args[index++]
-        if (flag !in setOf("--run", "--module", "--tools", "--output")) arguments("Unknown option $flag")
+        if (flag !in setOf("--run", "--module", "--tools", "--output", "--store")) arguments("Unknown option $flag")
         val value = args.getOrNull(index++) ?: arguments("Missing value for $flag")
         if (value.isBlank() || options.put(flag, value) != null) arguments("Empty or repeated $flag")
     }
@@ -29,8 +29,14 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
     val toolsPath = path("--tools")
     if (pathsPhysicallyOverlap(directory, output)) arguments("Output must be outside the retained run")
     if (NativeFiles.info(output) != null) arguments("Output directory already exists")
+    val store = try { reportStorePath(options["--store"], listOf(directory, toolsPath), output) } catch (failure: IllegalArgumentException) {
+        arguments(failure.message ?: "Invalid report cache path")
+    }
     var stage: String? = null
     check(kvik_interrupt_install() == 0) { "Cannot install coverage interruption handlers" }
+    fun checkpoint() {
+        if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_COVERAGE_CANCELLED", DiagnosticCategory.CANCELLATION, "Coverage report cancelled", ExitStatus.CANCELLED)
+    }
     try {
         fun json(bytes: ByteArray) = parseJson(bytes.decodeToString(throwOnInvalidSequence = true))
         fun read(name: String) = NativeFiles.read("$directory/$name", 16 * 1024 * 1024)
@@ -87,12 +93,6 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
             tests.getValue("counts").objectValue().getValue("discoveryComplete").booleanValue()
         val tools = BuildTools(toolsPath)
         val identities = tools.desiredIdentities(setOf("jvm")).getValue("jvm")
-        val layout = tools.jvmProvider().verifiedExecution(identities) {
-            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_COVERAGE_CANCELLED", DiagnosticCategory.CANCELLATION, "Coverage report cancelled", ExitStatus.CANCELLED)
-        }
-        require(layout.jacocoAgentIdentity == specification.agent && layout.jacocoCliIdentity == specification.reporter) {
-            "Installed coverage tools differ from the test producer"
-        }
         val parent = output.substringBeforeLast('/')
         NativeFiles.ensureDirectory(parent)
         val workspace = NativeFiles.tempDirectory(parent).also { stage = it }
@@ -106,27 +106,26 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
         val classes = inputs.files.filter { file -> specification.classDirectories.any { file.path.value.startsWith(it.path.value + "/") } }
         val sources = specification.sources.map { FileEntry(it.inputPath, it.digest) }.distinct()
         val analysisFiles = TreeManifest(classes + sources)
-        var totalBytes = 0L
-        for (entry in analysisFiles.files) {
-            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_COVERAGE_CANCELLED", DiagnosticCategory.CANCELLATION, "Coverage report cancelled", ExitStatus.CANCELLED)
+        fun readAnalysisInput(entry: FileEntry): ByteArray {
+            checkpoint()
             require(inputs.files.contains(entry)) { "Coverage source is not a test input" }
             val limit = if (entry in sources) 16 * 1024 * 1024 else 32 * 1024 * 1024
+            return NativeFiles.read("$testDirectory/input/${entry.path.value}", limit).also {
+                require(Sha256.digest(it) == entry.digest) { "Retained coverage input differs: ${entry.path.value}" }
+            }
+        }
+        var totalBytes = 0L
+        for (entry in analysisFiles.files) {
             totalBytes += entry.digest.sizeBytes
             require(totalBytes <= 1024L * 1024 * 1024) { "Coverage inputs exceed 1 GiB" }
-            val bytes = NativeFiles.read("$testDirectory/input/${entry.path.value}", limit)
-            require(Sha256.digest(bytes) == entry.digest) { "Retained coverage input differs: ${entry.path.value}" }
-            write("$workspace/${entry.path.value}", bytes)
+            readAnalysisInput(entry)
         }
-        specification.classDirectories.forEach { NativeFiles.ensureDirectory("$workspace/${it.path.value}") }
         val executionData = execBytes?.let {
-            write("$workspace/coverage.exec", it)
             listOf(FileEntry(LogicalPath("coverage.exec"), Sha256.digest(it)))
         } ?: emptyList()
         val request = obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to check.json(),
             "specification" to specification.toJson(), "executionData" to executionData.map { it.toJson() }.json(),
             "executionComplete" to executionComplete.json(), "files" to classes.map { it.toJson() }.json())
-        write("$workspace/request.json", request.canonical().encodeToByteArray())
-        NativeFiles.ensureDirectory("$workspace/home"); NativeFiles.ensureDirectory("$workspace/tmp")
         val composition = Digest(runtimeComposition, runtimeCompositionSize)
         val metadata = listOf("verification.json" to verification, "completion.json" to completion, "events.jsonl" to journal,
             "recipe.json" to recipeBytes, "observation.json" to observationBytes, "capture.json" to captureBytes,
@@ -134,13 +133,11 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
         val boundInputs = TreeManifest(analysisFiles.files + executionData + metadata.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
         val artifacts = linkedMapOf<String, ByteArray>()
         execBytes?.let { artifacts["coverage.exec"] = it }
-        var worker: Map<String, JsonValue>? = null
-        var report: CoverageReport? = null
         val recipes = linkedMapOf<String, ActionSpec>()
         fun recipe(id: String, inputs: TreeManifest, outputs: List<String>) = ActionSpec("kvik-$id-v1", composition,
             ActionKind.GENERATE, jvmHostPlatform(), "reports", identities + ("jacoco" to specification.reporter),
             inputs, outputs.map(::LogicalPath), emptyList(), mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"),
-            obj("specification" to specification.toJson()), cachePolicy = CachePolicy.NEVER).also { recipes[id] = it }
+            obj("specification" to specification.toJson()), cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
         val nodes = listOf(
             ActionNode("coverage-analyze", emptySet()) { recipe("coverage-analyze", boundInputs,
                 listOf("worker-result.json") + specification.classDirectories.map { "coverage/${it.module}/jacoco.xml" }) },
@@ -148,6 +145,7 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
                 TreeManifest(predecessors.getValue("coverage-analyze").outputs.files + boundInputs.files), listOf("coverage.json")) },
         )
         val actionEvents = mutableListOf<RunEvent>()
+        val runId = "coverage-${record.runId}"
         val results = runtimeProcessHost().use { host ->
             val executor = object : ActionExecutor {
                 override fun resources(action: ActionSpec) = ResourceRequest(512)
@@ -155,18 +153,30 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
                     fun success(names: List<String>) = ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED,
                         TreeManifest(names.map { FileEntry(LogicalPath(it), Sha256.digest(artifacts.getValue(it))) }), 0)
                     if (actionId == "coverage-normalize") {
-                        val analyzed = checkNotNull(worker)
+                        val analyzed = json(artifacts.getValue("worker-result.json"))
+                            .fields(setOf("schemaVersion", "requestId", "status", "sources", "xml", "diagnostics"))
+                        analyzed.requireVersion()
+                        require(analyzed.getValue("requestId") == check.json())
                         val originals = TreeManifest(artifacts.filterKeys { it == "coverage.exec" || it.endsWith("/jacoco.xml") }
                             .map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
-                        report = CoverageReport(record.runId, check, Sha256.digest(verification), record.inputSnapshot, record.configuration,
+                        val report = CoverageReport(record.runId, check, Sha256.digest(verification), record.inputSnapshot, record.configuration,
                             record.dependencyLock, Sha256.digest(boundInputs.toJson()), specification, record.status, record.freshnessAtCompletion,
                             analyzed.getValue("sources").arrayValue().map(SourceCoverage::fromJson), originals,
                             executionComplete && analyzed.getValue("status").stringValue() == "complete",
                             analyzed.getValue("diagnostics").arrayValue().map(JsonValue::stringValue))
-                        artifacts["coverage.json"] = report!!.toJson().canonical().encodeToByteArray()
+                        artifacts["coverage.json"] = report.toJson().canonical().encodeToByteArray()
                         val result = success(listOf("coverage.json"))
                         return object : RunningAction { override fun poll() = result; override fun cancel() = Unit; override fun close() = Unit }
                     }
+                    val layout = tools.jvmProvider().verifiedExecution(identities, ::checkpoint)
+                    require(layout.jacocoAgentIdentity == specification.agent && layout.jacocoCliIdentity == specification.reporter) {
+                        "Installed coverage tools differ from the test producer"
+                    }
+                    for (entry in analysisFiles.files) write("$workspace/${entry.path.value}", readAnalysisInput(entry))
+                    specification.classDirectories.forEach { NativeFiles.ensureDirectory("$workspace/${it.path.value}") }
+                    execBytes?.let { write("$workspace/coverage.exec", it) }
+                    write("$workspace/request.json", request.canonical().encodeToByteArray())
+                    NativeFiles.ensureDirectory("$workspace/home"); NativeFiles.ensureDirectory("$workspace/tmp")
                     val command = listOf(layout.javaExecutable, "-Xmx512m", "-Duser.home=$workspace/home", "-Djava.io.tmpdir=$workspace/tmp",
                         "-cp", listOf(layout.workerClasses, checkNotNull(layout.jacocoCli), layout.stdlibJar).joinToString(":"),
                         "kvik.jvm.CoverageWorker", workspace, "request.json", "worker-result.json")
@@ -215,14 +225,15 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
                                 require(Sha256.digest(content) == Digest.fromJson(file.getValue("digest")))
                                 artifacts[path] = content; names.add(path)
                             }
-                            worker = analyzed
                             artifacts["worker-result.json"] = bytes
                             return success(names).copy(processUsage = listOfNotNull(exit.usage))
                         }
                     }
                 }
             }
-            SchedulerRun("coverage-${record.runId}", nodes, executor, ResourceBudget(1, 512), EventJournal { actionEvents.add(it) }).use { run ->
+            val cached = cacheReportActions(store, executor, artifacts::getValue, { path, bytes -> artifacts[path] = bytes }, ::checkpoint,
+                { type, payload -> actionEvents.add(RunEvent(runId, actionEvents.size + 1L, type, payload)) })
+            SchedulerRun(runId, nodes, cached, ResourceBudget(1, 512), EventJournal { actionEvents.add(it.copy(sequence = actionEvents.size + 1L)) }).use { run ->
                 while (true) {
                     if (kvik_interrupt_requested() != 0) run.cancel()
                     if (run.tick()) break
@@ -237,16 +248,13 @@ internal fun coverageReportCommand(args: List<String>): JsonValue.Object {
             "actions" to nodes.map { node -> obj("actionId" to node.id.json(), "dependencies" to node.dependencies.sorted().map { it.json() }.json(),
                 "action" to recipes.getValue(node.id).toJson()) }.json(), "results" to results.map { it.toJson() }.json(),
             "events" to actionEvents.map { it.toJson() }.json()).canonical().encodeToByteArray()
-        fun checkpoint() {
-            if (kvik_interrupt_requested() != 0) throw CliFailure("KVIK_COVERAGE_CANCELLED", DiagnosticCategory.CANCELLATION, "Coverage report cancelled", ExitStatus.CANCELLED)
-        }
         artifacts.forEach { (name, bytes) -> checkpoint(); write("$publish/$name", bytes) }
         NativeFiles.syncDirectory(publish)
         checkpoint()
         NativeFiles.exposeDirectory(publish, output)
         return obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to record.runId.json(), "check" to check.json(),
             "outputDirectory" to output.json(), "sourceRunStatus" to record.status.name.lowercase().json(),
-            "reportStatus" to checkNotNull(report).status.name.lowercase().json(),
+            "reportStatus" to retainedReportJson(artifacts, "coverage.json").values.getValue("status"),
             "artifacts" to TreeManifest(artifacts.map { (name, bytes) -> FileEntry(LogicalPath(name), Sha256.digest(bytes)) }).toJson())
     } catch (failure: CliFailure) { throw failure
     } catch (failure: Exception) {

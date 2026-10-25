@@ -9,7 +9,14 @@ kvik test-report --run /path/to/.kvik/runs/RUN_ID --output /path/to/selected-rep
 
 The default format is `junit-xml`; `--format json` exports the normalized result. Module and target options may be repeated. Selection is limited to the test scopes requested by that run. An absent module or target is an error. The output directory must be new and outside the retained run.
 
-The directory contains `report.json`, `junit.xml` (or `export.json`) and `graph.json`. Aggregation and export are separate graph actions. Their inputs include the committed run records, scope selection and implementation identity; export consumes the normalized report artifact. These transformations currently execute locally on each request. They do not rerun tests or turn historical results into verification of current sources. The command exit status describes report generation; the JSON response separately identifies the source run and report statuses.
+The directory contains `report.json`, `junit.xml` (or `export.json`) and `graph.json`. Aggregation and export are separate graph actions. Their inputs include the committed run records, scope selection and implementation identity; export consumes the normalized report artifact. These transformations use the local action cache, with `executed` or `local_hit` outcomes in `graph.json`. They do not rerun tests or turn historical results into verification of current sources. The command exit status describes report generation; the JSON response separately identifies the source run and report statuses.
+
+`test-report` accepts `--store PATH` and defaults to `.kvik/cache` under the current
+working directory. The store must be outside the retained run and output
+directories. Each call validates the retained run before consulting the cache.
+Changing only the export format reuses the normalized report. Negative source
+and report statuses remain negative on cache hits; cache corruption or an
+unavailable store falls back to local transformation.
 
 Filtering narrows the reported test cases but conservatively retains the source run's failed, incomplete or cancelled overall status. Individual scope outcomes remain available separately. New records retain each observed test scope’s status and discovery counts, including when another scope fails or execution stops early. Older records contain only aggregate discovery counts, so their per-scope discovery counts remain unknown when a run requested multiple test scopes. JSON schemas are published in `schemas/v1/contracts.json` as `testReport`, `testReportGraph` and `testReportExport`.
 
