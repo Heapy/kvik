@@ -1,6 +1,6 @@
 """Bounded, source-pinned Native interop recipes used by the composed runtime."""
 from bootstrap.identity import inventory, canonical, digest
-from bootstrap.pin_tools import native_target
+from bootstrap.pin_tools import native_target, NATIVE_DEPENDENCIES
 from pathlib import Path
 
 RECIPES = {
@@ -36,10 +36,18 @@ def linker_options(roots):
             '-linker-option', f'-L{roots["nativeToolchain"]}/x86_64-unknown-linux-gnu/lib64']
 
 
+def compiler_properties():
+    # The distribution also lists LLDB, which is a debugger rather than an input
+    # to these compile/link recipes. Restrict eager dependency preparation to the
+    # trees actually pinned by bootstrap; do not require an ambient LLDB cache.
+    target = native_target()
+    return 'airplaneMode=true;dependencies.' + target + '=' + ' '.join(NATIVE_DEPENDENCIES[target].values())
+
+
 def runtime_properties(roots):
     """Only the host runtime links captured system C libraries, not consumer programs."""
     if native_target() == 'macos_arm64':
-        return 'airplaneMode=true'
+        return compiler_properties()
     # Ubuntu's captured libc linker script names /lib and /lib64. Require those
     # aliases to remain inside the inventoried /usr tree; do not mix its headers
     # and shared libraries with Konan's older glibc sysroot.
@@ -50,7 +58,7 @@ def runtime_properties(roots):
     gcc = roots['nativeToolchain'] / 'lib/gcc/x86_64-unknown-linux-gnu/8.3.0'
     if any(char in str(gcc) for char in ';=\r\n'):
         raise ValueError('Native toolchain path cannot contain property separators')
-    return ';'.join(['airplaneMode=true', 'targetSysRoot.linux_x64=/',
+    return ';'.join([compiler_properties(), 'targetSysRoot.linux_x64=/',
         f'libGcc.linux_x64={gcc}', 'abiSpecificLibraries.linux_x64=usr/lib/x86_64-linux-gnu',
         'crtFilesLocation.linux_x64=usr/lib/x86_64-linux-gnu',
         'dynamicLinker.linux_x64=/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2'])
@@ -89,6 +97,6 @@ def build(names, source_root, output, roots, environment, log, run_owned):
             options += ['-libraryPath', str(output)]
         library = output / name
         run_owned([roots["kotlinNative"] / "bin/cinterop", "-def", source / (definition + ".def"), *options,
-            "-target", native_target(), "-Xoverride-konan-properties", "airplaneMode=true", "-o", library], environment, log)
+            "-target", native_target(), "-Xoverride-konan-properties", compiler_properties(), "-o", library], environment, log)
         libraries.append(library.with_suffix(".klib"))
     return libraries

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pinned bootstrap tool archives",
+  "description": "Optional acquisition policy. Host and component tree digests must match bootstrap/toolchains.lock.json. URLs and cache paths do not change runtime identity.",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "host", "components"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "host": {
+      "type": "object", "additionalProperties": false,
+      "required": ["os", "architecture", "release", "sdk"],
+      "properties": {
+        "os": {"type": "string"}, "architecture": {"type": "string"},
+        "release": {"type": "string"}, "sdk": {"type": "string"}
+      }
+    },
+    "components": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "jdk": {"$ref": "#/$defs/archive"},
+        "kotlinNative": {"$ref": "#/$defs/archive"},
+        "llvm": {"$ref": "#/$defs/archive"},
+        "libffi": {"$ref": "#/$defs/archive"},
+        "nativeToolchain": {"$ref": "#/$defs/archive"}
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object", "additionalProperties": false, "required": ["hash", "sizeBytes"],
+      "properties": {
+        "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"},
+        "sizeBytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)(?:\\.{1,2}|\\.[gG][iI][tT])(?:/|$))(?!.*//)[^\\\\*?\\[\\]\\u0000-\\u001f\\u007f]+(?<!/)$(?![\\s\\S])",
+      "description": "Normalized relative path; the launcher additionally requires NFC, at most 64 segments and 1024 UTF-8 bytes.",
+      "maxLength": 1024
+    },
+    "archive": {
+      "type": "object", "additionalProperties": false,
+      "required": ["url", "digest", "format", "rootPrefix", "directory", "tree"],
+      "properties": {
+        "url": {"type": "string", "pattern": "^https://[^#\\s]+$(?![\\s\\S])"},
+        "digest": {"allOf": [{"$ref": "#/$defs/digest"}, {"properties": {"sizeBytes": {"maximum": 4294967296}}}]},
+        "format": {"enum": ["tar.gz", "zip"]},
+        "rootPrefix": {"anyOf": [{"const": ""}, {"$ref": "#/$defs/relativePath"}]},
+        "directory": {"anyOf": [{"const": "."}, {"$ref": "#/$defs/relativePath"}]},
+        "tree": {"allOf": [{"$ref": "#/$defs/digest"}, {"properties": {"sizeBytes": {"maximum": 134217728}}}]}
+      }
+    }
+  }
+}

@@ -41,7 +41,7 @@ class BootstrapLaunch private constructor(
     }
 
     companion object {
-        private val pathFlags = listOf("--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache", "--runtime-store")
+        private val pathFlags = listOf("--java-home", "--konan-home", "--konan-data", "--cache-dir", "--artifact-cache", "--source-lock", "--source-cache", "--runtime-store", "--tool-archives", "--tool-cache")
         private val policyFlags = listOf("--offline", "--no-build")
         private const val timeoutFlag = "--bootstrap-command-timeout"
 
@@ -55,7 +55,7 @@ class BootstrapLaunch private constructor(
             val launcher = absolute(fields.getValue("launcher").stringValue())
             require(launcher == child(root, "kvik")) { "Bootstrap launcher must belong to its source root" }
             val arguments = fields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
-            require(arguments.size in 6..20) { "Invalid bootstrap argument count" }
+            require(arguments.size in 6..24) { "Invalid bootstrap argument count" }
             val paths = mutableMapOf<String, String>()
             var cursor = 0
             var previousFlag = -1
@@ -82,6 +82,9 @@ class BootstrapLaunch private constructor(
             }
             require("--source-cache" !in paths || "--source-lock" in paths) {
                 "Bootstrap source cache requires a source lock"
+            }
+            require("--tool-cache" !in paths || "--tool-archives" in paths) {
+                "Bootstrap tool cache requires an archive lock"
             }
             val composition = Digest.fromJson(fields.getValue("composition"))
             val runtime = absolute(fields.getValue("runtime").stringValue())

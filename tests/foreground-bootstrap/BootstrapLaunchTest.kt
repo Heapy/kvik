@@ -130,6 +130,28 @@ class BootstrapLaunchTest {
         )) assertFails { parse(changed).requireReplacement(current, next) }
     }
 
+    @Test fun toolAcquisitionPolicySurvivesRecomposition() {
+        val launch = BootstrapLaunch.parse(toolArchivesProducerDescriptor)
+        val fields = parseJson(toolArchivesProducerDescriptor.decodeToString()).objectValue()
+        val arguments = fields.getValue("bootstrapArguments").arrayValue().map { it.stringValue() }
+        assertEquals(24, arguments.size)
+        assertEquals(listOf("--tool-archives", "/tool locks $(literal)/../archives.json", "--tool-cache", "/tool cache"),
+            arguments.subList(16, 20))
+        assertEquals(listOf(launch.python, launch.launcher) + arguments + "--print-launch", launch.command(BootstrapQuery.LAUNCH))
+        fun parse(values: List<String>) = BootstrapLaunch.parse(JsonValue.Object(fields +
+            ("bootstrapArguments" to values.map { it.json() }.json())).canonical().encodeToByteArray())
+        for (invalid in listOf(arguments.filterIndexed { index, _ -> index !in 16..17 },
+            arguments.take(17), arguments.take(19), arguments + "--tool-cache",
+            arguments.toMutableList().also { it[17] = "relative/archives.json" })) {
+            assertFails { parse(invalid) }
+        }
+        for (changed in listOf(arguments.toMutableList().also { it[17] = "/another/archives.json" },
+            arguments.toMutableList().also { it[19] = "/another/cache" },
+            arguments.filterIndexed { index, _ -> index !in 18..19 })) {
+            assertFails { parse(changed).requireReplacement(launch, launch.composition) }
+        }
+    }
+
     @Test fun responsesAreBoundedStrictUtf8AndExactSchema() {
         val current = BootstrapLaunch.parse(producerDescriptor)
         val query = obj("schemaVersion" to 1.json(), "composition" to current.composition.toJson())

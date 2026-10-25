@@ -14,7 +14,7 @@ import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
 from bootstrap.pin_tools import host_identity, tool_roots, native_target, component_names
-from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier
+from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier, tool_archives
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -176,6 +176,7 @@ def validate_runtime_store(args, selected, lock):
     store = args.runtime_store
     protected = [ROOT / "kvik", ROOT / "bootstrap", args.cache_dir, args.artifact_cache]
     protected.append(Path(args.konan_data))
+    protected.extend(path for path in (getattr(args, 'tool_archives', None), getattr(args, 'tool_cache', None)) if path is not None)
     protected.extend(tool_roots(args.java_home, args.konan_home, args.konan_data).values())
     if isinstance(selected, source_graph.ObservedGraph):
         protected.extend([args.source_lock, args.source_cache])
@@ -187,6 +188,29 @@ def validate_runtime_store(args, selected, lock):
         protected.extend(ROOT / source["origin"] for source in lock["sources"])
     if store.is_symlink() or any(overlap(store, path) for path in protected):
         raise ValueError("Runtime store overlaps bootstrap inputs or another bootstrap cache")
+
+
+def validate_tool_outputs(args, selected, lock):
+    """Validate acquisition policy before any cache directory is created."""
+    from bootstrap.source_files import overlap
+    tool_archives.read_lock(args.tool_archives, lock['toolchains'], lock['platform'])
+    protected = [ROOT / 'kvik', ROOT / 'bootstrap', args.tool_archives, Path(args.konan_data)]
+    protected.extend(tool_roots(args.java_home, args.konan_home, args.konan_data).values())
+    outputs = [args.cache_dir, args.artifact_cache]
+    outputs.extend(path for path in (args.source_cache, args.runtime_store) if path is not None)
+    if isinstance(selected, source_graph.ObservedGraph):
+        protected.append(args.source_lock)
+        protected.extend(selected.local_roots[node['id']] / path
+                         for node in selected.graph.document['sources'] if node['pin']['kind'] == 'local'
+                         for path in node['contentPaths'])
+    else:
+        protected.extend(ROOT / source['origin'] for source in lock['sources'])
+    if args.tool_cache.is_symlink() or any(overlap(args.tool_cache, path) for path in protected):
+        raise ValueError('Tool cache overlaps bootstrap inputs or tool installations')
+    if any(overlap(args.tool_cache, path) for path in outputs):
+        raise ValueError('Tool cache must be separate from other bootstrap caches')
+    if any(overlap(args.tool_archives, path) for path in [*outputs, args.tool_cache]):
+        raise ValueError('Bootstrap cache overlaps tool archive lock')
 
 
 def validate_options(options, *, target=None):
@@ -238,9 +262,13 @@ def cached(directory, key):
 
 
 def validate_tools(args, expected):
-    if not args.java_home or not args.konan_home:
+    archive_lock = getattr(args, 'tool_archives', None)
+    if archive_lock is None and (not args.java_home or not args.konan_home):
         raise ValueError("Native rebuild requires --java-home and --konan-home (or JAVA_HOME and KONAN_HOME)")
     roots = tool_roots(args.java_home, args.konan_home, args.konan_data)
+    if archive_lock is not None:
+        document = tool_archives.read_lock(archive_lock, expected, host_identity())
+        roots.update(tool_archives.provision(document, args.tool_cache, offline=args.offline))
     if set(roots) != component_names() or set(expected) != component_names():
         raise ValueError("Tool component set differs from bootstrap host")
     for name, path in roots.items():
@@ -257,7 +285,9 @@ def launch_descriptor(args, key, executable):
                         ("--konan-data", args.konan_data), ("--cache-dir", args.cache_dir),
                         ("--artifact-cache", args.artifact_cache), ("--source-lock", getattr(args, "source_lock", None)),
                         ("--source-cache", getattr(args, "source_cache", None)),
-                        ("--runtime-store", getattr(args, "runtime_store", None))):
+                        ("--runtime-store", getattr(args, "runtime_store", None)),
+                        ("--tool-archives", getattr(args, "tool_archives", None)),
+                        ("--tool-cache", getattr(args, "tool_cache", None))):
         if value is not None:
             arguments.extend((flag, str(Path(value).absolute())))
     timeout = command_timeout(getattr(args, "bootstrap_command_timeout", 300))
@@ -394,7 +424,9 @@ def build(args, recipe, selected, lock, key, destination):
             for p in recipe["plugins"])
         executable = temporary / "kvik.kexe"
         environment = {name: os.environ[name] for name in ("HOME", "TMPDIR") if name in os.environ}
-        environment.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "JAVA_HOME": str(roots["jdk"]), "KONAN_DATA_DIR": str(Path(args.konan_data).resolve()),
+        konan_data = (tool_archives.native_data(roots, temporary / 'konan-data', native_target())
+                      if getattr(args, 'tool_archives', None) is not None else Path(args.konan_data).resolve())
+        environment.update({"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "JAVA_HOME": str(roots["jdk"]), "KONAN_DATA_DIR": str(konan_data),
             "LANG": "C", "LC_ALL": "C", "TZ": "UTC"})
         if native_target() == 'macos_arm64':
             environment.update({"DEVELOPER_DIR": str(roots["xcodeToolchain"].parents[1]), "SDKROOT": str(roots["sdk"])})
@@ -409,7 +441,7 @@ def build(args, recipe, selected, lock, key, destination):
             [clang, *c_options, "-c", native / "process.c", "-o", bridge / "process.o"],
             [ar, "rcs", bridge / "libkvik-process.a", bridge / "process.o"],
             [roots["kotlinNative"] / "bin/cinterop", "-def", native / "process.def", "-compiler-option", f"-I{native}",
-                *native_libraries.interop_options(roots), "-libraryPath", bridge, "-target", native_target(), "-Xoverride-konan-properties", "airplaneMode=true", "-o", bridge / "process"],
+                *native_libraries.interop_options(roots), "-libraryPath", bridge, "-target", native_target(), "-Xoverride-konan-properties", native_libraries.compiler_properties(), "-o", bridge / "process"],
         ]
         log_path = args.cache_dir / "logs" / (key["hash"] + ".log")
         log_path.parent.mkdir(exist_ok=True)
@@ -452,6 +484,8 @@ def build(args, recipe, selected, lock, key, destination):
         (temporary / "manifest.json").write_bytes(canonical(manifest) + b"\n")
         shutil.rmtree(temporary / "sources")
         shutil.rmtree(bridge)
+        if (temporary / 'konan-data').exists():
+            shutil.rmtree(temporary / 'konan-data')
         jvm_worker.verify_bundle(temporary, worker_digest)
         jvm_worker.sync_tree(temporary)
         if desired_composition(args)[3] != key:
@@ -532,6 +566,8 @@ def main():
     parser.add_argument("--source-lock", type=Path)
     parser.add_argument("--source-cache", type=Path)
     parser.add_argument("--runtime-store", type=Path)
+    parser.add_argument("--tool-archives", type=Path)
+    parser.add_argument("--tool-cache", type=Path)
     parser.add_argument("--bootstrap-command-timeout", type=command_timeout, default=300,
                         help="Per-command bootstrap deadline in seconds (1–3600; default: 300).")
     parser.add_argument("--offline", action="store_true")
@@ -548,6 +584,12 @@ def main():
             raise ValueError("Bootstrap queries cannot include a runtime command")
         if args.source_cache is not None and args.source_lock is None:
             raise ValueError("--source-cache requires --source-lock")
+        if args.tool_cache is not None and args.tool_archives is None:
+            raise ValueError('--tool-cache requires --tool-archives')
+        if args.tool_archives is not None:
+            args.tool_archives = args.tool_archives.absolute()
+            args.tool_archives = args.tool_archives.parent.resolve(strict=True) / args.tool_archives.name
+            args.tool_cache = (args.tool_cache or ROOT / '.kvik/tool-distributions').absolute()
         if args.source_lock is not None:
             # Preserve the final component so a symlink lock is still rejected.
             args.source_lock = args.source_lock.absolute()
@@ -556,6 +598,8 @@ def main():
         args.cache_dir = args.cache_dir.resolve()
         args.artifact_cache = args.artifact_cache.absolute()
         recipe, selected, lock, key = desired_composition(args)
+        if args.tool_archives is not None:
+            validate_tool_outputs(args, selected, lock)
         if args.source_lock is not None:
             validate_graph_outputs(args, selected)
         if args.runtime_store is not None:

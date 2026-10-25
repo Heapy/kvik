@@ -11,6 +11,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bootstrap.identity import canonical, digest, inventory
 
+NATIVE_DEPENDENCIES = {
+    'macos_arm64': {'llvm': 'llvm-21-aarch64-macos-essentials-97', 'libffi': 'libffi-3.3-1-macos-arm64'},
+    'linux_x64': {'llvm': 'llvm-21-x86_64-linux-essentials-116', 'libffi': 'libffi-3.2.1-2-linux-x86-64',
+                  'nativeToolchain': 'x86_64-unknown-linux-gnu-gcc-8.3.0-glibc-2.19-kernel-4.9-2'},
+}
+
 
 def native_target():
     host = (platform.system(), platform.machine())
@@ -52,11 +58,11 @@ def validate_target_sdk(root, platform_name):
 def tool_roots(java_home, konan_home, konan_data, apple_targets=()):
     validate_apple_targets(apple_targets)
     dependencies = Path(konan_data).resolve() / "dependencies"
+    roots = {name: dependencies / directory for name, directory in NATIVE_DEPENDENCIES[native_target()].items()}
     if native_target() == "macos_arm64":
         sdk = Path(subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()).resolve()
         clang = Path(subprocess.check_output(["xcrun", "--find", "clang"], text=True).strip()).resolve()
-        roots = {"llvm": dependencies / "llvm-21-aarch64-macos-essentials-97",
-                 "libffi": dependencies / "libffi-3.3-1-macos-arm64", "sdk": sdk, "xcodeToolchain": clang.parents[2]}
+        roots.update(sdk=sdk, xcodeToolchain=clang.parents[2])
         developer = roots["xcodeToolchain"].parent.parent
         for target in sorted(apple_targets):
             component, platform_name, sdk_name = APPLE_TARGETS[target]
@@ -69,10 +75,7 @@ def tool_roots(java_home, konan_home, konan_data, apple_targets=()):
     else:
         # Exact dependency names from the pinned Kotlin/Native 2.4.20 distribution.
         # Never choose an arbitrary installed version by globbing the dependency cache.
-        roots = {"llvm": dependencies / "llvm-21-x86_64-linux-essentials-116",
-                 "libffi": dependencies / "libffi-3.2.1-2-linux-x86-64",
-                 "nativeToolchain": dependencies / "x86_64-unknown-linux-gnu-gcc-8.3.0-glibc-2.19-kernel-4.9-2",
-                 "system": Path("/usr")}
+        roots['system'] = Path('/usr')
     # Read-only bootstrap queries may omit compiler homes. SDK and Native data
     # locations are still known and must remain separate from writable stores.
     if java_home is not None:

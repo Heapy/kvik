@@ -52,7 +52,10 @@ class LinuxBootstrapTest(unittest.TestCase):
             self.assertEqual(roots['xcodeToolchain'] / 'usr/bin/ar', ar)
             self.assertEqual(['-D_DARWIN_C_SOURCE', '-isysroot', roots['sdk']], flags)
             self.assertEqual([], native_libraries.linker_options(roots))
-            self.assertEqual('airplaneMode=true', native_libraries.runtime_properties(roots))
+            properties = dict(item.split('=', 1) for item in native_libraries.runtime_properties(roots).split(';'))
+            self.assertEqual('true', properties['airplaneMode'])
+            self.assertEqual({'llvm-21-aarch64-macos-essentials-97', 'libffi-3.3-1-macos-arm64'},
+                             set(properties['dependencies.macos_arm64'].split()))
             launcher.validate_options(['-target', 'macos_arm64', '-entry', 'kvik.cli.main'])
             with self.assertRaises(ValueError):
                 launcher.validate_options(['-target', 'linux_x64', '-entry', 'kvik.cli.main'])
@@ -81,7 +84,11 @@ class LinuxBootstrapTest(unittest.TestCase):
         self.assertEqual(4, len(interops))
         for command in interops:
             self.assertEqual('linux_x64', command[command.index('-target') + 1])
-            self.assertIn('airplaneMode=true', command)
+            properties = dict(item.split('=', 1) for item in command[command.index('-Xoverride-konan-properties') + 1].split(';'))
+            self.assertEqual('true', properties['airplaneMode'])
+            self.assertEqual({'llvm-21-x86_64-linux-essentials-116', 'libffi-3.2.1-2-linux-x86-64',
+                             'x86_64-unknown-linux-gnu-gcc-8.3.0-glibc-2.19-kernel-4.9-2'},
+                             set(properties['dependencies.linux_x64'].split()))
             self.assertIn('-I/usr/include/x86_64-linux-gnu', command)
             self.assertNotIn('-linker-option', command)
             self.assertNotIn('-isysroot', command)
