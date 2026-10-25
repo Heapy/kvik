@@ -26,6 +26,9 @@ data class ProjectQueryFilter(val modules: List<String> = emptyList(), val targe
 }
 
 fun projectDeclarations(project: ProjectSpec, scripts: Map<String, ExpandedScript> = emptyMap()): List<JsonValue> = buildList {
+    fun pluginDeclaration(declaration: JsonValue.Object, plugin: CompilerPluginSpec): JsonValue.Object =
+        if (plugin.id == null) declaration else JsonValue.Object(declaration.values + mapOf(
+            "pluginId" to plugin.id.json(), "compilerVersion" to checkNotNull(plugin.compilerVersion).json()))
     fun declaration(module: String, source: String?, kind: String, coordinate: Coordinate?, dependency: String?,
                     scope: String, exported: Boolean, targets: List<String>, compilations: List<String>) = obj(
         "module" to module.json(), "sourceSet" to (source?.json() ?: JsonValue.Null), "kind" to kind.json(),
@@ -42,8 +45,8 @@ fun projectDeclarations(project: ProjectSpec, scripts: Map<String, ExpandedScrip
                 (dependency as? Dependency.Module)?.module, dependency.scope.name.lowercase(), dependency.exported,
                 reached.map { it.first }.distinct(), reached.map { it.second }.distinct()))
         }
-        for (plugin in module.compilerPlugins) add(declaration(module.id, null, "compiler-plugin", plugin.coordinate, plugin.module,
-            "compile", false, plugin.targets.sorted(), plugin.scopes.sorted()))
+        for (plugin in module.compilerPlugins) add(pluginDeclaration(declaration(module.id, null, "compiler-plugin", plugin.coordinate, plugin.module,
+            "compile", false, plugin.targets.sorted(), plugin.scopes.sorted()), plugin))
         module.sqlDelight?.let { settings ->
             for (coordinate in sqlDelightCompilerCoordinates(settings.version)) add(declaration(module.id, settings.sourceSet,
                 "sqldelight-compiler", coordinate, null, "runtime", false, listOf("jvm"), listOf("main")))
@@ -65,7 +68,7 @@ fun projectDeclarations(project: ProjectSpec, scripts: Map<String, ExpandedScrip
             "compilations" to listOf("script".json()).json(), "origin" to origin.toJson())
         for ((dependency, origin) in script.dependencies) add(declared(if (dependency is Dependency.External) "external" else "module",
             (dependency as? Dependency.External)?.coordinate, (dependency as? Dependency.Module)?.module, dependency.scope.name.lowercase(), origin))
-        for ((plugin, origin) in script.compilerPlugins) add(declared("compiler-plugin", plugin.coordinate, plugin.module, "compile", origin))
+        for ((plugin, origin) in script.compilerPlugins) add(pluginDeclaration(declared("compiler-plugin", plugin.coordinate, plugin.module, "compile", origin), plugin))
     }
 
 }

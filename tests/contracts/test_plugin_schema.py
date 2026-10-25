@@ -8,6 +8,24 @@ SCHEMA = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/contracts
 
 
 class PluginSchemaTest(unittest.TestCase):
+    def test_dependency_declarations_identify_explicit_plugins(self):
+        packages = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/packages.json').read_text())
+        validator = Draft202012Validator({'$defs': packages['$defs'], '$ref': '#/$defs/declaration'})
+        common = dict(sourceSet=None, kind='compiler-plugin', coordinate='example:plugin:1', dependencyModule=None,
+                      scope='compile', exported=False, targets=['jvm'])
+        for owner in [dict(module='consumer', compilations=['main']), dict(script='run', compilations=['script'],
+                     origin=dict(declaration='/scripts/run/compilerPlugins/0', profileSelection=None, catalog=None))]:
+            legacy = {**common, **owner}
+            validator.validate(legacy)
+            explicit = {**legacy, 'pluginId': 'example.plugin', 'compilerVersion': '2.4.20'}
+            validator.validate(explicit)
+            validator.validate({**explicit, 'coordinate': None, 'dependencyModule': 'producer'})
+            for changes in [dict(kind='external'), dict(pluginId='bad/id'), dict(pluginId=None), dict(compilerVersion=None),
+                            dict(compilerVersion='2.4.10')]:
+                self.assertFalse(validator.is_valid({**explicit, **changes}), changes)
+            for name in ('pluginId', 'compilerVersion'):
+                self.assertFalse(validator.is_valid({k: v for k, v in explicit.items() if k != name}))
+
     def test_resolution_domains_separate_plugin_identities(self):
         packages = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/packages.json').read_text())
         validators = [Draft202012Validator({**SCHEMA, '$ref': '#/$defs/resolutionDomain'}),

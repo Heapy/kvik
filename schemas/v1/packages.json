@@ -1129,6 +1129,13 @@
             ]
           },
           "maxItems": 2
+        },
+        "pluginId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "compilerVersion": {
+          "const": "2.4.20"
         }
       },
       "required": [
@@ -1142,7 +1149,36 @@
         "targets",
         "compilations"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "pluginId"
+                ]
+              },
+              {
+                "required": [
+                  "compilerVersion"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "pluginId",
+              "compilerVersion"
+            ],
+            "properties": {
+              "kind": {
+                "const": "compiler-plugin"
+              }
+            }
+          }
+        }
+      ]
     },
     "scriptOrigin": {
       "type": "object",
@@ -1243,6 +1279,13 @@
         },
         "origin": {
           "$ref": "#/$defs/scriptOrigin"
+        },
+        "pluginId": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "compilerVersion": {
+          "const": "2.4.20"
         }
       },
       "required": [
@@ -1257,7 +1300,36 @@
         "script",
         "origin"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "pluginId"
+                ]
+              },
+              {
+                "required": [
+                  "compilerVersion"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "pluginId",
+              "compilerVersion"
+            ],
+            "properties": {
+              "kind": {
+                "const": "compiler-plugin"
+              }
+            }
+          }
+        }
+      ]
     },
     "metadataExclusion": {
       "type": "object",

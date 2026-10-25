@@ -122,6 +122,11 @@ Each explicitly described plugin has its own resolution domain, identified by
 versions of the same helper library. Workspace plugin compilation still resolves
 the producer module's own dependencies normally; its consumer-side loading
 classpath uses the plugin's domain.
+The `dependencies` response also includes `pluginId` and the declared
+`compilerVersion` in each explicit plugin declaration, alongside its `coordinate`
+or `dependencyModule`. Match that ID and the module/script owner to the reported
+resolution domains. The compiler version is a declared compatibility requirement,
+not a claim that a particular plugin has already compiled successfully.
 
 To pin a helper version for one plugin, append its ID to `--scope-pin`:
 

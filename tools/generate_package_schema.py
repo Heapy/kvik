@@ -50,6 +50,11 @@ defs['scriptOrigin']=obj(declaration=text,profileSelection=nullable(text),catalo
 script_declaration=dict(defs['moduleDeclaration']['properties']);script_declaration.pop('module')
 script_declaration.update(script=script_id,origin=ref('scriptOrigin'),kind=enum('external','module','compiler-plugin'),sourceSet={'type':'null'},exported={'const':False},targets={'const':['jvm']},compilations={'const':['script']})
 defs['scriptDeclaration']=obj(**script_declaration)
+for name in ('moduleDeclaration', 'scriptDeclaration'):
+    defs[name]['properties'].update(pluginId={'type':'string','pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END},
+                                    compilerVersion={'const':'2.4.20'})
+    defs[name]['allOf']=[{'if':{'anyOf':[{'required':['pluginId']},{'required':['compilerVersion']}]},
+                         'then':{'required':['pluginId','compilerVersion'],'properties':{'kind':{'const':'compiler-plugin'}}}}]
 defs['declaration']={'oneOf':[ref('moduleDeclaration'),ref('scriptDeclaration')]}
 defs['projectQuery']['properties']['scripts']=arr(script_id,256)
 defs['projectQuery']['properties']['compilation']=nullable(enum('main','test','script'))

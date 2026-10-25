@@ -102,6 +102,18 @@ class ScriptResolutionTest {
         assertEquals("complete", query.values.getValue("status").stringValue())
         val reported = query.values.getValue("domains").arrayValue().map { ResolutionDomain.fromJson(it.objectValue().getValue("domain")) }
         assertEquals(lock.selections.map { it.domain }.toSet(), reported.toSet())
+        val declarations = query.values.getValue("declarations").arrayValue().map(JsonValue::objectValue)
+        val declaredPlugins = declarations.filter { it.getValue("kind").stringValue() == "compiler-plugin" }
+        assertEquals(6, declaredPlugins.size)
+        for (domain in host.map { it.domain }) {
+            val owner = if (domain.consumer is ResolutionConsumer.Script) "script" else "module"
+            val declaration = declaredPlugins.single { it[owner]?.stringValue() == domain.consumer.name &&
+                it.getValue("pluginId").stringValue() == domain.pluginId }
+            assertEquals("2.4.20", declaration.getValue("compilerVersion").stringValue())
+            if (domain.pluginId == "example.plugin") assertEquals("producer", declaration.getValue("dependencyModule").stringValue())
+            else assertEquals("example:${domain.pluginId!!.substringAfter('.')}:1", declaration.getValue("coordinate").stringValue())
+        }
+        assertTrue(declarations.filter { it.getValue("kind").stringValue() != "compiler-plugin" }.all { "pluginId" !in it && "compilerVersion" !in it })
         save("plugin-lock.json", lock.toJson()); save("plugin-query.json", query)
     }
 
