@@ -22,3 +22,47 @@ Lookups check the local cache first. Missing, unavailable or invalid remote entr
 `--offline` disables remote requests and credential lookup. Keep `--remote-cache PATH` to use the same action identities and reuse previously restored local entries. Endpoint, credentials and read/write mode do not affect compilation identity. Transfers are bounded to 16 MiB per blob and 128 MiB per operation; actions exceeding those limits still execute locally.
 
 Foreground sessions forward only the configured credential to their preparation worker. Compiler workers and applications keep their own declared environments. Each requested operation rereads the transport configuration; a changed credential environment replaces the idle preparation worker. Configuration edits alone do not trigger a reload, so request `r` or `t` after changing this file.
+
+## Checking reuse between machines
+
+`tools/test_remote_cache_cross_machine.py` splits the existing JVM fixture into
+independent writer and reader invocations against a provisioned REAPI cache. Use
+the `library`/`consumer` fixture created by `tools/test_build_cli.py`, including its
+locked dependency blobs. Both hosts need the same source/configuration/lock inputs,
+runtime composition and tool identities; installation paths may differ. Supply
+each host's installation paths through its own `--tools` file. Start with an empty
+remote namespace and keep the same endpoint and namespace for both phases.
+
+On machine A:
+
+```sh
+python3 tools/test_remote_cache_cross_machine.py writer \
+  --runtime /path/to/kvik.kexe --fixture /path/to/fixture \
+  --tools /path/to/tools.json --remote-cache /path/to/remote.json \
+  --output /path/to/new-writer-directory
+```
+
+Transfer `baseline.json` from that output directory to machine B, then run:
+
+```sh
+python3 tools/test_remote_cache_cross_machine.py reader \
+  --runtime /path/to/kvik.kexe --fixture /another/path/to/fixture \
+  --tools /path/to/tools.json --remote-cache /path/to/remote.json \
+  --baseline /path/to/baseline.json --output /path/to/new-reader-directory
+```
+
+The writer uses read/write mode; the reader uses read-only mode. Other endpoint
+and authentication settings follow the supplied configuration. Credentials remain
+in the named environment variable. The baseline binds the endpoint and namespace,
+and a writer with failed lookups or publication cannot provide a passing baseline.
+Both invocations create a new project and seed
+only verified locked dependency blobs, never local action records or compilation
+outputs. The writer must compile all three fixture compilations; the reader must
+restore all three remotely with identical action keys and output manifests. Both
+must execute tests freshly.
+
+The reader compares hashed hardware identifiers and rejects the writer's host by
+default. For local harness development, `--allow-same-host` permits a same-host
+reader and explicitly records that the cross-machine gate did not pass. A local
+validation cannot establish cross-machine portability. A real cross-machine pass
+requires a shared HTTPS endpoint; loopback servers are only for local validation.
