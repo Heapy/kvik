@@ -325,7 +325,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "tools/test_jvm_portability.py")), checkNotNull(remoteConfiguration).limits)
                         RemoteCachingActionExecutor(delegate, localCache, content, client, ::portableJvmCompilation,
                             ::cacheDiagnostic, cacheDecision = { journal.emit("action-cache-decision", it.toJson()) },
-                            publishEnabled = remoteConfiguration.write)
+                            publishEnabled = remoteConfiguration.write,
+                            cacheTransfer = { journal.emit("action-cache-transfer", it.toJson()) })
                     }
                     val cached = remote ?: LocalCachingActionExecutor(delegate, localCache, content, ::cacheDiagnostic,
                         cacheDecision = { journal.emit("action-cache-decision", it.toJson()) })

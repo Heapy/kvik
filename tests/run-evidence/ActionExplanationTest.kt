@@ -39,6 +39,7 @@ class ActionExplanationTest {
         assertEquals("executed-cache-reason-unrecorded", reason(explanation))
         assertEquals(JsonValue.Null, explanation.values.getValue("cacheDecision"))
         assertEquals(JsonValue.Null, explanation.values.getValue("timing"))
+        assertEquals(emptyList(), explanation.values.getValue("cacheTransfers").arrayValue())
         assertEquals(action.toJson(), explanation.values.getValue("action"))
         assertEquals(JsonValue.Null, explanation.values.getValue("currentFreshness"))
         assertEquals("unbound-retained", explanation.values.getValue("dependencyEvidence").stringValue())
@@ -69,6 +70,80 @@ class ActionExplanationTest {
         assertFails { validate(record, journal(at = 1)) }
         assertFails { validate(record, journal(at = 3)) }
         assertFails { validate(record, journal(duplicate = true)) }
+    }
+    @Test fun remoteTransferMeasurementsSurviveHistoricalQueries() {
+        val remote = action.copy(cachePolicy = CachePolicy.REMOTE)
+        val record = record(listOf(result(recipe = remote)))
+        val stats = CacheTransferStats(2, 125, 34, 5678)
+        val lookup = ActionCacheTransfer("main", remote.key(Sha256), "lookup", "miss", stats)
+        for (publication in listOf("published", "failed", "cancelled")) {
+            val upload = ActionCacheTransfer("main", remote.key(Sha256), "publish", publication,
+                if (publication == "cancelled") null else stats)
+            val journal = events(record).toMutableList().also {
+                it.add(2, RunEvent(record.runId, 1, "action-cache-transfer", lookup.toJson()))
+                it.add(4, RunEvent(record.runId, 1, "action-cache-transfer", upload.toJson()))
+            }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+            val explanation = explainRetainedAction(record, validate(record, journal), "main", recipe(spec = remote))
+            assertEquals(listOf(lookup.toJson(), upload.toJson()), explanation.values.getValue("cacheTransfers").arrayValue())
+            assertEquals(record.actions.single().toJson(), explanation.values.getValue("result"))
+        }
+    }
+    @Test fun remoteTransfersRejectWrongKeysOrderDuplicateOperationsAndCachedPublication() {
+        val remote = action.copy(cachePolicy = CachePolicy.REMOTE)
+        fun journal(record: VerificationRecord, value: ActionCacheTransfer, at: Int, duplicate: Boolean = false) =
+            events(record).toMutableList().also {
+                it.add(at, RunEvent(record.runId, 1, "action-cache-transfer", value.toJson()))
+                if (duplicate) it.add(at, RunEvent(record.runId, 1, "action-cache-transfer", value.toJson()))
+            }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+        val record = record(listOf(result(recipe = remote)))
+        val lookup = ActionCacheTransfer("main", remote.key(Sha256), "lookup", "miss")
+        val upload = lookup.copy(operation = "publish", outcome = "published")
+        validate(record, journal(record, lookup, 2))
+        validate(record, journal(record, upload, 3))
+        for ((value, at) in listOf(lookup to 1, lookup to 3, upload to 2, lookup.copy(key = d) to 2,
+            lookup.copy(actionId = "unknown") to 2)) assertFails { validate(record, journal(record, value, at)) }
+        assertFails { validate(record, journal(record, lookup, 2, duplicate = true)) }
+        for (status in listOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
+            val other = record(listOf(result(status = status, recipe = remote)))
+            assertFails { validate(other, journal(other, upload, 3)) }
+        }
+        val local = record(listOf(result()))
+        val invalid = journal(local, lookup.copy(key = action.key(Sha256)), 2)
+        assertFails { explainRetainedAction(local, validate(local, invalid), "main", recipe()) }
+        assertFails { lookup.copy(outcome = "published") }
+        assertFails { upload.copy(outcome = "hit") }
+    }
+    @Test fun successfulResultsRejectContradictoryLookupOutcomesButLaterFailureCanRetainAHit() {
+        val remote = action.copy(cachePolicy = CachePolicy.REMOTE)
+        for (status in listOf(ActionStatus.EXECUTED, ActionStatus.REMOTE_HIT, ActionStatus.LOCAL_HIT, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
+            for (outcome in listOf("hit", "miss", "failed", "cancelled")) {
+                val record = record(listOf(result(status = status, recipe = remote)))
+                val transfer = ActionCacheTransfer("main", remote.key(Sha256), "lookup", outcome)
+                val journal = events(record).toMutableList().also {
+                    it.add(2, RunEvent(record.runId, 1, "action-cache-transfer", transfer.toJson()))
+                }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+                val valid = when (status) {
+                    ActionStatus.EXECUTED -> outcome in setOf("miss", "failed")
+                    ActionStatus.REMOTE_HIT -> outcome == "hit"
+                    ActionStatus.LOCAL_HIT -> false
+                    else -> true
+                }
+                if (valid) explainRetainedAction(record, validate(record, journal), "main", recipe(spec = remote))
+                else {
+                    assertFails { validate(record, journal) }
+                    assertFails { explainRetainedAction(record, journal, "main", recipe(spec = remote)) }
+                }
+            }
+        }
+        val record = record(listOf(result(recipe = remote)))
+        val decision = obj("actionId" to "main".json(), "key" to remote.key(Sha256).toJson(),
+            "decision" to "remote-miss".json(), "detail" to JsonValue.Null)
+        val inconsistent = events(record).toMutableList().also {
+            it.add(2, RunEvent(record.runId, 1, "action-cache-decision", decision))
+            it.add(3, RunEvent(record.runId, 1, "action-cache-transfer", ActionCacheTransfer("main", remote.key(Sha256), "lookup", "failed").toJson()))
+        }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+        assertFails { validate(record, inconsistent) }
+        assertFails { explainRetainedAction(record, inconsistent, "main", recipe(spec = remote)) }
     }
     @Test fun reuseRequiredExecutionAndUnresolvedOutcomesAreDistinct() {
         for ((status, expected) in listOf(ActionStatus.LOCAL_HIT to "local-cache-hit", ActionStatus.REMOTE_HIT to "remote-cache-hit",

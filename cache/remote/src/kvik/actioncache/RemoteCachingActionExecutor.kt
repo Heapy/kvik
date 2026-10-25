@@ -29,6 +29,7 @@ class RemoteCachingActionExecutor(
     private val maxPublications: Int = 128,
     private val maxPublicationBytes: Long = 16L * 1024 * 1024,
     private val publishEnabled: Boolean = true,
+    private val cacheTransfer: (ActionCacheTransfer) -> Unit = {},
 ) : ActionExecutor {
     private val localExecutor = LocalCachingActionExecutor(delegate, local, content, diagnostic, cacheDecision)
     private val handles = mutableSetOf<RunningAction>()
@@ -55,6 +56,7 @@ class RemoteCachingActionExecutor(
             private var running: RunningAction? = null
             private var result: ActionResult? = null
             private var decided = false
+            private var transferReported = false
             private var cancelled = false
             private var done = false
             private fun decide(choice: String, detail: String? = null) {
@@ -62,8 +64,24 @@ class RemoteCachingActionExecutor(
                 decided = true
                 cacheDecision(ActionCacheDecision(actionId, key, choice, detail))
             }
-            private fun joinLookup() {
-                lookup?.let { it.join(); lookup = null; lookups-- }
+            private fun reportLookup(found: Lookup?, cancelled: Boolean = false) {
+                if (transferReported || found?.choice == "local-hit") return
+                transferReported = true
+                cacheTransfer(ActionCacheTransfer(actionId, key, "lookup", when {
+                    cancelled -> "cancelled"
+                    found?.choice == "remote-hit" -> "hit"
+                    found?.choice == "remote-miss" -> "miss"
+                    else -> "failed"
+                }, found?.stats))
+            }
+            private fun joinLookup(cancelled: Boolean = false) {
+                lookup?.let { job ->
+                    job.join(); lookup = null; lookups--
+                    if (cancelled) {
+                        val outcome = checkNotNull(job.outcome.load())
+                        reportLookup(outcome.getOrNull(), cancelled = outcome.exceptionOrNull() is CacheJobCancelled)
+                    }
+                }
             }
             override fun poll(): ActionResult? {
                 check(!done)
@@ -84,6 +102,7 @@ class RemoteCachingActionExecutor(
                         lookup = CacheJob { checkpoint -> this@RemoteCachingActionExecutor.lookup(spec, checkpoint) }
                         lookups++
                     } catch (failure: Exception) {
+                        reportLookup(null)
                         diagnostic(CacheDiagnostic("remote-cache-lookup-failed", "Could not start cache IO worker"))
                         decide("remote-error", "Could not start cache IO worker")
                         running = localExecutor.startAfterMiss(runId, actionId, spec)
@@ -95,6 +114,7 @@ class RemoteCachingActionExecutor(
                 val found = outcome.getOrElse {
                     Lookup(null, "remote-error", "Cache lookup failed", listOf(CacheDiagnostic("remote-cache-lookup-failed", "Cache lookup failed")))
                 }
+                reportLookup(found)
                 found.diagnostics.forEach(diagnostic)
                 decide(found.choice, found.detail)
                 if (found.conflict) {
@@ -112,13 +132,13 @@ class RemoteCachingActionExecutor(
                 if (done || result != null || cancelled) return
                 cancelled = true
                 lookup?.cancel()
-                joinLookup()
+                joinLookup(cancelled = true)
                 running?.cancel()
             }
             override fun close() {
                 if (done) return
                 lookup?.cancel()
-                joinLookup()
+                joinLookup(cancelled = true)
                 done = true
                 var failure: Throwable? = null
                 if (result == null) try { running?.cancel() } catch (error: Throwable) { failure = error }
@@ -131,7 +151,7 @@ class RemoteCachingActionExecutor(
     }
 
     private data class Lookup(val outputs: TreeManifest?, val choice: String, val detail: String? = null,
-        val diagnostics: List<CacheDiagnostic> = emptyList(), val conflict: Boolean = false)
+        val diagnostics: List<CacheDiagnostic> = emptyList(), val conflict: Boolean = false, val stats: CacheTransferStats? = null)
     private fun lookup(action: ActionSpec, checkpoint: () -> Unit): Lookup {
         val notes = mutableListOf<CacheDiagnostic>()
         val key = action.key(Sha256)
@@ -149,25 +169,25 @@ class RemoteCachingActionExecutor(
         val fetched = remote.lookupRemote(action, checkpoint)
         fetched.diagnostic?.let { notes += it }
         val cached = fetched.action ?: return Lookup(null, if (fetched.diagnostic == null) "remote-miss" else "remote-error",
-            fetched.diagnostic?.message, notes)
+            fetched.diagnostic?.message, notes, stats = fetched.stats)
         val outputs = try {
             require(cached.key == key)
             checkedCacheOutputs(action, cached.outputs, content, checkpoint)
         } catch (failure: Exception) {
             checkpoint()
-            return Lookup(null, "remote-error", "Remote outputs failed validation", notes)
+            return Lookup(null, "remote-error", "Remote outputs failed validation", notes, stats = fetched.stats)
         }
         checkpoint()
         try { local.publish(CachedAction(key, outputs)) }
         catch (conflict: CacheConflictFailure) {
-            return Lookup(null, "remote-error", "Conflicting local cache outputs", notes + CacheDiagnostic("local-cache-conflict", "Conflicting local cache outputs"), true)
+            return Lookup(null, "remote-error", "Conflicting local cache outputs", notes + CacheDiagnostic("local-cache-conflict", "Conflicting local cache outputs"), true, fetched.stats)
         } catch (failure: Exception) {
             checkpoint()
             notes += CacheDiagnostic("local-cache-publish-failed", "Remote hit could not be recorded locally")
             checkedCacheOutputs(action, outputs, content, checkpoint)
         }
         checkpoint()
-        return Lookup(outputs, "remote-hit", diagnostics = notes)
+        return Lookup(outputs, "remote-hit", diagnostics = notes, stats = fetched.stats)
     }
 
     private fun retain(action: ActionSpec, result: ActionResult) {
@@ -203,6 +223,8 @@ class RemoteCachingActionExecutor(
             upload = null
             retainedBytes -= candidate.bytes
             val completed = outcome.getOrElse { RemotePublication(false, CacheDiagnostic("remote-publish-failed", "Remote upload failed; executed outputs remain local")) }
+            cacheTransfer(ActionCacheTransfer(candidate.result.actionId, checkNotNull(candidate.result.key), "publish",
+                if (completed.published) "published" else "failed", completed.stats))
             completed.diagnostic?.let(diagnostic)
         }
         while (!publicationsAborted && uploads.isNotEmpty()) {
@@ -210,6 +232,7 @@ class RemoteCachingActionExecutor(
             val job = try { CacheJob { checkpoint -> remote.publishRemote(candidate.action, candidate.result, checkpoint) } }
             catch (failure: Exception) {
                 retainedBytes -= candidate.bytes
+                cacheTransfer(ActionCacheTransfer(candidate.result.actionId, checkNotNull(candidate.result.key), "publish", "failed"))
                 diagnostic(CacheDiagnostic("remote-publish-failed", "Could not start upload worker; executed outputs remain local"))
                 continue
             }
@@ -229,11 +252,22 @@ class RemoteCachingActionExecutor(
     /** Abort queued/in-flight uploads, joining before returning. Completed actions stay successful. */
     fun abortPublications() {
         publicationsAborted = true
-        upload?.second?.let { it.cancel(); it.join() }
+        val pending = upload
+        pending?.second?.let { it.cancel(); it.join() }
         upload = null
         candidates.clear()
         uploads.clear()
         retainedBytes = 0
+        pending?.let { (candidate, job) ->
+            val outcome = checkNotNull(job.outcome.load())
+            val completed = outcome.getOrNull()
+            cacheTransfer(ActionCacheTransfer(candidate.result.actionId, checkNotNull(candidate.result.key), "publish",
+                when {
+                    completed?.published == true -> "published"
+                    outcome.exceptionOrNull() is CacheJobCancelled -> "cancelled"
+                    else -> "failed"
+                }, completed?.stats))
+        }
     }
 
     fun close() {

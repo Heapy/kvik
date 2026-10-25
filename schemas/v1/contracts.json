@@ -9954,6 +9954,117 @@
       ],
       "additionalProperties": false
     },
+    "cacheTransferStats": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "uploadedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "downloadedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "durationNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "requests",
+        "uploadedBytes",
+        "downloadedBytes",
+        "durationNanos"
+      ],
+      "additionalProperties": false
+    },
+    "actionCacheTransfer": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "key": {
+          "$ref": "#/$defs/digest"
+        },
+        "operation": {
+          "enum": [
+            "lookup",
+            "publish"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "hit",
+            "miss",
+            "published",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cacheTransferStats"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actionId",
+        "key",
+        "operation",
+        "outcome",
+        "stats"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "lookup"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "hit",
+                  "miss",
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "published",
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
     "actionTiming": {
       "type": "object",
       "properties": {
@@ -9998,6 +10109,7 @@
             "action-started",
             "action-finished",
             "action-cache-decision",
+            "action-cache-transfer",
             "action-timing",
             "diagnostic",
             "test-result",
@@ -10201,6 +10313,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/actionTiming"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "action-cache-transfer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/actionCacheTransfer"
               }
             }
           }
@@ -12797,6 +12925,13 @@
               "type": "null"
             }
           ]
+        },
+        "cacheTransfers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionCacheTransfer"
+          },
+          "maxItems": 2
         },
         "dependencyEvidence": {
           "enum": [

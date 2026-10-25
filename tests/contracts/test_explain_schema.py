@@ -70,5 +70,21 @@ class ExplanationSchemaTest(unittest.TestCase):
         explained['timing'] = None
         self.validator.validate(explained)
 
+    def test_remote_transfer_event_preserves_operation_outcome_and_unknown_stats(self):
+        validator = Draft202012Validator({**self.contracts, '$ref': '#/$defs/event'})
+        payload = dict(actionId='app:jvm:main', key=dict(hash='0' * 64, sizeBytes=0), operation='lookup', outcome='hit',
+            stats=dict(requests=2, uploadedBytes=120, downloadedBytes=330, durationNanos=4000))
+        event = dict(schemaVersion=1, runId='run-example', sequence=3, type='action-cache-transfer', payload=payload)
+        validator.validate(event)
+        for key, value in [('requests', -1), ('requests', 2**31), ('uploadedBytes', -1), ('downloadedBytes', 2**63),
+                           ('durationNanos', 1.5), ('credentials', 'secret')]:
+            changed = dict(event, payload={**payload, 'stats': {**payload['stats'], key: value}})
+            self.assertTrue(list(validator.iter_errors(changed)), (key, value))
+        for operation, outcome, valid in [('lookup', 'miss', True), ('lookup', 'published', False),
+                                        ('publish', 'published', True), ('publish', 'hit', False),
+                                        ('publish', 'failed', True), ('publish', 'cancelled', True)]:
+            changed = dict(event, payload={**payload, 'operation': operation, 'outcome': outcome, 'stats': None})
+            self.assertEqual(valid, validator.is_valid(changed), (operation, outcome))
+
 
 if __name__ == '__main__': unittest.main()

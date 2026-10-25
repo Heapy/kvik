@@ -10,6 +10,13 @@
 static pthread_once_t initialized = PTHREAD_ONCE_INIT;
 static CURLcode initialization;
 static void initialize(void) { initialization = curl_global_init(CURL_GLOBAL_DEFAULT); }
+static void transfer_stats(CURL *curl, kvik_rpc_reply *reply) {
+    curl_off_t uploaded = 0, downloaded = 0;
+    if (curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD_T, &uploaded) == CURLE_OK && uploaded >= 0)
+        reply->uploaded_bytes = (int64_t)uploaded;
+    if (curl_easy_getinfo(curl, CURLINFO_SIZE_DOWNLOAD_T, &downloaded) == CURLE_OK && downloaded >= 0)
+        reply->downloaded_bytes = (int64_t)downloaded;
+}
 typedef struct { kvik_rpc_reply *reply; size_t limit, headers; int content_type; } Transfer;
 typedef struct { int (*cancelled)(void *); void *context; } Cancellation;
 static int progress(void *context, curl_off_t a, curl_off_t b, curl_off_t c, curl_off_t d) {
@@ -89,6 +96,7 @@ kvik_rpc_reply *kvik_rpc(const char *url, const char *authorization,
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &transfer);
     reply->transport_error = (int)curl_easy_perform(curl);
+    transfer_stats(curl, reply);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &reply->http_status);
     long version = 0;
     curl_easy_getinfo(curl, CURLINFO_HTTP_VERSION, &version);
@@ -166,6 +174,7 @@ kvik_rpc_reply *kvik_json_post(const char *url, const char *bearer_token,
     JSON_SET(CURLOPT_XFERINFODATA, &cancellation);
 #undef JSON_SET
     reply->transport_error = (int)curl_easy_perform(curl);
+    transfer_stats(curl, reply);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &reply->http_status);
 cleanup:
     curl_slist_free_all(headers);

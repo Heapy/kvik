@@ -27,7 +27,10 @@ fun main(args: Array<String>) {
     val action = if (operation == "test") specification(label, CachePolicy.NEVER, ActionKind.TEST) else specification(label)
     val mapping = ReapiMapping(action, limits)
     when (operation) {
-        "selftest" -> wireChecks(action, limits)
+        "selftest" -> {
+            wireChecks(action, limits)
+            transferChecks(root, endpoint, action, limits)
+        }
         "executor" -> executorBackendChecks(root, endpoint)
         "executor-unit" -> executorChecks(root)
         "executor-cancel" -> executorCancellationCheck(root, endpoint)

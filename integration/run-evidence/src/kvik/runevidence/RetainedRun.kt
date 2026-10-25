@@ -29,7 +29,22 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
     val started = mutableSetOf<String>()
     val decisions = mutableSetOf<String>()
     val timed = mutableSetOf<String>()
+    val transfers = mutableSetOf<Pair<String, String>>()
+    val lookupTransfers = mutableListOf<ActionCacheTransfer>()
+    val choices = mutableMapOf<String, String>()
     for (event in events) when (event.type) {
+        "action-cache-transfer" -> {
+            val transfer = ActionCacheTransfer.fromJson(event.payload)
+            val result = results[transfer.actionId]
+            require(result?.key == transfer.key && transfers.add(transfer.actionId to transfer.operation)) {
+                "Remote transfer identity differs from retained result or is duplicated"
+            }
+            require(transfer.actionId in started && if (transfer.operation == "lookup") transfer.actionId !in finished
+                else transfer.actionId in finished && result.status == ActionStatus.EXECUTED && result.exitCode == 0) {
+                "Remote transfer differs from action order or publication eligibility"
+            }
+            if (transfer.operation == "lookup") lookupTransfers += transfer
+        }
         "action-timing" -> {
             val timing = ActionTiming.fromJson(event.payload)
             require(timing.actionId in started && timing.actionId !in finished && timed.add(timing.actionId)) {
@@ -41,6 +56,7 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
             val id = fields.getValue("actionId").stringValue()
             require(id !in finished && decisions.add(id) &&
                 results[id]?.key == Digest.fromJson(fields.getValue("key"))) { "Cache decision differs from action result or order" }
+            choices[id] = fields.getValue("decision").stringValue()
         }
         "action-started" -> {
             val fields = event.payload.fields(setOf("actionId", "key"))
@@ -53,5 +69,16 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
         }
     }
     require(finished == results.keys) { "Journal does not contain every retained action result" }
+    lookupTransfers.forEach { validateSuccessfulLookup(it, results.getValue(it.actionId), choices[it.actionId]) }
     return events
+}
+
+internal fun validateSuccessfulLookup(transfer: ActionCacheTransfer, result: ActionResult, decision: String?) {
+    if (transfer.operation != "lookup" || !result.successful) return
+    require(when (result.status) {
+        ActionStatus.REMOTE_HIT -> transfer.outcome == "hit" && (decision == null || decision == "remote-hit")
+        ActionStatus.EXECUTED -> transfer.outcome in setOf("miss", "failed") &&
+            (decision == null || decision == if (transfer.outcome == "miss") "remote-miss" else "remote-error")
+        else -> false
+    }) { "Remote lookup outcome contradicts successful action or cache decision" }
 }

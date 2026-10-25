@@ -4,8 +4,8 @@ import kvik.cache.CacheDiagnostic
 import kvik.cache.CacheConflictFailure
 import kvik.core.*
 
-data class RemoteLookup(val action: CachedAction?, val diagnostic: CacheDiagnostic? = null)
-data class RemotePublication(val published: Boolean, val diagnostic: CacheDiagnostic? = null)
+data class RemoteLookup(val action: CachedAction?, val diagnostic: CacheDiagnostic? = null, val stats: CacheTransferStats? = null)
+data class RemotePublication(val published: Boolean, val diagnostic: CacheDiagnostic? = null, val stats: CacheTransferStats? = null)
 
 /** Per-call outcomes contain no credentials and invoke no observation callbacks. */
 interface RemoteCacheClient {
@@ -50,14 +50,14 @@ class RemoteActionCache(
     override fun lookupRemote(action: ActionSpec, checkpoint: () -> Unit): RemoteLookup {
         checkpoint()
         if (!remoteEligible(action)) return RemoteLookup(null)
+        val session = RpcSession(endpoint, limits, checkpoint)
         return try {
             val mapping = ReapiMapping(action, limits)
-            val session = RpcSession(endpoint, limits, checkpoint)
             session.capabilities(writing = false)
             val result = try {
                 session.rpc("ActionCache", "GetActionResult", session.request { bytes(2, mapping.actionDigest.wire()) })
             } catch (missing: RemoteGrpcFailure) {
-                if (missing.status == 5) return RemoteLookup(null) else throw missing
+                if (missing.status == 5) return RemoteLookup(null, stats = session.stats()) else throw missing
             }
             fun fetch(digest: Digest): ByteArray {
                 checkpoint()
@@ -73,10 +73,10 @@ class RemoteActionCache(
             val outputs = mapping.decodeResult(result, ::fetch)
             outputs.files.forEach { fetch(it.digest) }
             checkpoint()
-            RemoteLookup(CachedAction(mapping.localKey, outputs))
+            RemoteLookup(CachedAction(mapping.localKey, outputs), stats = session.stats())
         } catch (failure: Exception) {
             checkpoint() // Cancellation propagates, never becomes an outage fallback.
-            RemoteLookup(null, CacheDiagnostic("remote-cache-lookup-failed", failureDetail(failure)))
+            RemoteLookup(null, CacheDiagnostic("remote-cache-lookup-failed", failureDetail(failure)), session.stats())
         }
     }
 
@@ -106,13 +106,13 @@ class RemoteActionCache(
     override fun publishRemote(action: ActionSpec, result: ActionResult, checkpoint: () -> Unit): RemotePublication {
         checkpoint()
         if (!remoteEligible(action)) return RemotePublication(false)
+        val session = RpcSession(endpoint, limits, checkpoint)
         if (result.status != ActionStatus.EXECUTED || result.exitCode != 0 || result.key != action.key(Sha256))
-            return RemotePublication(false, CacheDiagnostic("remote-publish-rejected", "Only matching executed results may publish"))
+            return RemotePublication(false, CacheDiagnostic("remote-publish-rejected", "Only matching executed results may publish"), session.stats())
         val snapshot = TreeManifest(result.outputs.files.toList())
         return try {
             val mapping = ReapiMapping(action, limits)
             val encodedResult = mapping.result(snapshot)
-            val session = RpcSession(endpoint, limits, checkpoint)
             session.capabilities(writing = true)
             // Validate all local payloads before the first upload; uploads themselves are idempotent.
             val data = (mapping.action.inputs.files + snapshot.files).map { it.digest }.distinct()
@@ -131,10 +131,10 @@ class RemoteActionCache(
             })
             val checked = mapping.decodeResult(returned) { digest -> session.download(digest) }
             demand(checked.toJson() == snapshot.toJson(), "Remote acknowledged different outputs")
-            RemotePublication(true)
+            RemotePublication(true, stats = session.stats())
         } catch (failure: Exception) {
             checkpoint()
-            RemotePublication(false, CacheDiagnostic("remote-publish-failed", failureDetail(failure)))
+            RemotePublication(false, CacheDiagnostic("remote-publish-failed", failureDetail(failure)), session.stats())
         }
     }
 }

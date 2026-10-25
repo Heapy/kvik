@@ -30,6 +30,16 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
         require(started != null && it.sequence > started.sequence && it.sequence < finished.sequence) { "Action timing differs from action order" }
         ActionTiming.fromJson(it.payload)
     }
+    val transfers = events.filter { it.type == "action-cache-transfer" && it.payload.values["actionId"] == actionId.json() }.map {
+        val transfer = ActionCacheTransfer.fromJson(it.payload)
+        require(transfer.key == result.key && action?.cachePolicy == CachePolicy.REMOTE && started != null &&
+            it.sequence > started.sequence && if (transfer.operation == "lookup") it.sequence < finished.sequence
+            else it.sequence > finished.sequence && result.status == ActionStatus.EXECUTED && result.exitCode == 0) {
+            "Remote transfer contradicts action identity, policy or order"
+        }
+        transfer
+    }
+    require(transfers.map { it.operation }.distinct().size == transfers.size) { "Duplicate remote transfer operation" }
     val decisions = events.filter { it.type == "action-cache-decision" && it.payload.values["actionId"] == actionId.json() }
     require(decisions.size <= 1) { "Duplicate cache decision for action" }
     val decision = decisions.singleOrNull()?.let { event ->
@@ -49,6 +59,7 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
         if (result.status == ActionStatus.EXECUTED) require(choice !in setOf("local-hit", "remote-hit")) { "Execution contradicts local hit decision" }
         event.payload
     }
+    transfers.forEach { validateSuccessfulLookup(it, result, decision?.values?.get("decision")?.stringValue()) }
     // Older scheduler versions recorded sharing in a diagnostic rather than a typed event.
     // Match the complete known format and corresponding owner, not an arbitrary message prefix.
     val owner = if (started == null && result.key != null && action?.cachePolicy != CachePolicy.NEVER) record.actions.singleOrNull { candidate ->
@@ -82,6 +93,7 @@ fun explainRetainedAction(record: VerificationRecord, events: List<RunEvent>, ac
         "currentFreshness" to JsonValue.Null,
         "result" to result.toJson(), "action" to (action?.toJson() ?: JsonValue.Null), "cacheDecision" to (decision ?: JsonValue.Null),
         "timing" to (timing?.toJson() ?: JsonValue.Null),
+        "cacheTransfers" to transfers.map { it.toJson() }.json(),
         "dependencyEvidence" to (if (dependencies == null) "unavailable" else "unbound-retained").json(),
         "dependencies" to (dependencies?.map { results.getValue(it).toJson() }?.json() ?: JsonValue.Null),
         "reason" to obj("code" to code.json(), "message" to message.json(), "sharedWith" to (owner?.actionId?.json() ?: JsonValue.Null),

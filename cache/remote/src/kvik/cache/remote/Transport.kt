@@ -3,6 +3,7 @@ package kvik.cache.remote
 
 import kotlinx.cinterop.*
 import kvik.cache.remote.platform.*
+import kvik.core.CacheTransferStats
 import kotlin.time.TimeSource
 
 /** Credentials are transport state only; they never enter content or action identities. */
@@ -45,6 +46,11 @@ internal class RpcSession(private val endpoint: RemoteEndpoint, val limits: Tran
     private val started = TimeSource.Monotonic.markNow()
     private var transferred = 0L
     private var requests = 0
+    private var transportRequests = 0
+    private var uploadedBytes = 0L
+    private var downloadedBytes = 0L
+    fun stats(): CacheTransferStats = CacheTransferStats(transportRequests, uploadedBytes, downloadedBytes,
+        started.elapsedNow().inWholeNanoseconds)
     var batchBytes: Long = limits.blobBytes.toLong()
     fun rpc(service: String, method: String, message: ByteArray): ByteArray {
         checkpoint()
@@ -60,6 +66,7 @@ internal class RpcSession(private val endpoint: RemoteEndpoint, val limits: Tran
         val maximum = minOf(limits.rpcBytes.toLong(), limits.totalBytes - transferred).toInt()
         val cancellation = StableRef.create(checkpoint)
         val response = try { framed.usePinned { pinned ->
+            transportRequests++
             val result = kvik_rpc("${endpoint.url}/build.bazel.remote.execution.v2.$service/$method",
                 endpoint.bearerToken?.let { "authorization: Bearer $it" }, pinned.addressOf(0).reinterpret(),
                 framed.size.convert(), maximum.convert(), minOf(remaining, limits.rpcMillis), staticCFunction { context: COpaquePointer? ->
@@ -68,6 +75,9 @@ internal class RpcSession(private val endpoint: RemoteEndpoint, val limits: Tran
                 }, cancellation.asCPointer())
                 ?: throw RemoteFailure("Remote transport allocation failed")
             try {
+                // Capture even partial/failed transfers before cancellation or status validation.
+                uploadedBytes += result.pointed.uploaded_bytes
+                downloadedBytes += result.pointed.downloaded_bytes
                 checkpoint()
                 demand(result.pointed.transport_error == 0, "Remote transport failed (${result.pointed.transport_error})")
                 demand(result.pointed.http_status == 200L, "Remote HTTP status ${result.pointed.http_status}")

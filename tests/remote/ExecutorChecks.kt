@@ -72,12 +72,17 @@ fun executorChecks(root: String) {
     val owner = pthread_self()
     val notes = mutableListOf<CacheDiagnostic>()
     val decisions = mutableListOf<ActionCacheDecision>()
+    val transfers = mutableListOf<ActionCacheTransfer>()
+    val lookupStats = CacheTransferStats(2, 123, 456, 789)
+    val publishStats = CacheTransferStats(4, 987, 654, 321)
+    val transfer: (ActionCacheTransfer) -> Unit = { check(pthread_equal(owner, pthread_self()) != 0); transfers += it }
     val decision: (ActionCacheDecision) -> Unit = { check(pthread_equal(owner, pthread_self()) != 0); decisions += it }
     val diagnostic: (CacheDiagnostic) -> Unit = { check(pthread_equal(owner, pthread_self()) != 0); notes += it }
     val remote = Remote()
-    remote.fetch = { _, checkpoint -> check(pthread_equal(owner, pthread_self()) == 0); checkpoint(); RemoteLookup(null) }
+    remote.fetch = { _, checkpoint -> check(pthread_equal(owner, pthread_self()) == 0); checkpoint(); RemoteLookup(null, stats = lookupStats) }
+    remote.publish = { _, _, checkpoint -> checkpoint(); RemotePublication(true, stats = publishStats) }
     val delegate = Delegate(content)
-    val executor = RemoteCachingActionExecutor(delegate, local, content, remote, { true }, diagnostic, decision)
+    val executor = RemoteCachingActionExecutor(delegate, local, content, remote, { true }, diagnostic, decision, cacheTransfer = transfer)
     val action = spec("confirmed")
     try {
         val result = finish(executor, "one", action)
@@ -91,6 +96,9 @@ fun executorChecks(root: String) {
         executor.observeCompleted(mapOf("two" to second))
         executor.drain()
         check(remote.uploads.load() == 1)
+        check(transfers == listOf(ActionCacheTransfer("one", action.key(Sha256), "lookup", "miss", lookupStats),
+            ActionCacheTransfer("two", spec("confirmed-second").key(Sha256), "lookup", "miss", lookupStats),
+            ActionCacheTransfer("two", spec("confirmed-second").key(Sha256), "publish", "published", publishStats)))
         val reused = finish(executor, "new-id", action)
         check(reused.status == ActionStatus.LOCAL_HIT && reused.actionId == "new-id" && delegate.starts == 2)
         check(remote.lookups.load() == 2 && decisions.last().decision == "local-hit")
@@ -124,15 +132,16 @@ fun executorChecks(root: String) {
     println("PASS failed/cancelled actions never publish; NEVER, TEST, LOCAL and unapproved adapters make no remote calls")
 
     val hitAction = spec("remote-hit")
-    val remoteHit = Remote().apply { fetch = { a, _ -> RemoteLookup(CachedAction(a.key(Sha256), outputs(content))) } }
+    val remoteHit = Remote().apply { fetch = { a, _ -> RemoteLookup(CachedAction(a.key(Sha256), outputs(content)), stats = lookupStats) } }
     val unused = Delegate(content)
-    val hitCache = RemoteCachingActionExecutor(unused, local, content, remoteHit, { true }, diagnostic, decision)
+    val hitCache = RemoteCachingActionExecutor(unused, local, content, remoteHit, { true }, diagnostic, decision, cacheTransfer = transfer)
     try {
         val hit = finish(hitCache, "remote-id", hitAction)
         check(hit.status == ActionStatus.REMOTE_HIT && unused.starts == 0 && decisions.last().decision == "remote-hit")
         NativeOutputTrees(content).materialize(hit.outputs, "$root/materialized")
         check(NativeFiles.read("$root/materialized/out/result", 100).decodeToString() == "output")
         check(local.lookup(hitAction.key(Sha256))?.outputs == hit.outputs)
+        check(transfers.last() == ActionCacheTransfer("remote-id", hitAction.key(Sha256), "lookup", "hit", lookupStats))
     } finally { hitCache.close() }
     println("PASS remote hit returns current identity, verified durable outputs and local promotion")
 
@@ -153,7 +162,8 @@ fun executorChecks(root: String) {
         finally { departed.store(true) }
     } }
     val blockedDelegate = Delegate(content)
-    val blockedCache = RemoteCachingActionExecutor(blockedDelegate, local, content, blocked, { true }, diagnostic, decision, maxLookups = 1)
+    val blockedCache = RemoteCachingActionExecutor(blockedDelegate, local, content, blocked, { true }, diagnostic, decision,
+        maxLookups = 1, cacheTransfer = transfer)
     val first = blockedCache.start("run", "blocked", spec("blocked"))
     val second = blockedCache.start("run", "waiting", spec("waiting"))
     try {
@@ -164,6 +174,8 @@ fun executorChecks(root: String) {
         check(first.poll()?.status == ActionStatus.CANCELLED)
         second.cancel(); check(second.poll()?.status == ActionStatus.CANCELLED)
         check(blockedDelegate.starts == 0 && blocked.lookups.load() == 1)
+        check(transfers.single { it.actionId == "blocked" } == ActionCacheTransfer("blocked", spec("blocked").key(Sha256), "lookup", "cancelled"))
+        check(transfers.none { it.actionId == "waiting" })
     } finally { first.close(); second.close(); blockedCache.close() }
     println("PASS responsive bounded lookup workers, queued cancellation and joined cancellation without delegate launch")
 
@@ -173,20 +185,22 @@ fun executorChecks(root: String) {
         try { waitForCancellation(checkpoint) }
         finally { stopped.store(true) }
     } }
-    val uploadCache = RemoteCachingActionExecutor(Delegate(content), local, content, uploadBlocked, { true })
+    val uploadCache = RemoteCachingActionExecutor(Delegate(content), local, content, uploadBlocked, { true }, cacheTransfer = transfer)
     try {
         val result = finish(uploadCache, "upload", spec("upload"))
         uploadCache.observeCompleted(mapOf("upload" to result)); await { publishing.load() }
         uploadCache.abortPublications(); check(stopped.load() && result.status == ActionStatus.EXECUTED)
+        check(transfers.last() == ActionCacheTransfer("upload", spec("upload").key(Sha256), "publish", "cancelled"))
     } finally { uploadCache.close() }
     println("PASS upload abort joins its worker and preserves already completed execution")
 
-    val broken = Remote().apply { publish = { _, _, _ -> RemotePublication(false, CacheDiagnostic("remote-publish-failed", "fixture outage")) } }
-    val outageCache = RemoteCachingActionExecutor(Delegate(content), local, content, broken, { true }, diagnostic)
+    val broken = Remote().apply { publish = { _, _, _ -> RemotePublication(false, CacheDiagnostic("remote-publish-failed", "fixture outage"), publishStats) } }
+    val outageCache = RemoteCachingActionExecutor(Delegate(content), local, content, broken, { true }, diagnostic, cacheTransfer = transfer)
     try {
         val r = finish(outageCache, "outage", spec("publish-outage"))
         outageCache.observeCompleted(mapOf("outage" to r)); outageCache.drain()
         check(r.status == ActionStatus.EXECUTED && notes.any { it.code == "remote-publish-failed" })
+        check(transfers.last() == ActionCacheTransfer("outage", spec("publish-outage").key(Sha256), "publish", "failed", publishStats))
     } finally { outageCache.close() }
     println("PASS publication outages preserve executed outputs with a caller-thread diagnostic")
 
@@ -219,6 +233,22 @@ fun executorChecks(root: String) {
         } finally { cache.close() }
     }
     println("PASS local publication conflicts remain failures for executed results and remote promotion")
+
+    val failedLookup = Remote().apply { fetch = { _, _ -> RemoteLookup(null, CacheDiagnostic("remote-cache-lookup-failed", "fixture outage"), lookupStats) } }
+    val fallback = RemoteCachingActionExecutor(Delegate(content), local, content, failedLookup, { true }, cacheTransfer = transfer, publishEnabled = false)
+    try {
+        check(finish(fallback, "lookup-outage", spec("lookup-outage")).status == ActionStatus.EXECUTED)
+        check(transfers.last() == ActionCacheTransfer("lookup-outage", spec("lookup-outage").key(Sha256), "lookup", "failed", lookupStats))
+    } finally { fallback.close() }
+
+    val observerDelegate = Delegate(content)
+    val observerFailure = RemoteCachingActionExecutor(observerDelegate, local, content, Remote(), { true },
+        cacheTransfer = { error("journal unavailable") })
+    try {
+        mustFail { finish(observerFailure, "observer-failure", spec("observer-failure")) }
+        check(observerDelegate.starts == 0)
+    } finally { observerFailure.close() }
+    println("PASS transfer metrics preserve remote failures, cancellation, caller-thread delivery and observer failure cleanup")
 }
 
 fun executorBackendChecks(root: String, endpoint: RemoteEndpoint) {

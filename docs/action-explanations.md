@@ -34,6 +34,17 @@ Older runs, unstarted actions and actions sharing another action's result have
 null timing. For shared work, inspect the action named by `reason.sharedWith`.
 Timing is run-local and never changes action keys or cached results.
 
+`cacheTransfers` lists remote lookup and publication operations, including their
+outcomes and `stats`: request count, uploaded/downloaded HTTP body bytes and
+operation duration in nanoseconds. Body bytes include gRPC framing but exclude
+HTTP headers and TLS overhead. Duration includes local mapping and validation
+within the remote operation. These records also appear as `action-cache-transfer`
+events; publication can finish after the action itself. Publication failure does
+not change a successful local action result. Interrupted or unmeasured operations
+can have null stats, which must not be interpreted as zero traffic. Cancellation
+does not roll back a remote write that the server already accepted. An empty list
+means no recorded remote operation, including older runs and local-only reuse.
+
 `dependencyEvidence: "unbound-retained"` means the dependency IDs come from the
 saved action record; the retained dependency list is not part of the action key.
 An unresolved action has null recipe and dependencies because these details were

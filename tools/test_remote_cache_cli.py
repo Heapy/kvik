@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,6 +30,9 @@ def main():
     parser.add_argument('--restore-only', type=Path, help='Reuse a completed writer case; check restoration into dependency-only CAS')
     args = parser.parse_args()
     runtime, fixture, backend = (p.resolve() for p in (args.runtime, args.fixture, args.backend))
+    schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
+    event_schema = Draft202012Validator({**schema, '$ref': '#/$defs/event'})
+    explanation_schema = Draft202012Validator({**schema, '$ref': '#/$defs/actionExplanation'})
     parent = ROOT / '.kvik/tests/remote-cache-cli'; parent.mkdir(parents=True, exist_ok=True)
     case = args.restore_only.resolve() if args.restore_only else Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
     grpc, http = free_port(), free_port()
@@ -80,6 +84,9 @@ def main():
                 (root / f'{label}.stderr').write_text(result.stderr)
                 assert result.returncode == 0, (label, result.stderr, result.stdout[-6000:])
                 assert secret not in result.stdout + result.stderr
+                events = [json.loads(line) for line in result.stdout.splitlines()]
+                for event in events:
+                    event_schema.validate(event)
                 records = list(output.glob('*/verification.json')); assert len(records) == 1
                 record = json.loads(records[0].read_text()); assert record['status'] == 'passed', record
                 compile_ids = {'consumer:jvm:main', 'consumer:jvm:test-compile', 'library:jvm:main'}
@@ -90,6 +97,32 @@ def main():
                 assert record['testCounts']['executed'] == 1 and record['testCounts']['failed'] == 0
                 effects = list(records[0].parent.rglob('effects.txt')); assert len(effects) == 1
                 assert effects[0].read_text() == 'executed\n'
+                transfers = [event['payload'] for event in events if event['type'] == 'action-cache-transfer']
+                assert all(t['actionId'] in compile_ids for t in transfers), transfers
+                if offline:
+                    assert not transfers, transfers
+                for action in compilations:
+                    observed = [t for t in transfers if t['actionId'] == action['actionId']]
+                    assert all(t['key'] == action['key'] for t in observed), observed
+                    if not offline:
+                        assert len(observed) == (1 if expected == 'remote_hit' else 2), observed
+                        assert observed[0]['operation'] == 'lookup'
+                        assert observed[0]['outcome'] == ('hit' if expected == 'remote_hit' else 'failed' if label == 'fallback' else 'miss'), observed
+                        if len(observed) == 2:
+                            assert (observed[1]['operation'], observed[1]['outcome']) == ('publish', 'failed' if label == 'fallback' else 'published')
+                        for item in observed:
+                            stats = item['stats']
+                            assert stats is not None and stats['requests'] > 0 and stats['durationNanos'] > 0, item
+                            if label == 'fallback':
+                                assert stats['uploadedBytes'] == stats['downloadedBytes'] == 0, item
+                            else:
+                                assert stats['uploadedBytes'] > 0 and stats['downloadedBytes'] > 0, item
+                    explanation = subprocess.run([str(runtime), 'explain', '--run', str(records[0].parent), '--action', action['actionId']],
+                        env=env, capture_output=True, text=True, timeout=20)
+                    assert explanation.returncode == 0, (explanation.stdout, explanation.stderr)
+                    explained = json.loads(explanation.stdout)
+                    explanation_schema.validate(explained)
+                    assert explained['cacheTransfers'] == observed, explained
                 return {action['actionId']: (action['key'], action['outputs']) for action in compilations}
 
             if args.restore_only:
