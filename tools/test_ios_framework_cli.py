@@ -2,13 +2,22 @@
 """Build device/simulator frameworks through the public CLI and consume them from Swift."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap import process_barrier
+
+
+def run(command, **options):
+    environment, descriptors = process_barrier.inherited(os.environ)
+    return subprocess.run(command, env=environment, pass_fds=descriptors, **options)
 
 
 def main():
@@ -55,7 +64,7 @@ def main():
 
     def resolve():
         write('kvik.json', json.dumps(document))
-        result = subprocess.run([executable, 'resolve', '--project', project/'kvik.json'], capture_output=True, text=True, timeout=60)
+        result = run([executable, 'resolve', '--project', project/'kvik.json'], capture_output=True, text=True, timeout=60)
         assert result.returncode == 0, result.stdout + result.stderr
         validate(json.loads(result.stdout), 'dependencyResolution')
 
@@ -64,7 +73,7 @@ def main():
                    '--module', 'consumer', '--jobs', '1', '--offline']
         for selected_target in selected:
             command += ['--target', selected_target]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+        result = run(command, capture_output=True, text=True, timeout=600)
         write(label+'.jsonl', result.stdout)
         write(label+'.stderr', result.stderr)
         assert (result.returncode == 0) == successful, (label, result.returncode, result.stdout, result.stderr)
@@ -96,7 +105,7 @@ def main():
             simulator = item['target'] == 'iosSimulatorArm64'
             sdk = tools['roots']['iosSimulatorSdk' if simulator else 'iosSdk']
             triple = 'arm64-apple-ios15.0' + ('-simulator' if simulator else '')
-            result = subprocess.run(['xcrun', 'swiftc', '-typecheck', '-target', triple, '-sdk', sdk,
+            result = run(['xcrun', 'swiftc', '-typecheck', '-target', triple, '-sdk', sdk,
                 '-module-cache-path', str(project/'.swift-module-cache'),
                 '-F', str(Path(item['framework']).parent), str(project/'Consumer.swift')],
                 capture_output=True, text=True, timeout=90)

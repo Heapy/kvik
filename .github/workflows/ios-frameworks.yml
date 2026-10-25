@@ -1,0 +1,44 @@
+name: iOS frameworks
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ios-frameworks:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25.0.4+7'
+          architecture: aarch64
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.15'
+      - name: Prepare Apple tools
+        shell: bash
+        run: |
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          python -m pip install jsonschema==4.23.0
+          curl --fail --location --retry 3 \
+            https://github.com/JetBrains/kotlin/releases/download/v2.4.20/kotlin-native-prebuilt-macos-aarch64-2.4.20.tar.gz \
+            --output "$RUNNER_TEMP/kotlin-native.tar.gz"
+          echo "b70d4fd2855fdb054fc9604beaa7de83c18d786454ae948de72a226e81f07dc8  $RUNNER_TEMP/kotlin-native.tar.gz" | shasum -a 256 --check
+          tar -xzf "$RUNNER_TEMP/kotlin-native.tar.gz" -C "$RUNNER_TEMP"
+          echo "KONAN_HOME=$RUNNER_TEMP/kotlin-native-prebuilt-macos-aarch64-2.4.20" >> "$GITHUB_ENV"
+      - name: Build native runtime and verify device and simulator frameworks
+        run: python tools/macos/verify.py --java-home "$JAVA_HOME" --konan-home "$KONAN_HOME" --pin-tools

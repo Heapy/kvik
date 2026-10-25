@@ -964,6 +964,16 @@ On macOS ARM64, `iosArm64` and `iosSimulatorArm64` library targets can compile K
 
 Pin the consumer SDKs explicitly with `python3 bootstrap/pin_tools.py --java-home "$JDK" --konan-home "$KONAN" --apple-target iosArm64 --apple-target iosSimulatorArm64 --output /absolute/project/ios-toolchains.lock.json`. Put that lock in the consumer `tools.json` `toolLock` field and add matching `iosSdk` and `iosSimulatorSdk` roots from `xcrun --sdk iphoneos --show-sdk-path` and `xcrun --sdk iphonesimulator --show-sdk-path`. The SDKs must belong to the pinned Xcode installation. Fresh compilation verifies the selected SDK; cached frameworks can be restored without installed compiler tools. This support covers compilation and linking: framework resources, dependency API exports, XCFramework assembly, iOS test execution and app deployment are not yet supported.
 
+The [iOS workflow](.github/workflows/ios-frameworks.yml) builds the native runtime on
+macOS ARM64 and checks device/simulator frameworks, Swift imports, static linking
+and cache reuse. Its local entry point is
+`python3 tools/macos/verify.py --java-home "$JDK" --konan-home "$KONAN" --konan-data "$HOME/.konan"`.
+Use Python 3.13 or newer. In a disposable checkout, add `--pin-tools` to provision
+Native dependencies and replace that checkout's bootstrap tool lock for the selected
+Xcode installation. The consumer lock includes both iOS SDKs and stays separate
+from the host-only bootstrap lock. Provisioning only removes downloaded archives
+from a Native data directory created by that invocation.
+
 Dependency locks use schema version 2 and resolve each module, target, compilation and usage separately. Existing unscoped locks require an explicit `resolve`. Repeatable `--scope-pin MODULE:TARGET:COMPILATION:USAGE:PURPOSE=GROUP:ARTIFACT:VERSION` overrides a global pin only in that domain; for example, `--scope-pin library:jvm:test:java-api:dependencies=org.jetbrains:annotations:23.0.0`. Supply it consistently to `resolve`, `check-lock`, `inspect`, `build` and `test`; runtime usage is a separate domain. Unknown domains and duplicate component pins are errors. Native test source compilation and executable linking use separate API and runtime closures; private link dependencies remain unavailable to source compilation. Source-free links reject missing used symbols. See [Native visibility evidence and portability limits](docs/evidence/k08-native-visibility.md).
 
 The source bootstrap uses Python with `os.waitid`/`WNOWAIT` support (tested with Python 3.15). A cache hit verifies and executes the native binary without starting a JVM. A cache miss verifies the installed compiler, JDK, native dependencies and Apple tools against `bootstrap/toolchains.lock.json`; it does not download missing tools. That lock currently describes the development macOS ARM64 host, so another host must be explicitly provisioned and repinned with `bootstrap/pin_tools.py` before building.
