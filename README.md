@@ -223,8 +223,12 @@ cache hit or deletion of the last SQL input, clears previous SQL errors. Reload
 clears published diagnostics before importing the new model.
 BSP keeps a bounded connection-local history to replay observed warnings for exact
 cached action keys, including when returning to an earlier successful build variant.
-The exposed launcher is the original KSP output. Diagnostics referring to the
-Native adapter's rewritten `prepared/kotest.kt` currently remain log messages.
+The exposed launcher is the original KSP output. Native adapter diagnostics link to
+separately retained copies of the exact `prepared/kotest.kt` and
+`prepared/KvikKotestRuntime.kt` compiler inputs. Their URIs, logical paths and digests
+appear in the launcher's `data.diagnosticSources` metadata; they are excluded from
+source lists and roots to avoid duplicate declarations. Rebuilds and reload clear
+old diagnostic mappings.
 
 Debugging and unsaved-buffer support remain pending. Compatibility is exercised by the framed protocol clients in
 `tools/test_bsp*_cli.py`; individual IDE clients still need integration testing.

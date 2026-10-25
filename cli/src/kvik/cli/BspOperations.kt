@@ -48,9 +48,7 @@ internal class NativeBspOperations(private val options: BspOptions) : BspOperati
     }
 
     private fun clearGeneratedDiagnostics(model: BspProjectModel, target: BspTarget, state: Pending) {
-        val generated = model.sources(listOf(target.uri)).values.getValue("items").arrayValue().single().objectValue()
-            .getValue("sources").arrayValue().map(JsonValue::objectValue)
-            .filter { it.getValue("generated").booleanValue() }.map { it.getValue("uri").stringValue() }.toSet()
+        val generated = model.generatedDocumentUris(target)
         for (consumer in model.generatedDiagnosticTargets(target)) {
             for (params in publishedDiagnostics.clearDocuments(consumer, generated)) {
                 notification(state, "build/publishDiagnostics", params)

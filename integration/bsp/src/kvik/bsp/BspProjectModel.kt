@@ -182,6 +182,10 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         for (source in sources) {
             require(source.directory.startsWith("${root.trimEnd('/')}/.kvik/bsp/")) { "Generated sources must belong to a retained BSP run" }
             require(target in generatedSourceTargets(source.producer)) { "Unsupported generated-source producer for target" }
+            require(source.diagnosticFiles.files.isEmpty() || source.producer == "${target.module}:${target.target}:ksp-test" &&
+                source.diagnosticFiles.files.map { it.path.value }.toSet() == setOf("prepared/kotest.kt", "prepared/KvikKotestRuntime.kt")) {
+                "Unsupported generated diagnostic sources"
+            }
             if (pluginGeneratedRoots(source.producer).isNotEmpty()) {
                 val roots = pluginGeneratedRoots(source.producer).filter { it.resources == null && target in pluginGeneratedTargets(it) }
                 require(source.files.files.all { file -> roots.any { file.path.value.startsWith(it.prefix) } }) {
@@ -194,7 +198,8 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
                 }
             }
         }
-        require(sources.flatMap { it.files.files }.map { it.path }.distinct().size == sources.sumOf { it.files.files.size }) {
+        val paths = sources.flatMap { it.files.files + it.diagnosticFiles.files }.map { it.path }
+        require(paths.distinct().size == paths.size) {
             "Ambiguous generated-source logical paths"
         }
         if (generated[target.uri].orEmpty() == sources) return false
@@ -272,7 +277,10 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
     private fun generatedSourceUri(uri: String, path: LogicalPath): String? =
         generated[uri].orEmpty().firstNotNullOfOrNull { source ->
             source.files.files.singleOrNull { it.path == path }?.let(source::uri)
+                ?: source.diagnosticFiles.files.singleOrNull { it.path == path }?.let(source::diagnosticUri)
         }
+
+    fun generatedDocumentUris(target: BspTarget): Set<String> = generated[target.uri].orEmpty().flatMap { it.documentUris() }.toSet()
 
     fun sourceUri(target: BspTarget, path: String): String? = try {
         val logical = LogicalPath(path)
@@ -326,7 +334,7 @@ class BspProjectModel(val inspection: ProjectInspection, val root: String, val c
         val file = uri?.let(filesByUri::get)
         return obj("targets" to compilations.filter {
             file != null && belongs(file.path, it.directories) || uri != null && generated[it.uri].orEmpty().any { source ->
-                source.files.files.any { generatedFile -> source.uri(generatedFile) == uri }
+                uri in source.documentUris()
             }
         }.map { it.id() }.json())
     }

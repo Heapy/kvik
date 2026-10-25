@@ -161,6 +161,20 @@ class FixtureSpec : FunSpec({
             materialization = path.parents[len(Path(LAUNCHER).parts)-1]
             assert materialization in [local_path(uri) for uri in item['roots']], item
             assert client.request('buildTarget/inverseSources', dict(textDocument=dict(uri=entry['uri']))) == dict(targets=[test_target])
+            diagnostic_sources = {s['logicalPath']: s for s in metadata['diagnosticSources']}
+            assert set(diagnostic_sources) == {'prepared/kotest.kt', 'prepared/KvikKotestRuntime.kt'}, metadata
+            for logical, diagnostic in diagnostic_sources.items():
+                prepared_path = local_path(diagnostic['uri'])
+                prepared_data = prepared_path.read_bytes()
+                assert diagnostic['digest'] == digest(prepared_data), diagnostic
+                assert prepared_path.as_posix().endswith('/'+logical), prepared_path
+                assert not any(prepared_path.is_relative_to(local_path(uri)) for uri in item['roots']), item
+                assert client.request('buildTarget/inverseSources', dict(textDocument=dict(uri=diagnostic['uri']))) == dict(targets=[test_target])
+                if logical == 'prepared/kotest.kt':
+                    assert prepared_data == data.replace(b'import io.kotest.engine.launcher.invokeTestEngine',
+                                                         b'import kvik.kotest.runtime.invokeTestEngine')
+                else:
+                    assert b'package kvik.kotest.runtime' in prepared_data
             return entry['uri'], path, data
 
         def compile_tests(status=1):
@@ -199,6 +213,31 @@ class FixtureSpec : FunSpec({
         before_failure_uri, _, _ = generated(recovered)
         assert failed_path.read_bytes() == failed_bytes
         print('PASS successful generation remains visible after downstream Native compilation fails', flush=True)
+
+        # A required constructor argument makes the KSP-generated invocation fail
+        # in the adapter's exact compiler input, rather than in the authored spec.
+        test_file.write_text(test_text.replace('class FixtureSpec :', 'class FixtureSpec(required: String) :'))
+        seen = len(client.notifications)
+        _, adapter_failure = compile_tests(status=2)
+        generated(adapter_failure)
+        entry, = [s for item in sources() for s in item['sources'] if s['generated']]
+        prepared, = [s for s in entry['data']['diagnosticSources'] if s['logicalPath'] == 'prepared/kotest.kt']
+        published = [n['params'] for n in client.notifications[seen:]
+                     if n['method'] == 'build/publishDiagnostics' and
+                     n['params']['textDocument']['uri'] == prepared['uri'] and n['params']['diagnostics']]
+        assert published, client.notifications[seen:]
+        lines = local_path(prepared['uri']).read_text().splitlines()
+        assert any('SpecRef.Function' in lines[d['range']['start']['line']]
+                   for event in published for d in event['diagnostics']), published
+        test_file.write_text(test_text)
+        seen = len(client.notifications)
+        _, recovered = compile_tests()
+        generated(recovered)
+        assert client.request('buildTarget/inverseSources', dict(textDocument=dict(uri=prepared['uri']))) == dict(targets=[])
+        assert any(n['method'] == 'build/publishDiagnostics' and
+                   n['params']['textDocument']['uri'] == prepared['uri'] and not n['params']['diagnostics']
+                   for n in client.notifications[seen:]), client.notifications[seen:]
+        print('PASS prepared launcher diagnostics point to exact compiler input and clear after recovery', flush=True)
 
         # Fail the prerequisite main compilation, before KSP can generate output.
         main_file.write_text('package fixture\nfun answer() = )\n')

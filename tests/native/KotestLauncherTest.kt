@@ -33,6 +33,12 @@ public suspend fun launch() {
 @OptIn(ExperimentalStdlibApi::class)
 public val testEngineEntryPoint: Unit = runBlocking { launch() }
 """.trimIndent() + "\n"
+    @Test fun preparedSourcesRetainTheExactCompilerInputs() {
+        val sources = kotestPreparedSources(raw).mapKeys { it.key.value }
+        assertEquals(setOf("prepared/kotest.kt", "prepared/KvikKotestRuntime.kt"), sources.keys)
+        assertEquals(adaptKotestLauncher(raw), sources.getValue("prepared/kotest.kt"))
+        assertEquals(kotestRuntimeSource, sources.getValue("prepared/KvikKotestRuntime.kt"))
+    }
     @Test fun pinnedOfficialLauncherAdaptationPreservesTheSpecInventoryAndEagerInvocation() {
         val adapted = adaptKotestLauncher(raw)
         assertEquals(raw.replace("import io.kotest.engine.launcher.invokeTestEngine", "import kvik.kotest.runtime.invokeTestEngine"), adapted)

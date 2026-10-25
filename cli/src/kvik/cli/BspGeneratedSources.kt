@@ -7,7 +7,7 @@ import kvik.cache.NativeOutputTrees
 import kvik.compiler.ksp.KspNativeCompilation
 import kvik.compiler.ksp.kotestGeneratedLauncher
 import kvik.compiler.ksp.kspNativeAction
-import kvik.compiler.native.adaptKotestLauncher
+import kvik.compiler.native.kotestPreparedSources
 import kvik.compiler.sqldelight.SqlDelightGeneration
 import kvik.compiler.sqldelight.sqlDelightAction
 import kvik.compiler.jvm.*
@@ -114,11 +114,14 @@ internal fun materializeBspGeneratedOutputs(
         val resourceOwners = resourceTargets.map { resources.getOrPut(it) { mutableListOf() } }
         if (result.outputs.files.isEmpty()) continue
         val content = NativeContentStore(store, maxBlobBytes = 8 * 1024 * 1024)
+        val diagnosticFiles = mutableListOf<FileEntry>()
         for (output in result.outputs.files) {
             val bytes = content.get(output.digest) ?: error("Generated content is unavailable")
             if (sourceTargets.isNotEmpty()) {
                 val source = bytes.decodeToString(throwOnInvalidSequence = true)
-                if (implementation == "kvik-ksp-native-v1") adaptKotestLauncher(source)
+                if (implementation == "kvik-ksp-native-v1") kotestPreparedSources(source).forEach { (path, text) ->
+                    diagnosticFiles += FileEntry(path, content.put(text.encodeToByteArray()))
+                }
             }
         }
         val directory = "$childDirectory/generated-$name"
@@ -128,8 +131,10 @@ internal fun materializeBspGeneratedOutputs(
             it.copy(path = LogicalPath("generated/scripts/${script.name}/" + it.path.value.removePrefix("generated/")))
         })
         NativeOutputTrees(content).materialize(files, directory)
+        val diagnostics = TreeManifest(diagnosticFiles)
+        if (diagnosticFiles.isNotEmpty()) NativeOutputTrees(content).materialize(diagnostics, "$directory-diagnostics")
         if (owners.isNotEmpty()) {
-            val sources = BspGeneratedSources(directory, result.actionId, checkNotNull(result.key), files)
+            val sources = BspGeneratedSources(directory, result.actionId, checkNotNull(result.key), files, diagnostics)
             owners.forEach { it += sources }
         }
         if (resourceOwners.isNotEmpty()) {

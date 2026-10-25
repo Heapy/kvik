@@ -20,7 +20,10 @@ class BspGeneratedSourcesTest {
     private fun model() = BspProjectModel(inspection, root, LogicalPath("kvik.json"))
     private val targetUri = bspFileUri("$root/kvik.json") + "#lib/macosArm64/test"
     private val file = FileEntry(LogicalPath("generated/kotlin/io/kotest/framework/runtime/kotest.kt"), digest, false)
-    private fun sources(run: String = "first") = BspGeneratedSources("$root/.kvik/bsp/$run/sources", "lib:macosArm64:ksp-test", digest, TreeManifest(listOf(file)))
+    private val prepared = listOf("prepared/kotest.kt", "prepared/KvikKotestRuntime.kt").map {
+        FileEntry(LogicalPath(it), digest, false)
+    }
+    private fun sources(run: String = "first") = BspGeneratedSources("$root/.kvik/bsp/$run/sources", "lib:macosArm64:ksp-test", digest, TreeManifest(listOf(file)), TreeManifest(prepared))
     private fun JsonValue.items(name: String) = objectValue().getValue(name).arrayValue()
 
     @Test fun generatedFilesExposeOriginAndResolveOnlyTheirOwningTarget() {
@@ -39,6 +42,16 @@ class BspGeneratedSourcesTest {
         assertEquals(file.path.value, origin.getValue("logicalPath").stringValue())
         assertEquals(digest.toJson(), origin.getValue("digest"))
         assertEquals(digest.toJson(), origin.getValue("actionKey"))
+        assertEquals(prepared.map { obj("uri" to source.diagnosticUri(it).json(), "logicalPath" to it.path.value.json(), "digest" to digest.toJson()) },
+            origin.getValue("diagnosticSources").arrayValue())
+        assertEquals(setOf(source.uri(file)) + prepared.map(source::diagnosticUri), model.generatedDocumentUris(target))
+        assertFalse((bspFileUri(source.diagnosticDirectory) + "/").json() in result.items("roots"))
+        for (adapter in prepared) {
+            val uri = source.diagnosticUri(adapter)
+            assertEquals(uri, model.diagnosticUri("lib:macosArm64:test-compile", adapter.path.value))
+            assertEquals(listOf(obj("uri" to targetUri.json())), model.inverseSources(uri).items("targets"))
+            for (other in model.allTargets().filter { it != target }) assertNull(model.sourceUri(other, adapter.path.value))
+        }
         assertTrue((bspFileUri(source.directory) + "/").json() in result.items("roots"))
         assertEquals(listOf(obj("uri" to targetUri.json())), model.inverseSources(source.uri(file)).items("targets"))
         assertEquals(model.inverseSources(source.uri(file)), model.inverseSources(source.uri(file).replace("%C3%BC", "%c3%bc")))
@@ -61,11 +74,18 @@ class BspGeneratedSourcesTest {
         assertFalse(model.replaceGeneratedSources(target, listOf(first)))
         assertTrue(model.replaceGeneratedSources(target, listOf(second)))
         assertTrue(model.inverseSources(first.uri(file)).items("targets").isEmpty())
+        for (adapter in prepared) {
+            assertTrue(model.inverseSources(first.diagnosticUri(adapter)).items("targets").isEmpty())
+            assertEquals(1, model.inverseSources(second.diagnosticUri(adapter)).items("targets").size)
+            assertTrue(model().inverseSources(second.diagnosticUri(adapter)).items("targets").isEmpty())
+        }
         assertEquals(1, model.inverseSources(second.uri(file)).items("targets").size)
         assertTrue(model().inverseSources(second.uri(file)).items("targets").isEmpty())
         assertTrue(model.replaceGeneratedSources(target, emptyList()))
         assertFalse(model.replaceGeneratedSources(target, emptyList()))
         assertNull(model.sourceUri(target, file.path.value))
+        assertTrue(model.generatedDocumentUris(target).isEmpty())
+        for (adapter in prepared) assertNull(model.diagnosticUri("lib:macosArm64:test-compile", adapter.path.value))
     }
 
     @Test fun generatedFileOwnershipWinsOverAnOverlappingDeclaredDirectory() {
@@ -85,6 +105,8 @@ class BspGeneratedSourcesTest {
             assertFails { model.replaceGeneratedSources(target, listOf(sources().copy(producer = producer))) }
         }
         assertFails { model.replaceGeneratedSources(target.copy(module = "other"), listOf(sources())) }
+        assertFails { model.replaceGeneratedSources(target, listOf(sources().copy(diagnosticFiles = TreeManifest(prepared.take(1))))) }
+        assertFails { sources().copy(diagnosticFiles = TreeManifest(listOf(file))) }
         assertFails { model.replaceGeneratedSources(target, listOf(sources().copy(directory = "/external/output"))) }
         assertFails { sources().copy(directory = "$root/.kvik/bsp/../outside") }
         assertFails { model.replaceGeneratedSources(target, listOf(sources(), sources("another"))) }

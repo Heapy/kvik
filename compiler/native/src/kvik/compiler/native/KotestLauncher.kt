@@ -1,5 +1,13 @@
 package kvik.compiler.native
 
+import kvik.core.LogicalPath
+
+/** Exact adapter-owned sources consumed by Native compilation, also retained for IDE diagnostics. */
+fun kotestPreparedSources(raw: String): Map<LogicalPath, String> = mapOf(
+    LogicalPath("prepared/kotest.kt") to adaptKotestLauncher(raw),
+    LogicalPath("prepared/KvikKotestRuntime.kt") to kotestRuntimeSource,
+)
+
 /** Adapt only the pinned Kotest 6.2.5 Native template; retain the original as an action input. */
 fun adaptKotestLauncher(raw: String): String {
     require(raw.length <= 1024 * 1024 && '\r' !in raw) { "Invalid/oversized Kotest launcher" }
