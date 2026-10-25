@@ -11,6 +11,7 @@ import time
 
 import jsonschema
 from check_run_journal import check_run_journal
+from check_active_input_mutation import check_active_input_mutation
 from tool_installation_roots import installation_roots
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -158,6 +159,7 @@ class PassingTests {
     assert {action['actionId']: action['key'] for action in first['actions']} == {action['actionId']: action['key'] for action in repeated['actions']}
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':test') else 'local_hit') for action in repeated['actions'])
     check_run_journal(executable, Path(summaries[-1]['run']), validate)
+    check_active_input_mutation(executable, project, validate)
     original_consumer = (project/'consumer/main/Consumer.kt').read_bytes()
     try:
         write('consumer/main/Consumer.kt', 'package fixture\nfun message() = greeting().also { require(it.isNotEmpty()) }\n')
