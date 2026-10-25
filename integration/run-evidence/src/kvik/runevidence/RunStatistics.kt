@@ -4,6 +4,7 @@ import kvik.core.*
 
 /** Summarizes already validated committed events; does not inspect current sources or execute work. */
 fun runStatistics(record: VerificationRecord, events: List<RunEvent>): JsonValue.Object {
+    val capture = events.first().payload.values["inputCapture"]?.let(InputCaptureStatistics::fromJson)
     val started = events.filter { it.type == "action-started" }.map { it.payload.values.getValue("actionId").stringValue() }.toSet()
     val timings = events.filter { it.type == "action-timing" }.map { ActionTiming.fromJson(it.payload) }
     val transfers = events.filter { it.type == "action-cache-transfer" }.map { ActionCacheTransfer.fromJson(it.payload) }
@@ -40,6 +41,7 @@ fun runStatistics(record: VerificationRecord, events: List<RunEvent>): JsonValue
     fun transferValue(values: List<Long>) = if (measuredTransfers.isEmpty()) JsonValue.Null else values.boundedSum().json()
     return obj("schemaVersion" to CONTRACT_VERSION.json(), "runId" to record.runId.json(),
         "status" to record.status.name.lowercase().json(), "currentFreshness" to JsonValue.Null,
+        "inputCapture" to (capture?.toJson() ?: JsonValue.Null),
         "requestedChecks" to record.requestedChecks.sorted().map { it.json() }.json(),
         "completedChecks" to record.completedChecks.sorted().map { it.json() }.json(),
         "testCounts" to record.testCounts.toJson(),

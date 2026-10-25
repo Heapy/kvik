@@ -114,6 +114,19 @@ class PassingTests {
             run = project/'.kvik/runs'/record['runId']
             assert json.loads((run/'verification.json').read_text()) == record
             assert (run/'events.jsonl').read_text() == result.stdout
+            capture = values[0]['payload']['inputCapture']
+            assert capture['kind'] == 'filesystem'
+            assert 0 <= capture['hashing']['durationNanos'] <= capture['durationNanos']
+            manifest = json.loads((run/'inputs.json').read_text())
+            input_bytes = sum(f['digest']['sizeBytes'] for f in manifest['files'])
+            input_bytes += (run/'configuration.json').stat().st_size + (run/'dependency-lock.json').stat().st_size
+            assert capture['hashing']['bytes'] >= input_bytes * 2, 'Both input observations must be hashed'
+            assert capture['hashing']['operations'] > 0
+            query = subprocess.run([str(executable), 'run-stats', '--run', str(run)], env=environment,
+                                   capture_output=True, text=True, timeout=20, check=True)
+            statistics = json.loads(query.stdout)
+            validate(statistics, 'runStatistics')
+            assert statistics['inputCapture'] == capture
             if command == 'test':
                 if status == 'passed':
                     assert record['testCounts']['executed'] == 1 and record['testCounts']['discoveryComplete']

@@ -77,4 +77,18 @@ Both timing and transfer sections label measurement coverage as complete,
 partial or unavailable. Partial values cover only recorded measurements;
 unavailable totals are null. An old journal with no transfer records does not
 establish zero network traffic. This query does not check current freshness,
-infer avoided tests, or estimate hashing time or memory consumption.
+infer avoided tests, or estimate memory consumption.
+
+`inputCapture` reports the initial successful input capture before action
+scheduling: its elapsed nanoseconds and SHA-256 operation count, bytes and elapsed
+hashing nanoseconds. Filesystem capture includes both observations; source
+provider capture uses the selected immutable manifest. Repeated hashing of the
+same bytes counts repeatedly. Hashing includes the snapshotter and its capture
+CAS calls, including manifest/fingerprint hashing; JSON encoding, file IO,
+configuration parsing and CAS publication are included only in capture elapsed
+time. Provider-internal identity verification/fetching, initial configuration
+preflight, later freshness scans, action keys, tool inventories and runtime
+bootstrap hashes are outside the hashing counter. Thus this is not total process
+hashing time. Capture occurs before the scheduler origin and is not added to
+scheduler timing fields. Old journals return null; unsuccessful captures that
+never created a run still return their original diagnostic without run statistics.

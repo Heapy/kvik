@@ -61,6 +61,22 @@ private fun capture(provider: SourceSnapshotProvider, store: ContentStore = Prov
         LogicalPath("kvik.lock.json"), selection = selection, checkpoint = checkpoint)
 
 class SourceProviderTest {
+    @Test fun measuredProviderCapturePreservesSnapshotAndManifestIdentity() {
+        val provider = MemoryProvider(revision())
+        val expected = capture(provider)
+        val hashed = mutableListOf<ByteArray>()
+        val hasher = MeasuredHasher(Hasher { bytes -> hashed += bytes.copyOf(); Sha256.digest(bytes) })
+        val actual = ProviderProjectSnapshotter(provider, ProviderStore(), SourcePathPolicy.CaseSensitive, hasher = hasher)
+            .capture(SourceSelector("project", "main"), LogicalPath("kvik.json"), LogicalPath("kvik.lock.json"))
+        assertEquals(expected.manifestDigest, actual.manifestDigest)
+        assertEquals(expected.snapshot.fingerprint, actual.snapshot.fingerprint)
+        assertEquals(expected.snapshot.inputs.toJson(), actual.snapshot.inputs.toJson())
+        assertTrue(hashed.any { it.contentEquals(providerDocument()) })
+        assertTrue(hashed.any { it.contentEquals(provider.head.manifest.toJson().canonical().encodeToByteArray()) })
+        assertEquals(hashed.size.toLong(), hasher.snapshot().operations)
+        assertEquals(hashed.sumOf { it.size.toLong() }, hasher.snapshot().bytes)
+    }
+
     @Test fun selectedScriptCapturesOtherScriptsReachableDeclarationsFromExactObservedBytes() {
         val document = JsonValue.Object(parseJson(providerDocument().decodeToString()).objectValue() + ("scripts" to parseJson("""{
             "probe":{"sources":["script/Main.kt"]},

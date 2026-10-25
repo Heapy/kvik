@@ -45,6 +45,7 @@ def main():
             stats = invoke()
             record = json.loads((run / 'verification.json').read_text())
             events = [json.loads(line) for line in (run / 'events.jsonl').read_text().splitlines()]
+            assert stats['inputCapture'] == events[0]['payload'].get('inputCapture')
             started = {e['payload']['actionId'] for e in events if e['type'] == 'action-started'}
             timings = [e['payload'] for e in events if e['type'] == 'action-timing']
             transfers = [e['payload'] for e in events if e['type'] == 'action-cache-transfer']

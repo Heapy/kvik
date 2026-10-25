@@ -55,11 +55,14 @@ internal class PreparedSourceProject(
     }
 
     fun capture(content: ContentStore, lockPath: LogicalPath, selection: SnapshotSelection, checkpoint: () -> Unit): ProjectInputSnapshot =
-        captureResolved(resolved, reference.root, configuration.name, lockPath, selection, content, checkpoint)
+        capture(content, lockPath, selection, Sha256, checkpoint)
+
+    fun capture(content: ContentStore, lockPath: LogicalPath, selection: SnapshotSelection, hasher: Hasher, checkpoint: () -> Unit): ProjectInputSnapshot =
+        captureResolved(resolved, reference.root, configuration.name, lockPath, selection, content, hasher, checkpoint)
 }
 
 private fun captureResolved(resolved: ResolvedSourceSnapshot, root: String, configuration: LogicalPath, lock: LogicalPath,
-                            selection: SnapshotSelection, content: ContentStore, checkpoint: () -> Unit): ProjectInputSnapshot {
+                            selection: SnapshotSelection, content: ContentStore, hasher: Hasher = Sha256, checkpoint: () -> Unit): ProjectInputSnapshot {
     val scoped = resolved.scopedTo(root, checkpoint)
     val provider = object : SourceSnapshotProvider {
         override fun resolve(selector: SourceSelector, checkpoint: () -> Unit): ResolvedSourceSnapshot {
@@ -68,7 +71,7 @@ private fun captureResolved(resolved: ResolvedSourceSnapshot, root: String, conf
             return scoped
         }
     }
-    return ProviderProjectSnapshotter(provider, content, SourcePathPolicy.CaseSensitive).capture(
+    return ProviderProjectSnapshotter(provider, content, SourcePathPolicy.CaseSensitive, hasher = hasher).capture(
         SourceSelector(scoped.provenance.project, scoped.provenance.revision), configuration, lock,
         selection = selection, checkpoint = checkpoint).snapshot
 }

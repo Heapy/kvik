@@ -811,6 +811,9 @@ DEFS["actionCacheTransfer"]["allOf"] = [{"if": {"properties": {"operation": {"co
 DEFS["actionTiming"] = object_({"actionId": NONEMPTY,
     "startedAfterNanos": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
     "durationNanos": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}})
+DEFS["hashingStatistics"] = object_({"operations": INT, "bytes": INT, "durationNanos": INT})
+DEFS["inputCaptureStatistics"] = object_({"kind": enum("filesystem", "source-provider"),
+    "durationNanos": INT, "hashing": ref("hashingStatistics")})
 DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "action-cache-transfer", "action-timing", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
 DEFS["configurationEditOperation"] = {"oneOf": [
     object_({"op": {"const": "set-dependency"}, "module": ID, "sourceSet": ID, "dependency": ref("dependency")}),
@@ -872,7 +875,8 @@ DEFS["changeVerificationResult"] = versioned({**CHANGE_VERIFICATION_CONTEXT,
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": {**object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest"),
         "inputManifest": ref("digest"), "inputScope": enum("project", "partial"), "inputSelection": ref("snapshotSelection"),
-        "source": ref("sourceReference"), "sourceRetention": ref("kodeRetentionReference")}, optional=("source", "sourceRetention", "inputManifest", "inputScope", "inputSelection")),
+        "source": ref("sourceReference"), "sourceRetention": ref("kodeRetentionReference"),
+        "inputCapture": ref("inputCaptureStatistics")}, optional=("source", "sourceRetention", "inputManifest", "inputScope", "inputSelection", "inputCapture")),
         "dependentRequired": {"sourceRetention": ["source"]}},
     "framework-ready": ref("frameworkReady"),
     "abi-ready": ref("abiReady"),
@@ -1003,6 +1007,7 @@ RUN_COUNT = {"type": "integer", "minimum": 0, "maximum": 2147483647}
 RUN_COVERAGE = enum("complete", "partial", "unavailable")
 RUN_OUTCOMES = object_({status: RUN_COUNT for status in ("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked")})
 DEFS["runStatistics"] = versioned({
+    "inputCapture": nullable(ref("inputCaptureStatistics")),
     "runId": NONEMPTY, "status": enum("passed", "failed", "incomplete", "cancelled"), "currentFreshness": {"type": "null"},
     "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
     "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "testCounts": ref("testCounts"),
@@ -1016,7 +1021,7 @@ DEFS["runStatistics"] = versioned({
         "summedMeasuredOperationNanos": nullable(RUN_METRIC)}),
     "slowestActions": array(object_({"actionId": NONEMPTY, "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"),
         "startedAfterNanos": RUN_METRIC, "durationNanos": RUN_METRIC}), maxItems=10),
-})
+}, optional=("inputCapture",))
 
 
 DEFS["doctor"] = versioned({

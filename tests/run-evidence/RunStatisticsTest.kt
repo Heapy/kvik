@@ -7,12 +7,12 @@ class RunStatisticsTest {
     private val digest = Sha256.digest(byteArrayOf())
     private fun result(id: String, status: ActionStatus = ActionStatus.EXECUTED) = ActionResult(id, digest, status, exitCode = 0)
     private fun summary(actions: List<ActionResult>, timings: List<ActionTiming> = emptyList(),
-        started: Set<String> = actions.map { it.actionId }.toSet(), transfers: List<ActionCacheTransfer> = emptyList()): JsonValue.Object {
+        started: Set<String> = actions.map { it.actionId }.toSet(), transfers: List<ActionCacheTransfer> = emptyList(), capture: JsonValue? = null): JsonValue.Object {
         val record = VerificationRecord("run-stats", setOf("app:jvm:build"), emptySet(), digest, digest, digest, digest, emptyMap(),
             actions, emptyList(), TestCounts(0, 0, 0, 0, true), VerificationStatus.INCOMPLETE, Freshness.STALE, listOf("kvik", "build"))
         val events = mutableListOf<RunEvent>()
         fun event(type: String, payload: JsonValue) { events += RunEvent(record.runId, events.size + 1L, type, payload as JsonValue.Object) }
-        event("run-started", obj())
+        event("run-started", if (capture == null) obj() else obj("inputCapture" to capture))
         for (action in actions) {
             if (action.actionId in started) event("action-started", obj("actionId" to action.actionId.json(), "key" to digest.toJson()))
             transfers.filter { it.actionId == action.actionId && it.operation == "lookup" }.forEach { event("action-cache-transfer", it.toJson()) }
@@ -28,6 +28,17 @@ class RunStatisticsTest {
     }
     private fun JsonValue.field(name: String): JsonValue = objectValue().getValue(name)
     private fun JsonValue.number(name: String) = field(name).longValue()
+
+    @Test fun captureMetricsSurviveRetentionAndOldRunsRemainUnknown() {
+        assertEquals(JsonValue.Null, summary(emptyList()).field("inputCapture"))
+        val capture = InputCaptureStatistics("filesystem", 100, HashingStatistics(12, 300, 80)).toJson()
+        val value = summary(emptyList(), capture = capture)
+        assertEquals(capture, value.field("inputCapture"))
+        assertEquals(JsonValue.Null, value.field("timing").field("observedSchedulerNanos"))
+        assertFails { summary(emptyList(), capture = JsonValue.Null) }
+        assertFails { summary(emptyList(), capture = JsonValue.Object(capture.values + ("durationNanos" to 10.json()))) }
+        assertFails { summary(emptyList(), capture = JsonValue.Object(capture.values + ("extra" to true.json()))) }
+    }
 
     @Test fun parallelIntervalsSeparateElapsedBusyAndSummedTime() {
         val result = summary(listOf(result("a"), result("b"), result("c")),

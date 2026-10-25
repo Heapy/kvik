@@ -9,8 +9,12 @@ class CacheConflictFailure(message: String) : Exception(message)
 class NativeContentStore(
     val root: String,
     val maxBlobBytes: Int = 64 * 1024 * 1024,
+    private val hasher: Hasher,
     private val diagnostic: (CacheDiagnostic) -> Unit = {},
 ) : ContentStore {
+    constructor(root: String, maxBlobBytes: Int = 64 * 1024 * 1024, diagnostic: (CacheDiagnostic) -> Unit = {}) :
+        this(root, maxBlobBytes, Sha256, diagnostic)
+
     init {
         require(maxBlobBytes > 0)
         NativeFiles.ensureDirectory(root)
@@ -21,7 +25,7 @@ class NativeContentStore(
     override fun put(bytes: ByteArray): Digest {
         require(bytes.size <= maxBlobBytes) { "Blob exceeds $maxBlobBytes byte limit" }
         val snapshot = bytes.copyOf()
-        val digest = Sha256.digest(snapshot)
+        val digest = hasher.digest(snapshot)
         NativeFiles.withLock("$root/locks/${digest.hash}-${digest.sizeBytes}.lock") {
             val path = blobPath(digest)
             val existing = NativeFiles.info(path)
@@ -46,7 +50,7 @@ class NativeContentStore(
         }
         return try {
             val bytes = NativeFiles.read(blobPath(digest), maxBlobBytes)
-            if (Sha256.digest(bytes) != digest) {
+            if (hasher.digest(bytes) != digest) {
                 diagnostic(CacheDiagnostic("blob-corrupt", "Size or SHA-256 mismatch: ${digest.hash}"))
                 null
             } else bytes

@@ -58,6 +58,25 @@ private class Fixture {
 private inline fun fixture(block: (Fixture) -> Unit) { val f = Fixture(); try { block(f) } finally { f.close() } }
 
 class ProjectSnapshotTest {
+    @Test fun captureHashMeasurementPreservesIdentityAndExcludesLaterFreshnessScans() = fixture { f ->
+        val expected = f.capture()
+        val hashed = mutableListOf<ByteArray>()
+        val hasher = MeasuredHasher(Hasher { bytes -> hashed += bytes.copyOf(); Sha256.digest(bytes) })
+        val measured = assertIs<SnapshotCapture.Captured>(f.snapshotter.capture(LogicalPath("kvik.json"), f.lock, hasher = hasher)).snapshot
+        val statistics = hasher.snapshot()
+        assertEquals(expected.fingerprint, measured.fingerprint)
+        assertEquals(expected.inputs.toJson(), measured.inputs.toJson())
+        // Both observations hash each selected file; repeated work is not collapsed to unique bytes.
+        for (file in measured.inputs.files) {
+            val bytes = NativeFiles.read("${f.root}/${file.path.value}", 4096)
+            assertTrue(hashed.count { it.contentEquals(bytes) } >= 2)
+        }
+        assertEquals(hashed.size.toLong(), statistics.operations)
+        assertEquals(hashed.sumOf { it.size.toLong() }, statistics.bytes)
+        assertEquals(Freshness.CURRENT, f.snapshotter.freshness(measured))
+        assertEquals(statistics, hasher.snapshot())
+    }
+
     @Test fun sqlDirectoryAdditionEditAndDeletionInvalidateSnapshot() = fixture { f ->
         val generator = SqlDelightSpec("main", LogicalPath("sql"), "sample.db", "Database")
         write("${f.root}/kvik.json", document().replace("\"id\":\"library\"",

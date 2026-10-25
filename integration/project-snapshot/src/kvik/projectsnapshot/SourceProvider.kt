@@ -121,7 +121,7 @@ data class ProviderSnapshot(val provenance: SourceProvenance, val manifestDigest
 /** Immutable capture needs one manifest observation, not local filesystem double-scanning.
  * Exceptions (including cancellation) propagate; unavailable data never falls back to local or newer sources. */
 class ProviderProjectSnapshotter(private val provider: SourceSnapshotProvider, private val content: ContentStore,
-    private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits = SnapshotLimits()) {
+    private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits = SnapshotLimits(), private val hasher: Hasher = Sha256) {
     fun capture(selector: SourceSelector, configurationPath: LogicalPath, lockPath: LogicalPath,
         expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project,
         checkpoint: () -> Unit = {}): ProviderSnapshot {
@@ -134,16 +134,17 @@ class ProviderProjectSnapshotter(private val provider: SourceSnapshotProvider, p
         val manifest = resolved.manifest
         val frozen = SourceManifest(manifest.files, manifest.directories, checkpoint)
         val frozenSelection = SnapshotSelection.fromJson(selection.toJson())
-        val capture = ProviderObservation(resolved, frozen, content, pathPolicy, limits, checkpoint)
+        val manifestDigest = hasher.digest(frozen.toJson())
+        val capture = ProviderObservation(resolved, frozen, content, pathPolicy, limits, checkpoint, hasher, manifestDigest)
             .capture(configurationPath, lockPath, expectedConfiguration, frozenSelection)
         checkpoint()
-        return ProviderSnapshot(provenance, frozen.digest, capture)
+        return ProviderSnapshot(provenance, manifestDigest, capture)
     }
 }
 
 private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, private val manifest: SourceManifest,
     private val content: ContentStore, private val pathPolicy: SourcePathPolicy, private val limits: SnapshotLimits,
-    private val checkpoint: () -> Unit) {
+    private val checkpoint: () -> Unit, private val hasher: Hasher, private val manifestDigest: Digest) {
     private val files = manifest.files.associateBy { it.path.value }
     private val folders = manifest.directories.map { it.value }.toSet()
     private val children = linkedMapOf<String, MutableList<Pair<String, Boolean>>>()
@@ -188,8 +189,8 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
         }
         checkpoint()
         val tree = TreeManifest(inputs.values.sortedBy { it.path.value })
-        val fingerprint = projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, observedDirectories, selection)
-        return ProjectInputSnapshot("source-provider:${manifest.digest.hash}", configurationPath, lockPath.value, selection,
+        val fingerprint = projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, observedDirectories, selection, hasher)
+        return ProjectInputSnapshot("source-provider:${manifestDigest.hash}", configurationPath, lockPath.value, selection,
             configurationBytes, lockBytes, tree, fingerprint, configuration, standalone)
     }
 
@@ -281,7 +282,7 @@ private class ProviderObservation(private val resolved: ResolvedSourceSnapshot, 
             checkpoint()
             if (raw.size.toLong() != entry.blob.sizeBytes) throw SnapshotFailure("Source blob size mismatch: $path")
             val fetched = raw.copyOf()
-            val digest = Sha256.digest(fetched)
+            val digest = hasher.digest(fetched)
             if (hint != null && digest != hint) throw SnapshotFailure("Source blob digest hint mismatch: $path")
             // A cache hint authenticates neither the provider's native identity nor its revision. Do both checks.
             resolved.verify(entry.blob, fetched.copyOf(), checkpoint)

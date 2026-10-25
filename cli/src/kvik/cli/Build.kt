@@ -30,6 +30,7 @@ import kvik.projectgraph.*
 import kvik.projectsnapshot.*
 import kvik.runevidence.*
 import platform.posix.usleep
+import kotlin.time.TimeSource
 
 private class RunJournal(private val runId: String, directory: String, private val projectPaths: Set<String>,
                          private val source: SourceReference? = null) : AutoCloseable {
@@ -158,18 +159,24 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     if (scriptFile == null && sourceProject == null) requireDisjointStore(checkNotNull(project), storePath, lockPath, toolsPath, selection)
     else if (scriptFile != null && sourceProject == null) requireDisjointStore(root, scriptFile.path, scriptFile.inputPlan(), storePath, lockPath, toolsPath)
     val content = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes)
-    if (sourceProject != null) content.put(sourceBytes)
-    val snapshots = if (sourceProject != null) null else if (sessionCache == null) NativeProjectSnapshotter(root, content)
-        else NativeProjectSnapshotter(root, content, parseConfiguration = sessionCache::configuration)
+    val inputHasher = MeasuredHasher()
+    val captureStart = TimeSource.Monotonic.markNow()
+    // This store is used only by synchronous capture; execution uses the unmeasured store above.
+    val captureContent = NativeContentStore(storePath, maxBlobBytes = initialEffective.maxArtifactBytes, hasher = inputHasher)
+    if (sourceProject != null) captureContent.put(sourceBytes)
+    val snapshots = if (sourceProject != null) null else if (sessionCache == null) NativeProjectSnapshotter(root, captureContent)
+        else NativeProjectSnapshotter(root, captureContent, parseConfiguration = sessionCache::configuration)
     val snapshot = if (sourceProject != null) try {
-        sourceProject.capture(content, LogicalPath(lockPath), selection, ::sourceCheckpoint)
+        sourceProject.capture(captureContent, LogicalPath(lockPath), selection, inputHasher, ::sourceCheckpoint)
     } catch (failure: CliFailure) { throw failure }
     catch (failure: Exception) { throw CliFailure("KVIK_SOURCE_INPUT", DiagnosticCategory.CONFIGURATION,
         failure.message ?: "Cannot capture source revision", ExitStatus.INVALID_CONFIGURATION, sourceProject.reference) }
-    else when (val captured = checkNotNull(snapshots).capture(name, lockPath, Sha256.digest(sourceBytes), selection)) {
+    else when (val captured = checkNotNull(snapshots).capture(name, lockPath, inputHasher.digest(sourceBytes), selection, inputHasher)) {
         is SnapshotCapture.Captured -> captured.snapshot
         is SnapshotCapture.Indeterminate -> throw CliFailure("KVIK_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION, captured.reason, ExitStatus.INCOMPLETE)
     }
+    val inputCapture = InputCaptureStatistics(if (sourceProject == null) "filesystem" else "source-provider",
+        captureStart.elapsedNow().inWholeNanoseconds, inputHasher.snapshot())
     if (expectedSnapshot != null && snapshot.fingerprint != expectedSnapshot)
         throw CliFailure("KVIK_VERIFICATION_INPUT_CHANGED", DiagnosticCategory.CONFIGURATION,
             "Inputs changed after verification selection", ExitStatus.INCOMPLETE)
@@ -250,7 +257,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     var began = false
     try {
         if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install foreground interruption handlers" }
-        val started = obj("requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson(),
+        val started = obj("inputCapture" to inputCapture.toJson(), "requestedChecks" to requested.sorted().map { it.json() }.json(), "inputSnapshot" to snapshot.fingerprint.toJson(),
             "inputManifest" to Sha256.digest(snapshot.inputs.toJson()).toJson(), "inputSelection" to selection.toJson(),
             "inputScope" to (if (selection == SnapshotSelection.Project) "project" else "partial").json())
         journal.emit("run-started", if (sourceProject == null) started else JsonValue.Object(started.values +

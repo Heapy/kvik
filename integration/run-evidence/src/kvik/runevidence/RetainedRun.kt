@@ -21,6 +21,7 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
         }
     }
     require(events.first().type == "run-started" && events.count { it.type == "run-started" } == 1) { "Run journal start is missing or duplicated" }
+    events.first().payload.values["inputCapture"]?.let(InputCaptureStatistics::fromJson)
     val last = events.last()
     require(last.type == "run-finished" && events.count { it.type == "run-finished" } == 1 && last.payload == record.toJson() &&
         Digest.fromJson(committed.getValue("event")) == Sha256.digest(last.toJson())) { "Run completion event does not match retained verification" }

@@ -69,12 +69,12 @@ class NativeProjectSnapshotter(private val root: String, private val content: Co
 ) {
     init { physicalDirectory(root) }
 
-    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project): SnapshotCapture {
-        val first = try { scan(configurationPath, lockPath, publish = true, expectedConfiguration, selection) }
+    fun capture(configurationPath: LogicalPath, lockPath: String, expectedConfiguration: Digest? = null, selection: SnapshotSelection = SnapshotSelection.Project, hasher: Hasher = Sha256): SnapshotCapture {
+        val first = try { scan(configurationPath, lockPath, publish = true, expectedConfiguration, selection, hasher) }
         catch (race: SnapshotRace) { return SnapshotCapture.Indeterminate(race.message ?: "Inputs changed while capturing") }
         catch (failure: SnapshotFailure) { throw failure }
         catch (failure: Exception) { throw SnapshotFailure(failure.message ?: "Cannot capture project inputs") }
-        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration, selection) }
+        val second = try { scan(configurationPath, lockPath, publish = false, expectedConfiguration, selection, hasher) }
         catch (failure: Exception) { return SnapshotCapture.Indeterminate(failure.message ?: "Inputs changed while confirming capture") }
         if (first.fingerprint != second.fingerprint) return SnapshotCapture.Indeterminate("Project inputs changed between capture observations")
         return SnapshotCapture.Captured(first)
@@ -99,8 +99,8 @@ class NativeProjectSnapshotter(private val root: String, private val content: Co
         return first.fingerprint.takeIf { it == second.fingerprint }
     }
 
-    private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean, expectedConfiguration: Digest?, selection: SnapshotSelection): ProjectInputSnapshot =
-        Observation(root, content.takeIf { publish }, limits, parseConfiguration).capture(configurationPath, lockPath, expectedConfiguration, selection)
+    private fun scan(configurationPath: LogicalPath, lockPath: String, publish: Boolean, expectedConfiguration: Digest?, selection: SnapshotSelection, hasher: Hasher = Sha256): ProjectInputSnapshot =
+        Observation(root, content.takeIf { publish }, limits, parseConfiguration, hasher).capture(configurationPath, lockPath, expectedConfiguration, selection)
 }
 
 private fun physicalDirectory(path: String) {
@@ -125,7 +125,7 @@ private fun status(path: String): Status? = memScoped {
 }
 
 private class Observation(private val root: String, private val content: ContentStore?, private val limits: SnapshotLimits,
-    private val parseConfiguration: (ByteArray) -> ProjectConfiguration) {
+    private val parseConfiguration: (ByteArray) -> ProjectConfiguration, private val hasher: Hasher) {
     private val identities = mutableMapOf<Pair<ULong, ULong>, String>()
     private val bytes = mutableMapOf<String, ByteArray>()
     private val entries = linkedMapOf<LogicalPath, FileEntry>()
@@ -142,7 +142,7 @@ private class Observation(private val root: String, private val content: Content
         require(configurationFile != lockPath) { "Configuration and lock paths must differ" }
         ancestors(configurationPath.value)
         val configurationBytes = readFile(configurationFile, minOf(limits.maxFileBytes, 4 * 1024 * 1024), publish = false)
-        if (expectedConfiguration != null && Sha256.digest(configurationBytes) != expectedConfiguration)
+        if (expectedConfiguration != null && hasher.digest(configurationBytes) != expectedConfiguration)
             throw SnapshotRace("Configuration changed after input/store preflight")
         val lockBytes = readFile(lockPath, minOf(limits.maxFileBytes, 16 * 1024 * 1024), publish = false)
         var configuration: ProjectConfiguration? = null
@@ -188,7 +188,7 @@ private class Observation(private val root: String, private val content: Content
         }
         val tree = TreeManifest(entries.values.sortedBy { it.path.value })
         return ProjectInputSnapshot(root, configurationPath, lockPath, selection, configurationBytes, lockBytes, tree,
-            projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, directories, selection), configuration, standalone)
+            projectSnapshotFingerprint(configurationPath, configurationBytes, lockBytes, plan, tree, directories, selection, hasher), configuration, standalone)
     }
 
     private fun requireDeclared(path: LogicalPath) {
@@ -268,11 +268,11 @@ private class Observation(private val root: String, private val content: Content
         val data = readFile(absolute, limits.maxFileBytes)
         val value = status(absolute) ?: throw SnapshotRace("Input disappeared: $logical")
         if (value.kind != S_IFREG) throw SnapshotRace("Input type changed: $logical")
-        entries[path] = FileEntry(path, Sha256.digest(data), value.mode and 73 != 0)
+        entries[path] = FileEntry(path, hasher.digest(data), value.mode and 73 != 0)
     }
 
     private fun publish(data: ByteArray) {
-        if (content != null && content.put(data) != Sha256.digest(data)) throw SnapshotFailure("ContentStore returned an incorrect input digest")
+        if (content != null && content.put(data) != hasher.digest(data)) throw SnapshotFailure("ContentStore returned an incorrect input digest")
     }
 
     private fun readFile(path: String, limit: Int, publish: Boolean = true): ByteArray {
@@ -297,13 +297,13 @@ private class Observation(private val root: String, private val content: Content
 
 /** Shared by local observations and immutable providers; provenance is deliberately excluded. */
 internal fun projectSnapshotFingerprint(configurationPath: LogicalPath, configurationBytes: ByteArray, lockBytes: ByteArray,
-    plan: ProjectInputPlan, tree: TreeManifest, directories: Map<String, JsonValue>, selection: SnapshotSelection): Digest {
+    plan: ProjectInputPlan, tree: TreeManifest, directories: Map<String, JsonValue>, selection: SnapshotSelection, hasher: Hasher = Sha256): Digest {
     val identity = obj("schemaVersion" to 1.json(), "implementation" to "kvik-project-input-snapshot-v1".json(),
-        "configurationPath" to configurationPath.value.json(), "configurationBytes" to Sha256.digest(configurationBytes).toJson(),
-        "lockBytes" to Sha256.digest(lockBytes).toJson(), "roots" to plan.directories.map { it.value.json() }.json(),
+        "configurationPath" to configurationPath.value.json(), "configurationBytes" to hasher.digest(configurationBytes).toJson(),
+        "lockBytes" to hasher.digest(lockBytes).toJson(), "roots" to plan.directories.map { it.value.json() }.json(),
         "pluginInputs" to plan.files.map { it.value.json() }.json(), "inputs" to tree.toJson(),
         "directories" to JsonValue.Object(directories.toMap()))
-    return Sha256.digest(JsonValue.Object(identity.objectValue() +
+    return hasher.digest(JsonValue.Object(identity.objectValue() +
         (if (plan.scriptRoots.isEmpty()) emptyMap() else mapOf("scriptRoots" to plan.scriptRoots.map { it.value.json() }.json())) +
         (if (plan.declarationRoots.isEmpty()) emptyMap() else mapOf("declarationRoots" to plan.declarationRoots.map { it.value.json() }.json())) +
         (if (selection == SnapshotSelection.Project) emptyMap() else mapOf("selection" to selection.toJson()))))

@@ -10090,6 +10090,57 @@
       ],
       "additionalProperties": false
     },
+    "hashingStatistics": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "durationNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "operations",
+        "bytes",
+        "durationNanos"
+      ],
+      "additionalProperties": false
+    },
+    "inputCaptureStatistics": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "filesystem",
+            "source-provider"
+          ]
+        },
+        "durationNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "hashing": {
+          "$ref": "#/$defs/hashingStatistics"
+        }
+      },
+      "required": [
+        "kind",
+        "durationNanos",
+        "hashing"
+      ],
+      "additionalProperties": false
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -10176,6 +10227,9 @@
                   },
                   "sourceRetention": {
                     "$ref": "#/$defs/kodeRetentionReference"
+                  },
+                  "inputCapture": {
+                    "$ref": "#/$defs/inputCaptureStatistics"
                   }
                 },
                 "required": [
@@ -13080,6 +13134,16 @@
       "properties": {
         "schemaVersion": {
           "const": 1
+        },
+        "inputCapture": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/inputCaptureStatistics"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "runId": {
           "type": "string",
