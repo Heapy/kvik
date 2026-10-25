@@ -57,9 +57,19 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
         if (scopes.none { (modules.isEmpty() || it[0] in modules) && (targets.isEmpty() || it[1] in targets) })
             arguments("Selection contains no requested test scope")
         val composition = Digest(runtimeComposition, runtimeCompositionSize)
-        val retainedInputs = TreeManifest(listOf("verification.json" to verificationBytes, "completion.json" to completionBytes, "events.jsonl" to journalBytes)
-            .map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
-        val artifacts = mutableMapOf<String, ByteArray>()
+        val artifacts = linkedMapOf<String, ByteArray>()
+        var retainedBytes = 0L
+        fun retain(path: String, bytes: ByteArray) {
+            LogicalPath(path)
+            require(path !in artifacts) { "Duplicate report artifact: $path" }
+            retainedBytes += bytes.size
+            require(retainedBytes <= 256L * 1024 * 1024) { "Test report artifacts exceed 256 MiB" }
+            artifacts[path] = bytes
+        }
+        for ((name, bytes) in listOf("verification.json" to verificationBytes, "completion.json" to completionBytes, "events.jsonl" to journalBytes))
+            retain("runs/${record.runId}/$name", bytes)
+        retainTestLogs(directory, record.runId, record.tests, 256L * 1024 * 1024 - retainedBytes, ::retain)
+        val retainedInputs = TreeManifest(artifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
         val recipes = linkedMapOf<String, ActionSpec>()
         val exportName = if (format == "json") "export.json" else "junit.xml"
         fun action(id: String, implementation: String, inputs: TreeManifest, name: String, parameters: JsonValue.Object) = ActionSpec(
@@ -78,7 +88,7 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
         )
         val actionEvents = mutableListOf<RunEvent>()
         val runId = "report-${record.runId}"
-        val executor = cachedReportExecutor(store, 128, { name, bytes -> artifacts[name] = bytes }, {},
+        val executor = cachedReportExecutor(store, 128, ::retain, {},
             { type, payload -> actionEvents.add(RunEvent(runId, actionEvents.size + 1L, type, payload)) }) { actionId, action ->
             val bytes = when (actionId) {
                 "test-report:aggregate" -> testReport(record, events, modules, targets).toJson().canonical().encodeToByteArray()
@@ -102,12 +112,18 @@ internal fun testReportCommand(args: List<String>): JsonValue.Object {
             "sourceDirectory" to directory.json(), "actions" to nodes.map { node -> obj("actionId" to node.id.json(),
                 "dependencies" to node.dependencies.sorted().map { it.json() }.json(), "action" to recipes.getValue(node.id).toJson()) }.json(),
             "results" to results.map { it.toJson() }.json(), "events" to actionEvents.map { it.toJson() }.json())
-        artifacts["graph.json"] = graph.canonical().encodeToByteArray()
+        retain("graph.json", graph.canonical().encodeToByteArray())
         val parent = output.substringBeforeLast('/')
         NativeFiles.ensureDirectory(parent)
         val stage = NativeFiles.tempDirectory(parent)
         try {
+            val directories = artifacts.keys.flatMap { name ->
+                val parts = name.split('/').dropLast(1)
+                parts.indices.map { parts.take(it + 1).joinToString("/") }
+            }.distinct().sortedBy { it.count { char -> char == '/' } }
+            directories.forEach { NativeFiles.ensureDirectory("$stage/$it") }
             artifacts.forEach { (name, bytes) -> NativeFiles.writeNew("$stage/$name", bytes) }
+            directories.asReversed().forEach { NativeFiles.syncDirectory("$stage/$it") }
             NativeFiles.syncDirectory(stage)
             NativeFiles.exposeDirectory(stage, output)
         } finally { NativeFiles.removeTree(stage) }

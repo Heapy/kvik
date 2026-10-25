@@ -140,6 +140,11 @@ def main():
             copied = destination/'runs'/record['runId']
             for name in ('verification.json', 'completion.json', 'events.jsonl'):
                 assert (copied/name).read_bytes() == (run/name).read_bytes()
+            logs = [log for test in record['tests'] for attempt in test['details']['attempts'] for log in attempt['logs']]
+            assert logs, 'Fixture must contain retained test logs'
+            for log in logs:
+                assert (copied/log['path']).read_bytes() == (run/log['path']).read_bytes()
+                assert digest(copied/log['path']) == log['digest']
         assert json.loads((destination/'scope.json').read_text()) == aggregate['scope']
         graph = json.loads((destination/'graph.json').read_text())
         validate(graph, 'testAggregateGraph')
@@ -164,6 +169,22 @@ def main():
     assert json_export == combined
     selected = invoke('selected-consumer', selection=('--module', 'consumer', '--target', 'jvm'))
     assert selected['scope']['expectedChecks'] == ['consumer:jvm:test'] and selected['uniqueCounts']['executed'] == 1
+    # Selected exports still carry every supplied run, permitting later regrouping.
+    private = output/'private-runs'
+    shutil.copytree(output/'selected-consumer/runs', private)
+    invoke('portable', inputs=[private/run.name for run in runs])
+    shutil.rmtree(private)
+    relocated = invoke('relocated', inputs=[output/'portable/runs'/run.name for run in runs])
+    assert relocated == combined
+    assert all(result['status'] == 'local_hit' for result in json.loads((output/'relocated/graph.json').read_text())['results'])
+    shutil.copytree(output/'portable/runs', private)
+    first_log = records[runs[0].name]['tests'][0]['details']['attempts'][0]['logs'][0]
+    log_path = private/runs[0].name/first_log['path']
+    log_path.unlink()
+    invoke('missing-log', inputs=[private/run.name for run in runs], expected=3, refusal=True)
+    log_path.write_bytes(b'changed log bytes')
+    failure = invoke('changed-log', inputs=[private/run.name for run in runs], expected=3, refusal=True)
+    assert 'log digest differs' in failure['message']
     for label, missing in [('missing-third', 'third:jvm:test'), ('missing-native', 'consumer:macosArm64:test'),
                            ('missing-js', 'consumer:js:test'), ('missing-wasm', 'consumer:wasmJs:test')]:
         aggregate = invoke(label, expected_checks=[*checks, missing], expected=3)

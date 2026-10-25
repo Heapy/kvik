@@ -62,25 +62,8 @@ internal fun testPublishCommand(args: List<String>): ExitStatus {
             for ((file, bytes) in listOf("verification.json" to verification, "completion.json" to completion, "events.jsonl" to journal))
                 retain("runs/${record.runId}/$file", bytes)
             val report = testReport(record, events)
-            // Log paths are relative to their source run. Keep that namespace in the retry
-            // bundle, deduplicating shared action logs across tests and attempts.
-            val logs = report.scopes.flatMap { scope -> scope.tests.flatMap { test ->
-                test.details?.attempts.orEmpty().flatMap { it.logs }
-            } }.groupBy { it.path }
-            for ((path, references) in logs.entries.sortedBy { it.key.value }) {
-                checkpoint()
-                val digests = references.map { it.digest }.distinct()
-                require(digests.size == 1) { "Conflicting retained test log identities" }
-                val digest = digests.single()
-                require(digest.sizeBytes <= 64L * 1024 * 1024 && totalBytes + digest.sizeBytes <= 256L * 1024 * 1024) {
-                    "Retained test logs exceed publication limits"
-                }
-                val source = "$directory/${path.value}"
-                NativeFiles.ensureDirectory(source.substringBeforeLast('/'), create = false)
-                val bytes = NativeFiles.read(source, 64 * 1024 * 1024)
-                require(Sha256.digest(bytes) == digest) { "Retained test log digest differs" }
-                retain("runs/${record.runId}/${path.value}", bytes)
-            }
+            retainTestLogs(directory, record.runId, report.scopes.flatMap { it.tests },
+                256L * 1024 * 1024 - totalBytes, ::retain, ::checkpoint)
             report
         }
         val baseline = reports.first().provenance.values

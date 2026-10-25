@@ -76,6 +76,7 @@ internal fun testAggregateCommand(args: List<String>): ExitStatus {
             retain("runs/${record.runId}/verification.json", verification)
             retain("runs/${record.runId}/completion.json", completion)
             retain("runs/${record.runId}/events.jsonl", journal)
+            retainTestLogs(directory, record.runId, record.tests, 256L * 1024 * 1024 - retainedBytes, ::retain, ::checkpoint)
             Run(record, digest, events)
         }
         require(runs.map { it.record.runId }.distinct().size == runs.size) { "Duplicate run identity" }
