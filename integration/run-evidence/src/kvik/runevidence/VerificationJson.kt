@@ -52,7 +52,7 @@ fun verificationRecordFromJson(value: JsonValue): VerificationRecord {
     }
 }
 
-private fun actionResultFromJson(value: JsonValue): ActionResult {
+internal fun actionResultFromJson(value: JsonValue): ActionResult {
     val fields = value.fields(setOf("actionId", "key", "status", "outputs", "exitCode", "diagnostic"), setOf("processUsage"))
     val id = fields.getValue("actionId").stringValue()
     require(id.isNotBlank()) { "Action result requires an identity" }
@@ -62,7 +62,7 @@ private fun actionResultFromJson(value: JsonValue): ActionResult {
         fields["processUsage"]?.arrayValue()?.also { require(it.isNotEmpty()) }?.map(ProcessUsage::fromJson) ?: emptyList())
 }
 
-private fun testCountsFromJson(value: JsonValue): TestCounts {
+internal fun testCountsFromJson(value: JsonValue): TestCounts {
     val fields = value.fields(setOf("discovered", "executed", "failed", "skipped", "discoveryComplete"))
     val discovered = fields.getValue("discovered").let { if (it == JsonValue.Null) null else it.intValue() }
     val executed = fields.getValue("executed").intValue()

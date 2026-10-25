@@ -83,8 +83,8 @@ def main():
             assert digest(destination/artifact['path']) == artifact['digest']
         graph = json.loads((destination/'graph.json').read_text())
         assert len(graph['actions']) == len(graph['results']) == 2
-        assert all(action['action']['kind'] == 'generate' and action['action']['cachePolicy'] == 'never' for action in graph['actions'])
-        assert all(action['status'] == 'executed' for action in graph['results'])
+        assert all(action['action']['kind'] == 'generate' and action['action']['cachePolicy'] == 'local' for action in graph['actions'])
+        assert all(action['status'] in ('executed', 'local_hit') for action in graph['results'])
         assert graph['actions'][1]['dependencies'] == [graph['actions'][0]['actionId']]
         assert graph['actions'][1]['action']['inputs'] == graph['results'][0]['outputs']
         print('PASS '+label, flush=True)

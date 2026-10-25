@@ -73,6 +73,22 @@ remain readable.
 
 ## Check a threshold
 
+`coverage-check`, `coverage-aggregate` and `coverage-export` reuse deterministic
+transformation outputs in the local action cache. They default to `.kvik/cache`
+under the current working directory; pass `--store PATH` to select a shared store.
+The store must be outside the source report/run directories and the output
+directory. Each invocation still creates a new output directory and verifies its
+retained inputs before looking up cached transformations.
+
+Keys include input digests, scope, exclusion settings, threshold/export policy and
+the Kvik runtime composition. `graph.json` records `executed` or `local_hit` for
+each action, along with cache decisions and diagnostics. Changing an export format
+or a threshold leaves the original test run untouched. Failed and incomplete
+report outcomes retain their status on a cache hit. Corrupt cache entries are
+recomputed; an unavailable cache permits uncached reporting. These report actions
+use local caching only; coverage capture and service publication keep their
+separate execution policies.
+
 Evaluate the retained report without rerunning tests or starting a JDK:
 
 ```sh

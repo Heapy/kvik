@@ -11,7 +11,7 @@ import kvik.runevidence.*
 /** Explicit run inputs and an expected matrix keep absent CI jobs visible. */
 internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_COVERAGE_AGGREGATE_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY",
+        "$message. Use coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY [--store PATH]",
         ExitStatus.INVALID_CONFIGURATION)
     val runs = linkedSetOf<String>()
     val reports = mutableListOf<String>()
@@ -19,6 +19,7 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
     val modules = linkedSetOf<String>()
     val targets = linkedSetOf<String>()
     var outputArgument: String? = null
+    var storeArgument: String? = null
     var index = 0
     while (index < args.size) {
         val flag = args[index++]
@@ -30,6 +31,7 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
             "--expect" -> if (!expected.add(value)) arguments("Repeated expected check")
             "--module" -> if (!modules.add(value)) arguments("Repeated module")
             "--target" -> if (!targets.add(value)) arguments("Repeated target")
+            "--store" -> { if (storeArgument != null) arguments("Repeated store"); storeArgument = value }
             "--output" -> { if (outputArgument != null) arguments("Repeated output"); outputArgument = value }
             else -> arguments("Unknown option $flag")
         }
@@ -40,6 +42,9 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
     if (NativeFiles.info(output) != null) arguments("Output directory already exists")
     if ((runs + reports.map { it.substringBeforeLast('/') }).any { pathsPhysicallyOverlap(it, output) })
         arguments("Output must be outside all source runs and report directories")
+    val store = try { reportStorePath(storeArgument, runs + reports.map { it.substringBeforeLast('/') }, output) } catch (failure: IllegalArgumentException) {
+        arguments(failure.message ?: "Invalid report cache path")
+    }
     var stage: String? = null
     check(kvik_interrupt_install() == 0) { "Cannot install coverage interruption handlers" }
     fun checkpoint() {
@@ -126,38 +131,33 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
         val inputs = TreeManifest(artifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
         val composition = Digest(runtimeComposition, runtimeCompositionSize)
         val recipes = linkedMapOf<String, ActionSpec>()
-        var aggregate: CoverageAggregate? = null
         fun recipe(id: String, input: TreeManifest, name: String) = ActionSpec("kvik-$id-v1", composition, ActionKind.GENERATE,
             mapOf("os" to "portable", "arch" to "any"), "reports", mapOf("kvik" to composition), input,
-            listOf(LogicalPath(name)), emptyList(), emptyMap(), scope.toJson(), cachePolicy = CachePolicy.NEVER).also { recipes[id] = it }
+            listOf(LogicalPath(name)), emptyList(), emptyMap(), scope.toJson(), cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
         val nodes = listOf(
             ActionNode("coverage-aggregate", emptySet()) { recipe("coverage-aggregate", inputs, "aggregate.json") },
             ActionNode("coverage-aggregate-export", setOf("coverage-aggregate")) { predecessors ->
                 recipe("coverage-aggregate-export", predecessors.getValue("coverage-aggregate").outputs, "report.json") },
         )
-        val executor = object : ActionExecutor {
-            override fun resources(action: ActionSpec) = ResourceRequest(512)
-            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-                checkpoint()
-                val bytes = if (actionId == "coverage-aggregate") {
-                    aggregateCoverage(scope, contributions).also { aggregate = it }.toJson().canonical().encodeToByteArray()
-                } else artifacts.getValue("aggregate.json").also {
-                    require(Sha256.digest(it) == action.inputs.files.single().digest) { "Aggregate export input differs" }
-                }
-                val name = action.outputs.single()
-                retain(name.value, bytes)
-                val result = ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED,
-                    TreeManifest(listOf(FileEntry(name, Sha256.digest(bytes)))), 0)
-                return object : RunningAction { override fun poll() = result; override fun cancel() = Unit; override fun close() = Unit }
-            }
-        }
         val events = mutableListOf<RunEvent>()
-        val results = SchedulerRun("coverage-aggregate-${baseline.runId}", nodes, executor, ResourceBudget(1, 512), EventJournal { events.add(it) }).use { run ->
+        val runId = "coverage-aggregate-${baseline.runId}"
+        val executor = cachedReportExecutor(store, 512, ::retain, ::checkpoint,
+            { type, payload -> events.add(RunEvent(runId, events.size + 1L, type, payload)) }) { actionId, action ->
+            checkpoint()
+            val bytes = if (actionId == "coverage-aggregate") {
+                aggregateCoverage(scope, contributions).toJson().canonical().encodeToByteArray()
+            } else artifacts.getValue("aggregate.json").also {
+                require(Sha256.digest(it) == action.inputs.files.single().digest) { "Aggregate export input differs" }
+            }
+            val name = action.outputs.single()
+            mapOf(name.value to bytes)
+        }
+        val results = SchedulerRun(runId, nodes, executor, ResourceBudget(1, 512), EventJournal { events.add(it.copy(sequence = events.size + 1L)) }).use { run ->
             while (true) { checkpoint(); if (run.tick()) break }
             run.results.values.toList()
         }
         require(results.all { it.successful }) { results.filterNot { it.successful }.joinToString { it.diagnostic.orEmpty() } }
-        val result = checkNotNull(aggregate)
+        val result = retainedReportJson(artifacts, "aggregate.json")
         retain("graph.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "scope" to scope.toJson(),
             "runs" to records.sortedBy { it.record.runId }.map { obj("runId" to it.record.runId.json(), "verification" to it.digest.toJson()) }.json(),
             "actions" to nodes.map { node -> obj("actionId" to node.id.json(), "dependencies" to node.dependencies.sorted().map { it.json() }.json(),
@@ -176,14 +176,9 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
         checkpoint()
         NativeFiles.exposeDirectory(pending, output)
         println(obj("schemaVersion" to CONTRACT_VERSION.json(), "outputDirectory" to output.json(),
-            "aggregate" to Sha256.digest(artifacts.getValue("aggregate.json")).toJson(), "status" to result.status.name.lowercase().json(),
-            "complete" to result.complete.json(), "artifacts" to TreeManifest(artifacts.map { (name, bytes) -> FileEntry(LogicalPath(name), Sha256.digest(bytes)) }).toJson()).canonical())
-        return when (result.status) {
-            VerificationStatus.PASSED -> ExitStatus.SUCCESS
-            VerificationStatus.FAILED -> ExitStatus.FAILED
-            VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
-            VerificationStatus.CANCELLED -> ExitStatus.CANCELLED
-        }
+            "aggregate" to Sha256.digest(artifacts.getValue("aggregate.json")).toJson(), "status" to result.values.getValue("status"),
+            "complete" to result.values.getValue("complete"), "artifacts" to TreeManifest(artifacts.map { (name, bytes) -> FileEntry(LogicalPath(name), Sha256.digest(bytes)) }).toJson()).canonical())
+        return reportExitStatus(result)
     } catch (failure: CliFailure) { throw failure
     } catch (failure: Exception) {
         throw CliFailure("KVIK_COVERAGE_AGGREGATE_FAILED", DiagnosticCategory.INFRASTRUCTURE,

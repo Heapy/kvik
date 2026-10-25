@@ -44,7 +44,7 @@ def main():
                 graph = json.loads((root/name/'graph.json').read_bytes())
                 validate(graph, 'coverageThresholdGraph')
                 assert [a['actionId'] for a in graph['actions']] == ['coverage-threshold', 'coverage-threshold-export']
-                assert all(a['status'] == 'executed' for a in graph['results'])
+                assert all(a['status'] in ('executed', 'local_hit') for a in graph['results'])
                 assert graph['sourceReport'] == dict(hash=hashlib.sha256(report.read_bytes()).hexdigest(), sizeBytes=report.stat().st_size)
             return response
         passed = invoke('zero')['result']

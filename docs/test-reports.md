@@ -49,6 +49,19 @@ JUnit XML preserves observed attempts and includes infrastructure errors for mis
 
 Aggregation reads retained run data locally without loading projects, starting a JDK or rerunning tests. It does not verify today's source state or publish results. Valid negative results are saved. Exit codes follow aggregate status: 0 passed, 1 failed, 3 incomplete and 130 cancelled; invalid command arguments use 2. Invalid or incompatible retained inputs return 3 without publishing an output directory.
 
+`test-aggregate` caches aggregation and export independently in the local action
+cache. The default store is `.kvik/cache` under the current working directory;
+use `--store PATH` to share another store. It must be outside all source run and
+output directories. Keys include the retained records, expected matrix, scope,
+format and runtime composition. Switching between JSON and JUnit can reuse the
+aggregate. `graph.json` records cache decisions and `local_hit` results.
+
+Retained inputs are validated on every invocation, including cache hits. Cached
+negative outcomes preserve their failure or incompleteness. Corrupt cache entries
+are recomputed, and an unavailable cache falls back to uncached transformations.
+Output directories must still be new. This reuses reporting artifacts; it neither
+reuses test execution for a new test request nor caches service publication.
+
 JSON definitions in `schemas/v1/contracts.json` are `testAggregationScope`, `testReportContribution`, `testAggregate`, `testAggregateExport` (stdout), and `testAggregateGraph` (`graph.json`).
 
 ## Publish a GitHub Check

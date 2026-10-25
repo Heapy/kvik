@@ -145,8 +145,8 @@ def main():
         validate(graph, 'testAggregateGraph')
         assert len(graph['actions']) == len(graph['results']) == 2
         assert [action['actionId'] for action in graph['actions']] == ['test-aggregate', 'test-aggregate-export']
-        assert all(a['action']['kind'] == 'generate' and a['action']['cachePolicy'] == 'never' for a in graph['actions'])
-        assert all(result['status'] == 'executed' for result in graph['results'])
+        assert all(a['action']['kind'] == 'generate' and a['action']['cachePolicy'] == 'local' for a in graph['actions'])
+        assert all(result['status'] in ('executed', 'local_hit') for result in graph['results'])
         assert graph['actions'][1]['dependencies'] == [graph['actions'][0]['actionId']]
         assert graph['actions'][1]['action']['inputs'] == graph['results'][0]['outputs']
         for result in graph['results']:

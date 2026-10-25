@@ -151,8 +151,8 @@ def aggregate(args):
         validate(graph, 'coverageAggregateGraph')
         assert [node['actionId'] for node in graph['actions']] == ['coverage-aggregate', 'coverage-aggregate-export']
         assert graph['actions'][1]['dependencies'] == ['coverage-aggregate']
-        assert all(node['action']['kind'] == 'generate' and node['action']['cachePolicy'] == 'never' for node in graph['actions'])
-        assert all(result['status'] == 'executed' for result in graph['results'])
+        assert all(node['action']['kind'] == 'generate' and node['action']['cachePolicy'] == 'local' for node in graph['actions'])
+        assert all(result['status'] in ('executed', 'local_hit') for result in graph['results'])
         assert graph['actions'][1]['action']['inputs'] == graph['results'][0]['outputs']
         for contributor in aggregate['contributors']:
             prefix = output/'contributors'/contributor['digest']['hash']

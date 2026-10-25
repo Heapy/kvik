@@ -11,7 +11,7 @@ import kvik.runevidence.*
 /** Consumer conversion is local; service publication is a separate operation. */
 internal fun coverageExportCommand(args: List<String>): ExitStatus {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_COVERAGE_EXPORT_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY",
+        "$message. Use coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY [--store PATH]",
         ExitStatus.INVALID_CONFIGURATION)
     val options = linkedMapOf<String, String>()
     val modules = linkedSetOf<String>()
@@ -24,7 +24,7 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
             allModules = true
             continue
         }
-        if (flag !in setOf("--report", "--format", "--target", "--module", "--output")) arguments("Unknown option $flag")
+        if (flag !in setOf("--report", "--format", "--target", "--module", "--output", "--store")) arguments("Unknown option $flag")
         val value = args.getOrNull(index++) ?: arguments("Missing value for $flag")
         if (value.isBlank() || value.startsWith("--")) arguments("Missing value for $flag")
         if (flag == "--module") {
@@ -40,6 +40,9 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
     val output = projectPath(currentDirectory(), option("--output"))
     if (pathsPhysicallyOverlap(sourceDirectory, output)) arguments("Output must be outside the source report directory")
     if (NativeFiles.info(output) != null) arguments("Output directory already exists")
+    val store = try { reportStorePath(options["--store"], listOf(sourceDirectory), output) } catch (failure: IllegalArgumentException) {
+        arguments(failure.message ?: "Invalid report cache path")
+    }
     var stage: String? = null
     check(kvik_interrupt_install() == 0) { "Cannot install coverage interruption handlers" }
     fun checkpoint() {
@@ -108,38 +111,34 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
         val parameters = obj("format" to format.json(), "selection" to selection.toJson())
         val recipe = ActionSpec("kvik-coverage-export-v1", composition, ActionKind.GENERATE,
             mapOf("os" to "portable", "arch" to "any"), "reports", mapOf("kvik" to composition), inputs,
-            listOf(LogicalPath("report")), emptyList(), emptyMap(), parameters, cachePolicy = CachePolicy.NEVER)
+            listOf(LogicalPath("report")), emptyList(), emptyMap(), parameters, cachePolicy = CachePolicy.LOCAL)
         val artifacts = linkedMapOf<String, ByteArray>()
-        var exported: CoverageConsumerExport? = null
-        val executor = object : ActionExecutor {
-            override fun resources(action: ActionSpec) = ResourceRequest(128)
-            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-                checkpoint()
-                val result = when (format) {
-                    "jacoco-xml" -> if (aggregate != null) exportJacocoCoverage(aggregate, reportDigest, selection, ::readOriginal)
-                        else exportJacocoCoverage(checkNotNull(report), reportDigest, selection, ::readOriginal)
-                    else -> if (aggregate != null) exportSonarCoverage(aggregate, reportDigest, selection)
-                        else exportSonarCoverage(checkNotNull(report), reportDigest, selection)
-                }
-                exported = result
-                result.artifacts.forEach { (path, data) ->
-                    LogicalPath(path)
-                    require(if (format == "sonar-generic") path == "coverage.xml" else
-                        path.matches(Regex("jacoco/[A-Za-z][A-Za-z0-9_.-]*/[A-Za-z][A-Za-z0-9_.-]*/test/[A-Za-z][A-Za-z0-9_.-]*\\.xml"))) {
-                        "Unexpected consumer export artifact"
-                    }
-                    require(data.size <= 64 * 1024 * 1024) { "Consumer export exceeds 64 MiB" }
-                    artifacts["report/$path"] = data
-                }
-                artifacts["report/export.json"] = result.toJson().canonical().encodeToByteArray()
-                val manifest = TreeManifest(artifacts.map { (path, data) -> FileEntry(LogicalPath(path), Sha256.digest(data)) })
-                val actionResult = ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED, manifest, 0)
-                return object : RunningAction { override fun poll() = actionResult; override fun cancel() = Unit; override fun close() = Unit }
-            }
-        }
         val events = mutableListOf<RunEvent>()
+        val runId = "coverage-export-${reportDigest.hash}"
+        val executor = cachedReportExecutor(store, 128, { name, data -> artifacts[name] = data }, ::checkpoint,
+            { type, payload -> events.add(RunEvent(runId, events.size + 1L, type, payload)) }) { _, _ ->
+            checkpoint()
+            val result = when (format) {
+                "jacoco-xml" -> if (aggregate != null) exportJacocoCoverage(aggregate, reportDigest, selection, ::readOriginal)
+                    else exportJacocoCoverage(checkNotNull(report), reportDigest, selection, ::readOriginal)
+                else -> if (aggregate != null) exportSonarCoverage(aggregate, reportDigest, selection)
+                    else exportSonarCoverage(checkNotNull(report), reportDigest, selection)
+            }
+            val generated = linkedMapOf<String, ByteArray>()
+            result.artifacts.forEach { (path, data) ->
+                LogicalPath(path)
+                require(if (format == "sonar-generic") path == "coverage.xml" else
+                    path.matches(Regex("jacoco/[A-Za-z][A-Za-z0-9_.-]*/[A-Za-z][A-Za-z0-9_.-]*/test/[A-Za-z][A-Za-z0-9_.-]*\\.xml"))) {
+                    "Unexpected consumer export artifact"
+                }
+                require(data.size <= 64 * 1024 * 1024) { "Consumer export exceeds 64 MiB" }
+                generated["report/$path"] = data
+            }
+            generated["report/export.json"] = result.toJson().canonical().encodeToByteArray()
+            generated
+        }
         val nodes = listOf(ActionNode("coverage-export", emptySet()) { recipe })
-        val results = SchedulerRun("coverage-export-${reportDigest.hash}", nodes, executor, ResourceBudget(1, 128), EventJournal { events.add(it) }).use { run ->
+        val results = SchedulerRun(runId, nodes, executor, ResourceBudget(1, 128), EventJournal { events.add(it.copy(sequence = events.size + 1L)) }).use { run ->
             while (true) {
                 checkpoint()
                 if (run.tick()) break
@@ -147,7 +146,7 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
             run.results.values.toList()
         }
         require(results.all { it.successful }) { results.filterNot { it.successful }.joinToString { it.diagnostic.orEmpty() } }
-        val result = checkNotNull(exported)
+        val result = retainedReportJson(artifacts, "report/export.json")
         artifacts["graph.json"] = obj("schemaVersion" to CONTRACT_VERSION.json(), "sourceReport" to reportDigest.toJson(),
             "actions" to listOf(obj("actionId" to "coverage-export".json(), "dependencies" to emptyList<JsonValue>().json(),
                 "action" to recipe.toJson())).json(), "results" to results.map { it.toJson() }.json(),
@@ -165,14 +164,9 @@ internal fun coverageExportCommand(args: List<String>): ExitStatus {
         NativeFiles.syncDirectory(pending)
         checkpoint()
         NativeFiles.exposeDirectory(pending, output)
-        println(obj("schemaVersion" to CONTRACT_VERSION.json(), "outputDirectory" to output.json(), "result" to result.toJson(),
+        println(obj("schemaVersion" to CONTRACT_VERSION.json(), "outputDirectory" to output.json(), "result" to result,
             "artifacts" to TreeManifest(artifacts.map { (name, data) -> FileEntry(LogicalPath(name), Sha256.digest(data)) }).toJson()).canonical())
-        return when (result.status) {
-            VerificationStatus.PASSED -> ExitStatus.SUCCESS
-            VerificationStatus.FAILED -> ExitStatus.FAILED
-            VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
-            VerificationStatus.CANCELLED -> ExitStatus.CANCELLED
-        }
+        return reportExitStatus(result)
     } catch (failure: CliFailure) { throw failure
     } catch (failure: Exception) {
         throw CliFailure("KVIK_COVERAGE_EXPORT_FAILED", DiagnosticCategory.INFRASTRUCTURE,

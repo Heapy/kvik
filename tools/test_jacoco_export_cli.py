@@ -128,9 +128,9 @@ def main():
         assert graph['sourceReport'] == digest(report)
         action, = graph['actions']
         result, = graph['results']
-        assert action['action']['kind'] == 'generate' and action['action']['cachePolicy'] == 'never'
+        assert action['action']['kind'] == 'generate' and action['action']['cachePolicy'] == 'local'
         assert action['action']['outputs'] == ['report'] and action['dependencies'] == []
-        assert result['status'] == 'executed' and action['actionId'] == result['actionId']
+        assert result['status'] in ('executed', 'local_hit') and action['actionId'] == result['actionId']
         assert {entry['path'] for entry in result['outputs']['files']} == {'report/export.json', *('report/'+name for name in (xml or {}))}
         for entry in result['outputs']['files']:
             assert digest(destination/entry['path']) == entry['digest']

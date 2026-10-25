@@ -11,7 +11,7 @@ import kvik.runevidence.*
 /** Explicit CI composition over retained results, with no runner or compiler invocation. */
 internal fun testAggregateCommand(args: List<String>): ExitStatus {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_TEST_AGGREGATE_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use test-aggregate --run PATH ... [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--format json|junit-xml] --output NEW_DIRECTORY",
+        "$message. Use test-aggregate --run PATH ... [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--format json|junit-xml] --output NEW_DIRECTORY [--store PATH]",
         ExitStatus.INVALID_CONFIGURATION)
     val runPaths = linkedSetOf<String>()
     val expected = linkedSetOf<String>()
@@ -21,7 +21,7 @@ internal fun testAggregateCommand(args: List<String>): ExitStatus {
     var index = 0
     while (index < args.size) {
         val flag = args[index++]
-        if (flag !in setOf("--run", "--expect", "--module", "--target", "--format", "--output")) arguments("Unknown option $flag")
+        if (flag !in setOf("--run", "--expect", "--module", "--target", "--format", "--output", "--store")) arguments("Unknown option $flag")
         val value = args.getOrNull(index++) ?: arguments("Missing value for $flag")
         if (value.isBlank() || value.startsWith("--")) arguments("Missing value for $flag")
         when (flag) {
@@ -40,6 +40,9 @@ internal fun testAggregateCommand(args: List<String>): ExitStatus {
     val output = projectPath(currentDirectory(), options["--output"] ?: arguments("Missing --output"))
     if (runPaths.any { pathsPhysicallyOverlap(it, output) }) arguments("Output must be outside every retained run")
     if (NativeFiles.info(output) != null) arguments("Output directory already exists")
+    val store = try { reportStorePath(options["--store"], runPaths, output) } catch (failure: IllegalArgumentException) {
+        arguments(failure.message ?: "Invalid report cache path")
+    }
     var stage: String? = null
     check(kvik_interrupt_install() == 0) { "Cannot install test aggregation interruption handlers" }
     fun checkpoint() {
@@ -101,52 +104,47 @@ internal fun testAggregateCommand(args: List<String>): ExitStatus {
         retain("scope.json", scope.toJson().canonical().encodeToByteArray())
         val retainedInputs = TreeManifest(artifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
         val composition = Digest(runtimeComposition, runtimeCompositionSize)
-        var aggregate: TestAggregate? = null
         val recipes = linkedMapOf<String, ActionSpec>()
         val exportName = if (format == "json") "export.json" else "junit.xml"
         fun action(id: String, inputs: TreeManifest, name: String, parameters: JsonValue.Object) = ActionSpec(
             "kvik-$id-v1", composition, ActionKind.GENERATE, mapOf("os" to "portable", "arch" to "any"), "reports",
             mapOf("kvik" to composition), inputs, listOf(LogicalPath(name)), emptyList(), emptyMap(), parameters,
-            cachePolicy = CachePolicy.NEVER).also { recipes[id] = it }
+            cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
         val nodes = listOf(
             ActionNode("test-aggregate", emptySet()) { action("test-aggregate", retainedInputs, "aggregate.json", scope.toJson()) },
             ActionNode("test-aggregate-export", setOf("test-aggregate")) { predecessors ->
                 action("test-aggregate-export", predecessors.getValue("test-aggregate").outputs, exportName, obj("format" to format.json()))
             },
         )
-        val executor = object : ActionExecutor {
-            override fun resources(action: ActionSpec) = ResourceRequest(128)
-            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-                checkpoint()
-                val bytes = if (actionId == "test-aggregate") {
-                    val contributions = runs.filter { run -> run.record.requestedChecks.any { it in selected } }.map { run ->
-                        checkpoint()
-                        val report = testReport(run.record, run.events)
-                        require(report.sourceVerification == run.digest) { "Test report differs from its retained verification" }
-                        TestReportContribution(Sha256.digest(report.toJson()), report)
-                    }
-                    aggregateTestReports(scope, contributions).also { aggregate = it }.toJson().canonical().encodeToByteArray()
-                } else {
-                    val source = artifacts.getValue("aggregate.json")
-                    require(action.inputs.files.single().digest == Sha256.digest(source)) { "Test aggregate export input differs" }
-                    if (format == "json") source else junitXml(checkNotNull(aggregate)).encodeToByteArray()
-                }
-                require(bytes.size <= 64 * 1024 * 1024) { "Test report exceeds 64 MiB; select fewer test scopes" }
-                val name = action.outputs.single()
-                retain(name.value, bytes)
-                val result = ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED,
-                    TreeManifest(listOf(FileEntry(name, Sha256.digest(bytes)))), 0)
-                return object : RunningAction { override fun poll() = result; override fun cancel() = Unit; override fun close() = Unit }
-            }
-        }
         val events = mutableListOf<RunEvent>()
-        val results = SchedulerRun("test-aggregate-${Sha256.digest(scope.toJson()).hash}", nodes, executor,
-            ResourceBudget(1, 128), EventJournal { events.add(it) }).use { run ->
+        val runId = "test-aggregate-${Sha256.digest(scope.toJson()).hash}"
+        val executor = cachedReportExecutor(store, 128, ::retain, ::checkpoint,
+            { type, payload -> events.add(RunEvent(runId, events.size + 1L, type, payload)) }) { actionId, action ->
+            checkpoint()
+            val bytes = if (actionId == "test-aggregate") {
+                val contributions = runs.filter { run -> run.record.requestedChecks.any { it in selected } }.map { run ->
+                    checkpoint()
+                    val report = testReport(run.record, run.events)
+                    require(report.sourceVerification == run.digest) { "Test report differs from its retained verification" }
+                    TestReportContribution(Sha256.digest(report.toJson()), report)
+                }
+                aggregateTestReports(scope, contributions).toJson().canonical().encodeToByteArray()
+            } else {
+                val source = artifacts.getValue("aggregate.json")
+                require(action.inputs.files.single().digest == Sha256.digest(source)) { "Test aggregate export input differs" }
+                if (format == "json") source else junitXml(testAggregateFromJson(json(source))).encodeToByteArray()
+            }
+            require(bytes.size <= 64 * 1024 * 1024) { "Test report exceeds 64 MiB; select fewer test scopes" }
+            val name = action.outputs.single()
+            mapOf(name.value to bytes)
+        }
+        val results = SchedulerRun(runId, nodes, executor,
+            ResourceBudget(1, 128), EventJournal { events.add(it.copy(sequence = events.size + 1L)) }).use { run ->
             while (true) { checkpoint(); if (run.tick()) break }
             run.results.values.toList()
         }
         require(results.all { it.successful }) { results.filterNot { it.successful }.joinToString { it.diagnostic.orEmpty() } }
-        val result = checkNotNull(aggregate)
+        val result = retainedReportJson(artifacts, "aggregate.json")
         retain("graph.json", obj("schemaVersion" to CONTRACT_VERSION.json(), "scope" to scope.toJson(),
             "runs" to runs.map { obj("runId" to it.record.runId.json(), "verification" to it.digest.toJson()) }.json(),
             "actions" to nodes.map { node -> obj("actionId" to node.id.json(), "dependencies" to node.dependencies.sorted().map { it.json() }.json(),
@@ -166,14 +164,9 @@ internal fun testAggregateCommand(args: List<String>): ExitStatus {
         checkpoint()
         NativeFiles.exposeDirectory(pending, output)
         println(obj("schemaVersion" to CONTRACT_VERSION.json(), "outputDirectory" to output.json(), "format" to format.json(),
-            "aggregate" to Sha256.digest(artifacts.getValue("aggregate.json")).toJson(), "status" to result.status.name.lowercase().json(),
-            "complete" to result.complete.json(), "artifacts" to TreeManifest(artifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) }).toJson()).canonical())
-        return when (result.status) {
-            VerificationStatus.PASSED -> ExitStatus.SUCCESS
-            VerificationStatus.FAILED -> ExitStatus.FAILED
-            VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
-            VerificationStatus.CANCELLED -> ExitStatus.CANCELLED
-        }
+            "aggregate" to Sha256.digest(artifacts.getValue("aggregate.json")).toJson(), "status" to result.values.getValue("status"),
+            "complete" to result.values.getValue("complete"), "artifacts" to TreeManifest(artifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) }).toJson()).canonical())
+        return reportExitStatus(result)
     } catch (failure: CliFailure) { throw failure
     } catch (failure: Exception) {
         throw CliFailure("KVIK_TEST_AGGREGATE_FAILED", DiagnosticCategory.INFRASTRUCTURE,

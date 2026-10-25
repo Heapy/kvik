@@ -4,6 +4,19 @@ import kvik.core.*
 import kotlin.test.*
 
 class TestAggregateTest {
+    @Test fun retainedAggregateRoundTripPreservesRetriesMissingScopesAndXml() {
+        val retry = test().copy(details = TestDetails("Suite", "retry", listOf(
+            TestAttempt(1, TestStatus.FAILED, failure = TestFailure(TestFailureKind.ASSERTION, message = "original failure")),
+            TestAttempt(2, TestStatus.PASSED))))
+        val result = aggregate(report("retry-run", listOf(retry), completed = emptySet(), status = VerificationStatus.FAILED),
+            expected = setOf("a:jvm:test", "missing:linuxX64:test"))
+        val restored = testAggregateFromJson(parseJson(result.toJson().canonical()))
+        assertEquals(result.toJson(), restored.toJson())
+        assertEquals(junitXml(result), junitXml(restored))
+        assertFails { testAggregateFromJson(JsonValue.Object(result.toJson().values + ("status" to "passed".json()))) }
+        val empty = aggregateTestReports(scope("a:jvm:test"), emptyList())
+        assertEquals(empty.toJson(), testAggregateFromJson(empty.toJson()).toJson())
+    }
     @Test fun sameTestOnJvmAndLinuxRemainsTwoIndependentExecutions() {
         val jvm = report("jvm-run", listOf(test()))
         val linux = report("linux-run", listOf(test(target = "linuxX64")))

@@ -10,7 +10,7 @@ import kvik.execution.platform.*
 /** A threshold is a local transformation of an existing report, never a new test invocation. */
 internal fun coverageCheckCommand(args: List<String>): ExitStatus {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_COVERAGE_CHECK_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY",
+        "$message. Use coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY [--store PATH]",
         ExitStatus.INVALID_CONFIGURATION)
     val options = linkedMapOf<String, String>()
     val modules = linkedSetOf<String>()
@@ -30,7 +30,7 @@ internal fun coverageCheckCommand(args: List<String>): ExitStatus {
             allTargets = true
             continue
         }
-        if (flag !in setOf("--report", "--metric", "--minimum", "--module", "--target", "--output")) arguments("Unknown option $flag")
+        if (flag !in setOf("--report", "--metric", "--minimum", "--module", "--target", "--output", "--store")) arguments("Unknown option $flag")
         val value = args.getOrNull(index++) ?: arguments("Missing value for $flag")
         if (value.isBlank() || value.startsWith("--")) arguments("Missing value for $flag")
         if (flag == "--module") {
@@ -53,6 +53,9 @@ internal fun coverageCheckCommand(args: List<String>): ExitStatus {
     val output = projectPath(currentDirectory(), option("--output"))
     if (pathsPhysicallyOverlap(sourceDirectory, output)) arguments("Output must be outside the source report directory")
     if (NativeFiles.info(output) != null) arguments("Output directory already exists")
+    val store = try { reportStorePath(options["--store"], listOf(sourceDirectory), output) } catch (failure: IllegalArgumentException) {
+        arguments(failure.message ?: "Invalid report cache path")
+    }
     var stage: String? = null
     check(kvik_interrupt_install() == 0) { "Cannot install coverage interruption handlers" }
     fun checkpoint() {
@@ -126,46 +129,33 @@ internal fun coverageCheckCommand(args: List<String>): ExitStatus {
         val inputs = TreeManifest(listOf(FileEntry(LogicalPath("report.json"), reportDigest),
             FileEntry(LogicalPath("policy.json"), Sha256.digest(policyBytes))) + originals)
         val artifacts = linkedMapOf<String, ByteArray>()
-        var evaluation: JsonValue.Object? = null
-        var evaluationStatus: VerificationStatus? = null
         val recipes = linkedMapOf<String, ActionSpec>()
         fun action(id: String, inputs: TreeManifest, output: String) = ActionSpec("kvik-$id-v1", composition, ActionKind.GENERATE,
             mapOf("os" to "portable", "arch" to "any"), "reports", mapOf("kvik" to composition), inputs,
-            listOf(LogicalPath(output)), emptyList(), emptyMap(), policyJson, cachePolicy = CachePolicy.NEVER).also { recipes[id] = it }
+            listOf(LogicalPath(output)), emptyList(), emptyMap(), policyJson, cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
         val nodes = listOf(
             ActionNode("coverage-threshold", emptySet()) { action("coverage-threshold", inputs, "evaluation.json") },
             ActionNode("coverage-threshold-export", setOf("coverage-threshold")) { predecessors ->
                 action("coverage-threshold-export", predecessors.getValue("coverage-threshold").outputs, "threshold.json") },
         )
-        val executor = object : ActionExecutor {
-            override fun resources(action: ActionSpec) = ResourceRequest(128)
-            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
-                checkpoint()
-                val resultBytes = if (actionId == "coverage-threshold") {
-                    val result = if (aggregate != null) {
-                        evaluateCoverageAggregateThreshold(aggregate, reportDigest, checkNotNull(aggregatePolicy)).let {
-                            evaluationStatus = it.status
-                            it.toJson()
-                        }
-                    } else {
-                        evaluateCoverageThreshold(checkNotNull(report), reportDigest, checkNotNull(policy)).let {
-                            evaluationStatus = it.status
-                            it.toJson()
-                        }
-                    }
-                    evaluation = result
-                    result.canonical().encodeToByteArray()
-                } else artifacts.getValue("evaluation.json").also {
-                    require(Sha256.digest(it) == action.inputs.files.single().digest) { "Threshold export input differs" }
-                }
-                artifacts[action.outputs.single().value] = resultBytes
-                val result = ActionResult(actionId, action.key(Sha256), ActionStatus.EXECUTED,
-                    TreeManifest(listOf(FileEntry(action.outputs.single(), Sha256.digest(resultBytes)))), 0)
-                return object : RunningAction { override fun poll() = result; override fun cancel() = Unit; override fun close() = Unit }
-            }
-        }
         val events = mutableListOf<RunEvent>()
-        val results = SchedulerRun("coverage-check-$runLabel", nodes, executor, ResourceBudget(1, 128), EventJournal { events.add(it) }).use { run ->
+        val runId = "coverage-check-$runLabel"
+        val executor = cachedReportExecutor(store, 128, { name, data -> artifacts[name] = data }, ::checkpoint,
+            { type, payload -> events.add(RunEvent(runId, events.size + 1L, type, payload)) }) { actionId, action ->
+            checkpoint()
+            val resultBytes = if (actionId == "coverage-threshold") {
+                val result = if (aggregate != null) {
+                    evaluateCoverageAggregateThreshold(aggregate, reportDigest, checkNotNull(aggregatePolicy)).toJson()
+                } else {
+                    evaluateCoverageThreshold(checkNotNull(report), reportDigest, checkNotNull(policy)).toJson()
+                }
+                result.canonical().encodeToByteArray()
+            } else artifacts.getValue("evaluation.json").also {
+                require(Sha256.digest(it) == action.inputs.files.single().digest) { "Threshold export input differs" }
+            }
+            mapOf(action.outputs.single().value to resultBytes)
+        }
+        val results = SchedulerRun(runId, nodes, executor, ResourceBudget(1, 128), EventJournal { events.add(it.copy(sequence = events.size + 1L)) }).use { run ->
             while (true) {
                 checkpoint()
                 if (run.tick()) break
@@ -173,7 +163,7 @@ internal fun coverageCheckCommand(args: List<String>): ExitStatus {
             run.results.values.toList()
         }
         require(results.all { it.successful }) { results.filterNot { it.successful }.joinToString { it.diagnostic.orEmpty() } }
-        val result = checkNotNull(evaluation)
+        val result = retainedReportJson(artifacts, "evaluation.json")
         artifacts["graph.json"] = obj("schemaVersion" to CONTRACT_VERSION.json(), "sourceReport" to reportDigest.toJson(),
             "actions" to nodes.map { node -> obj("actionId" to node.id.json(), "dependencies" to node.dependencies.sorted().map { it.json() }.json(),
                 "action" to recipes.getValue(node.id).toJson()) }.json(), "results" to results.map { it.toJson() }.json(),
@@ -188,12 +178,7 @@ internal fun coverageCheckCommand(args: List<String>): ExitStatus {
         NativeFiles.exposeDirectory(pending, output)
         println(obj("schemaVersion" to CONTRACT_VERSION.json(), "outputDirectory" to output.json(), "result" to result,
             "artifacts" to TreeManifest(artifacts.map { (name, data) -> FileEntry(LogicalPath(name), Sha256.digest(data)) }).toJson()).canonical())
-        return when (checkNotNull(evaluationStatus)) {
-            VerificationStatus.PASSED -> ExitStatus.SUCCESS
-            VerificationStatus.FAILED -> ExitStatus.FAILED
-            VerificationStatus.INCOMPLETE -> ExitStatus.INCOMPLETE
-            VerificationStatus.CANCELLED -> ExitStatus.CANCELLED
-        }
+        return reportExitStatus(result)
     } catch (failure: CliFailure) { throw failure
     } catch (failure: Exception) {
         throw CliFailure("KVIK_COVERAGE_CHECK_FAILED", DiagnosticCategory.INFRASTRUCTURE,
