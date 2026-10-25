@@ -34,6 +34,11 @@ fun supportsCoreChangeSelection(plugins: List<BuildPlugin>): Boolean =
 /** Adds actions using built-in or registered source executors; cannot replace provider actions or checks. */
 interface ProjectGraphContributor : BuildPlugin {
     fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode>
+
+    /** Publish outputs of this plugin's contributed actions or selected generators.
+     * Called after its actions and instrumentation are added; later plugins see the references.
+     */
+    fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph): List<ProjectArtifact> = emptyList()
 }
 
 fun composedProjectActionGraph(
@@ -79,13 +84,15 @@ private fun compose(
     }
     launches.forEach { (id, launch) -> exposeTestArtifacts(id, launch) }
     val contributed = supplied.contributedActions.toMutableSet()
+    fun currentGraph() = ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
+        expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(),
+        launches.toMap(), supplied.generatedResources.toList(), artifacts.toList())
     require(contributed.all { id -> nodes.any { it.id == id } }) { "Unknown contributed action" }
     validateNodes(nodes)
     require(terminals.values.all { terminal -> nodes.any { it.id == terminal } }) { "Build plugin graph omits a terminal action" }
     for (plugin in ordered.filter { it !== provider }) {
         val added = if (plugin is ProjectGraphContributor) {
-            plugin.contribute(prepared, ProjectActionGraph(nodes.map { it.copy(dependencies = it.dependencies.toSet()) },
-                expectedChecks.toSet(), terminals.toMap(), contributed.toSet(), supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList(), artifacts.toList()))
+            plugin.contribute(prepared, currentGraph()).toList()
         } else {
             val authoring = context.effective.document.objectValue()
             val document = authoring["project"] ?: authoring["standaloneScript"] ?: error("Missing plugin authoring document")
@@ -94,8 +101,7 @@ private fun compose(
         nodes += added.map { guardedNode(it, context.composition, contribution = true) }
         contributed += added.map { it.id }
         if (plugin is ProjectTestInstrumentationContributor) {
-            val graph = ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals.toMap(), contributed.toSet(),
-                supplied.generatedSources.toList(), launches.toMap(), supplied.generatedResources.toList(), artifacts.toList())
+            val graph = currentGraph()
             for (instrumentation in plugin.instrumentTests(prepared, graph)) {
                 val index = nodes.indexOfFirst { it.id == instrumentation.actionId }
                 require(index >= 0) { "Unknown instrumentation action: ${instrumentation.actionId}" }
@@ -105,6 +111,18 @@ private fun compose(
                 nodes[index] = guardedNode(node, context.composition, contribution = node.id in contributed, launch = instrumented)
                 exposeTestArtifacts(node.id, instrumented)
             }
+        }
+        if (plugin is ProjectGraphContributor) {
+            val published = plugin.artifacts(prepared, currentGraph()).toList()
+            val owned = added.map { it.id }.toSet() + generated.nodes.filter {
+                it.id.startsWith("plugin:${plugin.id}:generate:")
+            }.map { it.id }
+            require(published.all { it.producer in owned }) {
+                "Plugin artifacts must reference its own contributed actions or generators: ${plugin.id}"
+            }
+            require(published.none { it in artifacts }) { "Plugin artifact is already published: ${plugin.id}" }
+            validateProjectArtifacts(nodes, published)
+            artifacts += published
         }
     }
     validateNodes(nodes)

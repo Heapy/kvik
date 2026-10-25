@@ -1235,6 +1235,12 @@ Test graphs also expose `test-results`, JVM coverage captures and declared
 instrumentation outputs. These can feed dependent plugin actions after successful
 tests; retained report commands handle failed and incomplete runs.
 
+Contributors can also override `artifacts(context, graph)` to publish semantic
+references to their own declared outputs. The callback runs after their actions and
+instrumentation are added, so later plugins can find these artifacts without
+knowing the producer's action IDs or paths. Selected generator outputs are supported;
+unused generators are not scheduled merely because a plugin publishes references.
+
 Build plugins can implement `ProjectInputContributor.projectInputs(configuration)` to
 return `BuildPluginInputs(files = ..., directories = ...)` with project-relative
 schema, template or data paths. This pure hook runs before capture and may use

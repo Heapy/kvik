@@ -39,11 +39,17 @@ class PluginGenerationTest {
     private fun graph(inputs: ProjectGeneratedInputs = declarations(), mode: ProjectMode = ProjectMode.BUILD,
                       targets: Set<String> = setOf("jvm", "js", "macosArm64")): ProjectActionGraph {
         val effective = effectiveConfiguration(config())
-        val plugin = object : ProjectGenerationContributor {
+        val plugin = object : ProjectGenerationContributor, ProjectGraphContributor {
             override val id = "example.codegen"
             override val apiVersion = CONTRACT_VERSION
             override val configurationSchema = obj()
             override fun generatedInputs(context: ProjectBuildContext) = inputs
+            override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph) = emptyList<ActionNode>()
+            override fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph) = inputs.nodes
+                .filter { generator -> graph.nodes.any { it.id == generator.id } }
+                .flatMap { generator -> generator.outputContract!!.artifacts.map { output ->
+                    ProjectArtifact("app", "common", "generated", generator.id, output)
+                } }
         }
         return composedProjectActionGraph(listOf(KotlinBuildPlugin(), plugin),
             ProjectBuildContext(effective, DependencyLock(effective.digest, emptyList()), TreeManifest(emptyList()), composition, tools),
@@ -59,6 +65,8 @@ class PluginGenerationTest {
         val generated = LogicalPath(pluginSourcePrefix(root) + "Generated.kt")
         assertEquals(setOf(producer), graph.contributedActions)
         assertEquals(1, graph.nodes.count { it.id == producer })
+        assertEquals(producer, graph.requireArtifact("app", "common", "generated", "kotlin-sources").producer)
+        assertEquals(producer, graph.requireArtifact("app", "common", "generated", "resources").producer)
         assertEquals(1, inspectActionGraph(graph).values.getValue("generatedResources").arrayValue().size)
         for (target in listOf("jvm", "js", "macosArm64")) {
             val node = graph.nodes.single { it.id == "app:$target:main" }
@@ -91,8 +99,10 @@ class PluginGenerationTest {
         val combined = ProjectGeneratedInputs(base.nodes + test.nodes, base.sources + test.sources, base.resources + test.resources)
         val main = graph(combined, targets = setOf("jvm"))
         assertFalse(main.nodes.any { it.id == testId })
+        assertFalse(main.artifacts.any { it.producer == testId })
         val tests = graph(combined, ProjectMode.COMPILE_TESTS, setOf("jvm"))
         assertContains(tests.nodes.single { it.id == "app:jvm:test-compile" }.dependencies, testId)
+        assertEquals(2, tests.artifacts.count { it.producer == testId })
         assertFalse(testId in tests.nodes.single { it.id == "app:jvm:main" }.dependencies)
     }
 

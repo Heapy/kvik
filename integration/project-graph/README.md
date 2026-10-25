@@ -56,6 +56,27 @@ classpath graph and describes the compiler classpath. Custom providers can decla
 additional kinds and compilation names. `inspect-graph` exposes the same references
 in its `artifacts` array.
 
+A `ProjectGraphContributor` can override `artifacts(context, graph)` to publish its
+own outputs. This optional callback runs once after that plugin's graph and
+instrumentation contributions; the next plugin (in plugin-ID order) sees the new
+references. The callback is pure and receives the updated graph, including its own
+actions. Existing contributors default to no publications.
+
+```kotlin
+override fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph) =
+    listOf(ProjectArtifact("app", "jvm", "main", "my-plugin:generate",
+        treeOutput("assets", "generated-assets")))
+```
+
+The producer must be an action added by the same contributor, or one of that
+plugin's generator actions selected into the graph. The output must exactly match
+a declared `OutputArtifact` on that node. Duplicate references, absent producers,
+undeclared outputs and attempts to publish another plugin's action are rejected.
+Filter generator publications against the selected graph: publishing a reference
+does not select an otherwise unused generator. Main providers continue to publish
+references in their returned `ProjectActionGraph.artifacts`. These publications use
+the same lookup, inspection and manifest API for project builds and scripts.
+
 `manifest` requires a successful result with the matching producer ID, selects only
 the referenced output, and preserves digests and executable bits when remapping.
 Empty trees are valid; absent file artifacts and incorrect file/tree shapes fail.

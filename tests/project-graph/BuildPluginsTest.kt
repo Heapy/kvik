@@ -59,6 +59,70 @@ private class Contributor(id: String, private val add: (ProjectBuildContext, Pro
 }
 
 class BuildPluginsTest {
+    @Test fun pluginsPublishArtifactsForLaterConsumersInProjectAndScriptGraphs() {
+        val context = pluginContext()
+        val output = fileOutput("assets.bin", "generated-data")
+        var publications = 0
+        val publisher = object : AdditivePlugin("a.producer"), ProjectGraphContributor {
+            override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph) =
+                listOf(ActionNode("producer:assets", emptySet(), ActionOutputContract(output)) {
+                    pluginNode("assets").resolve(emptyMap()).copy(outputs = listOf(output.path))
+                })
+            override fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph): List<ProjectArtifact> {
+                assertContains(graph.nodes.map { it.id }, "producer:assets")
+                publications++
+                return listOf(ProjectArtifact("app", "jvm", "main", "producer:assets", output))
+            }
+        }
+        val consumer = Contributor("z.consumer") { _, graph ->
+            val artifact = graph.requireArtifact("app", "jvm", "main", "generated-data")
+            listOf(ActionNode("consumer:assets", setOf(artifact.producer)) { results ->
+                pluginNode("consumer").resolve(emptyMap()).copy(inputs = artifact.manifest(results, LogicalPath("input/data.bin")))
+            })
+        }
+        val plugins = listOf(consumer, FixtureProvider(), publisher)
+        val graphs = listOf(composedProjectActionGraph(plugins, context, pluginRequest),
+            composedScriptActionGraph(plugins, context, ScriptGraphRequest("task")))
+        assertEquals(2, publications)
+        for (graph in graphs) {
+            val artifact = graph.requireArtifact("app", "jvm", "main", "generated-data")
+            assertEquals(artifact.toJson(), inspectActionGraph(graph).values.getValue("artifacts").arrayValue().single())
+            assertContains(graph.contributedActions, artifact.producer)
+            val consumerNode = graph.nodes.single { it.id == "consumer:assets" }
+            val result = ActionResult(artifact.producer, pluginDigest("generator"), ActionStatus.EXECUTED,
+                TreeManifest(listOf(FileEntry(output.path, pluginDigest("data")))), 0)
+            assertEquals(listOf(FileEntry(LogicalPath("input/data.bin"), pluginDigest("data"))),
+                consumerNode.resolve(mapOf(artifact.producer to result)).inputs.files)
+            val changed = result.copy(outputs = TreeManifest(listOf(FileEntry(output.path, pluginDigest("changed")))))
+            assertNotEquals(consumerNode.resolve(mapOf(artifact.producer to result)).key(Sha256),
+                consumerNode.resolve(mapOf(artifact.producer to changed)).key(Sha256))
+        }
+    }
+
+    @Test fun artifactPublicationsRejectForeignActionsUndeclaredOutputsAndDuplicates() {
+        val output = fileOutput("data.bin", "generated-data")
+        val other = ActionNode("main", emptySet(), { error("No recipe needed") }, ActionOutputContract(output))
+        val provider = FixtureProvider(project = { _, _ -> pluginGraph(listOf(other)) })
+        fun publish(make: (ProjectArtifact) -> List<ProjectArtifact>) = object : AdditivePlugin("producer"), ProjectGraphContributor {
+            override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph) = listOf(other.copy(id = "owned"))
+            override fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph) =
+                make(ProjectArtifact("app", "jvm", "main", "owned", output))
+        }
+        for (plugin in listOf(
+            publish { listOf(it.copy(producer = "main")) },
+            publish { listOf(it.copy(producer = "missing")) },
+            publish { listOf(it.copy(output = fileOutput("unknown.bin", "generated-data"))) },
+            publish { listOf(it, it) },
+        )) assertFails { composedProjectActionGraph(listOf(provider, plugin), pluginContext(), pluginRequest) }
+        val foreign = object : AdditivePlugin("z.foreign"), ProjectGraphContributor {
+            override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph) = emptyList<ActionNode>()
+            override fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph) =
+                listOf(graph.requireArtifact("app", "jvm", "main", "generated-data").copy(compilation = "test"))
+        }
+        assertFails { composedProjectActionGraph(listOf(provider, publish { listOf(it) }, foreign), pluginContext(), pluginRequest) }
+    }
+
+
     @Test fun contributorsConsumeSemanticArtifactsAndScriptsRetainThem() {
         val context = pluginContext()
         var calls = 0
