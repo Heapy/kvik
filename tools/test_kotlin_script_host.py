@@ -228,6 +228,23 @@ println("EFFECT literal declarations")
             jar.writestr('META-INF/services/org.jetbrains.kotlin.compiler.plugin.' + service, 'kvik.kts.fixture.' + provider)
     second_application = {**application, 'id': 'kvik.fixture.second', 'classpath': ['input/second-plugin.jar'], 'options': ['text=both-transformed']}
 
+    failing_source = case / 'FailingPlugin.kt'
+    failing_source.write_text((ROOT / 'tests/jvm-kts/Plugin.kt').read_text().replace(
+        'class Registrar : CompilerPluginRegistrar() {', '''class Registrar : CompilerPluginRegistrar() {
+    init {
+        val mode = System.getProperty("kvik.fixture.plugin.failure", "linkage")
+        if (!mode.startsWith("second-") || System.setProperty("kvik.fixture.plugin.initialized", "true") != null) {
+            if (mode.endsWith("initialization")) error("fixture initialization failed")
+            throw NoSuchMethodError("fixture missing compiler method")
+        }
+    }'''))
+    failing_plugin = case / 'failing-plugin.jar'
+    process('compile-failing-plugin', ['-cp', compiler_cp, 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect',
+        '-classpath', compiler_cp, '-d', failing_plugin, failing_source])
+    with zipfile.ZipFile(failing_plugin, 'a') as jar:
+        for service, provider in [('CommandLineProcessor', 'Processor'), ('CompilerPluginRegistrar', 'Registrar')]:
+            jar.writestr('META-INF/services/org.jetbrains.kotlin.compiler.plugin.' + service, 'kvik.kts.fixture.' + provider)
+
     serialization = json.loads((ROOT / 'compiler/jvm/test-artifacts.lock.json').read_text())
     serialization['artifacts'] = [item for item in serialization['artifacts'] if item['coordinate'].split(':')[1] in {
         'kotlin-serialization-compiler-plugin-embeddable', 'kotlinx-serialization-core-jvm', 'kotlinx-serialization-json-jvm'}]
@@ -299,7 +316,25 @@ println("EFFECT literal declarations")
         failure = json.loads((incompatible / 'result.json').read_text())
         assert failure['status'] == 'infrastructure-error' and not (incompatible / 'output/classes').exists(), failure
         assert any('different compiler API' in diagnostic['message'] for diagnostic in failure['diagnostics']), failure
+        assert failure['diagnostics'][0]['code'] == 'KVIK_PLUGIN_INCOMPATIBLE', failure
+        for kind, code, message in [('linkage', 'KVIK_PLUGIN_INCOMPATIBLE', 'fixture missing compiler method'),
+                                    ('initialization', 'KVIK_PLUGIN_INITIALIZATION', 'fixture initialization failed'),
+                                    ('second-linkage', 'KVIK_PLUGIN_INCOMPATIBLE', 'fixture missing compiler method'),
+                                    ('second-initialization', 'KVIK_PLUGIN_INITIALIZATION', 'fixture initialization failed')]:
+            label = 'plugin-' + kind + '-' + extension
+            rejected = case / label
+            shutil.copytree(mixed / 'input', rejected / 'input')
+            (rejected / 'output').mkdir()
+            shutil.copy2(failing_plugin, rejected / 'input/plugin.jar')
+            (rejected / 'request.json').write_text(json.dumps(mixed_request))
+            process(label, ['-Dkvik.fixture.plugin.failure=' + kind, '-cp', bootstrap_cp, worker_class, rejected,
+                'request.json', 'result.json', cache, manifest], expected=1)
+            failure = json.loads((rejected / 'result.json').read_text())
+            assert failure['status'] == 'infrastructure-error' and not (rejected / 'output/classes').exists(), failure
+            diagnostic = failure['diagnostics'][0]
+            assert diagnostic['code'] == code and message in diagnostic['message'] and application['id'] in diagnostic['message'], failure
     print('PASS isolated ordered workspace plugins plus serialization for .kt/.kts; duplicate IDs refused', flush=True)
+    print('PASS plugin linkage/initialization diagnostics survive reflection and isolated scripting loaders', flush=True)
 
     _, failure = compile_script('annotation-cycle', {'main/Main.kts': '@file:Import("../helpers/Helper.kts")',
         'helpers/Helper.kts': '@file:Import("../main/Main.kts")'})

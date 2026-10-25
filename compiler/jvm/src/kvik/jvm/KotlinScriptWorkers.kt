@@ -61,8 +61,22 @@ private fun scriptWorker(args: Array<String>, operation: String) {
 /** Called only inside the validated, isolated implementation loader; JSON is the loader boundary. */
 object KotlinScriptWorkerSession {
     @JvmStatic fun execute(operation: String, root: String, requestJson: String, artifactRoot: String, manifestJson: String): String {
+        var requestId = "invalid-request"
+        val result = try {
+            val request = parseJson(requestJson)
+            requestId = request.objectValue().getValue("requestId").stringValue()
+            executeRequest(operation, root, request, artifactRoot, manifestJson)
+        } catch (failure: AdapterFailure) {
+            // Serialize in the loader that owns AdapterFailure; its JVM type cannot cross this boundary.
+            failure.printStackTrace(System.err)
+            WorkerResult(requestId, WorkerStatus.INFRASTRUCTURE_ERROR, 1, listOf(Diagnostic(
+                failure.code, DiagnosticCategory.INFRASTRUCTURE, failure.message ?: "Script adapter failed")))
+        }
+        return result.toJson().canonical()
+    }
+
+    private fun executeRequest(operation: String, root: String, request: JsonValue, artifactRoot: String, manifestJson: String): WorkerResult {
         val workspace = Workspace(Path.of(root))
-        val request = parseJson(requestJson)
         val fields = request.objectValue()
         val requestId = fields.getValue("requestId").stringValue()
         val pinned = distribution(Path.of(artifactRoot), parseJson(manifestJson), Digest.fromJson(fields.getValue("compiler")))
@@ -140,7 +154,7 @@ object KotlinScriptWorkerSession {
                     if (compiled.successful) 0 else 1, compiled.diagnostics.map { it.workerDiagnostic(evaluation = false) })
             } finally { workspace.removeTree(staging) }
         }
-        return result.toJson().canonical()
+        return result
     }
 }
 

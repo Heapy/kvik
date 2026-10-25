@@ -3,10 +3,12 @@ package kvik.jvm
 
 import kvik.core.*
 import java.net.URLClassLoader
+import java.lang.reflect.InvocationTargetException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipFile
 import java.util.ServiceLoader
+import java.util.ServiceConfigurationError
 
 /** Check on the real action filesystem, including case and Unicode aliases, before plugin code loads. */
 internal fun prepareOutputRoots(staging: Path, logical: List<LogicalPath>): Map<LogicalPath, Path> {
@@ -108,8 +110,10 @@ internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>,
                         reject("KVIK_PLUGIN_INCOMPATIBLE", "Plugin must support K2")
                 }
             }
+        } catch (failure: ReflectiveOperationException) {
+            rejectPluginInitialization(application.id, failure)
         } catch (failure: LinkageError) {
-            reject("KVIK_PLUGIN_INCOMPATIBLE", failure.message ?: "Plugin/compiler API linkage failed")
+            rejectPluginInitialization(application.id, failure)
         }
         if ((application.options.isNotEmpty() || application.pathOptions.isNotEmpty()) && processors.isEmpty())
             reject("KVIK_PLUGIN_SERVICE", "Plugin options require a command-line processor")
@@ -118,6 +122,23 @@ internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>,
         }
         PreparedWorkspacePlugin(application.id, classpath, options)
     }
+}
+
+/** Reflection wraps constructor/getter failures; keep the actual plugin and cause in diagnostics. */
+private fun rejectPluginInitialization(id: String, failure: Throwable): Nothing {
+    var cause = failure
+    while (true) {
+        val nested = when (cause) {
+            is InvocationTargetException -> cause.targetException
+            is ServiceConfigurationError -> cause.cause
+            else -> null
+        }
+        if (nested == null || nested === cause) break
+        cause = nested
+    }
+    val code = if (cause is LinkageError || cause is ReflectiveOperationException || cause is ServiceConfigurationError)
+        "KVIK_PLUGIN_INCOMPATIBLE" else "KVIK_PLUGIN_INITIALIZATION"
+    reject(code, "Compiler plugin $id failed to initialize (${cause.javaClass.simpleName}): ${cause.message ?: "No further details"}")
 }
 
 internal fun workspacePluginBridgeId(plugins: List<PreparedWorkspacePlugin>): String =
@@ -153,8 +174,13 @@ internal fun <T> withTypedWorkspacePlugins(plugins: List<PreparedWorkspacePlugin
                     else -> super.getResources(name)
                 }
             }.use { loader ->
-                val registrar = ServiceLoader.load(registrarType, loader).toList()
-                val processor = ServiceLoader.load(processorType, loader).toList()
+                fun providers(type: Class<*>): List<Any> = try {
+                    ServiceLoader.load(type, loader).toList()
+                } catch (failure: ServiceConfigurationError) {
+                    rejectPluginInitialization(plugin.id, failure)
+                }
+                val registrar = providers(registrarType)
+                val processor = providers(processorType)
                 require(registrar.size == 1 && processor.size <= 1) { "Validated plugin services changed" }
                 registrars += registrar.single()
                 processors += processor.singleOrNull()

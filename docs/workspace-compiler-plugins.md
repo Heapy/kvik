@@ -110,6 +110,13 @@ compatible with Kotlin 2.4.20 and the selected backend. JVM-only plugins do not
 gain Native/JS/Wasm compatibility by being published. Explicit Native plugin
 declarations select `main` and `test` independently, as workspace plugins do.
 
+Plugin initialization failures retain the plugin ID and underlying exception in
+structured diagnostics. `KVIK_PLUGIN_INCOMPATIBLE` identifies unavailable classes,
+methods or incompatible service providers; `KVIK_PLUGIN_INITIALIZATION` identifies
+other constructor failures. These codes are preserved for both `.kt` and `.kts`
+compilation, including failures when the compiler loads an already validated
+plugin again.
+
 Each explicitly described plugin has its own resolution domain, identified by
 `pluginId` in the lock and dependency queries. Two plugins may use different
 versions of the same helper library. Workspace plugin compilation still resolves
