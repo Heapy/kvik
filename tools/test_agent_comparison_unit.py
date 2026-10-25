@@ -11,9 +11,105 @@ import unittest
 from compare_agent_workflows import (TEST_IDS, agent_test_observed, compilation_metrics,
     environment, git, git_state, inspect_scope, process, transcript_metrics,
     query_answer_matches, query_executed_actions, query_execution_violations, source_state)
+from agent_worktree_trials import branch_state, intervals_overlap, observe_branch
 
 
 class AgentComparisonTests(unittest.TestCase):
+    def test_linked_worktrees_preserve_separate_git_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            seed, linked = root/'seed', root/'linked'
+            seed.mkdir()
+            env = environment(root, root)
+            git(seed, env, 'init', '-b', 'main')
+            (seed/'Source.kt').write_text('baseline')
+            git(seed, env, 'add', '.')
+            git(seed, env, 'commit', '-m', 'fixture')
+            git(seed, env, 'worktree', 'add', '-b', 'linked', linked)
+            original, other = git_state(seed, env), git_state(linked, env)
+            self.assertNotIn('error', other)
+            self.assertEqual(original['commonDirectory'], other['commonDirectory'])
+            self.assertEqual(original['head'], other['head'])
+            self.assertNotEqual(original['branch'], other['branch'])
+            (linked/'Source.kt').write_text('changed')
+            git(linked, env, 'add', 'Source.kt')
+            self.assertNotEqual(git_state(linked, env), other)
+            self.assertEqual(git_state(seed, env), original)
+
+    def test_worktree_snapshot_excludes_only_exact_timing_marker(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root/'consumer').mkdir()
+            original = branch_state(root)
+            (root/'consumer/worktree-window.json').write_text('{}')
+            self.assertEqual(branch_state(root), original)
+            (root/'consumer/Source.kt').write_text('changed')
+            self.assertNotEqual(branch_state(root), original)
+
+    def test_worktree_windows_require_actual_overlap(self):
+        left = dict(startMillis=10, endMillis=20)
+        self.assertTrue(intervals_overlap(left, dict(startMillis=19, endMillis=30)))
+        self.assertFalse(intervals_overlap(left, dict(startMillis=20, endMillis=30)))
+        with self.assertRaises(RuntimeError):
+            intervals_overlap(left, dict(startMillis=30, endMillis=30))
+
+    def test_worktree_observation_rejects_stale_and_wrong_branch_results(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            run = root/'run'
+            marker = run/'kvik-run-one/worktree-window.json'
+            marker.parent.mkdir(parents=True)
+            marker.write_text(json.dumps(dict(startMillis=10, endMillis=20, observed='ada:2')))
+            path = run/'verification.json'
+            record = dict(status='passed', freshnessAtCompletion='current',
+                          testCounts=dict(executed=3, discoveryComplete=True), tests=[
+                              dict(id='[engine:junit-jupiter]/[class:'+i.split('#')[0]+']/[method:'+i.split('#')[1]+']',
+                                   status='passed') for i in TEST_IDS])
+            path.write_text(json.dumps(record))
+            self.assertEqual(observe_branch('kvik', root, {path}, 'passed')['status'], 'passed')
+            with self.assertRaises(RuntimeError):
+                observe_branch('kvik', root, set(), 'passed')
+            for changes in (dict(freshnessAtCompletion='stale'), dict(status='failed'),
+                            dict(testCounts=dict(executed=0, discoveryComplete=True))):
+                path.write_text(json.dumps(dict(record, **changes)))
+                with self.assertRaises(RuntimeError):
+                    observe_branch('kvik', root, {path}, 'passed')
+            path.write_text(json.dumps(record))
+            marker.write_text(json.dumps(dict(startMillis=10, endMillis=20, observed='ADA:2')))
+            with self.assertRaises(RuntimeError):
+                observe_branch('kvik', root, {path}, 'passed')
+
+    def test_worktree_ktc_window_requires_matching_completed_cli(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root/'consumer').mkdir()
+            (root/'consumer/worktree-window.json').write_text(json.dumps(
+                dict(startMillis=10, endMillis=20, observed='ada:2')))
+            reports = root/'build/reports/consumer/jvm'
+            reports.mkdir(parents=True)
+            (reports/'tests.xml').write_text('<testsuite>'+''.join(
+                '<testcase classname="'+i.split('#')[0]+'" name="'+i.split('#')[1]+'"/>'
+                for i in TEST_IDS)+'</testsuite>')
+            path = root/'trace.jsonl'
+            spans = [dict(name='Root', traceId='one', startTimeUnixNano=1, endTimeUnixNano=30_000_000),
+                     dict(name='junit-platform-console-standalone', traceId='one',
+                          startTimeUnixNano=2, endTimeUnixNano=25_000_000)]
+            def write_spans():
+                path.write_text(json.dumps(dict(resourceSpans=[dict(scopeSpans=[dict(spans=spans)])])))
+            write_spans()
+            self.assertEqual(observe_branch('ktc', root, {path}, 'passed')['status'], 'passed')
+            for changes in (dict(status=dict(code=2)), dict(endTimeUnixNano=0), dict(traceId='another')):
+                saved = dict(spans[0])
+                spans[0].update(changes)
+                write_spans()
+                with self.assertRaises(RuntimeError):
+                    observe_branch('ktc', root, {path}, 'passed')
+                spans[0] = saved
+            spans[1]['startTimeUnixNano'] = 11_000_000
+            write_spans()
+            with self.assertRaises(RuntimeError):
+                observe_branch('ktc', root, {path}, 'passed')
+
     def test_query_answers_reject_wrong_scope_and_false_current_claim(self):
         owner = dict(module='library', sourceSets=['main'], targets=['jvm'], downstreamModules=['consumer'])
         self.assertTrue(query_answer_matches('file-ownership', owner))

@@ -29,7 +29,7 @@ REPAIR_TASKS = {
                          goal='Diagnose and fix the failing test without changing the tests or their intended behavior.'),
 }
 QUERY_TASKS = ('file-ownership', 'stale-verification')
-TASKS = (*REPAIR_TASKS, *QUERY_TASKS)
+TASKS = (*REPAIR_TASKS, *QUERY_TASKS, 'independent-worktrees')
 PINS = ['org.junit.jupiter:junit-jupiter-api:5.13.4',
         'org.junit.jupiter:junit-jupiter-engine:5.13.4', 'org.junit:junit-bom:5.13.4',
         'org.junit.platform:junit-platform-engine:1.13.4',
@@ -257,7 +257,7 @@ configuration, wrappers, tests, or dependency versions to repair application cod
         limitations=['Small JVM-only synthetic fixture; no general productivity conclusion',
                     'KTC and Kvik have different incremental compiler implementations and default schedulers',
                     'Compiler action instrumentation is backend-specific',
-                    'Concurrent-worktree agent tasks are not yet implemented'])
+                    'The agent worktree trial does not cover cancellation or Native targets'])
     write_json(root/'fixture.json', metadata)
     for backend in COMMANDS:
         workspace = root/('validate-'+backend)
@@ -356,9 +356,10 @@ def agent_test_observed(backend, paths, workspace):
 
 def git_state(workspace, env):
     try:
-        require((workspace/'.git').is_dir() and not (workspace/'.git').is_symlink(), 'Missing private Git directory')
+        require((workspace/'.git').exists() and not (workspace/'.git').is_symlink(), 'Missing private Git metadata')
         return dict(head=git(workspace, env, 'rev-parse', 'HEAD'),
             branch=git(workspace, env, 'rev-parse', '--abbrev-ref', 'HEAD'),
+            commonDirectory=str((workspace/git(workspace, env, 'rev-parse', '--git-common-dir')).resolve()),
             index=git(workspace, env, 'ls-files', '--stage'))
     except (RuntimeError, subprocess.CalledProcessError):
         return dict(error='Private Git metadata is missing or invalid')
@@ -493,12 +494,13 @@ Finish with the requested JSON response: completed is true only after the done c
     return result
 
 
-def source_state(workspace):
+def source_state(workspace, *, excluded_directories=('.git', '.kvik', 'build'), excluded_files=()):
     """Content/mode snapshot; mtime is deliberately not a freshness signal."""
     return {str(p.relative_to(workspace)): dict(sha256=digest(p), executable=p.stat().st_mode & 0o111)
             if not p.is_symlink() else dict(symlink=os.readlink(p))
             for p in workspace.rglob('*') if (p.is_file() or p.is_symlink())
-            and p.relative_to(workspace).parts[0] not in ('.git', '.kvik', 'build')}
+            and p.relative_to(workspace).parts[0] not in excluded_directories
+            and str(p.relative_to(workspace)) not in excluded_files}
 
 
 def query_schema(task):
@@ -676,10 +678,13 @@ def run(args):
     args.codex = args.codex.resolve(strict=True)
     root = Path(tempfile.mkdtemp(prefix='trials-', dir=args.fixture.resolve().parent))
     shutil.copyfile(Path(__file__), root/'harness.py')
+    helper = Path(__file__).with_name('agent_worktree_trials.py')
+    shutil.copyfile(helper, root/helper.name)
     version = subprocess.run([args.codex, '--version'], capture_output=True, text=True, check=True).stdout.strip()
     write_json(root/'invocation.json', dict(model=args.model, effort=args.effort, codexVersion=version,
         codexSha256=digest(args.codex), harnessSha256=digest(root/'harness.py'),
         harnessSource='harness.py', trials=args.trials,
+        worktreeHelperSha256=digest(root/helper.name),
         tasks=args.tasks, timeoutSeconds=args.timeout, fixture=str(args.fixture.resolve()),
         writableCaches=list(map(str, args.writable_cache))))
     results = []
@@ -688,7 +693,11 @@ def run(args):
             backends = ('ktc', 'kvik') if index % 2 == 0 else ('kvik', 'ktc')
             pair = []
             for backend in backends:
-                execute = query_trial if task in QUERY_TASKS else repair_trial
+                if task == 'independent-worktrees':
+                    from agent_worktree_trials import worktree_trial
+                    execute = worktree_trial
+                else:
+                    execute = query_trial if task in QUERY_TASKS else repair_trial
                 result = execute(args, fixture, backend, task, root/f'{index+1}-{task}-{backend}')
                 pair.append(result)
                 results.append(result)

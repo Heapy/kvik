@@ -1232,8 +1232,9 @@ python3 tools/compare_agent_workflows.py run \
 
 `run` invokes Codex with the same explicit model and effort for both backends
 (`gpt-6-sol`, `high` by default), an isolated workspace and a 15-minute deadline
-per task. It covers a compilation error, a failing boundary test, file ownership
-and stale verification. Repair tasks start from the same broken commit after
+per task. It covers a compilation error, a failing boundary test, file ownership,
+stale verification and concurrent checks in independent Git worktrees.
+Repair tasks start from the same broken commit after
 warming an identical passing baseline, with
 Kotlin 2.4.20, JDK 25, JVM release 17, JUnit 5.13.4 and matched Kotlin test
 dependencies. The generated KTC wrapper fixes the JDK path across login shells;
@@ -1250,6 +1251,17 @@ old passing result. Kvik's native freshness response is retained separately from
 that shared oracle. Executing either build system during a query invalidates the
 trial even if all compilation was cached.
 
+Use `--tasks independent-worktrees` for the concurrent scenario. Two linked
+worktrees start with warm compilation and different source contents: the left
+suite should pass and the right should fail. The agent must preserve both and
+report both results. Test JVMs record their own execution windows and observed
+branch behavior; the grader requires overlapping windows, fresh results and
+unchanged sources and Git state. Separate clean checkouts independently rerun
+each branch. Kvik shares an action/blob cache between the worktrees; KTC shares
+provisioned tools/downloads and keeps project-local incremental state. This
+scenario uses a two-second test wait to make overlap observable. Identical-input
+worktrees and cancellation isolation remain separate runtime gates.
+
 The harness retains prompts, JSONL transcripts, token usage, tool calls, returned
 command-output bytes, compiler invocation counts, diffs and independent test
 results under `.kvik/tests/agent-comparison/`. It validates all three test
@@ -1262,9 +1274,8 @@ not equivalent amounts of compiler work. Returned log text can be truncated by
 Codex; full transcript bytes are a separate metric. macOS KTC process cleanup
 may need automatic sandbox escalation, whose time is included in the trial.
 
-This small JVM experiment does not yet cover concurrent-worktree agent tasks
-from K10, or the Kode/Git agent
-comparison from K17. CI runs only the harness accounting/failure tests; model
+This small JVM experiment does not cover the Kode/Git agent comparison from K17.
+CI runs only the harness accounting/failure tests; model
 calls are manual and incur provider usage.
 
 Compiler plugins can be built from another module in the same project. Declare
