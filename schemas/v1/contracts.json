@@ -12656,6 +12656,348 @@
         }
       ]
     },
+    "fileInspectionResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "file-inspection"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "observed": {
+          "type": "boolean"
+        },
+        "configurationPath": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "configurationScope": {
+          "const": "declaration-and-resolver-policy"
+        },
+        "configuration": {
+          "$ref": "#/$defs/digest"
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "owners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "sourceSet": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "source",
+                    "resource",
+                    "generator-input"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "jvm",
+                    "macosArm64",
+                    "linuxX64",
+                    "iosArm64",
+                    "iosSimulatorArm64",
+                    "js",
+                    "wasmJs"
+                  ]
+                },
+                "uniqueItems": true
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  "pointer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file",
+                  "pointer"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "module",
+              "sourceSet",
+              "roles",
+              "targets",
+              "origin"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "scripts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "source",
+                    "resource",
+                    "compiler-plugin-input"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  "pointer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file",
+                  "pointer"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "roles",
+              "origin"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "generators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "kind": {
+                "const": "sqldelight"
+              },
+              "sourceSet": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  "pointer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file",
+                  "pointer"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "module",
+              "kind",
+              "sourceSet",
+              "origin"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "module": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+              },
+              "target": {
+                "enum": [
+                  "jvm",
+                  "macosArm64",
+                  "linuxX64",
+                  "iosArm64",
+                  "iosSimulatorArm64",
+                  "js",
+                  "wasmJs"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "build",
+                  "test",
+                  "abi-check"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "id",
+              "module",
+              "target",
+              "kind",
+              "reasons"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "declaration": {
+                "$ref": "#/$defs/target"
+              },
+              "mainCompilerOptions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "testCompilerOptions": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+                  },
+                  "pointer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file",
+                  "pointer"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "declaration",
+              "mainCompilerOptions",
+              "testCompilerOptions",
+              "origin"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "fullReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "file",
+        "observed",
+        "configurationPath",
+        "configurationScope",
+        "configuration",
+        "composition",
+        "tags",
+        "owners",
+        "scripts",
+        "generators",
+        "checks",
+        "settings",
+        "fullReasons",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
     "scriptOrigin": {
       "type": "object",
       "properties": {

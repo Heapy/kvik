@@ -862,8 +862,8 @@ CHANGE_VERIFICATION_CONTEXT = {
 }
 DEFS["changeVerificationPlan"] = versioned({**CHANGE_VERIFICATION_CONTEXT,
     "kind": {"const": "verification-selection"}, "status": {"const": "planned"},
-    "selection": ref("affectedCheckSelection"),
-}, optional=("baselineRuns",))
+    "selection": ref("affectedCheckSelection"), "source": ref("sourceReference"),
+}, optional=("baselineRuns", "source"))
 DEFS["changeVerificationResult"] = versioned({**CHANGE_VERIFICATION_CONTEXT,
     "kind": {"const": "change-verification"},
     "status": enum("planned", "unchanged", "passed", "failed", "incomplete", "cancelled"),
@@ -873,8 +873,8 @@ DEFS["changeVerificationResult"] = versioned({**CHANGE_VERIFICATION_CONTEXT,
     "executionRuns": array(object_({"directory": NONEMPTY,
         "status": enum("passed", "failed", "incomplete", "cancelled"),
         "completedChecks": array(ref("requestedCheck"), uniqueItems=True)})),
-    "reason": nullable(STRING),
-}, optional=("baselineRuns",))
+    "reason": nullable(STRING), "source": ref("sourceReference"),
+}, optional=("baselineRuns", "source"))
 DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "then": {"properties": {"payload": shape}}} for kind, shape in {
     "run-started": {**object_({"requestedChecks": array(ref("requestedCheck")), "inputSnapshot": ref("digest"),
         "inputManifest": ref("digest"), "inputScope": enum("project", "partial"), "inputSelection": ref("snapshotSelection"),
@@ -965,6 +965,22 @@ DEFS["configurationSourceEditPlan"] = {**DEFS["dependencyResolution"],
         "proposedConfiguration": ref("project"), "proposedConfigurationFile": ref("digest")},
     "required": DEFS["dependencyResolution"]["required"] + ["source", "kind", "edits", "configurationFile", "proposedConfiguration", "proposedConfigurationFile"],
 }
+
+FILE_ORIGIN = object_({"file": PATH, "pointer": STRING})
+DEFS["fileInspectionResult"] = versioned({
+    "kind": {"const": "file-inspection"}, "file": PATH, "observed": BOOL, "configurationPath": PATH,
+    "configurationScope": {"const": "declaration-and-resolver-policy"},
+    "configuration": ref("digest"), "composition": ref("digest"), "tags": array(STRING, uniqueItems=True),
+    "owners": array(object_({"module": ID, "sourceSet": ID, "roles": array(enum("source", "resource", "generator-input"), minItems=1, uniqueItems=True),
+        "targets": array(enum(*PROJECT_TARGETS), uniqueItems=True), "origin": FILE_ORIGIN})),
+    "scripts": array(object_({"name": ID, "roles": array(enum("source", "resource", "compiler-plugin-input"), minItems=1, uniqueItems=True), "origin": FILE_ORIGIN})),
+    "generators": array(object_({"module": ID, "kind": {"const": "sqldelight"}, "sourceSet": ID, "origin": FILE_ORIGIN})),
+    "checks": array(object_({"id": STRING, "module": ID, "target": enum(*PROJECT_TARGETS), "kind": enum("build", "test", "abi-check"),
+        "reasons": array(NONEMPTY, minItems=1, uniqueItems=True)})),
+    "settings": mapping(object_({"declaration": ref("target"), "mainCompilerOptions": array(STRING),
+        "testCompilerOptions": nullable(array(STRING)), "origin": FILE_ORIGIN})),
+    "fullReasons": array(STRING, uniqueItems=True), "limitations": array(STRING, minItems=1), "source": ref("sourceReference"),
+}, optional=("source",))
 
 DEFS["scriptOrigin"] = object_({"declaration": STRING, "profileSelection": nullable(STRING), "catalog": nullable(STRING)})
 DEFS["scriptInspection"] = versioned({

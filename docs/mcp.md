@@ -80,7 +80,7 @@ connection, send `notifications/initialized`, then use `tools/list` and
 
 | Tool | Inputs | Result |
 | --- | --- | --- |
-| `kvik_inspect` | None | Current project model, source ownership, targets and effective settings from `inspect` |
+| `kvik_inspect` | Optional `file` | Whole project model, or file ownership, conservative downstream checks and target settings |
 | `kvik_config_validate` | None | Configuration, project graph and configured resolver policy validation; no lock check or repository access |
 | `kvik_dependencies` | Optional `modules`, `scripts`, `targets`, `compilation`, `usage`; `availableVersions` enables `packages`, `channel`, `limit`, `cursor`, `refresh` | Declared and locked dependency graph, optionally available versions |
 | `kvik_package_versions` | `package` as `group:artifact`; optional `channel`, `limit`, `cursor`, `offline`, `refresh` | Published versions with repository observations and freshness |
@@ -90,6 +90,28 @@ connection, send `notifications/initialized`, then use `tools/list` and
 | `kvik_run_stats` | `run` | Historical action counts, timings, CPU/memory observations and remote transfers |
 | `kvik_session_status` | `session` | Foreground state and current owner liveness |
 | `kvik_session_events` | `session`; optional `cursor`, `limit` | Paginated foreground events, completeness and owner liveness |
+
+Pass `{"file": "library/src/Example.kt"}` to `kvik_inspect` for the CLI's
+`file-inspection` document. The path is logical and relative to the configuration
+directory; a configuration at `nested/kvik.json` uses the same path inside that
+directory, without the `nested/` prefix. Absolute paths and traversal are rejected.
+`owners` retains module/source-set pairs; `scripts` lists direct script ownership;
+`generators` identifies declared generator inputs. `checks` includes downstream
+build/test/ABI impact and reasons, with target settings and configuration origins
+in `settings`. Unknown paths or custom build-plugin graphs widen the selection
+and explain why in `fullReasons`.
+
+`observed` says whether inspection saw a regular file at that path. Declared
+ownership and impact also work for proposed/deleted paths. `checks` is a planning
+result: it neither executes checks nor establishes verification or tool/lock
+availability. Script execution, documentation and publication remain outside
+that check scope. Source results include a `source` reference for the immutable
+revision. Local observations do not form an atomic filesystem snapshot.
+File inspection does not read script annotations or expand imports; missing
+script entries/helpers therefore do not block these queries. Script ownership
+comes from declared source/resource paths and compiler-plugin inputs.
+`configurationScope: "declaration-and-resolver-policy"` identifies the scope of
+its configuration digest; it is not a digest of expanded script declarations.
 
 To enable execution tools, configure the server with the same pinned tools file
 used by CLI builds:

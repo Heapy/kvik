@@ -18,7 +18,7 @@ internal fun mcpOptions(arguments: List<String>): McpOptions {
     val options = queryArguments(remaining, setOf("--project", "--lock", "--store", "--query-cache") + buildFlags,
         repeats = setOf("--pin", "--scope-pin", "--exclude-metadata-edge"), flags = setOf("--offline", "--config-edits", "--session-controls"))
     val projectName = options.values["--project"] ?: "kvik.json"
-    val project = if (source == null) readProject(projectName) else null
+    val project = if (source == null) readProject(projectName, expandScriptDeclarations = false) else null
     if (source != null) {
         LogicalPath(projectName)
         options.values["--lock"]?.let(::LogicalPath)

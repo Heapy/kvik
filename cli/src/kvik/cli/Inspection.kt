@@ -14,8 +14,8 @@ import platform.posix.*
 private data class Owner(val module: String, val sourceSet: String, val targets: List<String>)
 
 /** Read-only inspection of declared directories and manually tagged files, including untracked files. */
-fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy()): JsonValue {
-    val project = readProject(projectPath)
+fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(), file: LogicalPath? = null): JsonValue {
+    val project = readProject(projectPath, expandScriptDeclarations = file == null)
     val root = project.root
     fun collect(path: String): List<String> {
         val logical = LogicalPath(path)
@@ -40,7 +40,7 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
         }
         return false
     }
-    return inspectConfiguration(project.configuration, project.name, policy, ::existingFile) { directory ->
+    val inspected = inspectConfiguration(project.configuration, project.name, policy, ::existingFile, file = file) { directory ->
         // Reject links in every declared ancestor, including a link whose leaf is absent.
         var current = root
         var missing = false
@@ -50,13 +50,15 @@ fun inspectProject(projectPath: String, policy: ResolverPolicy = ResolverPolicy(
             if (status == null) { missing = true; break }
             require(NativeFiles.directory(status)) { "Source/resource root is not a real directory: ${directory.value}" }
         }
-        if (missing) emptyList() else collect(directory.value)
-    }.toJson()
+        if (missing) emptyList() else if (file == null) collect(directory.value)
+        else if (file.value.startsWith(directory.value + "/") && existingFile(file)) listOf(file.value) else emptyList()
+    }
+    return if (file == null) inspected.toJson() else inspectFileResult(inspected, project.name, file)
 }
 
 /** Declaration bytes and source ownership are bound to the same frozen revision. */
 internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: LogicalPath,
-                                 policy: ResolverPolicy, checkpoint: () -> Unit,
+                                 policy: ResolverPolicy, checkpoint: () -> Unit, file: LogicalPath? = null,
                                  read: (SourceFileEntry) -> ByteArray = { entry ->
                                      resolved.fetch(entry.blob, 4 * 1024 * 1024, checkpoint) ?: error("Source blob is unavailable")
                                  }): JsonValue {
@@ -68,8 +70,8 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
     val root = fileName.value.substringBeforeLast('/', "")
     val prefix = if (root.isEmpty()) "" else "$root/"
     val sourceFiles = manifest.files.associateBy { it.path.value }
-    val configuration = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
-        .withScriptDeclarations(boundedScriptSourceReader { path ->
+    val declaration = parseProjectConfiguration(parseJson(bytes.decodeToString(throwOnInvalidSequence = true)))
+    val configuration = if (file != null) declaration else declaration.withScriptDeclarations(boundedScriptSourceReader { path ->
             checkpoint()
             val source = sourceFiles[prefix + path.value] ?: error("Script source is absent from revision: ${path.value}")
             require(source.blob.sizeBytes <= 4 * 1024 * 1024) { "Script source exceeds 4 MiB" }
@@ -81,20 +83,23 @@ internal fun inspectSourceProject(resolved: ResolvedSourceSnapshot, fileName: Lo
     val files = manifest.files.map { it.path.value }.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
     val directories = manifest.directories.map { it.value }.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.toSet()
     val inspected = inspectConfiguration(configuration, LogicalPath(fileName.value.substringAfterLast('/')), policy,
-        existingFile = { it.value in files }, checkpoint = checkpoint) { directory ->
+        existingFile = { it.value in files }, checkpoint = checkpoint, file = file) { directory ->
         checkpoint()
         var parent = ""
         for (part in directory.value.split('/')) {
             parent = if (parent.isEmpty()) part else "$parent/$part"
             require(parent !in files) { "Source/resource root is not a directory: ${directory.value}" }
         }
-        if (directory.value !in directories) emptyList() else files.filter { it.startsWith("${directory.value}/") }
+        if (directory.value !in directories) emptyList()
+        else if (file == null) files.filter { it.startsWith("${directory.value}/") }
+        else listOfNotNull(file.value.takeIf { it in files && it.startsWith("${directory.value}/") })
     }
-    return inspected.copy(source = SourceReference(resolved.provenance, root, manifest.digest)).toJson()
+    val model = inspected.copy(source = SourceReference(resolved.provenance, root, manifest.digest))
+    return if (file == null) model.toJson() else inspectFileResult(model, LogicalPath(fileName.value.substringAfterLast('/')), file, checkpoint)
 }
 
 private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: LogicalPath, policy: ResolverPolicy,
-                                 existingFile: (LogicalPath) -> Boolean, checkpoint: () -> Unit = {},
+                                 existingFile: (LogicalPath) -> Boolean, checkpoint: () -> Unit = {}, file: LogicalPath? = null,
                                  filesBelow: (LogicalPath) -> List<String>): ProjectInspection {
     val owners = linkedMapOf<String, MutableList<Owner>>()
     val origins = linkedMapOf<String, ConfigurationOrigin>()
@@ -115,7 +120,7 @@ private fun inspectConfiguration(configuration: ProjectConfiguration, fileName: 
             }
         }
     }
-    for (path in configuration.project.fileTags.keys) {
+    for (path in if (file == null) configuration.project.fileTags.keys else setOf(file)) {
         checkpoint()
         if (existingFile(path)) owners.getOrPut(path.value) { mutableListOf() }
     }

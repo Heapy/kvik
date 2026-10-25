@@ -27,6 +27,19 @@ origins and capabilities. Kotlin consumers can parse it with
 inspection also carries the source revision, project root and manifest identity as
 one source context.
 
+Use `inspect --file library/src/Example.kt --project /absolute/project/kvik.json`
+for a focused `file-inspection` result. Paths are relative to the configuration
+directory, including for Kode revisions. The result lists source-set ownership,
+direct script ownership, generator inputs, conservative downstream build/test/ABI
+checks and target settings with configuration origins. Proposed or deleted files
+are matched against declarations with `observed: false`; unknown paths widen to
+all declared checks. Inspection does not execute those checks or validate tools
+and locks. The same query is available as `kvik_inspect` with `{"file": "..."}`
+through MCP. File inspection reads project declarations without expanding script
+annotations or imports, so a missing script cannot block it. Its configuration
+digest covers those declarations and resolver policy, as identified by
+`configurationScope: "declaration-and-resolver-policy"`.
+
 Agents can query the project model, package/dependency versions, retained run
 results and foreground-session state through
 [`kvik mcp --project PATH`](docs/mcp.md), a foreground MCP stdio server with

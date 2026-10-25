@@ -35,13 +35,17 @@ internal fun sourceProjectOptions(args: List<String>): Pair<KodeProjectOptions?,
 }
 
 internal fun inspectCommand(args: List<String>): JsonValue {
-    val (source, remaining) = sourceProjectOptions(args)
+    val fileIndex = args.indexOf("--file")
+    require(args.count { it == "--file" } <= 1) { "Duplicate --file" }
+    val file = if (fileIndex < 0) null else LogicalPath(args.getOrNull(fileIndex + 1)
+        ?.takeIf { !it.startsWith("--") } ?: error("--file requires a configuration-relative logical path"))
+    val (source, remaining) = sourceProjectOptions(if (file == null) args else args.filterIndexed { index, _ -> index != fileIndex && index != fileIndex + 1 })
     val options = projectOptions(remaining, lockOptions = source != null)
-    if (source == null) return inspectProject(options.project, options.resolverPolicy())
+    if (source == null) return inspectProject(options.project, options.resolverPolicy(), file)
     check(kvik_interrupt_install() == 0) { "Cannot install source inspection interruption handlers" }
     try {
-        return withPreparedSourceProject(source, options) { prepared ->
-            prepared.inspect(options.resolverPolicy()).also { sourceCheckpoint() }
+        return withPreparedSourceProject(source, options, validateConfiguration = file == null) { prepared ->
+            prepared.inspect(options.resolverPolicy(), file).also { sourceCheckpoint() }
         }
     } finally { kvik_interrupt_restore() }
 }

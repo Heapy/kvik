@@ -22,8 +22,8 @@ internal class PreparedSourceProject(
     val retention: KodeRetentionReference? = null,
     private val sourceStore: String? = null,
 ) {
-    fun inspect(policy: ResolverPolicy): JsonValue = inspectSourceProject(resolved, revisionPath(configuration.name), policy,
-        ::sourceCheckpoint) { entry -> read(entry, sourceStore, 4 * 1024 * 1024) }
+    fun inspect(policy: ResolverPolicy, file: LogicalPath? = null): JsonValue = inspectSourceProject(resolved, revisionPath(configuration.name), policy,
+        ::sourceCheckpoint, file) { entry -> read(entry, sourceStore, 4 * 1024 * 1024) }
 
     val project: ProjectFile by lazy {
         ProjectFile(configuration.root, configuration.name, configuration.bytes,

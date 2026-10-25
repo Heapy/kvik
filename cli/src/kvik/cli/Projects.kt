@@ -23,7 +23,7 @@ internal fun currentDirectory(): String = memScoped {
 
 internal fun readProject(projectPath: String, parse: (ByteArray) -> ProjectConfiguration = {
     parseProjectConfiguration(parseJson(it.decodeToString(throwOnInvalidSequence = true)))
-}): ProjectFile {
+}, expandScriptDeclarations: Boolean = true): ProjectFile {
     val absolute = if (projectPath.startsWith('/')) projectPath else "${currentDirectory()}/$projectPath"
     NativeFiles.validateAbsolute(absolute)
     val parent = absolute.substringBeforeLast('/').ifEmpty { "/" }
@@ -33,7 +33,9 @@ internal fun readProject(projectPath: String, parse: (ByteArray) -> ProjectConfi
     NativeFiles.ensureDirectory(root, create = false)
     val name = LogicalPath(absolute.substringAfterLast('/'))
     val bytes = NativeFiles.read("$root/${name.value}", 4 * 1024 * 1024)
-    return ProjectFile(root, name, bytes, parse(bytes).withScriptDeclarations(localScriptSourceReader(root)))
+    val configuration = parse(bytes)
+    return ProjectFile(root, name, bytes, if (expandScriptDeclarations)
+        configuration.withScriptDeclarations(localScriptSourceReader(root)) else configuration)
 }
 
 /** Bounded preflight reads reject links in every ancestor as well as the leaf. */

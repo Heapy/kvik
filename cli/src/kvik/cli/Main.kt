@@ -47,6 +47,7 @@ private fun command(args: Array<String>) {
             Metadata corrections: --exclude-metadata-edge JSON (repeatable; exact domain, parent, metadata digest, variant, dependency, reason)
             Lock options: --lock PATH --store PATH --offline
             Revision inspection: inspect --kode PATH --kode-home PATH --source-project NAME --revision REV_OR_REF [--project LOGICAL_PATH]
+            File inspection: inspect --file LOGICAL_PATH --project PATH returns ownership and conservative downstream build/test/ABI checks; file is configuration-relative
             Revision build/test: same source flags plus build options; --lock is relative to the configuration directory; --offline requires a cached immutable revision
             Revision dev: the same source flags follow a reference in foreground library/application mode; each operation pins its observed revision
             Revision locks: resolve/check-lock accept source flags; resolve returns a guarded Kode transaction; --replace-project FILE includes configuration changes

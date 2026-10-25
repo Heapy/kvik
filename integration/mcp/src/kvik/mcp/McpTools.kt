@@ -152,7 +152,8 @@ private val sessionCursor = Argument("cursor", "--cursor", obj("type" to "object
 })
 
 val mcpTools: List<McpTool> = listOf(
-    McpTool("kvik_inspect", "Inspect the configured project, source ownership, targets and effective settings. Reads current local files or resolves the configured source selector once per call; source results identify the immutable revision.", listOf("inspect")),
+    McpTool("kvik_inspect", "Inspect the configured project, source ownership, targets and effective settings. Optional file is a configuration-relative logical path and returns a bounded file-inspection with owners, conservative downstream build/test/ABI checks and settings. Reads current files or one immutable source revision; no checks execute.",
+        listOf("inspect"), arguments = listOf(text("file", "--file", "Configuration-relative logical file path, including proposed or deleted files", maximum = 1024))),
     McpTool("kvik_config_validate", "Validate the current project configuration, graph and configured resolver policy. Does not check the dependency lock, download dependencies or execute project code.", listOf("config", "validate")),
     McpTool("kvik_dependencies", "Read declared and locked project dependencies. Optional availableVersions queries configured repositories; available versions do not establish compatibility. Incomplete results retain diagnostics.",
         listOf("dependencies"), arguments = listOf(repeated("modules", "--module"), repeated("scripts", "--script"), repeated("targets", "--target"),
