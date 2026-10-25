@@ -1,23 +1,26 @@
 package kvik.cli
 
 import kvik.cache.NativeFiles
-import kvik.cache.remote.RemoteEndpoint
-import kvik.cache.remote.TransferLimits
+import kvik.cache.remote.*
 import kvik.core.*
 
 /** Transport settings never enter action identities; credentials are read only when online. */
 internal class RemoteCacheConfiguration(document: JsonValue) {
     private val fields = document.fields(setOf("schemaVersion", "url", "trustedWriters"),
-        setOf("instance", "mode", "tokenEnvironment"))
+        setOf("provider", "instance", "mode", "tokenEnvironment", "username"))
+    val provider: String
     val url: String
     val instance: String
     val write: Boolean
     val tokenEnvironment: String?
+    val username: String?
     // Kotlin runtime jars commonly exceed the protocol client's conservative 1 MiB default.
     val limits = TransferLimits(blobBytes = 16 * 1024 * 1024, rpcBytes = 32 * 1024 * 1024,
         totalBytes = 128L * 1024 * 1024)
     init {
         fields.requireVersion()
+        provider = fields["provider"]?.stringValue() ?: "reapi"
+        require(provider in setOf("reapi", "gradle-http")) { "Unknown remote cache provider" }
         url = fields.getValue("url").stringValue()
         instance = fields["instance"]?.stringValue() ?: ""
         require(fields.getValue("trustedWriters").booleanValue()) { "Remote cache requires explicitly trusted writers" }
@@ -29,14 +32,30 @@ internal class RemoteCacheConfiguration(document: JsonValue) {
         tokenEnvironment = fields["tokenEnvironment"]?.stringValue()?.also {
             require(it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "Invalid remote cache token environment name" }
         }
-        RemoteEndpoint(url, instance, trustedWriters = true) // Validate even in offline mode.
-    }
-    fun endpoint(environment: (String) -> String?): RemoteEndpoint {
-        val token = tokenEnvironment?.let { name ->
-            environment(name)?.takeIf { it.isNotEmpty() } ?: error("Missing remote cache credential environment: $name")
+        username = fields["username"]?.stringValue()
+        // Validate transport configuration even in offline mode, without reading credentials.
+        if (provider == "gradle-http") {
+            require(tokenEnvironment != null && username != null) { "HTTP cache requires username and tokenEnvironment" }
+            HttpCacheEndpoint(url, instance, username, trustedWriters = true)
+        } else {
+            require(username == null) { "REAPI uses bearer authentication, not username" }
+            RemoteEndpoint(url, instance, trustedWriters = true)
         }
-        return RemoteEndpoint(url, instance, token, trustedWriters = true)
     }
+    fun credential(environment: (String) -> String?): String? {
+        val token = tokenEnvironment?.let { name -> environment(name)?.takeIf { it.isNotEmpty() } }
+        if (provider == "reapi") {
+            require(tokenEnvironment == null || token != null) { "Missing remote cache credential environment: $tokenEnvironment" }
+            RemoteEndpoint(url, instance, token, trustedWriters = true)
+        } else {
+            HttpCacheEndpoint(url, instance, checkNotNull(username), token, trustedWriters = true)
+        }
+        return token
+    }
+    fun client(content: ContentStore, local: ActionCache, approvals: Set<PortabilityApproval>, token: String?): RemoteCacheClient =
+        if (provider == "gradle-http") HttpActionCache(content,
+            HttpCacheEndpoint(url, instance, checkNotNull(username), checkNotNull(token), trustedWriters = true), approvals, limits)
+        else RemoteActionCache(content, local, RemoteEndpoint(url, instance, token, trustedWriters = true), approvals, limits)
     companion object {
         fun read(path: String) = RemoteCacheConfiguration(parseJson(
             NativeFiles.read(path, 64 * 1024).decodeToString(throwOnInvalidSequence = true)))

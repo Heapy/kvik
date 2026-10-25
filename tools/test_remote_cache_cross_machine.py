@@ -29,7 +29,7 @@ TEST_ACTION = 'consumer:jvm:test'
 TEST_ID = '[engine:junit-jupiter]/[class:fixture.PassingTests]/[method:dependencyAndResource()]'
 IDENTITIES = ('inputSnapshot', 'configuration', 'dependencyLock', 'composition', 'toolchains')
 REMOTE_FAILURES = {'remote-cache-lookup-failed', 'remote-publication-queue-full',
-                   'remote-publish-rejected', 'remote-publish-failed'}
+                   'remote-publish-rejected', 'remote-publish-failed', 'remote-publish-skipped'}
 
 
 class GateError(Exception):
@@ -96,13 +96,23 @@ def remote_configuration(path, mode):
     value = document(path)
     required = {'schemaVersion', 'url', 'trustedWriters'}
     require(isinstance(value, dict) and required <= value.keys() and
-            value.keys() <= required | {'instance', 'mode', 'tokenEnvironment'},
+            value.keys() <= required | {'provider', 'instance', 'mode', 'tokenEnvironment', 'username'},
             'Remote configuration must use the existing CLI schema (no inline credentials)')
     require(type(value['schemaVersion']) is int and value['schemaVersion'] == 1 and value['trustedWriters'] is True,
             'Remote cache requires schemaVersion 1 and trustedWriters true')
-    # Same endpoint grammar as RemoteEndpoint: HTTPS, or the explicit loopback fixture exception.
-    require(isinstance(value['url'], str) and re.fullmatch(
-        r'https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://127\.0\.0\.1:[0-9]{1,5}', value['url']),
+    provider = value.get('provider', 'reapi')
+    require(provider in ('reapi', 'gradle-http'), 'Unknown remote cache provider')
+    pattern = r'(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://127\.0\.0\.1:[0-9]{1,5})'
+    if provider == 'gradle-http':
+        pattern += r'(?:/[A-Za-z0-9._~-]+)*/?'
+        username = value.get('username')
+        require(isinstance(username, str) and 1 <= len(username) <= 1024 and
+                all(33 <= ord(c) <= 126 and c != ':' for c in username) and 'tokenEnvironment' in value,
+                'HTTP cache requires username and tokenEnvironment')
+    else:
+        require('username' not in value, 'REAPI uses bearer authentication')
+    require(isinstance(value['url'], str) and len(value['url']) <= 4096 and re.fullmatch(pattern, value['url']) and
+            all(p not in ('.', '..') for p in urlsplit(value['url']).path.split('/')),
         'Remote cache requires HTTPS (HTTP is permitted only for 127.0.0.1 fixtures)')
     require(value.get('mode', 'read') in ('read', 'read-write'), 'Invalid remote cache mode')
     instance = value.get('instance', '')
@@ -127,7 +137,10 @@ def endpoint_identity(config):
     host = url.hostname.lower().rstrip('.')
     port = url.port or (443 if url.scheme == 'https' else 80)
     authority = host if port == (443 if url.scheme == 'https' else 80) else f'{host}:{port}'
-    return dict(url=f'{url.scheme}://{authority}', instance=config.get('instance', ''))
+    identity = dict(url=f'{url.scheme}://{authority}', instance=config.get('instance', ''))
+    if config.get('provider') == 'gradle-http':
+        identity.update(provider='gradle-http', url=identity['url'] + url.path.rstrip('/'))
+    return identity
 
 
 def loopback_endpoint(endpoint):
@@ -152,7 +165,8 @@ def check_transported_cache(archive, endpoint, baseline):
     require('cacheSnapshot' in baseline and digest(read(archive)) == baseline['cacheSnapshot'],
             'Transported cache archive differs from the writer snapshot')
     require(loopback_endpoint(endpoint) and loopback_endpoint(baseline['remote']) and
-            endpoint['instance'] == baseline['remote']['instance'],
+            endpoint['instance'] == baseline['remote']['instance'] and
+            endpoint.get('provider', 'reapi') == baseline['remote'].get('provider', 'reapi') == 'reapi',
             'Transported cache requires loopback servers with the same instance')
 
 

@@ -102,6 +102,8 @@ def main():
             raise RuntimeError('Expected one JVM fixture for remote cache checks')
         run([sys.executable, ROOT/'tools/test_remote_cache_cli.py', '--runtime', executable,
              '--fixture', fixtures[0], '--backend', args.remote_cache_backend.resolve(strict=True)])
+        run([sys.executable, ROOT/'tools/test_remote_cache_cli.py', '--runtime', executable,
+             '--fixture', fixtures[0], '--provider', 'gradle-http'])
     run([sys.executable, ROOT/'tools/test_native_build_cli.py', '--java-home', java,
          '--konan-home', native, '--konan-data', data, '--runtime', executable,
          *(['--link-timeout-ms', args.native_link_timeout_ms] if args.native_link_timeout_ms is not None else [])])

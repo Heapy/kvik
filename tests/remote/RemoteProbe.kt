@@ -16,6 +16,10 @@ private fun specification(label: String, policy: CachePolicy = CachePolicy.REMOT
 fun main(args: Array<String>) {
     val operation = args[0]
     val root = args[1]
+    if (operation.startsWith("http-")) {
+        httpChecks(operation, root, args[2], specification(args.getOrElse(3) { "default" }))
+        return
+    }
     val endpoint = RemoteEndpoint(args[2], trustedWriters = true)
     val label = args.getOrElse(3) { "default" }
     val diagnostics = { value: CacheDiagnostic -> println("DIAGNOSTIC ${value.code}: ${value.message}") }

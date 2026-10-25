@@ -21,6 +21,7 @@ from tools.native_files_interop import files_interop_command, files_library_args
 sys.path.insert(0, str(ROOT / 'tests/remote'))
 from experiments.k01.cache_probe import fields, field, digest as wire_digest
 from fixture_proxy import DropAfterProxy
+from test_http_cache import check_http_cache
 
 BACKEND_SHA256 = 'ebde44a9dd6fd645b1ee36b6bf5fe141c3e5aa193ae59f031b50cc390cd1a0a2'
 
@@ -49,6 +50,7 @@ def main():
     command([args.konan_home / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-library', output / 'remote.klib', *sources,
              *sorted((ROOT / 'tests/remote').glob('*.kt')), '-entry', 'kvik.cache.remote.tests.main', '-o', output / 'probe.kexe'])
     executable = output / 'probe.kexe'
+    check_http_cache(executable, output)
 
     def port():
         with socket.socket() as listener:

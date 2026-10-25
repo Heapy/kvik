@@ -1,6 +1,6 @@
 # Remote compilation cache
 
-Pass `--remote-cache PATH` to `build`, `test` or `dev`. The JSON file configures a trusted REAPI cache, such as bazel-remote:
+Pass `--remote-cache PATH` to `build`, `test` or `dev`. The JSON file selects a trusted cache provider. REAPI (the default) works with servers such as bazel-remote:
 
 ```json
 {
@@ -25,10 +25,35 @@ Publication uploads output contents, output trees, and REAPI Action, Command and
 
 Foreground sessions forward only the configured credential to their preparation worker. Compiler workers and applications keep their own declared environments. Each requested operation rereads the transport configuration; a changed credential environment replaces the idle preparation worker. Configuration edits alone do not trigger a reload, so request `r` or `t` after changing this file.
 
+## Gradle HTTP provider
+
+Use `provider: "gradle-http"` for the [Gradle HTTP cache protocol](https://docs.gradle.org/current/userguide/build_cache.html#sec:build_cache_configure_remote). For the configured BuildFetch project:
+
+```json
+{
+  "schemaVersion": 1,
+  "provider": "gradle-http",
+  "url": "https://cache.eu-central-a.buildfetch.com/b1CXAN/gradle/",
+  "instance": "kvik",
+  "trustedWriters": true,
+  "mode": "read",
+  "username": "token-auth",
+  "tokenEnvironment": "BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN"
+}
+```
+
+The token supplies the HTTP Basic password. The provider is disabled when that environment variable is absent or empty, and `--offline` never reads credentials. Select `read-write` explicitly for trusted CI writers; setting `CI` alone does not enable writes. URLs may have a base path but cannot contain credentials, query strings, fragments or traversal. Redirects are rejected to avoid forwarding credentials or changing a PUT into a GET.
+
+The provider uses the same action identity, portability approvals, local CAS and scheduler as REAPI. Each GET/PUT transfers one versioned Kvik archive containing its action key, output manifest, executable flags and file contents. HTTP keys hash the `kvik-http-v1` namespace, `instance` and action key. They do not share Gradle's task-output serialization. Input files and dependencies are not uploaded. The reader validates all output paths, sizes and SHA-256 digests before publishing blobs locally; the ordinary output materializer then exposes results atomically. Symlinks and special files are unsupported.
+
+Limits remain 16 MiB per output file and 128 MiB per transfer operation, with a 1 MiB manifest limit. A missing entry (404) executes locally. Invalid archives, failed authorization, timeouts and transport failures produce cache diagnostics and allow local execution. HTTP 413 skips publication while retaining the successful local result. Tests still execute freshly after compilation reuse. Transfers run in invocation-owned workers and support cancellation; there is no cache daemon.
+
+The manually dispatched **BuildFetch HTTP cache** workflow uses the repository secret `BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN`. It runs a cold writer and compiler-free reader on distinct Linux x64 runners against the shared HTTPS endpoint. A namespace derived from the workflow run and attempt prevents a previous run from satisfying the cold-writer check. Only the tools image and writer baseline pass through GitHub artifacts; compilation outputs come from BuildFetch. The regular Linux workflow also exercises HTTP with a local authenticated fixture, including foreground sessions, read-only restoration, offline reuse and outage fallback.
+
 ## Checking reuse between machines
 
 `tools/test_remote_cache_cross_machine.py` splits the existing JVM fixture into
-independent writer and reader invocations against a provisioned REAPI cache. Use
+independent writer and reader invocations against a provisioned REAPI or Gradle HTTP cache. Use
 the `library`/`consumer` fixture created by `tools/test_build_cli.py`, including its
 locked dependency blobs. Both hosts need the same source/configuration/lock inputs,
 runtime composition and tool identities; installation paths may differ. Supply

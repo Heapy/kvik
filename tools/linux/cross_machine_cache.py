@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise cache portability on two CI runners using a GitHub artifact as transport."""
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 from pathlib import Path
 import socket
@@ -76,13 +76,16 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--cache-snapshot', type=Path)
+    parser.add_argument('--remote-cache', type=Path, help='Use a shared HTTPS cache instead of transferring server storage')
     parser.add_argument('--backend', type=Path, default=Path('/usr/local/bin/bazel-remote'))
     args = parser.parse_args()
     if args.phase == 'reader':
-        if args.baseline is None or args.cache_snapshot is None:
-            parser.error('Reader requires --baseline and --cache-snapshot')
+        if args.baseline is None or (args.cache_snapshot is None and args.remote_cache is None):
+            parser.error('Reader requires --baseline and either --cache-snapshot or --remote-cache')
     elif args.baseline is not None or args.cache_snapshot is not None:
         parser.error('Writer does not accept reader inputs')
+    if args.cache_snapshot is not None and args.remote_cache is not None:
+        parser.error('Shared endpoint and transported cache snapshot are mutually exclusive')
     output = args.output.resolve()
     gate.require(not output.exists(), 'CI output directory must be new')
     machine = gate.machine_identity()
@@ -90,8 +93,9 @@ def main():
         baseline = gate.document(args.baseline)
         gate.require(baseline['machine']['fingerprint'] != machine['fingerprint'],
                      'Reader must run on a different machine')
-        restore_snapshot(args.cache_snapshot, baseline, output / 'backend')
-    else:
+        if args.cache_snapshot is not None:
+            restore_snapshot(args.cache_snapshot, baseline, output / 'backend')
+    if not output.exists():
         output.mkdir(parents=True)
 
     state = output / 'prepared.json'
@@ -111,16 +115,19 @@ def main():
         tools['konanData'] = str(absent / 'konan-data')
         gate.write_json(tools_path, tools)
     # The backend is invocation-owned and stopped before snapshotting its storage.
-    with cache_server(args.backend, output / 'backend', output / 'backend.log') as url:
-        remote = output / 'remote-cache.json'
-        gate.write_json(remote, dict(schemaVersion=1, url=url, trustedWriters=True))
+    with (nullcontext(None) if args.remote_cache else cache_server(args.backend, output / 'backend', output / 'backend.log')) as url:
+        remote = args.remote_cache.resolve() if args.remote_cache else output / 'remote-cache.json'
+        if args.remote_cache is None:
+            gate.write_json(remote, dict(schemaVersion=1, url=url, trustedWriters=True))
         command = [sys.executable, str(ROOT / 'tools/test_remote_cache_cross_machine.py'), args.phase,
                    '--runtime', prepared['runtime'], '--fixture', prepared['fixture'], '--tools', prepared['tools'],
                    '--remote-cache', str(remote), '--output', str(output / 'run'), '--timeout', '600']
         if args.phase == 'reader':
-            command += ['--baseline', str(args.baseline.resolve()), '--cache-snapshot', str(args.cache_snapshot.resolve())]
+            command += ['--baseline', str(args.baseline.resolve())]
+            if args.cache_snapshot is not None:
+                command += ['--cache-snapshot', str(args.cache_snapshot.resolve())]
         subprocess.run(command, check=True)
-    if args.phase == 'writer':
+    if args.phase == 'writer' and args.remote_cache is None:
         save_snapshot(output / 'backend', output / 'cache.tar.gz', output / 'run/baseline.json')
 
 

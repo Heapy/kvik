@@ -110,6 +110,24 @@ class CrossMachineGateTests(unittest.TestCase):
                 with self.subTest(value=value), self.assertRaises(gate.GateError):
                     gate.remote_configuration(self.config_path, 'read')
 
+    def test_http_provider_preserves_path_and_namespace_without_credentials(self):
+        config = dict(self.config, provider='gradle-http', username='token-auth', url='https://cache.example/project/gradle/')
+        gate.write_json(self.config_path, config)
+        with patch.dict(os.environ, GATE_TEST_TOKEN='secret-for-test'):
+            loaded, token = gate.remote_configuration(self.config_path, 'read-write')
+        self.assertEqual(loaded, dict(config, mode='read-write'))
+        identity = gate.endpoint_identity(loaded)
+        self.assertEqual(identity['provider'], 'gradle-http')
+        self.assertEqual(identity['url'], 'https://cache.example/project/gradle')
+        self.assertNotIn(token, gate.canonical(identity).decode())
+        self.assertNotEqual(identity, gate.endpoint_identity(dict(config, url='https://cache.example/another/gradle')))
+        self.assertNotEqual(identity, gate.endpoint_identity(dict(config, provider='reapi')))
+        for invalid in (dict(config, username='bad:user'), dict(config, url='https://cache.example/a/../b'),
+                        {k: v for k, v in config.items() if k != 'tokenEnvironment'}):
+            gate.write_json(self.config_path, invalid)
+            with self.assertRaises(gate.GateError):
+                gate.remote_configuration(self.config_path, 'read')
+
     def test_same_host_rejected_before_runtime_invocation(self):
         baseline = self.root / 'baseline.json'
         gate.write_json(baseline, dict(schemaVersion=1, phase='writer', machine=self.machine))

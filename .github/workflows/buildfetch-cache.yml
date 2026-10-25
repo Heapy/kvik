@@ -1,0 +1,87 @@
+name: BuildFetch HTTP cache
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  writer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure BuildFetch
+        env:
+          BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN: ${{ secrets.BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN }}
+        run: python3 tools/buildfetch_config.py .kvik/buildfetch.json
+      - name: Build the common tool image
+        run: |
+          docker build --platform linux/amd64 --tag kvik-cross-machine tools/linux
+          docker save kvik-cross-machine | gzip > .kvik/cross-machine-tools.tar.gz
+      - name: Compile and publish through Gradle HTTP
+        env:
+          BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN: ${{ secrets.BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN }}
+        run: |
+          docker run --rm --init --platform linux/amd64 \
+            --env BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN \
+            --volume "$GITHUB_WORKSPACE:/work/writer-kvik" --workdir /work/writer-kvik \
+            kvik-cross-machine python3 tools/linux/cross_machine_cache.py writer \
+              --remote-cache .kvik/buildfetch.json --output .kvik/ci/writer
+      - name: Share tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildfetch-tools
+          path: .kvik/cross-machine-tools.tar.gz
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Share the baseline (no compilation outputs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildfetch-baseline
+          path: .kvik/ci/writer/run/baseline.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  reader:
+    needs: writer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure BuildFetch
+        env:
+          BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN: ${{ secrets.BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN }}
+        run: python3 tools/buildfetch_config.py .kvik/buildfetch.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: buildfetch-tools
+          path: .kvik/ci-image
+      - uses: actions/download-artifact@v4
+        with:
+          name: buildfetch-baseline
+          path: .kvik/ci-transfer
+      - name: Load the identical tool image
+        run: gunzip -c .kvik/ci-image/cross-machine-tools.tar.gz | docker load
+      - name: Restore from BuildFetch and execute tests freshly
+        env:
+          BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN: ${{ secrets.BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN }}
+        run: |
+          docker run --rm --init --platform linux/amd64 \
+            --env BUILDFETCH_GRADLE_REMOTE_CACHE_TOKEN \
+            --volume "$GITHUB_WORKSPACE:/work/reader-kvik" --workdir /work/reader-kvik \
+            kvik-cross-machine python3 tools/linux/cross_machine_cache.py reader \
+              --remote-cache .kvik/buildfetch.json --output .kvik/ci/reader \
+              --baseline .kvik/ci-transfer/baseline.json
+      - name: Retain the reader result
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildfetch-result
+          path: .kvik/ci/reader/run/result.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error

@@ -4,13 +4,88 @@
   "title": "Kvik remote cache transport configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "url", "trustedWriters"],
+  "required": [
+    "schemaVersion",
+    "url",
+    "trustedWriters"
+  ],
   "properties": {
-    "schemaVersion": {"const": 1},
-    "url": {"type": "string", "pattern": "^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?|http://127\\.0\\.0\\.1:[0-9]{1,5})$"},
-    "instance": {"type": "string", "maxLength": 1024, "pattern": "^[^\\u0000-\\u001f]*$"},
-    "trustedWriters": {"const": true},
-    "mode": {"enum": ["read", "read-write"], "default": "read"},
-    "tokenEnvironment": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}
-  }
+    "schemaVersion": {
+      "const": 1
+    },
+    "url": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "instance": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^[^\\u0000-\\u001f]*$"
+    },
+    "trustedWriters": {
+      "const": true
+    },
+    "mode": {
+      "enum": [
+        "read",
+        "read-write"
+      ],
+      "default": "read"
+    },
+    "tokenEnvironment": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "provider": {
+      "enum": [
+        "reapi",
+        "gradle-http"
+      ],
+      "default": "reapi"
+    },
+    "username": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[!-9;-~]+$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "gradle-http"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "required": [
+          "username",
+          "tokenEnvironment"
+        ],
+        "properties": {
+          "url": {
+            "pattern": "^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?|http://127\\.0\\.0\\.1:[0-9]{1,5})(/[A-Za-z0-9._~-]+)*/?$"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "pattern": "^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?|http://127\\.0\\.0\\.1:[0-9]{1,5})$"
+          }
+        },
+        "not": {
+          "required": [
+            "username"
+          ]
+        }
+      }
+    }
+  ]
 }

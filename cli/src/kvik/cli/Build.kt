@@ -151,7 +151,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     val toolsPath = projectPath(root, options.tools)
     val remotePath = options.remoteCache?.let { projectPath(root, it) }
     val remoteConfiguration = remotePath?.let(RemoteCacheConfiguration::read)
-    val remoteEndpoint = if (options.project.offline) null else remoteConfiguration?.endpoint { boundedEnvironment(it, 8192) }
+    val remoteCredential = if (options.project.offline) null else remoteConfiguration?.credential { boundedEnvironment(it, 8192) }
+    val remoteEnabled = !options.project.offline && remoteConfiguration != null &&
+        (remoteConfiguration.provider == "reapi" || remoteCredential != null)
     val runsPath = projectPath(root, options.runs)
     val policy = options.project.resolverPolicy()
     // Reject an invalid declared policy before creating CAS or capturing blobs. Revalidate
@@ -332,18 +334,19 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     }
                     fun cacheDiagnostic(value: CacheDiagnostic) = journal.diagnostic(Diagnostic("KVIK_CACHE_NOTICE", DiagnosticCategory.CACHE, "${value.code}: ${value.message}"))
                     val localCache = NativeActionCache("$storePath/actions", content)
-                    val remote = remoteEndpoint?.let { endpoint ->
-                        val client = RemoteActionCache(content, localCache, endpoint, setOf(
+                    val remote = if (remoteEnabled) {
+                        val configuration = checkNotNull(remoteConfiguration)
+                        val client = configuration.client(content, localCache, setOf(
                             PortabilityApproval("kvik-jvm-compiler-v1", "jvm", mapOf("os" to "macos", "arch" to "arm64"),
                                 "tools/test_jvm_portability.py"),
                             PortabilityApproval("kvik-jvm-compiler-v1", "jvm", mapOf("os" to "linux", "arch" to "x64"),
                                 "tools/test_remote_cache_cli.py via tools/linux/verify.py"),
-                        ), checkNotNull(remoteConfiguration).limits)
+                        ), remoteCredential)
                         RemoteCachingActionExecutor(delegate, localCache, content, client, ::portableJvmCompilation,
                             ::cacheDiagnostic, cacheDecision = { journal.emit("action-cache-decision", it.toJson()) },
-                            publishEnabled = remoteConfiguration.write,
+                            publishEnabled = configuration.write,
                             cacheTransfer = { journal.emit("action-cache-transfer", it.toJson()) })
-                    }
+                    } else null
                     val cached = remote ?: LocalCachingActionExecutor(delegate, localCache, content, ::cacheDiagnostic,
                         cacheDecision = { journal.emit("action-cache-decision", it.toJson()) })
                     try {

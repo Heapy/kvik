@@ -181,4 +181,64 @@ cleanup:
     curl_easy_cleanup(curl);
     return reply;
 }
+kvik_rpc_reply *kvik_http_cache(const char *url, const char *authorization, int put,
+    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms, int (*cancelled)(void *), void *cancel_context) {
+    kvik_rpc_reply *reply = calloc(1, sizeof(*reply));
+    if (!reply) return NULL;
+    reply->grpc_status = -1;
+    reply->transport_error = CURLE_BAD_FUNCTION_ARGUMENT;
+    if (!url || (put != 0 && put != 1) || (request_size && (!put || !request)) ||
+        request_size > 512U * 1024U * 1024U || !response_limit || response_limit > 512U * 1024U * 1024U ||
+        timeout_ms <= 0 || timeout_ms > 60000) return reply;
+    if (authorization) {
+        size_t length = strnlen(authorization, 16385);
+        if (!length || length > 16384) return reply;
+        for (size_t index = 0; index < length; ++index)
+            if ((unsigned char)authorization[index] < 32 || (unsigned char)authorization[index] > 126) return reply;
+    }
+    pthread_once(&initialized, initialize);
+    if (initialization != CURLE_OK) { reply->transport_error = initialization; return reply; }
+    CURL *curl = curl_easy_init();
+    if (!curl) { reply->transport_error = CURLE_FAILED_INIT; return reply; }
+    struct curl_slist *headers = NULL;
+    if (!append_header(&headers, "Content-Type: application/octet-stream") ||
+        !append_header(&headers, "Expect:") ||
+        (authorization && !append_header(&headers, authorization))) {
+        reply->transport_error = CURLE_OUT_OF_MEMORY;
+        goto http_cleanup;
+    }
+    Transfer transfer = {reply, response_limit, 0, 0};
+    Cancellation cancellation = {cancelled, cancel_context};
+    CURLcode setting;
+#define HTTP_SET(option, value) do { setting = curl_easy_setopt(curl, option, value); \
+    if (setting != CURLE_OK) { reply->transport_error = setting; goto http_cleanup; } } while (0)
+    HTTP_SET(CURLOPT_URL, url);
+    HTTP_SET(CURLOPT_HTTPHEADER, headers);
+    HTTP_SET(CURLOPT_PROTOCOLS_STR, "http,https");
+    HTTP_SET(CURLOPT_PROXY, "");
+    HTTP_SET(CURLOPT_FOLLOWLOCATION, 0L);
+    HTTP_SET(CURLOPT_NOSIGNAL, 1L);
+    HTTP_SET(CURLOPT_CONNECTTIMEOUT_MS, timeout_ms);
+    HTTP_SET(CURLOPT_TIMEOUT_MS, timeout_ms);
+    if (put) {
+        HTTP_SET(CURLOPT_CUSTOMREQUEST, "PUT");
+        HTTP_SET(CURLOPT_POSTFIELDS, request ? (const char *)request : "");
+        HTTP_SET(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)request_size);
+    }
+    HTTP_SET(CURLOPT_WRITEFUNCTION, receive);
+    HTTP_SET(CURLOPT_WRITEDATA, &transfer);
+    HTTP_SET(CURLOPT_HEADERFUNCTION, json_header);
+    HTTP_SET(CURLOPT_HEADERDATA, &transfer);
+    HTTP_SET(CURLOPT_NOPROGRESS, 0L);
+    HTTP_SET(CURLOPT_XFERINFOFUNCTION, progress);
+    HTTP_SET(CURLOPT_XFERINFODATA, &cancellation);
+#undef HTTP_SET
+    reply->transport_error = (int)curl_easy_perform(curl);
+    transfer_stats(curl, reply);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &reply->http_status);
+http_cleanup:
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return reply;
+}
 void kvik_rpc_free(kvik_rpc_reply *reply) { if (reply) { free(reply->data); free(reply); } }

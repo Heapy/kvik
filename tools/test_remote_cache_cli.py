@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from http_cache_fixture import HttpCacheFixture
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +27,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--fixture', type=Path, required=True)
-    parser.add_argument('--backend', type=Path, required=True)
+    parser.add_argument('--backend', type=Path)
+    parser.add_argument('--provider', choices=('reapi', 'gradle-http'), default='reapi')
     parser.add_argument('--restore-only', type=Path, help='Reuse a completed writer case; check restoration into dependency-only CAS')
     args = parser.parse_args()
-    runtime, fixture, backend = (p.resolve() for p in (args.runtime, args.fixture, args.backend))
+    runtime, fixture = args.runtime.resolve(), args.fixture.resolve()
+    if args.provider == 'reapi' and args.backend is None:
+        parser.error('--backend is required for REAPI')
+    backend = args.backend.resolve() if args.backend else None
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_text())
     event_schema = Draft202012Validator({**schema, '$ref': '#/$defs/event'})
     explanation_schema = Draft202012Validator({**schema, '$ref': '#/$defs/actionExplanation'})
@@ -44,19 +49,40 @@ def main():
     env['KVIK_TEST_CACHE_TOKEN'] = secret
     measurements = []
     with (case / 'backend.log').open('w') as log:
-        server = subprocess.Popen([str(backend), '--dir', str(case / 'backend'), '--max_size', '1',
+        http_server = HttpCacheFixture(secret) if args.provider == 'gradle-http' else None
+        server = None if http_server else subprocess.Popen([str(backend), '--dir', str(case / 'backend'), '--max_size', '1',
             '--storage_mode', 'uncompressed', '--http_address', f'127.0.0.1:{http}', '--grpc_address', f'127.0.0.1:{grpc}'],
             stdout=log, stderr=subprocess.STDOUT)
-        try:
-            deadline = time.monotonic() + 10
-            while True:
-                assert server.poll() is None, 'Backend exited'
+        if http_server:
+            http_server.__enter__()
+        base_url = http_server.url if http_server else f'http://127.0.0.1:{grpc}'
+        stopped = False
+
+        def stop_server():
+            nonlocal stopped
+            if stopped:
+                return
+            stopped = True
+            if http_server:
+                http_server.__exit__()
+            elif server.poll() is None:
+                server.terminate()
                 try:
-                    with socket.create_connection(('127.0.0.1', grpc), .1):
-                        break
-                except OSError:
-                    assert time.monotonic() < deadline, 'Backend did not start'
-                    time.sleep(.02)
+                    server.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    server.kill(); server.wait()
+
+        try:
+            if server:
+                deadline = time.monotonic() + 10
+                while True:
+                    assert server.poll() is None, 'Backend exited'
+                    try:
+                        with socket.create_connection(('127.0.0.1', grpc), .1):
+                            break
+                    except OSError:
+                        assert time.monotonic() < deadline, 'Backend did not start'
+                        time.sleep(.02)
 
             def project(name, mode, url=None):
                 root = case / name
@@ -68,8 +94,10 @@ def main():
                          for selection in lock['selections'] for kind in ('artifacts', 'metadata') for entry in selection[kind]}
                 for name in names:
                     shutil.copyfile(fixture / '.kvik/cache/blobs' / name, blobs / name)
-                config = dict(schemaVersion=1, url=url or f'http://127.0.0.1:{grpc}', trustedWriters=True,
+                config = dict(schemaVersion=1, url=url or base_url, trustedWriters=True,
                               mode=mode, tokenEnvironment='KVIK_TEST_CACHE_TOKEN')
+                if http_server:
+                    config.update(provider='gradle-http', username='token-auth')
                 (root / 'remote.json').write_text(json.dumps(config))
                 return root
 
@@ -83,14 +111,14 @@ def main():
                 tools['konanData'] = str(root / '.kvik/absent-tools/konan-data')
                 path.write_text(json.dumps(tools))
 
-            def run(root, label, expected, offline=False):
+            def run(root, label, expected, offline=False, no_credential=False):
                 output = root / '.kvik' / label
                 command = [str(runtime), 'test', '--project', str(root / 'kvik.json'),
                     '--tools', str(root / 'tools.json'), '--module', 'consumer', '--target', 'jvm',
                     '--runs', str(output), '--remote-cache', str(root / 'remote.json')]
                 if offline:
                     command.append('--offline')
-                child_env = {key: value for key, value in env.items() if not (offline and key == 'KVIK_TEST_CACHE_TOKEN')}
+                child_env = {key: value for key, value in env.items() if not ((offline or no_credential) and key == 'KVIK_TEST_CACHE_TOKEN')}
                 started = time.monotonic()
                 result = subprocess.run(command, env=child_env, capture_output=True, text=True, timeout=180)
                 elapsed = time.monotonic() - started
@@ -121,12 +149,12 @@ def main():
                 assert effects[0].read_text() == 'executed\n'
                 transfers = [event['payload'] for event in events if event['type'] == 'action-cache-transfer']
                 assert all(t['actionId'] in compile_ids for t in transfers), transfers
-                if offline:
+                if offline or no_credential:
                     assert not transfers, transfers
                 for action in compilations:
                     observed = [t for t in transfers if t['actionId'] == action['actionId']]
                     assert all(t['key'] == action['key'] for t in observed), observed
-                    if not offline:
+                    if not offline and not no_credential:
                         assert len(observed) == (1 if expected == 'remote_hit' else 2), observed
                         assert observed[0]['operation'] == 'lookup'
                         assert observed[0]['outcome'] == ('hit' if expected == 'remote_hit' else 'failed' if label == 'fallback' else 'miss'), observed
@@ -137,6 +165,13 @@ def main():
                             assert stats is not None and stats['requests'] > 0 and stats['durationNanos'] > 0, item
                             if label == 'fallback':
                                 assert stats['uploadedBytes'] == stats['downloadedBytes'] == 0, item
+                            elif http_server:
+                                assert stats['requests'] == 1, item
+                                if item['operation'] == 'publish':
+                                    assert stats['uploadedBytes'] > 0 and stats['downloadedBytes'] == 0, item
+                                else:
+                                    assert stats['uploadedBytes'] == 0, item
+                                    assert (stats['downloadedBytes'] > 0) == (item['outcome'] == 'hit'), item
                             else:
                                 assert stats['uploadedBytes'] > 0 and stats['downloadedBytes'] > 0, item
                     explanation = subprocess.run([str(runtime), 'explain', '--run', str(records[0].parent), '--action', action['actionId']],
@@ -183,6 +218,8 @@ def main():
             reader = project('reader', 'read')
             hide_compiler_installations(reader)
             assert run(reader, 'restore', 'remote_hit') == produced
+            if http_server:
+                assert run(reader, 'missing-credential', 'local_hit', no_credential=True) == produced
             # A foreground coordinator must preserve online policy and receive its configured token.
             development = project('development', 'read')
             hide_compiler_installations(development)
@@ -226,18 +263,13 @@ def main():
                     reader_thread.join(timeout=5)
                     assert not reader_thread.is_alive()
             assert secret not in (development / 'session.jsonl').read_text() + (development / 'session.stderr').read_text()
-            server.terminate(); server.wait(timeout=10)
+            stop_server()
             assert run(reader, 'offline', 'local_hit', offline=True) == produced
             outage = project('outage', 'read-write', 'http://127.0.0.1:1')
             assert run(outage, 'fallback', 'executed') == produced
             print(f'PASS public/foreground remote restore without compilers, offline local reuse, outage fallback and fresh tests: {case}')
         finally:
-            if server.poll() is None:
-                server.terminate()
-                try:
-                    server.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    server.kill(); server.wait()
+            stop_server()
             (case / 'measurements.json').write_text(json.dumps(dict(scope='same-host loopback backend', runs=measurements), indent=2) + '\n')
 
 
