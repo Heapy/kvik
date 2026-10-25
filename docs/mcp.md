@@ -210,6 +210,51 @@ from a live writer does not advance the cursor. A partial journal after its
 owner exits is incomplete and returns `isError: true`. Reading status or events
 does not restart a session, keep it alive or submit controls.
 
+Add `--session-controls` at server startup to expose `kvik_session_control` for
+an existing foreground `dev` owner. This does not require `--tools` on the MCP
+server and does not start a session:
+
+```json
+{
+  "name": "kvik_session_control",
+  "arguments": {
+    "session": "/absolute/path/to/foreground/session",
+    "requestId": "reload-42",
+    "command": "r",
+    "waitMillis": 1000
+  }
+}
+```
+
+`command` accepts `r` (rebuild/reload), `t` (tests), `q` (exit), `status` or
+`cancel`. Only `cancel` requires `operationId`, taken from operation/application
+events or current session status. A stale ID cannot cancel a newer operation.
+Session paths are absolute or relative to the MCP project's directory and have
+the CLI's trusted-local-filesystem boundary; they may address another project's
+explicit foreground session. The owner uses its own tool, cache and offline
+settings, independently of the MCP server's settings.
+
+Use a stable `requestId` of 1–128 printable ASCII characters without spaces,
+separate from the JSON-RPC request ID. Retrying the same ID and arguments returns
+the original acknowledgement, including after owner exit; changing the arguments
+is rejected. `waitMillis` accepts 0–10000 and defaults to 1000.
+
+The tool preserves the CLI `session-control` document. `isError: false` means
+`status: "acknowledged"` with an `accepted` outcome; this confirms receipt only.
+Follow `kvik_session_events` to determine whether the requested operation
+succeeded. Rejected acknowledgements (`not-active`, `closing`) return
+`isError: true`. `pending`, `busy` and `owner-exited` also return `isError: true`:
+`pending` was submitted without an acknowledgement yet, `busy` did not submit,
+and `owner-exited` does not establish whether the command ran. Retry with the
+same ID when recovering an uncertain outcome.
+
+Cancelling an MCP call or closing its connection stops the submission/wait
+worker. A command already submitted may still execute. The independent
+foreground owner continues until its own stdin closes or it is stopped; an MCP
+connection cannot keep it alive after that. Use explicit `cancel` or `q` controls
+to stop its work. On runtime recomposition, explicitly use `nextSessionDirectory`
+from session status and start a new event cursor.
+
 Startup options `--lock`, `--store` and `--query-cache` have the same meanings and
 project-relative paths as their CLI counterparts. Repeated `--pin`, `--scope-pin`
 and `--exclude-metadata-edge` options set the policy for project inspection and
@@ -230,8 +275,8 @@ metadata query cache. Opt-in configuration planning may also populate the
 dependency store; configuration application replaces project and lock files.
 Per-request scratch files are removed after the owned
 process exits. Project queries and MCP builds currently address local projects;
-source-provider selectors and session controls remain available
-through the CLI. Retained-run queries can inspect results from either local
+source-provider selectors remain available through the CLI. Session controls can
+address existing local or source-provider owners. Retained-run queries can inspect results from either local
 projects or source-provider builds.
 
 The server allows four concurrent operations, with at most one build/test/verify per

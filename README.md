@@ -34,6 +34,7 @@ cancellable queries and structured CLI results. Add `--tools PATH` to enable
 build, test and change-aware `kvik_verify` tools using the same executor, cache
 and retained run results.
 Add `--config-edits` to prepare and apply guarded configuration/lock plans through MCP.
+Add `--session-controls` to control an existing foreground `dev` session.
 
 ### BSP project import and builds
 

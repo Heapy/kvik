@@ -23,7 +23,8 @@ internal fun mcpCommand(arguments: List<String>): Int {
         val queries = NativeMcpOperations(options).also { operations = it }
         val session = McpSession(queries, mcpTools +
             (if (options.build != null) mcpBuildTools else emptyList()) +
-            (if (options.configurationEdits) mcpConfigurationTools else emptyList()))
+            (if (options.configurationEdits) mcpConfigurationTools else emptyList()) +
+            (if (options.sessionControls) mcpSessionControlTools else emptyList()))
         // A returned plan appears twice in a response (structured and text); this input budget
         // accepts its single structured copy plus the apply request envelope.
         val decoder = McpLines(if (options.configurationEdits) MCP_MAX_OUTPUT else MCP_MAX_INPUT)

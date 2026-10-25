@@ -88,7 +88,9 @@ class McpSession(private val operations: McpOperations, private val tools: List<
                     "capabilities" to obj("tools" to obj()), "serverInfo" to obj("name" to "kvik".json(), "version" to "0.1.0".json()),
                     "instructions" to ("Project, package, retained-run and foreground-session queries. Inspect result status, freshness and diagnostics before making completeness or compatibility claims. Historical explanations and statistics do not assess current freshness." +
                         (if (tools.any { it.build }) " Build/test/verify tools execute project code and retain results. Supply _meta.progressToken for progress and the request directory; only one execution request runs per connection. A verification plan executes no checks; unchanged verification uses retained baselines." else "") +
-                        (if (tools.any { it.mutating }) " Configuration edits are enabled. Plan first, inspect configuration and lock contents, then pass the complete plan to config apply. Changed input files cause a conflict." else if (tools.none { it.build }) " This connection exposes read-only tools." else "")).json()))
+                        (if (tools.any { it.mutating }) " Configuration edits are enabled. Plan first, inspect configuration and lock contents, then pass the complete plan to config apply. Changed input files cause a conflict." else "") +
+                        (if (tools.any { it.sessionControl }) " Foreground session controls are enabled. Retry controls with the same requestId and arguments; acknowledgements do not establish completed work. Closing this connection does not stop an independent foreground owner." else "") +
+                        (if (tools.none { it.build || it.mutating || it.sessionControl }) " This connection exposes read-only tools." else "")).json()))
             } catch (failure: Exception) { mcpError(id, -32602, failure.message ?: "Invalid initialization") }
         }
         if (!initialized) return mcpError(id, -32002, "Initialize and send notifications/initialized first")

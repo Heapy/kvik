@@ -6,17 +6,17 @@ internal data class Argument(val name: String, val flag: String, val schema: Jso
                             val repeated: Boolean = false, val switch: Boolean = false,
                             val encode: ((RpcValue) -> String)? = null)
 
-private fun text(name: String, flag: String, description: String = name, choices: List<String> = emptyList()) = Argument(name, flag,
+private fun text(name: String, flag: String, description: String = name, choices: List<String> = emptyList(), maximum: Int = 4096) = Argument(name, flag,
     JsonValue.Object(buildMap {
-        put("type", "string".json()); put("minLength", 1.json()); put("maxLength", 4096.json()); put("description", description.json())
+        put("type", "string".json()); put("minLength", 1.json()); put("maxLength", maximum.json()); put("description", description.json())
         if (choices.isNotEmpty()) put("enum", choices.map { it.json() }.json())
     }))
 private fun repeated(name: String, flag: String, minimum: Int = 0, choices: List<String> = emptyList()) = Argument(name, flag,
     obj("type" to "array".json(), "minItems" to minimum.json(), "maxItems" to 32.json(), "uniqueItems" to true.json(),
         "items" to text(name, flag, choices = choices).schema), repeated = true)
 private fun switch(name: String, flag: String) = Argument(name, flag, obj("type" to "boolean".json()), switch = true)
-private fun integer(name: String, flag: String, maximum: Int) = Argument(name, flag,
-    obj("type" to "integer".json(), "minimum" to 1.json(), "maximum" to maximum.json()))
+private fun integer(name: String, flag: String, maximum: Int, minimum: Int = 1) = Argument(name, flag,
+    obj("type" to "integer".json(), "minimum" to minimum.json(), "maximum" to maximum.json()))
 
 /** Kvik documents use integer JSON numbers; JSON-RPC extension decimals remain unsupported here. */
 private fun RpcValue.configurationJson(): JsonValue = when (this) {
@@ -50,14 +50,14 @@ class McpTool internal constructor(val name: String, private val description: St
                                   private val coordinate: String? = null, private val required: Set<String> = emptySet(),
                                   private val arguments: List<Argument> = emptyList(), val repositories: Boolean = false,
                                   val project: Boolean = true, val build: Boolean = false, val mutating: Boolean = false,
-                                  private val openWorld: Boolean = repositories || build) {
+                                  val sessionControl: Boolean = false, private val openWorld: Boolean = repositories || build || sessionControl) {
     fun definition(): JsonValue.Object = obj("name" to name.json(), "description" to description.json(),
         "inputSchema" to obj("type" to "object".json(), "additionalProperties" to false.json(),
             "properties" to JsonValue.Object(buildMap {
                 coordinate?.let { put(it, text(it, "", if (it == "package") "Maven group:artifact" else "Maven group:artifact:version").schema) }
                 arguments.forEach { put(it.name, it.schema) }
             }), "required" to (required + listOfNotNull(coordinate)).sorted().map { it.json() }.json()),
-        "annotations" to obj("readOnlyHint" to (!build && !mutating).json(), "destructiveHint" to (build || mutating).json(),
+        "annotations" to obj("readOnlyHint" to (!build && !mutating && !sessionControl).json(), "destructiveHint" to (build || mutating || sessionControl).json(),
             "idempotentHint" to (!build).json(), "openWorldHint" to openWorld.json()))
 
     /** Convert a closed, typed tool schema to argv; never accept raw CLI flags or a shell command. */
@@ -91,11 +91,13 @@ class McpTool internal constructor(val name: String, private val description: St
                     spec.schema.values["type"] == "integer".json() -> {
                         val number = (raw as? RpcValue.Number)?.literal?.toIntOrNull()
                         val maximum = spec.schema.values.getValue("maximum").longValue().toInt()
-                        require(number != null && number in 1..maximum) { "${spec.name} must be an integer from 1 to $maximum" }
+                        val minimum = spec.schema.values.getValue("minimum").longValue().toInt()
+                        require(number != null && number in minimum..maximum) { "${spec.name} must be an integer from $minimum to $maximum" }
                         add(spec.flag); add(number.toString())
                     }
                     else -> {
                         val selected = value(raw)
+                        require(selected.length <= spec.schema.values.getValue("maxLength").longValue()) { "${spec.name} exceeds its maximum length" }
                         spec.schema.values["enum"]?.let { require(selected.json() in it.arrayValue()) { "Unsupported ${spec.name}: $selected" } }
                         add(spec.flag); add(selected)
                     }
@@ -112,6 +114,13 @@ private val versionArguments = listOf(
 private val queryMode = listOf(switch("offline", "--offline"), switch("refresh", "--refresh"))
 private val retainedRun = text("run", "--run", "Retained run directory, absolute or relative to the configured project directory")
 private val sessionDirectory = text("session", "--session", "Foreground session directory, absolute or relative to the configured project directory")
+private val sessionRequestId = Argument("requestId", "--request-id", obj("type" to "string".json(),
+    "minLength" to 1.json(), "maxLength" to 128.json(), "pattern" to "^[!-~]+$".json(),
+    "description" to "Stable printable ASCII request ID without spaces; retry with the same ID and arguments".json()), encode = { raw ->
+    raw.string().also { value ->
+        require(value.length in 1..128 && value.all { it.code in 33..126 }) { "Invalid session requestId" }
+    }
+})
 private val sessionCursor = Argument("cursor", "--cursor", obj("type" to "object".json(), "additionalProperties" to false.json(),
     "description" to "Pass the preceding response's nextCursor unchanged".json(),
     "required" to listOf("sessionId", "offset", "sequence").map { it.json() }.json(),
@@ -164,6 +173,16 @@ val mcpConfigurationTools: List<McpTool> = listOf(
         listOf("config", "apply"), required = setOf("plan"), arguments = listOf(configurationDocument("plan", "--plan-json",
             "Pass the complete, unchanged structuredContent object from kvik_config_plan. Inputs must still match the plan's preconditions.",
             listOf("schemaVersion", "kind", "root", "project", "lock", "store", "policy", "edits", "effectiveConfiguration", "configuration", "dependencyLock"))), project = false, mutating = true),
+)
+
+/** Controls address an existing explicit foreground owner; the MCP connection does not own it. */
+val mcpSessionControlTools: List<McpTool> = listOf(
+    McpTool("kvik_session_control", "Submit a command to an existing foreground session. Use a stable requestId for retries, distinct from the MCP request id. r rebuilds/reloads, t runs tests, q exits, status acknowledges current state, cancel requires an immutable operationId. Accepted acknowledgement confirms receipt, not operation completion; follow session events. Pending/busy/owner-exited and rejected acknowledgements return isError. Cancelling this MCP call stops only its submission/wait worker; an already submitted command may still execute.",
+        listOf("session", "control"), required = setOf("session", "requestId", "command"), arguments = listOf(
+            sessionDirectory, sessionRequestId,
+            text("command", "--command", choices = listOf("r", "t", "q", "status", "cancel")),
+            text("operationId", "--operation", "Required only for cancel; immutable ID from operation/application events or session status", maximum = 128),
+            integer("waitMillis", "--wait-ms", 10000, 0)), project = false, sessionControl = true),
 )
 
 /** Execution tools are advertised only when the foreground server was configured with pinned tools. */
