@@ -78,7 +78,7 @@ private fun inspectGraph(options: BuildOptions, mode: ProjectMode, project: Proj
         val module = snapshot.configuration.project.modules.singleOrNull { it.id == id } ?: error("Unknown module: $id")
         val settings = module.targets.singleOrNull { it.name == "jvm" }?.testSettings
             ?: JvmTestSettings(emptyList(), discover = true)
-        JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it }, coverage, settings.parallelism, settings.maxRetries, settings.discover)
+        JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it }, coverage, settings.parallelism, settings.maxRetries, settings.discover, settings.tags)
     } else emptyMap()
     val request = ProjectGraphRequest(options.modules, options.targets, mode, tests)
     val targets = projectToolTargets(snapshot.configuration.project, request)

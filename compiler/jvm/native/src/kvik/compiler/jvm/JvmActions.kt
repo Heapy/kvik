@@ -162,8 +162,9 @@ fun jvmMetadataCompileAction(compilation: JvmMetadataCompilation, inputs: TreeMa
         workerEnvironment, compilation.toJson(), timeoutMillis, CachePolicy.LOCAL)
 }
 
-data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources(), val agents: List<JvmTestAgent> = emptyList(), val parallelism: Int = 1, val maxRetries: Int = 0, val discoveryRoots: List<LogicalPath> = emptyList()) {
+data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>, val classes: List<String>, val engines: List<String> = listOf("junit-jupiter"), val coverage: JvmCoverageSpec? = null, val resources: TestResources = TestResources(), val agents: List<JvmTestAgent> = emptyList(), val parallelism: Int = 1, val maxRetries: Int = 0, val discoveryRoots: List<LogicalPath> = emptyList(), val tags: JvmTestTags = JvmTestTags()) {
     init {
+        require(!tags.enabled || engines == listOf("junit-jupiter")) { "JVM tag filters currently require only the junit-jupiter engine" }
         require(discoveryRoots.distinct().size == discoveryRoots.size && discoveryRoots.all { it in classpath && !it.value.endsWith(".jar") }) {
             "Test discovery roots must be unique runtime class directories"
         }
@@ -186,16 +187,17 @@ data class JvmTestSelection(val module: String, val classpath: List<LogicalPath>
             val instrumented = if (agents.isEmpty()) scheduled else JsonValue.Object(scheduled.values + ("agents" to agents.map { it.toJson() }.json()))
             val scheduledThreads = if (parallelism == 1) instrumented else JsonValue.Object(instrumented.values + ("parallelism" to parallelism.json()))
             val retried = if (maxRetries == 0) scheduledThreads else JsonValue.Object(scheduledThreads.values + ("maxRetries" to maxRetries.json()))
-            if (discoveryRoots.isEmpty()) retried else JsonValue.Object(retried.values + ("discoveryRoots" to discoveryRoots.jsonPaths()))
+            val discovered = if (discoveryRoots.isEmpty()) retried else JsonValue.Object(retried.values + ("discoveryRoots" to discoveryRoots.jsonPaths()))
+            JsonValue.Object(discovered.values + tags.toJson().values)
         }
     companion object {
         fun fromJson(value: JsonValue): JvmTestSelection {
-            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources", "agents", "parallelism", "maxRetries", "discoveryRoots"))
+            val d = value.fields(setOf("module", "classpath", "classes", "engines"), setOf("coverage", "resources", "agents", "parallelism", "maxRetries", "discoveryRoots", "includeTags", "excludeTags"))
             return JvmTestSelection(d.getValue("module").stringValue(), d.paths("classpath"), d.getValue("classes").arrayValue().map(JsonValue::stringValue), d.getValue("engines").arrayValue().map(JsonValue::stringValue), d["coverage"]?.let(JvmCoverageSpec::fromJson), d["resources"]?.let(TestResources::fromJson) ?: TestResources(),
                 d["agents"]?.arrayValue()?.map(JvmTestAgent::fromJson).orEmpty(),
                 (d["parallelism"]?.longValue() ?: 1).also { require(it in 1L..1024L) { "Invalid JVM test parallelism" } }.toInt(),
                 (d["maxRetries"]?.longValue() ?: 0).also { require(it in 0L..9L) { "Invalid JVM test maxRetries" } }.toInt(),
-                if ("discoveryRoots" in d) d.paths("discoveryRoots") else emptyList())
+                if ("discoveryRoots" in d) d.paths("discoveryRoots") else emptyList(), JvmTestTags.fromFields(d))
         }
     }
 }

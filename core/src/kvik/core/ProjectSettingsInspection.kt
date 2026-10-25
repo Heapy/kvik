@@ -44,7 +44,8 @@ fun projectSettingsInspection(configuration: ProjectConfiguration, file: Logical
             if (target.test != null && target.name == "jvm") {
                 val tests = target.testSettings ?: JvmTestSettings(emptyList(), discover = true)
                 settings("testSettings", obj("classes" to (if (tests.discover) JsonValue.Null else tests.classes.map(String::json).json()),
-                    "engines" to tests.engines.map(String::json).json(), "parallelism" to tests.parallelism.json(), "maxRetries" to tests.maxRetries.json()))
+                    "engines" to tests.engines.map(String::json).json(), "parallelism" to tests.parallelism.json(), "maxRetries" to tests.maxRetries.json(),
+                    "includeTags" to tests.tags.includeTags.map(String::json).json(), "excludeTags" to tests.tags.excludeTags.map(String::json).json()))
             }
             if (target.test != null && NativeTarget.find(target.name) != null) {
                 val native = target.nativeTestSettings ?: NativeTestSettings("kotlin")

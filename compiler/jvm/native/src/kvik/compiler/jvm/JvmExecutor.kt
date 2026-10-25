@@ -138,7 +138,7 @@ class JvmActionExecutor(
                 metadata.pluginApplications.map(::stagedPlugin), metadataTargets = metadata.targets).toJson()
             else obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json(),
                 "classpath" to staged(selection!!.classpath).map { it.json() }.json(), "testClasses" to selection.classes.map { it.json() }.json(), "engines" to selection.engines.map { it.json() }.json(), "parallelism" to selection.parallelism.json(), "maxRetries" to selection.maxRetries.json(),
-                "discoveryRoots" to staged(selection.discoveryRoots).map { it.json() }.json())
+                "discoveryRoots" to staged(selection.discoveryRoots).map { it.json() }.json()).let { JsonValue.Object(it.values + selection.tags.toJson().values) }
             writeJvmFile("$directory/request.json", request.canonical().encodeToByteArray())
             val classpath = if (compilerOutput != null) listOf(layout.workerClasses, layout.btaApiJar, layout.stdlibJar)
                 else listOf(layout.workerClasses, layout.junitJar, layout.stdlibJar) + selection!!.classpath.map { "$directory/input/${it.value}" }

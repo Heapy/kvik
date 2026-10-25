@@ -44,8 +44,9 @@ data class SourceSet(
 )
 
 /** Omitted classes discover compiled tests; an explicit empty selection still selects nothing. */
-data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1, val maxRetries: Int = 0, val discover: Boolean = false) {
+data class JvmTestSettings(val classes: List<String>, val engines: List<String> = listOf("junit"), val parallelism: Int = 1, val maxRetries: Int = 0, val discover: Boolean = false, val tags: JvmTestTags = JvmTestTags()) {
     init {
+        require(!tags.enabled || engines == listOf("junit")) { "JVM tag filters currently require only the junit engine" }
         require(!discover || classes.isEmpty()) { "JVM test discovery cannot be combined with explicit classes" }
         require(maxRetries in 0..9) { "JVM test maxRetries must be an integer in 0..9" }
         require(parallelism in 1..1024) { "JVM test parallelism must be an integer in 1..1024" }

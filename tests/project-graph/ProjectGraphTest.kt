@@ -134,6 +134,25 @@ private fun published(module: ModuleSpec, resources: Boolean = true) = module.co
     sourceSets = module.sourceSets.map { if (resources) it else it.copy(resources = emptyList()) })
 
 class ProjectGraphTest {
+    @Test fun tagsChangeOnlyTestSelectionAndRejectUnsupportedEngines() {
+        val original = request(ProjectMode.TEST)
+        val tags = JvmTestTags(listOf("fast", "smoke"), listOf("database"))
+        val filtered = original.copy(jvmTests = original.jvmTests.mapValues { it.value.copy(tags = tags) })
+        val before = resolved(graph(request = original))
+        val after = resolved(graph(request = filtered))
+        for (id in before.keys) {
+            if (before.getValue(id).kind != ActionKind.TEST) assertEquals(before.getValue(id), after.getValue(id))
+            else {
+                val selection = JvmTestSelection.fromJson(after.getValue(id).parameters)
+                assertEquals(tags, selection.tags)
+                assertEquals(selection, JvmTestSelection.fromJson(selection.toJson()))
+                assertFails { selection.copy(engines = listOf("kotest")) }
+                assertNotEquals(before.getValue(id).key(Sha256), after.getValue(id).key(Sha256))
+                assertEquals(CachePolicy.NEVER, after.getValue(id).cachePolicy)
+            }
+        }
+    }
+
     @Test fun discoveryUsesOnlyCompiledTestOutputAndDoesNotChangeCompilation() {
         val explicit = request(ProjectMode.TEST)
         val automatic = explicit.copy(jvmTests = explicit.jvmTests.mapValues { it.value.copy(classes = emptyList(), discover = true) })

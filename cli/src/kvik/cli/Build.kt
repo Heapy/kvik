@@ -197,7 +197,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         val module = snapshot.configuration.project.modules.singleOrNull { it.id == id } ?: error("Unknown module: $id")
         val target = module.targets.singleOrNull { it.name == "jvm" } ?: error("Missing target $id:jvm")
         val settings = target.testSettings ?: JvmTestSettings(emptyList(), discover = true)
-        JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it }, coverageTools, settings.parallelism, settings.maxRetries, settings.discover)
+        JvmTests(settings.classes, settings.engines.map { if (it == "junit") "junit-jupiter" else it }, coverageTools, settings.parallelism, settings.maxRetries, settings.discover, settings.tags)
     } else emptyMap()
     val graphRequest = ProjectGraphRequest(options.modules, options.targets, mode, selectedTests)
     val toolTargets = if (scriptFile == null) projectToolTargets(snapshot.configuration.project, graphRequest) else options.targets

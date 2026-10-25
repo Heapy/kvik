@@ -35,7 +35,7 @@ object TestWorker {
         var status = "incomplete"
         var exit = 3
         try {
-            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism", "maxRetries", "discoveryRoots"))
+            val request = workspace.readJson(args[1]).fields(setOf("schemaVersion", "requestId", "module", "target", "classpath", "testClasses", "engines"), setOf("parallelism", "maxRetries", "discoveryRoots", "includeTags", "excludeTags"))
             request.requireVersion()
             requestId = request.getValue("requestId").stringValue()
             val module = request.getValue("module").stringValue()
@@ -52,6 +52,8 @@ object TestWorker {
             require(roots.isEmpty() || classes.isEmpty()) { "Test discovery cannot be combined with explicit classes" }
             val engineIds = request.getValue("engines").arrayValue().map { it.stringValue() }.toSet()
             require(engineIds.isNotEmpty() && engineIds.all { it in setOf("junit-jupiter", "kotest") })
+            val tags = JvmTestTags.fromFields(request)
+            require(!tags.enabled || engineIds == setOf("junit-jupiter")) { "JVM tag filters currently require only the junit-jupiter engine" }
             val parallelism = (request["parallelism"]?.longValue() ?: 1).also {
                 require(it in 1L..1024L) { "Invalid JVM test parallelism" }
             }.toInt()
@@ -87,6 +89,9 @@ object TestWorker {
                     val launcher = LauncherFactory.create(config)
                     val discovery = LauncherDiscoveryRequestBuilder.request().enableImplicitConfigurationParameters(false)
                         .selectors(classes.map(::selectClass) + selectClasspathRoots(roots.toSet()))
+                        .filters(*listOfNotNull(
+                            tags.includeTags.takeIf { it.isNotEmpty() }?.let(TagFilter::includeTags),
+                            tags.excludeTags.takeIf { it.isNotEmpty() }?.let(TagFilter::excludeTags)).toTypedArray())
                         .configurationParameter("junit.jupiter.execution.parallel.enabled", (parallelism > 1).toString())
                         .configurationParameter("junit.jupiter.execution.parallel.mode.default", "concurrent")
                         .configurationParameter("junit.jupiter.execution.parallel.mode.classes.default", "concurrent")

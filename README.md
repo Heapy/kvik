@@ -551,6 +551,31 @@ project source set.
 
 `build` and `test` always consume the existing lock and cached dependencies without network resolution. Select modules and targets explicitly with repeatable flags. JVM tests are discovered from the selected module's compiled test output when `testSettings.classes` is omitted. Set `testSettings.engines` to select `junit` (default), `kotest`, or both. Production outputs and dependency JARs are available for loading but are not searched for tests. An explicit `classes` list restricts selection to those binary class names; an empty list selects nothing and produces incomplete verification. Discovery with no executable tests is also incomplete. Tests execute on every invocation; successful compilation can be reused locally. `--tools` names the explicit installed-tool configuration described in the build command contract. Run stdout contains versioned JSON events; compiler/test streams are retained in the run directory. `verification` checks whether a retained result still describes current inputs and tools. [`explain --run PATH --action ID`](docs/action-explanations.md) describes a retained action’s inputs, settings and recorded execution or reuse reason.
 
+For JUnit targets, filter discovery with literal tags:
+
+```json
+"testSettings": {
+  "includeTags": ["fast", "smoke"],
+  "excludeTags": ["database"]
+}
+```
+
+A test must match at least one included tag and none of the excluded tags.
+Omitting `includeTags` (or supplying an empty list) includes all tags and untagged
+tests before exclusions. Filters further narrow an explicit `classes` selection
+when supplied. Class-level and inherited tags follow
+[JUnit tag filtering](https://docs.junit.org/5.13.4/api/org.junit.platform.launcher/org/junit/platform/launcher/TagFilter.html).
+Use literal names, not tag expressions; each list accepts up to 64 unique names,
+each 1–128 characters without whitespace, control characters or `,()&|!`.
+Tag filtering currently requires only the `junit` engine; Kotest or mixed-engine
+filter requests are rejected.
+
+Reports count the selected scope. Filtered-out tests are outside that scope and
+are not reported as skipped. An empty match returns `incomplete`, never a passing
+test check. Filters are retained in configuration and test action parameters;
+changing them preserves compilation cache keys. Run `resolve` after editing
+configuration, as for other project changes.
+
 Independent module/target test actions run in parallel within `--jobs` and
 `--memory-mib` budgets (defaults: two CPU slots and 4096 MiB). Actions reserve one
 CPU slot by default. A target with tests can reserve more slots, reserve memory

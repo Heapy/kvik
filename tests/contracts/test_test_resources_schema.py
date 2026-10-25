@@ -62,6 +62,19 @@ class TestResourcesSchemaTest(unittest.TestCase):
             with self.subTest(settings=settings):
                 self.assertFalse(VALIDATOR.is_valid(self.target(testResources=settings)))
 
+    def test_junit_tag_filters(self):
+        for settings in ({'includeTags': ['fast', 'быстрые']}, {'excludeTags': ['database']},
+                         {'includeTags': ['fast'], 'excludeTags': ['slow']},
+                         {'classes': ['example.Checks'], 'includeTags': ['fast']},
+                         {'engines': ['kotest'], 'includeTags': [], 'excludeTags': []}):
+            VALIDATOR.validate(self.target(testSettings=settings))
+        for field in ('includeTags', 'excludeTags'):
+            for invalid in (None, 'fast', [''], ['fast', 'fast'], ['a b'], ['a\nb'], ['a|b'], ['a&b'],
+                            ['!slow'], ['a,b'], ['any()'], ['a\u0085b'], ['x' * 129], [f't{i}' for i in range(65)]):
+                self.assertFalse(VALIDATOR.is_valid(self.target(testSettings={field: invalid})), invalid)
+            for engines in (['kotest'], ['junit', 'kotest']):
+                self.assertFalse(VALIDATOR.is_valid(self.target(testSettings={field: ['fast'], 'engines': engines})))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -212,6 +212,22 @@
           "minimum": 0,
           "maximum": 9,
           "default": 0
+        },
+        "includeTags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jvmTestTag"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "excludeTags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jvmTestTag"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
         }
       },
       "required": [],
@@ -226,6 +242,41 @@
             },
             "required": [
               "parallelism"
+            ]
+          },
+          "then": {
+            "properties": {
+              "engines": {
+                "const": [
+                  "junit"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "includeTags"
+                ],
+                "properties": {
+                  "includeTags": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "required": [
+                  "excludeTags"
+                ],
+                "properties": {
+                  "excludeTags": {
+                    "minItems": 1
+                  }
+                }
+              }
             ]
           },
           "then": {
@@ -14799,6 +14850,22 @@
                   },
                   "uniqueItems": true
                 },
+                "includeTags": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/jvmTestTag"
+                  },
+                  "maxItems": 64,
+                  "uniqueItems": true
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/jvmTestTag"
+                  },
+                  "maxItems": 64,
+                  "uniqueItems": true
+                },
                 "engines": {
                   "type": "array",
                   "items": {
@@ -14842,7 +14909,44 @@
                 "classes",
                 "engines"
               ],
-              "additionalProperties": false
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "includeTags"
+                        ],
+                        "properties": {
+                          "includeTags": {
+                            "minItems": 1
+                          }
+                        }
+                      },
+                      {
+                        "required": [
+                          "excludeTags"
+                        ],
+                        "properties": {
+                          "excludeTags": {
+                            "minItems": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "engines": {
+                        "const": [
+                          "junit-jupiter"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
             },
             "timeoutMillis": {
               "type": "integer",
@@ -15726,6 +15830,12 @@
         "sourceRoots"
       ],
       "additionalProperties": false
+    },
+    "jvmTestTag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f,()&|!]+(?![\\s\\S])"
     }
   }
 }

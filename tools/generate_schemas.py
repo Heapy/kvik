@@ -56,14 +56,23 @@ DEFS["tree"] = versioned({"files": array(ref("file"), uniqueItems=True)})
 DEFS["dependency"] = {"oneOf": [object_({key: value, "scope": enum("compile", "runtime"), "exported": BOOL}, optional=("scope", "exported")) for key, value in [("coordinate", COORDINATE), ("module", ID)]]}
 DEFS["dependency"]["allOf"] = [{"if": {"required": ["scope"], "properties": {"scope": {"const": "runtime"}}}, "then": {"properties": {"exported": {"const": False}}}}]
 DEFS["sourceSet"] = object_({"name": ID, "directories": array(PATH), "resources": array(PATH), "dependsOn": array(ID, uniqueItems=True), "dependencies": array(ref("dependency"))})
+DEFS["jvmTestTag"] = {"type": "string", "minLength": 1, "maxLength": 128,
+    "pattern": r"^[^\s\u0000-\u001f\u007f-\u009f,()&|!]+(?![\s\S])"}
+TEST_TAGS = array(ref("jvmTestTag"), maxItems=64, uniqueItems=True)
+def tag_engine_constraint(engine):
+    return {"if": {"anyOf": [{"required": [name], "properties": {name: {"minItems": 1}}}
+                             for name in ("includeTags", "excludeTags")]},
+            "then": {"properties": {"engines": {"const": [engine]}}}}
+
 DEFS["jvmTestSettings"] = object_({
     "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*(?![\s\S])"}, uniqueItems=True),
     "engines": array(enum("junit", "kotest"), minItems=1, uniqueItems=True),
     "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
     "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
-}, optional=("classes", "engines", "parallelism", "maxRetries"))
+    "includeTags": TEST_TAGS, "excludeTags": TEST_TAGS,
+}, optional=("classes", "engines", "parallelism", "maxRetries", "includeTags", "excludeTags"))
 DEFS["jvmTestSettings"]["allOf"] = [{"if": {"properties": {"parallelism": {"minimum": 2}}, "required": ["parallelism"]},
-    "then": {"properties": {"engines": {"const": ["junit"]}}}}]
+    "then": {"properties": {"engines": {"const": ["junit"]}}}}, tag_engine_constraint("junit")]
 NATIVE_RETRIES = {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}
 DEFS["nativeTestSettings"] = {"oneOf": [
     object_({"engine": {"const": "kotlin"}, "maxRetries": NATIVE_RETRIES}, optional=("maxRetries",)),
@@ -1117,11 +1126,12 @@ DEFS["testLaunch"] = {"oneOf": [
         "classpath": array(PATH, minItems=1, uniqueItems=True),
         "classes": array({"type": "string", "pattern": r"^[A-Za-z_$][A-Za-z0-9_.$]*(?![\s\S])"}, uniqueItems=True),
         "discoveryRoots": array(PATH, uniqueItems=True),
+        "includeTags": TEST_TAGS, "excludeTags": TEST_TAGS,
         "engines": array(enum("junit-jupiter", "kotest"), minItems=1, uniqueItems=True),
         "coverage": ref("jvmCoverageSpec"), "resources": ref("testResources"),
         "agents": array(ref("jvmTestAgent"), maxItems=16),
         "parallelism": {"type": "integer", "minimum": 1, "maximum": 1024, "default": 1},
-        "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("coverage", "resources", "agents", "parallelism", "maxRetries", "discoveryRoots"))),
+        "maxRetries": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0}}, optional=("coverage", "resources", "agents", "parallelism", "maxRetries", "discoveryRoots", "includeTags", "excludeTags"))),
     test_launch("kvik-native-tests-v1", ("macosArm64", "linuxX64"), object_({"module": NONEMPTY, "executable": PATH,
         "filter": nullable({"type": "string", "pattern": r"^[A-Za-z0-9_.*]+(?![\s\S])"}),
         "resources": ref("testResources"), "maxRetries": NATIVE_RETRIES}, optional=("resources", "maxRetries"))),
@@ -1131,6 +1141,7 @@ DEFS["testLaunch"] = {"oneOf": [
         "filter": DEFS["jsTestSettings"]["properties"]["filter"], "resources": ref("testResources"),
         "maxRetries": DEFS["jsTestSettings"]["properties"]["maxRetries"]}, optional=("resources", "maxRetries"))),
 ]}
+DEFS["testLaunch"]["oneOf"][0]["properties"]["parameters"]["allOf"] = [tag_engine_constraint("junit-jupiter")]
 DEFS["graphInspection"] = versioned({
     "kind": {"const": "graph-inspection"}, "mode": enum(*GRAPH_MODES),
     "modules": array(ID, minItems=1, uniqueItems=True), "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
