@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check cross-machine CI harness
         run: python3 -m unittest discover -s tools -p 'test_*cross_machine*unit.py'
+      - name: Check source-workflow comparison gates
+        run: python3 -m unittest discover -s tools -p 'test_source_comparison_unit.py'
       - name: Prepare Linux tools
         run: docker build --platform linux/amd64 --tag kvik-linux-host tools/linux
       - name: Build runtime and run JVM and Native fixtures

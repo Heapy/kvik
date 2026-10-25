@@ -1179,6 +1179,34 @@ rewrites identifier tokens without resolving symbols: a new name can collide
 with another declaration, and limited path selection can leave references behind.
 Compilation and tests on the complete candidate are required to check it.
 
+To measure source-workflow overhead, prepare the collaboration fixture with
+`python3 tools/test_kode_workflow_cli.py prepare --runtime /absolute/kvik.kexe
+--kode /absolute/kode --tools /absolute/tools.json`, then pass its printed fixture
+path to:
+
+```sh
+python3 tools/compare_source_workflows.py --fixture /absolute/fixture.json --trials 4
+```
+
+The comparison replays the same two disjoint edits, independent tests, merge,
+integrated tests and repeated verification through Kode revisions and Git
+worktrees. Each trial gets fresh repositories and an independent Kvik cache with
+identical blob seeds and no action entries. It warms the baseline separately and
+alternates workflow order. The supplied workspace and cache remain unchanged.
+An optional `--runtime PATH` selects the same newer runtime for both workflows.
+The command rejects differing action keys, reuse decisions, search hits or test
+identities, and requires fresh tests even on the repeated build.
+
+Results stay under `.kvik/tests/source-comparison/`: `comparison.json` records
+each trial, tool fingerprints and controls; individual `result.json` files retain
+operation times, process counts, stdin/file-write and output bytes, UTF-8 argument
+sizes and logical repository sizes.
+This is a scripted infrastructure comparison. It does not measure LLM tokens,
+agent tool calls, conflict-resolution effort or incorrect completion claims;
+those K17 stage 5 questions still require controlled agent trials. Materialization
+and search timings are reported separately, without attributing query time to
+index construction. Filesystem allocation and OS page caches are not controlled.
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).
