@@ -1219,10 +1219,21 @@ configuration with the composed plugins before publishing a configuration/lock p
 
 Additional `ProjectGraphContributor` plugins receive the locked configuration,
 captured input manifest, tool identities and current graph. They can add actions
-that consume declared predecessor artifacts. Contributors run in plugin-ID order;
-duplicate action IDs, missing dependencies, cycles and missing requested terminals
+that consume declared predecessor artifacts. `graphDependencies` declares required
+plugin IDs whose graph callbacks must finish first; ready plugins use plugin-ID order.
+Duplicate action IDs, missing dependencies, cycles and missing requested terminals
 are rejected. Existing `BuildPlugin.actions(project)` implementations remain
 supported as additive callbacks over the authoring document.
+
+For example, an artifact consumer can declare
+`override val graphDependencies = setOf("example.generator")`. Its producer's actions,
+instrumentation and artifact publications are then visible regardless of their ID
+ordering. Missing plugins and dependency cycles fail before graph construction;
+Kvik does not fetch or enable plugins automatically. The sole graph provider runs
+first and cannot depend on graph contributors. These declarations order project and
+script graph callbacks; source package dependencies, configuration/input hooks and
+generator declarations keep their separate contracts. `runtime-info` includes each
+plugin's sorted `graphDependencies` list.
 
 Plugins can select compiled outputs with
 `graph.requireArtifact(module, target, compilation, kind)` or list matches with

@@ -6,8 +6,9 @@ import kvik.projectgraph.*
 
 /** Consumes a preceding plugin's public artifacts without knowing its action IDs or paths. */
 class ArtifactConsumerPlugin : ProjectGraphContributor {
-    override val id = "fixture.consume"
+    override val id = "fixture.artifactConsumer"
     override val apiVersion = CONTRACT_VERSION
+    override val graphDependencies = setOf("fixture.classpath")
     override val configurationSchema = obj("type" to "object".json())
 
     override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> {

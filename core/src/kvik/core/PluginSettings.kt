@@ -43,6 +43,7 @@ fun validatePluginSettings(plugins: List<BuildPlugin>, settings: Map<String, Jso
 
 /** Keep the existing authoring schema distinct from the optional per-plugin settings schema. */
 fun BuildPlugin.descriptor(): JsonValue.Object = JsonValue.Object(
-    obj("id" to id.json(), "apiVersion" to apiVersion.json(), "schema" to configurationSchema).values +
+    obj("id" to id.json(), "apiVersion" to apiVersion.json(), "schema" to configurationSchema,
+        "graphDependencies" to graphDependencies.sorted().map(String::json).json()).values +
         if (this is ConfigurableBuildPlugin) mapOf("settingsSchema" to settingsSchema) else emptyMap()
 )

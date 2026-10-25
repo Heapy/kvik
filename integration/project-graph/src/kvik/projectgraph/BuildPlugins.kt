@@ -57,16 +57,17 @@ private fun compose(
     plugins: List<BuildPlugin>, context: ProjectBuildContext, expectedChecks: Set<String>,
     provide: (ProjectBuildPlugin, ProjectBuildContext) -> ProjectActionGraph,
 ): ProjectActionGraph {
-    val ordered = plugins.toList().sortedBy { it.id }
-    require(ordered.all { it.id.isNotBlank() }) { "Build plugin IDs must not be blank" }
-    require(ordered.map { it.id }.distinct().size == ordered.size) { "Duplicate build plugin ID" }
-    require(ordered.all { it.apiVersion == CONTRACT_VERSION }) { "Incompatible build plugin API version" }
-    validatePluginSettings(ordered, parsePluginSettings(
-        context.effective.document.objectValue()["project"]?.objectValue()?.get("pluginSettings")))
-    val providers = ordered.filterIsInstance<ProjectBuildPlugin>()
+    val registered = plugins.toList().sortedBy { it.id }
+    require(registered.all { it.id.isNotBlank() }) { "Build plugin IDs must not be blank" }
+    require(registered.map { it.id }.distinct().size == registered.size) { "Duplicate build plugin ID" }
+    require(registered.all { it.apiVersion == CONTRACT_VERSION }) { "Incompatible build plugin API version" }
+    val providers = registered.filterIsInstance<ProjectBuildPlugin>()
     require(providers.size == 1) { "Exactly one project build plugin is required" }
     val provider = providers.single()
-    val generated = collectGeneratedInputs(ordered, context)
+    val ordered = orderGraphPlugins(registered, provider)
+    validatePluginSettings(registered, parsePluginSettings(
+        context.effective.document.objectValue()["project"]?.objectValue()?.get("pluginSettings")))
+    val generated = collectGeneratedInputs(registered, context)
     require(generated == ProjectGeneratedInputs() || provider.acceptsGeneratedInputs) { "Graph provider does not accept plugin generated inputs" }
     val prepared = if (context.generatedInputs == generated) context else context.copy(generatedInputs = generated)
     val supplied = provide(provider, prepared)
@@ -127,6 +128,33 @@ private fun compose(
     }
     validateNodes(nodes)
     return ProjectActionGraph(nodes.toList(), expectedChecks.toSet(), terminals, contributed.toSet(), supplied.generatedSources.toList(), launches, supplied.generatedResources.toList(), artifacts.toList())
+}
+
+/** Graph callback ordering is independent of source acquisition and pre-provider declarations. */
+private fun orderGraphPlugins(plugins: List<BuildPlugin>, provider: ProjectBuildPlugin): List<BuildPlugin> {
+    val dependencies = plugins.associate { it.id to it.graphDependencies.toSet() }
+    for ((id, required) in dependencies) for (dependency in required.sorted())
+        require(dependency in dependencies) { "Unknown graph dependency for build plugin $id: $dependency" }
+    try {
+        validateGraph(dependencies)
+    } catch (failure: IllegalArgumentException) {
+        throw IllegalArgumentException("Build plugin graph: ${failure.message}", failure)
+    }
+    require(dependencies.getValue(provider.id).isEmpty()) {
+        "Project graph provider ${provider.id} runs first and cannot depend on graph contributors"
+    }
+    val pending = plugins.filter { it !== provider }.toMutableList()
+    val complete = mutableSetOf(provider.id)
+    val ordered = mutableListOf<BuildPlugin>(provider)
+    while (pending.isNotEmpty()) {
+        // The registry is sorted; pick the smallest available ID after each contribution.
+        val index = pending.indexOfFirst { dependencies.getValue(it.id).all(complete::contains) }
+        check(index >= 0) { "Build plugin graph has no available contributor" }
+        val plugin = pending.removeAt(index)
+        ordered += plugin
+        complete += plugin.id
+    }
+    return ordered
 }
 
 private fun validateNodes(nodes: List<ActionNode>) {

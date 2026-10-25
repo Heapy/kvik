@@ -220,5 +220,7 @@ interface BuildPlugin {
     val id: String
     val apiVersion: Int
     val configurationSchema: JsonValue.Object
+    /** Required plugins whose project-graph contributions must be visible before this plugin's callbacks. */
+    val graphDependencies: Set<String> get() = emptySet()
     fun actions(project: JsonValue.Object): List<ActionNode> = emptyList()
 }

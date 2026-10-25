@@ -36,7 +36,7 @@ def main():
         composition = json.loads(composition_path.read_text())
         composition['plugins'].append(dict(id='fixture.classpath', directory='tests/build-plugins',
                                           sourceDirectories=['src'], implementation='fixture.plugins.ClasspathPlugin'))
-        composition['plugins'].append(dict(id='fixture.consume', directory='tests/artifact-consumer',
+        composition['plugins'].append(dict(id='fixture.artifactConsumer', directory='tests/artifact-consumer',
                                           sourceDirectories=['src'], implementation='fixture.plugins.ArtifactConsumerPlugin'))
         composition_path.write_text(json.dumps(composition))
         with (root / 'bootstrap.log').open('w') as log:
@@ -81,7 +81,9 @@ def main():
         return [json.loads(line) for line in result.stdout.splitlines()]
 
     info = invoke('info', ['runtime-info'])[0]
-    assert {plugin['id'] for plugin in info['plugins']} >= {'kvik.kotlin', 'fixture.classpath', 'fixture.consume'}
+    assert {plugin['id'] for plugin in info['plugins']} >= {'kvik.kotlin', 'fixture.classpath', 'fixture.artifactConsumer'}
+    consumer_plugin = next(plugin for plugin in info['plugins'] if plugin['id'] == 'fixture.artifactConsumer')
+    assert consumer_plugin['graphDependencies'] == ['fixture.classpath'], consumer_plugin
     invoke('resolve', ['resolve', '--project', config, '--store', store])
     graph = invoke('inspect-graph', ['inspect-graph', '--mode', 'build', '--module', 'app', '--target', 'jvm',
         '--project', config, '--tools', tools, '--store', store, '--offline'])[0]
@@ -93,7 +95,7 @@ def main():
     published = [a for a in graph['artifacts'] if a['module'] == 'app' and a['compilation'] == 'main' and
                  a['output']['kind'] == 'platform-classpath']
     assert len(published) == 1 and published[0]['producer'] == PLUGIN_ACTION, published
-    chained = next(action for action in graph['actions'] if action['id'] == 'fixture.consume:bundle')
+    chained = next(action for action in graph['actions'] if action['id'] == 'fixture.artifactConsumer:bundle')
     assert chained['dependencies'] == [published[0]['producer']], chained
     (root / 'graph.json').write_text(json.dumps(graph))
     inspection = invoke('inspect-script', ['inspect-script', 'task', '--project', config,
@@ -110,7 +112,7 @@ def main():
         artifact = actions[PLUGIN_ACTION]
         assert any(entry['path'] == 'classpath/input/classes/sample/AnswerKt.class' for entry in artifact['outputs']['files'])
         manifest = next(entry for entry in artifact['outputs']['files'] if entry['path'] == 'classpath/manifest.json')
-        consumed = actions['fixture.consume:bundle']
+        consumed = actions['fixture.artifactConsumer:bundle']
         copied = next(entry for entry in consumed['outputs']['files'] if entry['path'] == 'classpath/input/upstream/main/manifest.json')
         assert copied['digest'] == manifest['digest'], consumed
         identity = manifest['digest']
@@ -132,7 +134,7 @@ def main():
     cold, cold_record = build('cold')
     assert cold[PLUGIN_ACTION]['status'] == 'executed'
     warm, warm_record = build('warm')
-    assert warm['fixture.consume:bundle']['status'] == 'local_hit'
+    assert warm['fixture.artifactConsumer:bundle']['status'] == 'local_hit'
     assert warm[PLUGIN_ACTION]['status'] == 'local_hit' and warm[PLUGIN_ACTION]['key'] == cold[PLUGIN_ACTION]['key']
     script, _ = build('script', script=True)
     # Script snapshots contain only their declared scope, so the unrelated plugin input is absent.
@@ -157,7 +159,7 @@ def main():
     (other / 'fail.txt').unlink()
     main.write_text('package sample\nfun answer() = 43\n')
     changed, _ = build('changed')
-    assert changed['fixture.consume:bundle']['status'] == 'executed'
+    assert changed['fixture.artifactConsumer:bundle']['status'] == 'executed'
     assert changed[PLUGIN_ACTION]['status'] == 'executed' and changed[PLUGIN_ACTION]['key'] != cold[PLUGIN_ACTION]['key']
     remote = project / 'remote.json'
     remote.write_text(json.dumps(dict(schemaVersion=1, url='http://127.0.0.1:1', trustedWriters=True)))
@@ -200,7 +202,7 @@ def main():
             assert ('classpath/input/reports/coverage.exec' in paths) == covered, paths
             assert ('classpath/input/reports/coverage-result.json' in paths) == covered, paths
             assert any(f['path'] == 'classpath/input/upstream/test/input/reports/test-results.json'
-                       for f in actions['fixture.consume:bundle']['outputs']['files']), actions
+                       for f in actions['fixture.artifactConsumer:bundle']['outputs']['files']), actions
     # Retained reporting still accepts failed tests; ordinary graph dependents stay blocked.
     test_source.write_text(test_source.read_text().replace('== 43', '== 42'))
     failed = invoke('failed-tests', ['test', *test_options, '--coverage'], expected=1)[-1]['payload']

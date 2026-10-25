@@ -52,7 +52,7 @@ private class FixtureProvider(id: String = "provider", private val project: (Pro
     override fun scriptGraph(context: ProjectBuildContext, request: ScriptGraphRequest) = script(context, request)
 }
 
-private class Contributor(id: String, private val add: (ProjectBuildContext, ProjectActionGraph) -> List<ActionNode>) :
+private class Contributor(id: String, override val graphDependencies: Set<String> = emptySet(), private val add: (ProjectBuildContext, ProjectActionGraph) -> List<ActionNode>) :
     AdditivePlugin(id), ProjectGraphContributor {
     override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph) = add(context, graph)
     override fun actions(project: JsonValue.Object): List<ActionNode> = error("Typed contributors must not use the legacy callback")
@@ -63,7 +63,7 @@ class BuildPluginsTest {
         val context = pluginContext()
         val output = fileOutput("assets.bin", "generated-data")
         var publications = 0
-        val publisher = object : AdditivePlugin("a.producer"), ProjectGraphContributor {
+        val publisher = object : AdditivePlugin("z.producer"), ProjectGraphContributor {
             override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph) =
                 listOf(ActionNode("producer:assets", emptySet(), ActionOutputContract(output)) {
                     pluginNode("assets").resolve(emptyMap()).copy(outputs = listOf(output.path))
@@ -74,7 +74,7 @@ class BuildPluginsTest {
                 return listOf(ProjectArtifact("app", "jvm", "main", "producer:assets", output))
             }
         }
-        val consumer = Contributor("z.consumer") { _, graph ->
+        val consumer = Contributor("a.consumer", setOf("z.producer")) { _, graph ->
             val artifact = graph.requireArtifact("app", "jvm", "main", "generated-data")
             listOf(ActionNode("consumer:assets", setOf(artifact.producer)) { results ->
                 pluginNode("consumer").resolve(emptyMap()).copy(inputs = artifact.manifest(results, LogicalPath("input/data.bin")))
@@ -348,6 +348,77 @@ class BuildPluginsTest {
         calls.clear()
         assertEquals(graph.nodes.map { it.id }, composedProjectActionGraph(listOf(first, second, provider), context, pluginRequest).nodes.map { it.id })
         assertEquals(listOf("provider", "a", "z"), calls)
+    }
+
+    @Test fun graphDependenciesOrderTransitiveAndLegacyCallbacksWithStableReadyIds() {
+        val calls = mutableListOf<String>()
+        val provider = FixtureProvider(project = { _, _ -> calls += "provider"; pluginGraph() })
+        fun contributor(id: String, dependencies: Set<String> = emptySet()) = object : AdditivePlugin(id), ProjectGraphContributor {
+            override val graphDependencies = dependencies
+            override fun contribute(context: ProjectBuildContext, graph: ProjectActionGraph): List<ActionNode> {
+                calls += id
+                return emptyList()
+            }
+            override fun artifacts(context: ProjectBuildContext, graph: ProjectActionGraph): List<ProjectArtifact> {
+                calls += "$id:artifacts"
+                return emptyList()
+            }
+        }
+        val a = contributor("a", setOf("z", "provider"))
+        val b = contributor("b")
+        val y = contributor("y")
+        val z = object : AdditivePlugin("z") {
+            override val graphDependencies = setOf("y")
+            override fun actions(project: JsonValue.Object): List<ActionNode> {
+                calls += "z"
+                return emptyList()
+            }
+        }
+        for (registry in listOf(listOf(a, b, y, z, provider), listOf(provider, z, y, b, a))) {
+            calls.clear()
+            composedProjectActionGraph(registry, pluginContext(), pluginRequest)
+            assertEquals(listOf("provider", "b", "b:artifacts", "y", "y:artifacts", "z", "a", "a:artifacts"), calls)
+        }
+        assertEquals(listOf("provider", "z"), a.descriptor().values.getValue("graphDependencies").arrayValue().map { it.stringValue() })
+        assertEquals(emptyList(), b.descriptor().values.getValue("graphDependencies").arrayValue())
+    }
+
+    @Test fun invalidPluginDependenciesFailBeforeGraphAndGenerationCallbacks() {
+        var called = false
+        val provider = FixtureProvider(project = { _, _ -> called = true; pluginGraph() })
+        fun plugin(id: String, dependencies: Set<String>) = object : AdditivePlugin(id), ProjectGenerationContributor, ConfigurableBuildPlugin {
+            override val graphDependencies = dependencies
+            override val settingsSchema = obj()
+            override fun validateSettings(settings: JsonValue.Object) { called = true }
+            override fun generatedInputs(context: ProjectBuildContext): ProjectGeneratedInputs {
+                called = true
+                return ProjectGeneratedInputs()
+            }
+        }
+        val cases = listOf(
+            listOf(provider, plugin("a", setOf("missing"))) to "Unknown graph dependency for build plugin a: missing",
+            listOf(provider, plugin("a", setOf("a"))) to "a -> a",
+            listOf(provider, plugin("a", setOf("b")), plugin("b", setOf("c")), plugin("c", setOf("a"))) to "a -> b -> c -> a",
+        )
+        for ((plugins, message) in cases) {
+            assertContains(assertFailsWith<IllegalArgumentException> {
+                composedProjectActionGraph(plugins, pluginContext(), pluginRequest)
+            }.message.orEmpty(), message)
+            assertFalse(called)
+            assertFails { composedScriptActionGraph(plugins, pluginContext(), ScriptGraphRequest("task")) }
+            assertFalse(called)
+        }
+        val dependentProvider = object : AdditivePlugin("provider"), ProjectBuildPlugin {
+            override val graphDependencies = setOf("a")
+            override fun projectGraph(context: ProjectBuildContext, request: ProjectGraphRequest): ProjectActionGraph {
+                called = true
+                return pluginGraph()
+            }
+            override fun scriptGraph(context: ProjectBuildContext, request: ScriptGraphRequest): ProjectActionGraph = error("Not called")
+        }
+        assertContains(assertFails { composedProjectActionGraph(listOf(dependentProvider, plugin("a", emptySet())),
+            pluginContext(), pluginRequest) }.message.orEmpty(), "provider runs first")
+        assertFalse(called)
     }
 
     @Test fun legacyActionsReceiveAuthoringProjectAndDefaultActionsRemainEmpty() {

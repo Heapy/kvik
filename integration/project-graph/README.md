@@ -56,10 +56,29 @@ classpath graph and describes the compiler classpath. Custom providers can decla
 additional kinds and compilation names. `inspect-graph` exposes the same references
 in its `artifacts` array.
 
+`BuildPlugin.graphDependencies` declares required plugin IDs whose graph callbacks
+must finish before this plugin's callbacks. It defaults to an empty set. Composition
+validates these declarations before invoking settings, generator or provider callbacks,
+then runs the provider first and orders additional callbacks topologically, using the
+smallest ready plugin ID as the tie-breaker. This also covers legacy `actions(...)`
+and instrumentation-only plugins. Self-dependencies, cycles (reported with their
+path), unknown IDs and a provider depending on a contributor are rejected.
+
+```kotlin
+override val graphDependencies = setOf("example.assets")
+```
+
+The dependency makes the producer's actions, instrumentation and published artifacts
+visible to the consumer. It does not insert action edges: the consumer still declares
+the selected artifact's `producer` in its action dependencies. It also does not select
+unused generators, order pre-provider generation declarations or acquire plugin
+sources. Declare static, pure plugin IDs here and source-package dependencies in the
+runtime source graph. Project builds and scripts use the same ordering;
+`runtime-info.plugins[].graphDependencies` exposes the declared IDs in sorted order.
+
 A `ProjectGraphContributor` can override `artifacts(context, graph)` to publish its
 own outputs. This optional callback runs once after that plugin's graph and
-instrumentation contributions; the next plugin (in plugin-ID order) sees the new
-references. The callback is pure and receives the updated graph, including its own
+instrumentation contributions; later plugins in dependency order see the new references. The callback is pure and receives the updated graph, including its own
 actions. Existing contributors default to no publications.
 
 ```kotlin
@@ -123,7 +142,7 @@ provide those prerequisite actions. The input resolver receives only its declare
 prerequisites and returns a manifest of agent JARs and supporting files; the
 executor materializes their verified CAS contents. Instrumentation preserves the
 original checks, classes, classpath, resource budget and timeout. Contributors run
-in plugin-ID order, and later contributors see earlier instrumentation.
+in graph dependency order, and later contributors see earlier instrumentation.
 
 An agent's options are ordered `JvmAgentOption` fragments. `LITERAL` fragments are
 passed unchanged; `INPUT_FILE` and `OUTPUT_FILE` fragments become paths beneath
