@@ -1,17 +1,32 @@
 package kvik.cli
 
+import kvik.core.NativeTarget
+
 /** Physical roots and libraries have already been prepared and checked by the export boundary. */
 internal data class IdeaRoot(val path: String, val resource: Boolean = false, val generated: Boolean = false)
-internal data class IdeaLibrary(val name: String, val path: String)
+internal data class IdeaLibrary(val name: String, val path: String, val common: Boolean = false)
+internal sealed interface IdeaPlatform {
+    data class Jvm(val target: Int) : IdeaPlatform {
+        init { require(target in setOf(11, 17, 21, 25)) }
+    }
+    /** The intersection of the actual consuming targets, including intermediate source sets. */
+    data class Common(val targets: Set<String>, val jvmTarget: Int = 17) : IdeaPlatform {
+        init {
+            require(targets.size >= 2 && targets.all { it in setOf("jvm", "js", "wasmJs") || NativeTarget.find(it) != null })
+            Jvm(jvmTarget)
+        }
+    }
+}
 internal data class IdeaCompilation(
     val name: String,
     val roots: List<IdeaRoot>,
     val modules: List<String>,
     val libraries: List<IdeaLibrary>,
-    val jvmTarget: Int,
+    val platform: IdeaPlatform,
     val compilerArguments: List<String>,
     val friend: String? = null,
     val test: Boolean = false,
+    val refines: List<String> = emptyList(),
 )
 internal data class IdeaRun(val name: String, val arguments: List<String>, val directory: String)
 
@@ -20,6 +35,32 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
     require(sdk.isNotBlank() && compilations.isNotEmpty())
     val names = compilations.map { it.name }.toSet()
     require(names.size == compilations.size && names.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) })
+    val byName = compilations.associateBy { it.name }
+    fun targets(c: IdeaCompilation): Set<String> = when (val platform = c.platform) {
+        is IdeaPlatform.Jvm -> setOf("jvm")
+        is IdeaPlatform.Common -> platform.targets
+    }
+    // IDEA needs the complete refinement closure, with ordinary module edges as well.
+    // Keep ordinary library dependencies separate: they must not grant internal visibility.
+    fun refinements(c: IdeaCompilation): List<String> {
+        val reached = linkedSetOf<String>()
+        val visiting = mutableSetOf(c.name)
+        fun visit(owner: IdeaCompilation) {
+            require(owner.refines.distinct().size == owner.refines.size)
+            for (name in owner.refines) {
+                val parent = byName[name] ?: error("Unknown IDEA refinement: $name")
+                require(parent.platform is IdeaPlatform.Common && targets(parent).containsAll(targets(owner))) {
+                    "IDEA refinement has incompatible targets: ${owner.name} -> $name"
+                }
+                require(visiting.add(name)) { "Cyclic IDEA refinement: $name" }
+                if (reached.add(name)) visit(parent)
+                visiting.remove(name)
+            }
+        }
+        visit(c)
+        return reached.toList()
+    }
+    val refinementClosures = compilations.associate { it.name to refinements(it) }
     require(runs.map { it.name }.distinct().size == runs.size)
     val files = linkedMapOf<String, String>()
     files[".idea/modules.xml"] = ideaXml("project", "version" to "4") {
@@ -37,32 +78,63 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
             "project-jdk-name" to sdk, "project-jdk-type" to "JavaSDK")
     }
     for (c in compilations) {
-        require(c.jvmTarget in setOf(11, 17, 21, 25))
+        val jvm = c.platform as? IdeaPlatform.Jvm
+        val common = c.platform as? IdeaPlatform.Common
+        val refined = refinementClosures.getValue(c.name)
+        val multiplatform = common != null || refined.isNotEmpty()
+        val moduleEdges = (c.modules + refined).distinct()
         require(c.modules.distinct().size == c.modules.size && c.modules.all { it in names && it != c.name })
-        require(c.friend == null || c.friend in c.modules)
+        if (common != null) require(c.modules.all { dependency ->
+            val other = byName.getValue(dependency)
+            other.platform is IdeaPlatform.Common && targets(other).containsAll(common.targets)
+        }) { "Common IDEA sources cannot depend on platform-specific modules" }
+        require(c.friend == null || c.friend in moduleEdges)
         require(c.roots.map { it.path }.distinct().size == c.roots.size)
         c.roots.forEach { ideaPath(it.path) }
-        c.libraries.forEach { ideaPath(it.path); require(it.path.endsWith(".jar")) }
+        c.libraries.forEach {
+            ideaPath(it.path)
+            require(it.common == (common != null) && it.path.endsWith(if (it.common) ".klib" else ".jar")) {
+                "IDEA libraries must match the source platform"
+            }
+        }
         files[".idea/modules/${c.name}.iml"] = ideaXml("module", "type" to "JAVA_MODULE", "version" to "4") {
             element("component", "name" to "FacetManager") {
                 element("facet", "type" to "kotlin-language", "name" to "Kotlin") {
-                    element("configuration", "version" to "5", "platform" to "JVM ${c.jvmTarget}",
-                        "allPlatforms" to "JVM [${c.jvmTarget}]", "useProjectSettings" to "false") {
+                    val platforms = common?.targets?.map { target -> when (target) {
+                        "jvm" -> "JVM [${common.jvmTarget}]"
+                        "js" -> "JS []"
+                        "wasmJs" -> "wasm-js [JS]"
+                        else -> "Native [${NativeTarget.require(target).compilerName}]"
+                    } }?.sorted()?.joinToString("/") ?: "JVM [${checkNotNull(jvm).target}]"
+                    val attributes = listOf("version" to "5", "platform" to if (common != null) "Common (experimental) " else "JVM ${jvm!!.target}",
+                        "allPlatforms" to platforms, "useProjectSettings" to "false") +
+                        if (multiplatform) listOf("isHmppProject" to "true", "isTestModule" to c.test.toString()) else emptyList()
+                    element("configuration", *attributes.toTypedArray()) {
+                        if (multiplatform) textElement("newMppModelJpsModuleKind",
+                            if (common != null) "SOURCE_SET_HOLDER" else "COMPILATION_AND_SOURCE_SET_HOLDER")
+                        if (refined.isNotEmpty()) element("dependsOnModuleNames") {
+                            refined.forEach { textElement("dependsOn", it) }
+                        }
                         c.friend?.let { textElement("additionalVisibleModuleNames", it) }
                         element("compilerSettings") {
                             element("option", "name" to "additionalArguments", "value" to c.compilerArguments.joinToString(" ", transform = ::ideaArgument))
                         }
                         element("compilerArguments") {
                             element("stringArguments") {
-                                element("stringArg", "name" to "jvmTarget", "arg" to c.jvmTarget.toString())
+                                jvm?.let { element("stringArg", "name" to "jvmTarget", "arg" to it.target.toString()) }
                                 element("stringArg", "name" to "languageVersion", "arg" to "2.4")
                                 element("stringArg", "name" to "apiVersion", "arg" to "2.4")
+                            }
+                            if (multiplatform) element("booleanArguments") {
+                                element("booleanArg", "name" to "multiPlatform", "arg" to "true")
                             }
                         }
                     }
                 }
             }
-            element("component", "name" to "NewModuleRootManager", "LANGUAGE_LEVEL" to "JDK_${c.jvmTarget}", "inherit-compiler-output" to "true") {
+            val rootAttributes = listOf("name" to "NewModuleRootManager", "inherit-compiler-output" to "true") +
+                (jvm?.let { listOf("LANGUAGE_LEVEL" to "JDK_${it.target}") } ?: emptyList())
+            element("component", *rootAttributes.toTypedArray()) {
                 element("exclude-output")
                 for (root in c.roots) element("content", "url" to "file://${root.path}") {
                     val attributes = mutableListOf("url" to "file://${root.path}")
@@ -71,13 +143,14 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
                     if (root.generated) attributes += "generated" to "true"
                     element("sourceFolder", *attributes.toTypedArray())
                 }
-                element("orderEntry", "type" to "inheritedJdk")
+                if (jvm != null) element("orderEntry", "type" to "inheritedJdk")
                 element("orderEntry", "type" to "sourceFolder", "forTests" to "false")
                 // Each compilation contains its exact visibility closure. Re-exporting these edges
                 // would expose private dependencies to other compilations through IDEA traversal.
-                c.modules.forEach { element("orderEntry", "type" to "module", "module-name" to it) }
+                moduleEdges.forEach { element("orderEntry", "type" to "module", "module-name" to it) }
                 for (library in c.libraries) element("orderEntry", "type" to "module-library") {
-                    element("library", "name" to library.name) {
+                    val libraryAttributes = listOf("name" to library.name) + if (library.common) listOf("type" to "kotlin.common") else emptyList()
+                    element("library", *libraryAttributes.toTypedArray()) {
                         element("CLASSES") { element("root", "url" to "jar://${library.path}!/") }
                         element("JAVADOC")
                         element("SOURCES")

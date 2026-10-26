@@ -52,7 +52,8 @@ public final class KvikReferenceProbe extends LocalInspectionTool {
             @Override public void visitElement(PsiElement element) {
                 if (!element.getClass().getName().equals("org.jetbrains.kotlin.psi.KtNameReferenceExpression")) return;
                 String name = element.getText();
-                if (!java.util.Set.of("missingSymbol", "String", "answer", "baseValue", "hiddenValue", "generatedValue").contains(name)) return;
+                if (!java.util.Set.of("missingSymbol", "String", "answer", "baseValue", "hiddenValue", "generatedValue",
+                    "listOf", "first", "platformName", "sharedValue", "commonValue", "secret").contains(name)) return;
                 var references = PsiReferenceService.getService().getReferences(element, PsiReferenceService.Hints.NO_HINTS);
                 String result = references.isEmpty() ? "NO_REFERENCES" : "RESOLVED";
                 for (PsiReference reference : references) if (reference.resolve() == null) result = "UNRESOLVED";

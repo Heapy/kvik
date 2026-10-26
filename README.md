@@ -282,7 +282,7 @@ model under the run's `ide/<module>/model.json`, with ordinary files under `inpu
 The `ide-inputs-ready` event identifies that directory. Preparation is a separate
 check from compilation or tests. Its model has a versioned `ideInputs` JSON Schema.
 
-This is an initial JVM adapter. Common-source refinement, Native/JS/Wasm editor
+This is an initial JVM adapter. Common-source metadata preparation, Native/JS/Wasm editor
 models, compiler-plugin analysis, debugging and live project-model reload remain
 pending. `idea-export` rejects unsupported common roots and compiler plugins;
 `prepare-ide` preserves their ownership/presence in the intermediate model.
@@ -295,6 +295,12 @@ checks the resulting project with installed IDEA's Kotlin resolver and diagnosti
 in an isolated headless profile. The current inspector fixture is pinned to IDEA
 build `263.7307.44`; it explicitly refreshes source roots and imports model changes
 as new projects, so it does not establish live GUI model reload.
+
+The same import harness accepts `--common-stdlib PATH_TO_STDLIB_ALL_JAR` to test
+the common-source renderer with a transitive refinement chain and extracted KLIB
+metadata. It checks `expect`/`actual`, internal visibility, and rejection of JVM
+APIs from common code. Connecting this projection to locked, per-source-set
+metadata preparation in `idea-export` remains pending.
 
 ### Configuration changes
 

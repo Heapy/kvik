@@ -20,7 +20,9 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--stdlib', type=Path, required=True)
     parser.add_argument('--prepared-case', type=Path, help='Passed test_idea_export_cli.py case to import instead of the renderer fixture')
+    parser.add_argument('--common-stdlib', type=Path, help='Pinned stdlib metadata root JAR for the common refinement renderer fixture')
     args = parser.parse_args()
+    assert not (args.prepared_case and args.common_stdlib), 'Use either the CLI export or common renderer fixture'
     idea, java, native, stdlib = [p.resolve(strict=True) for p in (args.idea_home, args.java_home, args.konan_home, args.stdlib)]
     product = json.loads((idea/'Resources/product-info.json').read_bytes())
     assert product['buildNumber'] == '263.7307.44', 'Update and verify the test inspector against this IDE version first'
@@ -31,6 +33,14 @@ def main():
     project, workspace = case/'project-normal', case/'workspace ü # % &'
     project.mkdir(); workspace.mkdir()
     prepared = None
+    common_library = None
+    if args.common_stdlib:
+        # Fixture setup only: production preparation must select fragments from locked metadata.
+        common_library = case/'stdlib-common.klib'
+        with zipfile.ZipFile(args.common_stdlib) as archive, zipfile.ZipFile(common_library, 'w') as output:
+            for entry in archive.infolist():
+                if entry.filename.startswith('commonMain/') and not entry.is_dir():
+                    output.writestr(entry.filename.removeprefix('commonMain/'), archive.read(entry))
     if args.prepared_case:
         prepared = json.loads((args.prepared_case/'summary.json').read_bytes())
         assert prepared['passed']
@@ -45,7 +55,8 @@ def main():
         return (case/f'{label}.stdout').read_text()
 
     if prepared is None:
-        run('compile-renderer', [native/'bin/konanc', ROOT/'cli/src/kvik/cli/IdeaProjectFiles.kt', ROOT/'tests/idea/ProjectFixture.kt',
+        run('compile-renderer', [native/'bin/konanc', ROOT/'core/src/kvik/core/NativeTarget.kt',
+            ROOT/'cli/src/kvik/cli/IdeaProjectFiles.kt', ROOT/'tests/idea/ProjectFixture.kt',
             '-entry', 'kvik.cli.main', '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-o', case/'fixture'])
 
     def export(mode=None):
@@ -63,14 +74,15 @@ def main():
                 facet.remove(facet.find('additionalVisibleModuleNames'))
                 document.write(path, encoding='utf-8', xml_declaration=True)
             return
-        output = run('render-' + (mode or 'normal'), [case/'fixture.kexe', workspace, stdlib, *([mode] if mode else [])])
+        extra = [mode or 'normal', common_library] if common_library else ([mode] if mode else [])
+        output = run('render-' + (mode or 'normal'), [case/'fixture.kexe', workspace, stdlib, *extra])
         for line in output.splitlines():
             name, content = line.split('\t')
             path = project/name
             assert path.is_relative_to(project) and '..' not in path.parts
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(bytes.fromhex(content))
-        for name in ('hidden', 'base', 'app', 'tests'):
+        for name in ('hidden', 'base', 'app', 'tests', 'common', 'shared'):
             (workspace/name).mkdir(exist_ok=True)
 
     export()
@@ -79,6 +91,14 @@ def main():
         (workspace/'base/Base.kt').write_text('package base\nimport hidden.hiddenValue\nfun baseValue(): String = hiddenValue()\n')
     source = workspace/'app/App.kt'
     good = source.read_text() if prepared else 'package app\nimport base.baseValue\ninternal fun answer(): String = baseValue()\n'
+    if common_library:
+        common_source = workspace/'common/Common.kt'
+        common_good = ('package app\nexpect fun platformName(): String\ninternal fun secret(): String = "secret"\n'
+                       'fun commonValue(): String = listOf("common").first()\n')
+        common_source.write_text(common_good)
+        (workspace/'shared/Shared.kt').write_text('package app\nfun sharedValue(): String = commonValue() + secret()\n')
+        good += ('actual fun platformName(): String = java.lang.System.getProperty("os.name")\n'
+                 'fun useCommon(): String = platformName() + sharedValue() + secret()\n')
     source.write_text(good + 'fun broken(): String = missingSymbol()\n')
     if prepared is None:
         (workspace/'tests/Tests.kt').write_text('package app\nfun checkAnswer(): String = answer()\n')
@@ -133,6 +153,9 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
         assert any('KVIK_REFERENCE baseValue RESOLVED' == message for _, message in values), values
         if prepared:
             assert any('KVIK_REFERENCE generatedValue RESOLVED' == message for _, message in values), values
+        if common_library:
+            for name in ('listOf', 'first', 'platformName', 'sharedValue', 'commonValue'):
+                assert any(f'KVIK_REFERENCE {name} RESOLVED' == message for _, message in values), (name, values)
         settings = [text.split('|') for _, text in values if text.startswith('KVIK_RUN_CONFIGURATION|')]
         assert {s[1] for s in settings} == ({'Kvik build', 'Kvik test'} if prepared else {'Kvik quoted command'}), settings
         for setting in settings:
@@ -155,13 +178,27 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
     export('restored')
     restored = inspect('restored')
     assert restored == [], restored
+    phases = ['broken', 'repaired', 'private-edge', 'without-friend', 'restored']
+    if common_library:
+        common_source.write_text(common_good + 'fun platformLeak(): String = java.lang.System.getProperty("os.name")\n')
+        leak = inspect('common-platform-leak')
+        assert len(leak) == 1 and 'Common.kt' in leak[0][0] and "'java'" in leak[0][1], leak
+        common_source.write_text(common_good)
+        export('without-refinement')
+        refinement = inspect('without-refinement')
+        assert len(refinement) == 2 and all('App.kt' in file for file, _ in refinement), refinement
+        assert any("no corresponding 'expect'" in text for _, text in refinement), refinement
+        assert any('secret' in text and 'internal' in text for _, text in refinement), refinement
+        export('refinement-restored')
+        assert inspect('refinement-restored') == []
+        phases += ['common-platform-leak', 'without-refinement', 'refinement-restored']
     if prepared is None:
         output = run('quoted-command', ['/bin/sh', project/'.idea/kvik-command-0.sh'])
         assert output == "quote' dollar$ backtick` space & < >", output
     (case/'summary.json').write_text(json.dumps(dict(passed=True, build=product['buildNumber'],
-        phases=['broken', 'repaired', 'private-edge', 'without-friend', 'restored'],
+        phases=phases,
         modelRefresh='new-project-import', sourceRefresh='explicit-content-root-refresh',
-        projectSource='native-cli-export' if prepared else 'native-renderer-fixture'), indent=2) + '\n')
+        projectSource='native-cli-export' if prepared else 'native-common-renderer-fixture' if common_library else 'native-renderer-fixture'), indent=2) + '\n')
     print('Passed:', case, flush=True)
 
 

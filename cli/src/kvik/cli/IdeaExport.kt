@@ -51,7 +51,7 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
         "IDEA compiler-plugin analysis is not implemented; prepare-ide retains the model without claiming editor plugin support"
     }
     require(compilations.none { c -> c.roots.any { it.common } }) {
-        "IDEA common-source refinement is not implemented; prepare-ide retains source-set ownership for a future multiplatform import"
+        "IDEA common metadata preparation is not implemented; prepare-ide retains source-set ownership for a future multiplatform import"
     }
     val data = TreeManifest(actions.flatMap { action -> action.outputs.files.filter { it.path.value.startsWith("ide/input/") }.map {
         it.copy(path = LogicalPath(it.path.value.removePrefix("ide/input/")))
@@ -70,7 +70,7 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
         IdeaCompilation(c.name, c.roots.map { root -> IdeaRoot(
             if (root.generated) "$output/inputs/${root.path.value}" else "${project.root}/${root.path.value}", root.resource, root.generated) },
             c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}") },
-            jvmTargetFromOptions(c.compilerOptions), c.compilerOptions,
+            IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)), c.compilerOptions,
             if (c.compilation == "test") "${c.module}.main" else null, test = c.compilation == "test")
     }
     val files = ideaProjectFiles(sdk, projected, runs)
