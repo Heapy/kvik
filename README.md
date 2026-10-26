@@ -1263,7 +1263,16 @@ answers, transcripts, tool fingerprints, verification and per-role measurements.
 They distinguish agent time from independent verification, returned command bytes
 from provider token usage, successful/failed compilation actions from process
 counts, and repository storage from materialized bytes. Integration-agent costs
-include merge and repair effort. Explicit Kode index construction is measured
+include merge and repair effort. Per-role command journals also record observed
+logical provider-store growth at each edit boundary. Git intervals include staging
+costs before a commit; Kode transactions and merges are recorded separately.
+Failed/no-op commands and trailing costs remain visible. Missing or malformed
+records, overlapping commands and inventory failures mark attribution incomplete.
+This is net logical file growth, not exact causal allocation or filesystem-wide
+storage; transient bypasses remain a limitation. Cumulative observation durations
+are reported but can overlap, so they cannot be subtracted from elapsed time.
+Instrumented agent timings are separate from the historical trial below.
+Explicit Kode index construction is measured
 after the trial, with first and second calls reported separately; the first call
 is not assumed cold. Model calls are never part of automatic CI; CI runs only
 the grading and accounting regression tests.
@@ -1290,8 +1299,9 @@ Kode took more agent time in all six pairs: 25.9% more in aggregate, with 19.8%
 more tool calls. Integration-agent time alone was 407.150 s for Git and 438.031 s
 for Kode. The six explicit Kode index measurements built 12 blobs on their first
 call and reused all 12 on their second; median latency was 125.51/31.10 ms, outside
-agent timing. This does not compare Git search latency. Storage deltas cover whole
-roles rather than individual CLI edits; finer per-edit attribution remains open.
+agent timing. This does not compare Git search latency. These historical storage
+deltas cover whole roles; the later per-edit instrumentation does not retroactively
+attribute their individual edits.
 
 These results demonstrate the bounded revision/edit/test/merge workflow, but do
 not demonstrate better reliability or lower cost than Git. Keep Kode as an
