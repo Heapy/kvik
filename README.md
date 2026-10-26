@@ -1318,6 +1318,27 @@ more agent time and tool calls. The retained run is
 `.kvik/tests/workspace-agent-comparison/case-n9gmbbwq/comparison.json`
 (SHA-256 `af37fd7efa7e54402eec1343968fd58ef9550a0309e4c4b961c5320705fa2cbb`).
 
+A subsequent instrumented disjoint-change pair completed six independently
+verified agent roles with complete storage reconciliation. It measures two author
+edits and two integration merge transitions per backend:
+
+| Observed net logical store growth | Git | Kode |
+| --- | ---: | ---: |
+| Author edit intervals | 2,709 B | 2,025 B |
+| Integration merge intervals | 1,673 B | 930 B |
+| Trailing provider operations | 0 B | 2,346 B |
+| Total across the three roles | 4,382 B | 5,301 B |
+
+The Kode journal includes provider calls made by builds, including retention.
+All role totals equal their edit/merge intervals plus trailing costs. The run
+retains 38 Git and 82 Kode provider commands, including unsuccessful optional Git
+configuration probes. Cumulative observation durations are 3.52/7.48 s; these
+include concurrent observations and are not subtractable wall-time overhead.
+This single pair validates the accounting on assigned tasks, not a general
+storage advantage. Historical results remain unchanged. The preceding diagnostic
+trial also verified all six agent results, but correctly retained incomplete
+storage accounting; it is excluded from this table.
+
 For real agent workflow trials against KTC 0.13.0, prepare the shared two-module
 JVM fixture and explicitly opt in to model calls:
 
@@ -1447,7 +1468,7 @@ These results do not justify replacing KTC generally or claiming broad KMP
 compatibility. Total maintenance cost versus extending KTC has not been measured;
 structured inspection and freshness contracts remain candidates for reuse there.
 The prototype assessment does not close the separate extension work, including
-K17's per-edit storage attribution or the performance follow-ups tracked in
+broader K17 comparisons or the performance follow-ups tracked in
 [implementation status](docs/STATUS.md).
 
 The runtime/foreground functional audit now covers all eight mandatory cases.
