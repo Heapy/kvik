@@ -286,6 +286,8 @@ class CrossMachineGateTests(unittest.TestCase):
                 '--baseline', str(baseline), '--allow-same-host']
         with patch.object(sys, 'argv', argv), patch.dict(os.environ, GATE_TEST_TOKEN='secret-for-test'), \
              patch.object(gate, 'machine_identity', return_value=self.machine), \
+             patch.object(gate, 'performance_environment', return_value={}), \
+             patch.object(gate, 'measure_run', return_value={'invocationWallNanos': 123}), \
              patch.object(gate, 'run', return_value=gate.subprocess.CompletedProcess([], 0, b'', b'')), \
              patch.object(gate, 'inspect_run', return_value=observed), contextlib.redirect_stdout(io.StringIO()):
             gate.main()
@@ -293,6 +295,8 @@ class CrossMachineGateTests(unittest.TestCase):
         self.assertFalse(value['crossMachineGatePassed'])
         self.assertEqual(value['scope'], 'same-host/non-cross-machine')
         self.assertEqual(gate.document(new_output / 'remote-cache.json')['mode'], 'read')
+        self.assertEqual(value['performance'], {'invocationWallNanos': 123})
+        self.assertIsNone(value['writerPerformance'])  # Older baselines remain readable.
 
     def test_snapshot_on_another_machine_does_not_claim_shared_service_gate(self):
         output, _, _ = self.retained_run()
@@ -313,6 +317,8 @@ class CrossMachineGateTests(unittest.TestCase):
                 '--tools', str(tools), '--remote-cache', str(self.config_path), '--output', str(new_output),
                 '--baseline', str(baseline), '--cache-snapshot', str(archive)]
         with patch.object(sys, 'argv', argv), patch.object(gate, 'machine_identity', return_value=self.machine), \
+                patch.object(gate, 'performance_environment', return_value={}), \
+                patch.object(gate, 'measure_run', return_value={}), \
                 patch.object(gate, 'run', return_value=gate.subprocess.CompletedProcess([], 0, b'', b'')), \
                 patch.object(gate, 'inspect_run', return_value=observed), contextlib.redirect_stdout(io.StringIO()):
             gate.main()
@@ -320,6 +326,33 @@ class CrossMachineGateTests(unittest.TestCase):
         self.assertEqual(value['scope'], 'cross-machine-cache-snapshot')
         self.assertTrue(value['crossMachineSnapshotPassed'])
         self.assertFalse(value['crossMachineGatePassed'])
+
+    def test_measurement_requires_matching_complete_committed_statistics(self):
+        output, run, record = self.retained_run()
+        record['runId'] = 'run-one'
+        gate.write_json(run / 'verification.json', record)
+        stats = dict(runId='run-one', status='passed', testCounts=record['testCounts'],
+                     timing={'coverage': 'complete'}, remoteCache={'coverage': 'complete'},
+                     inputCapture={'durationNanos': 15}, actions={}, processUsage={}, slowestActions=[])
+        def invoke(value, code=0):
+            with patch.object(gate, 'run', return_value=gate.subprocess.CompletedProcess(
+                    [], code, gate.canonical(value), b'')) as query:
+                measured = gate.measure_run(self.runtime, output, 100, {'cpuModel': 'fixture'}, 'secret')
+            query.assert_called_once_with([str(self.runtime), 'run-stats', '--run', str(run)], 30)
+            return measured
+        measured = invoke(stats)
+        self.assertEqual(measured['invocationWallNanos'], 100)
+        self.assertEqual(measured['inputCapture']['durationNanos'], 15)
+        self.assertEqual(measured['environment'], {'cpuModel': 'fixture'})
+        self.assertEqual(measured['sampleCount'], 1)
+        for change in ({'runId': 'another-run'}, {'status': 'failed'}, {'testCounts': {}},
+                       {'timing': {'coverage': 'partial'}}, {'remoteCache': {'coverage': 'unavailable'}}):
+            with self.subTest(change=change), self.assertRaises(gate.GateError):
+                invoke(dict(stats, **change))
+        with self.assertRaisesRegex(gate.GateError, 'Cannot validate'):
+            invoke(stats, code=3)
+        with self.assertRaisesRegex(gate.GateError, 'Credential'):
+            invoke(dict(stats, diagnostic='secret'))
 
 
 if __name__ == '__main__':

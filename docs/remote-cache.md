@@ -91,6 +91,17 @@ outputs. The writer must compile all three fixture compilations; the reader must
 restore all three remotely with identical action keys and output manifests. Both
 must execute tests freshly.
 
+The baseline and reader result also retain `performance` for the provisioned test
+invocation; the reader includes `writerPerformance` when its baseline provides it.
+Measurements include wall time, host CPU/memory capacity and software version,
+input capture/hashing, action outcomes and timings, remote requests/bytes/operation
+time, and measured child CPU/peak RSS. They come from the public `run-stats` query
+after validating the committed journal. Provisioning, fixture copying and post-run
+validation are outside invocation wall time. Each phase is one sample on its own
+host: operation times can overlap, child peak RSS is not total concurrent memory,
+unavailable CPU/model or memory capacity is recorded as null, and a
+cold-writer/remote-reader pair does not establish a general speedup.
+
 The reader compares hashed hardware identifiers and rejects the writer's host by
 default. For local harness development, `--allow-same-host` permits a same-host
 reader and explicitly records that the cross-machine gate did not pass. A local

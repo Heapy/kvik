@@ -18,6 +18,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -281,6 +282,50 @@ def inspect_run(output, expected_status, composition):
                 tests=[dict(id=TEST_ID, module='consumer', target='jvm')])
 
 
+def performance_environment():
+    """Capacity describes the host, not a reservation or measured process usage."""
+    model, memory = None, None
+    if platform.system() == 'Darwin':
+        result = run(['/usr/sbin/sysctl', '-n', 'machdep.cpu.brand_string', 'hw.memsize'], 10)
+        values = result.stdout.decode(errors='replace').splitlines()
+        if result.returncode == 0 and len(values) == 2 and values[1].isdigit():
+            model, memory = values[0], int(values[1])
+    elif platform.system() == 'Linux':
+        for line in Path('/proc/cpuinfo').read_text().splitlines():
+            if line.startswith('model name'):
+                model = line.split(':', 1)[1].strip()
+                break
+        match = re.search(r'^MemTotal:\s+(\d+) kB$', Path('/proc/meminfo').read_text(), re.MULTILINE)
+        if match:
+            memory = int(match.group(1)) * 1024
+    return dict(os=platform.system(), osRelease=platform.release(), architecture=platform.machine(),
+                cpuModel=model, logicalCpuCount=os.cpu_count(), hostMemoryBytes=memory,
+                harnessPython=platform.python_version())
+
+
+def measure_run(runtime, output, elapsed_nanos, environment, token):
+    """Use the public query so statistics come from a validated, committed journal."""
+    records = list((output / 'runs').glob('*/verification.json'))
+    require(len(records) == 1, 'Performance measurement requires one verification run')
+    record = document(records[0])
+    result = run([str(runtime), 'run-stats', '--run', str(records[0].parent)], 30)
+    require(token is None or token.encode() not in result.stdout + result.stderr,
+            'Credential appeared in statistics diagnostics')
+    require(result.returncode == 0, 'Cannot validate retained run statistics')
+    statistics = json.loads(result.stdout)
+    require(statistics['runId'] == record['runId'] and statistics['status'] == record['status'] and
+            statistics['testCounts'] == record['testCounts'], 'Statistics do not match the verified run')
+    require(statistics['timing']['coverage'] == 'complete' and
+            statistics['remoteCache']['coverage'] == 'complete', 'Run timing or transfer measurements are incomplete')
+    return dict(schemaVersion=1, invocationWallNanos=elapsed_nanos, environment=environment,
+                # Preparation, post-run validation and this query are outside the timed invocation.
+                scope='provisioned-test-invocation', sampleCount=1,
+                inputCapture=statistics['inputCapture'], actions=statistics['actions'],
+                scheduler=statistics['timing'], remoteCache=statistics['remoteCache'],
+                childProcesses=statistics['processUsage'],
+                actionTimings=statistics['slowestActions'], testCounts=statistics['testCounts'])
+
+
 def cache_failure_summary(output):
     """Only fixed event codes/action IDs and numeric HTTP status; never echo raw diagnostics."""
     summary = []
@@ -353,7 +398,10 @@ def main():
     command = [str(runtime), 'test', '--project', str(project / 'kvik.json'), '--tools', str(project / 'tools.json'),
                '--module', 'consumer', '--target', 'jvm', '--jobs', '1', '--runs', str(output / 'runs'),
                '--remote-cache', str(remote_path)]
+    environment = performance_environment()
+    started = time.monotonic_ns()
     result = run(command, args.timeout)
+    elapsed_nanos = time.monotonic_ns() - started
     require(token is None or token.encode() not in result.stdout + result.stderr, 'Credential appeared in runtime diagnostics')
     # Do not echo or persist raw subprocess output: diagnostics may contain credential-bearing input.
     require(result.returncode == 0, f'Runtime test failed (exit {result.returncode}); {cache_failure_summary(output)}')
@@ -361,8 +409,10 @@ def main():
     if baseline is not None:
         require(observed == baseline['verification'], 'Reader verification identities, action keys/manifests or tests differ')
     require(inputs == input_identity(project, tools, runtime), 'Fixture inputs changed during execution')
+    performance = measure_run(runtime, output, elapsed_nanos, environment, token)
     if args.phase == 'writer':
-        value = dict(schemaVersion=1, phase='writer', machine=machine, remote=endpoint, inputs=inputs, verification=observed)
+        value = dict(schemaVersion=1, phase='writer', machine=machine, remote=endpoint, inputs=inputs,
+                     verification=observed, performance=performance)
         write_json(output / 'baseline.json', value)
         print('Writer complete; transfer baseline.json to the reader host. Cross-machine gate not yet evaluated.')
     else:
@@ -372,7 +422,8 @@ def main():
         value = dict(schemaVersion=1, phase='reader', machine=machine, writerMachine=baseline['machine'], remote=endpoint,
                      scope='cross-machine-cache-snapshot' if different_machine and snapshot else
                            'cross-machine' if passed else 'same-host/non-cross-machine',
-                     crossMachineGatePassed=passed, verification=observed)
+                     crossMachineGatePassed=passed, verification=observed,
+                     performance=performance, writerPerformance=baseline.get('performance'))
         if snapshot:
             value['cacheSnapshot'] = baseline['cacheSnapshot']
             value['crossMachineSnapshotPassed'] = different_machine
