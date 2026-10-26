@@ -178,7 +178,7 @@ def _blob_valid(path, expected):
         return False
 
 
-def _blob(cache, url, expected, offline, opener):
+def _blob(cache, url, expected, offline, opener, *, redirect_origins=None, transfer_timeout=120):
     key = expected['hash'] + '-' + str(expected['sizeBytes'])
     destination = cache / 'blobs' / key
     with _locked(cache, 'blob-' + key):
@@ -188,7 +188,8 @@ def _blob(cache, url, expected, offline, opener):
             raise ValueError(f'Missing/corrupt source blob in offline mode: {key}')
         with tempfile.TemporaryDirectory(prefix='blob-', dir=cache / 'staging') as temporary:
             staged = Path(temporary) / 'bytes'
-            download(url, expected, staged, opener=opener)
+            download(url, expected, staged, opener=opener, redirect_origins=redirect_origins,
+                     transfer_timeout=transfer_timeout)
             verified_copy(staged, None, expected, False)
             _quarantine(cache, destination)
             rename_new(staged, destination)

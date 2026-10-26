@@ -14,6 +14,7 @@ from bootstrap.pin_tools import NATIVE_DEPENDENCIES
 from bootstrap import source_graph
 from bootstrap.source_files import directory, rename_new, sync_directory, verified_copy, write_bytes
 from bootstrap.source_store import _blob, _locked, _quarantine
+from bootstrap.source_http import validate_redirect_origins
 
 LOCK_LIMIT = 1024 * 1024
 ARCHIVE_LIMIT = 4 * 1024**3
@@ -32,8 +33,14 @@ def read_lock(path, expected, host):
     if not isinstance(entries, dict) or not entries or not set(entries) <= COMPONENTS & set(expected):
         raise ValueError('Tool archives must select downloadable components from the bootstrap toolchain lock')
     for name, entry in entries.items():
-        if not isinstance(entry, dict) or set(entry) != {'url', 'digest', 'format', 'rootPrefix', 'directory', 'tree'}:
+        required = {'url', 'digest', 'format', 'rootPrefix', 'directory', 'tree'}
+        if (not isinstance(entry, dict) or not required <= set(entry) or
+                set(entry) - required - {'redirectOrigins', 'transferTimeoutSeconds'}):
             raise ValueError('Invalid tool archive descriptor: ' + name)
+        validate_redirect_origins(entry.get('redirectOrigins', []))
+        timeout = entry.get('transferTimeoutSeconds', 900)
+        if type(timeout) is not int or not 1 <= timeout <= 3600:
+            raise ValueError('Tool archive transfer timeout must be an integer from 1 to 3600 seconds')
         source_graph._url(entry['url'])
         if '#' in entry['url']:
             raise ValueError('Tool archive URLs cannot contain fragments')
@@ -261,7 +268,9 @@ def provision(document, cache, *, offline=False, opener=None):
             except (OSError, ValueError, RuntimeError):
                 valid = False
             if not valid:
-                blob = _blob(cache, entry['url'], entry['digest'], offline, opener)
+                blob = _blob(cache, entry['url'], entry['digest'], offline, opener,
+                             redirect_origins=entry.get('redirectOrigins', []),
+                             transfer_timeout=entry.get('transferTimeoutSeconds', 900))
                 verified_copy(blob, None, entry['digest'], False)
                 with tempfile.TemporaryDirectory(prefix='tool-', dir=cache / 'staging') as temporary:
                     temporary = Path(temporary)

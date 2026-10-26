@@ -18,7 +18,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from bootstrap import launcher, tool_archives as tools
+from bootstrap import launcher, tool_archives as tools, source_store
 from bootstrap.identity import canonical, digest, inventory
 
 
@@ -167,6 +167,45 @@ class ToolArchivesTest(unittest.TestCase):
                 tools.read_lock(self.lock, {'jdk': self.tree}, self.host)
         self.assertFalse(self.cache.exists())
 
+    def test_optional_transport_policy_field_validation(self):
+        document, _ = self.fixture()
+        invalid_origins = [None, 'https://cdn.example', ['https://cdn.example']*2,
+            ['https://cdn'+str(i)+'.example' for i in range(5)],
+            ['http://cdn.example'], ['https://user:password@cdn.example'],
+            ['https://cdn.example/'], ['https://cdn.example/path'], ['https://cdn.example?'],
+            ['https://cdn.example?secret=x'], ['https://cdn.example#fragment'],
+            ['https://CDN.example'], ['https://cdn.example:443'], ['https://cdn.example:0444'],
+            ['https://cdn.example:65536'], ['https://cdn.example\n']]
+        for value in invalid_origins:
+            changed = copy.deepcopy(document)
+            changed['components']['jdk']['redirectOrigins'] = value
+            self.lock.write_bytes(canonical(changed))
+            with self.subTest(origins=value), self.assertRaises(ValueError):
+                tools.read_lock(self.lock, {'jdk': self.tree}, self.host)
+        for value in (None, True, 0, -1, 3601, '900'):
+            changed = copy.deepcopy(document)
+            changed['components']['jdk']['transferTimeoutSeconds'] = value
+            self.lock.write_bytes(canonical(changed))
+            with self.subTest(timeout=value), self.assertRaises(ValueError):
+                tools.read_lock(self.lock, {'jdk': self.tree}, self.host)
+        for value in (1, 900, 3600):
+            changed = copy.deepcopy(document)
+            changed['components']['jdk'].update(transferTimeoutSeconds=value,
+                redirectOrigins=['https://cdn.example', 'https://cdn.example:8443', 'https://[::1]'])
+            self.lock.write_bytes(canonical(changed))
+            self.assertEqual(changed, tools.read_lock(self.lock, {'jdk': self.tree}, self.host))
+
+    def test_tool_transport_policy_reaches_download_and_default_is_900(self):
+        for options, expected_origins, expected_timeout in (({}, [], 900),
+                ({'redirectOrigins': ['https://cdn.example'], 'transferTimeoutSeconds': 1800}, ['https://cdn.example'], 1800)):
+            document, opener = self.fixture()
+            document['components']['jdk'].update(options)
+            with patch.object(source_store, 'download', wraps=source_store.download) as download:
+                tools.provision(document, self.cache/str(expected_timeout), opener=opener)
+            self.assertEqual(download.call_count, 1)
+            self.assertEqual(download.call_args.kwargs['redirect_origins'], expected_origins)
+            self.assertEqual(download.call_args.kwargs['transfer_timeout'], expected_timeout)
+
     def test_published_schema_accepts_the_lock_and_rejects_invalid_paths(self):
         import jsonschema
         document, _ = self.fixture()
@@ -174,6 +213,12 @@ class ToolArchivesTest(unittest.TestCase):
         jsonschema.Draft202012Validator.check_schema(schema)
         validator = jsonschema.Draft202012Validator(schema)
         validator.validate(document)
+        document['components']['jdk'].update(redirectOrigins=['https://cdn.example'], transferTimeoutSeconds=1800)
+        validator.validate(document)
+        for field, value in [('redirectOrigins', ['https://cdn.example/']), ('redirectOrigins', ['https://cdn.example']*2),
+                             ('transferTimeoutSeconds', 0), ('transferTimeoutSeconds', 3601)]:
+            changed = copy.deepcopy(document); changed['components']['jdk'][field] = value
+            self.assertFalse(validator.is_valid(changed), (field, value))
         for path in ('../escape', 'a/../b', '/absolute', 'a//b', 'a/', 'a\\b', 'a\nb', 'a/*', 'a/.GIT/config'):
             document['components']['jdk']['directory'] = path
             self.assertFalse(validator.is_valid(document), path)
