@@ -25,6 +25,8 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_linux_export_unit.py'
       - name: Check bootstrap timing boundaries and source selection
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_build_timings.py'
+      - name: Check complete tool inventory traversal
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_inventory.py'
       - name: Check agent-comparison accounting and failure gates
         run: python3 -m unittest discover -s tools -p 'test_agent_comparison_unit.py'
       - name: Prepare Linux tools
