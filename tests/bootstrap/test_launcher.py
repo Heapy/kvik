@@ -16,11 +16,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--java-home", required=True)
-    parser.add_argument("--konan-home", required=True)
+    parser.add_argument("--java-home")
+    parser.add_argument("--konan-home")
     parser.add_argument("--artifact-cache", default=str(ROOT / ".kvik/tool-artifacts"))
-    parser.add_argument("--quick", action="store_true", help="Use the repository's existing runtime for cached-startup checks only")
+    parser.add_argument("--quick", action="store_true", help="Measure a provisioned runtime without building/downloading")
+    parser.add_argument("--launcher-root", type=Path, default=ROOT, help="Trusted launcher source root for --quick")
+    parser.add_argument("--cache-dir", type=Path, default=ROOT / ".kvik/runtime")
+    parser.add_argument("--source-lock", type=Path)
+    parser.add_argument("--source-cache", type=Path)
+    parser.add_argument("--output-dir", type=Path, default=ROOT / ".kvik/tests/bootstrap", help="Parent of fresh --quick result cases")
+    from cached_startup import sample_count, run_quick
+    parser.add_argument("--samples", type=sample_count, default=30)
+    parser.add_argument("--timeout-seconds", type=float, default=10)
+    parser.add_argument("--host-name")
+    parser.add_argument("--strict-budgets", action="store_true")
     args = parser.parse_args()
+    if not 0 < args.timeout_seconds <= 60:
+        parser.error("--timeout-seconds must be greater than zero and at most 60")
+    if args.source_cache is not None and args.source_lock is None:
+        parser.error("--source-cache requires --source-lock")
+    if not args.quick and (not args.java_home or not args.konan_home):
+        parser.error("Non-quick checks require --java-home and --konan-home")
     evidence = []
 
     def invoke(root, cache, options=(), expected=0):
@@ -35,16 +51,13 @@ def main():
         evidence.append({"name": name, "seconds": seconds, "details": details})
         print(f"PASS {name} ({seconds}s)", flush=True)
 
-    output = ROOT / ".kvik/tests/bootstrap"
+    output = args.output_dir
     output.mkdir(parents=True, exist_ok=True)
     if args.quick:
-        samples = []
-        for _ in range(10):
-            result, seconds = invoke(ROOT, ROOT / ".kvik/runtime", ["--no-build", "--offline"])
-            assert "runtime-cache-hit" in result.stderr
-            assert json.loads(result.stdout)["backend"] == "kotlin-native"
-            samples.append(seconds)
-        passed("cached-offline-startup", sum(samples), samples)
+        result = run_quick(args)
+        if args.strict_budgets and not result['budgetsMet']:
+            raise SystemExit(3)
+        return
     else:
         with tempfile.TemporaryDirectory(prefix="sources-", dir=output) as directory:
             work = Path(directory)
@@ -163,7 +176,7 @@ def main():
             result, seconds = invoke(second, cache, ["--no-build", "--offline"])
             assert json.loads(result.stdout)["composition"] == identity
             passed("source-restore-reuses-original-composition", seconds)
-    (output / ("quick.json" if args.quick else "integration.json")).write_text(json.dumps(evidence, indent=2) + "\n")
+    (output / "integration.json").write_text(json.dumps(evidence, indent=2) + "\n")
 
 
 if __name__ == "__main__":
