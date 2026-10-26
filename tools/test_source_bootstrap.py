@@ -356,6 +356,28 @@ def audit_runtime(directory, expected_lock, key, records, events, worker_status,
                 ('source-acquisition.json', 'source-inputs.json', 'source-commands.jsonl', 'runtime.lock.json', 'jvm-worker-cache.json')}}
 
 
+def recorded_invocation(label, command, env, cwd, stdout, stderr, timeout, retain):
+    """Persist the attempted command and partial file output before propagating timeout."""
+    started = time.monotonic()
+    argv = list(map(str, command))
+    result = None
+    timed_out = False
+    with stdout.open('wb') as out, stderr.open('wb') as err:
+        try:
+            result = subprocess.run(argv, env=env, cwd=cwd, stdout=out, stderr=err, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            raise
+        finally:
+            entry = {'label': label, 'argv': argv, 'environment': env,
+                     'exitCode': result.returncode if result is not None else None, 'timedOut': timed_out,
+                     'seconds': time.monotonic()-started, 'timeoutSeconds': timeout,
+                     'stdout': stdout.name, 'stderr': stderr.name,
+                     'stdoutDigest': digest(stdout.read_bytes()), 'stderrDigest': digest(stderr.read_bytes())}
+            retain(entry)
+    return result
+
+
 def invocation_timeout(value):
     try:
         seconds = int(value)
@@ -436,14 +458,10 @@ def main():
         sequence += 1
         stdout = attempt/f'{sequence:02d}-{label}.stdout'
         stderr = attempt/f'{sequence:02d}-{label}.stderr'
-        started = time.monotonic()
-        argv = list(map(str, command))
-        with stdout.open('wb') as out, stderr.open('wb') as err:
-            result = subprocess.run(argv, env=env, cwd=case, stdout=out, stderr=err, timeout=timeout)
-        entry = {'label': label, 'argv': argv, 'environment': env, 'exitCode': result.returncode,
-                 'seconds': time.monotonic()-started, 'timeoutSeconds': timeout, 'stdout': stdout.name, 'stderr': stderr.name,
-                 'stdoutDigest': digest(stdout.read_bytes()), 'stderrDigest': digest(stderr.read_bytes())}
-        receipt['commands'].append(entry); write(attempt/'summary.json', receipt)
+        def retain(entry):
+            receipt['commands'].append(entry)
+            write(attempt/'summary.json', receipt)
+        result = recorded_invocation(label, command, env, case, stdout, stderr, timeout, retain)
         assert result.returncode == expected, (label, result.returncode, stderr.read_text(errors='replace')[-4000:])
         return stdout.read_bytes(), stderr.read_bytes()
     with HttpsFixture(case/'archives', case/'tls', port) as server:

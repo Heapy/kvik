@@ -4,6 +4,8 @@ import copy
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +28,38 @@ class SourceToolArchivesTest(unittest.TestCase):
         for value in ('0', '-1', '3601', 'nan', '1.5'):
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
                 harness.invocation_timeout(value)
+
+    def test_timeout_and_success_retain_command_and_partial_output(self):
+        summary = self.root/'summary.json'
+        records = []
+        def retain(entry):
+            records.append(entry)
+            harness.write(summary, {'passed': False, 'commands': records})
+        out, err = self.root/'command.stdout', self.root/'command.stderr'
+        code = 'import sys,time;print("started",flush=True);print("diagnostic",file=sys.stderr,flush=True);time.sleep(30)'
+        command = [sys.executable, '-c', code]
+        with self.assertRaises(subprocess.TimeoutExpired):
+            harness.recorded_invocation('cold', command, {}, self.root, out, err, 0.3, retain)
+        stored = harness.read(summary)['commands'][-1]
+        self.assertEqual(stored, records[-1])
+        self.assertEqual(stored['argv'], command)
+        self.assertEqual(stored['label'], 'cold')
+        self.assertEqual(stored['environment'], {})
+        self.assertTrue(stored['timedOut'])
+        self.assertIsNone(stored['exitCode'])
+        self.assertEqual(stored['timeoutSeconds'], 0.3)
+        self.assertGreaterEqual(stored['seconds'], 0.3)
+        self.assertEqual(out.read_bytes(), b'started\n')
+        self.assertEqual(err.read_bytes(), b'diagnostic\n')
+        for stream, path in [('stdout', out), ('stderr', err)]:
+            self.assertEqual(stored[stream], path.name)
+            self.assertEqual(stored[stream+'Digest'], harness.digest(path.read_bytes()))
+        result = harness.recorded_invocation('success', [sys.executable, '-c', 'print("done")'],
+                                             {}, self.root, out, err, 5, retain)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(records[-1]['timedOut'])
+        self.assertEqual(records[-1]['exitCode'], 0)
+        self.assertEqual(len(harness.read(summary)['commands']), 2)
 
     def arguments(self, components=None, missing=False):
         with patch.object(harness, 'native_target', return_value='macos_arm64'):
