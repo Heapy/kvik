@@ -28,6 +28,69 @@ from foreground_measurements import ProcessSampler, ControlTimings
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def wait_application_effect(path,pid,arguments,environment_value,seconds=10):
+    expected=f'{pid}:'+('|'.join(value.encode('utf-8').hex() for value in arguments))+':'+environment_value
+    deadline=time.monotonic()+seconds
+    while True:
+        raw=path.read_text() if path.exists() else ''
+        # stdout is emitted before this append in both fixture applications.
+        # Require its complete newline-terminated record for this execution PID.
+        lines=raw.splitlines() if raw.endswith('\n') else raw[:raw.rfind('\n')+1].splitlines()
+        matches=[(index,line) for index,line in enumerate(lines) if line.startswith(f'{pid}:')]
+        if matches:
+            assert [line for _,line in matches]==[expected],f'Application effect mismatch: expected one {expected!r}, observed {matches!r}'
+            return dict(pid=pid,line=expected,lineNumber=matches[0][0]+1)
+        if time.monotonic()>=deadline:
+            raise TimeoutError(f'No complete effect for application PID {pid} in {path}; expected={expected!r}, tail={raw[-1000:]!r}')
+        time.sleep(.01)
+
+
+def require_cached_preparation(initial,recovered):
+    expected=initial['actions'];actual=recovered['actions']
+    assert expected and actual,'Application preparation actions must not be empty'
+    def keys(actions):
+        result={action['actionId']:action['key'] for action in actions}
+        assert len(result)==len(actions),'Duplicate application preparation action'
+        return result
+    assert keys(actual)==keys(expected),'Recovered preparation changed action IDs or keys'
+    assert all(action['status']=='local_hit' for action in actual),'Recovery executed a preparation action'
+
+
+def process_identities():
+    rows={}
+    for line in subprocess.run(['/bin/ps','-axo','pid=,ppid=,pgid=,stat=,lstart='],
+                               check=True,capture_output=True,text=True,timeout=2).stdout.splitlines():
+        pid,parent,group,state,birth=line.split(None,4)
+        pid,parent,group=map(int,(pid,parent,group))
+        assert pid>0 and parent>=0 and group>=0 and pid not in rows,'Invalid process identity table'
+        rows[pid]=dict(pid=pid,parent=parent,group=group,state=state,birth=birth)
+    return rows
+
+
+def application_identity(ownership,rows,expected=None):
+    chain=[ownership[role] for role in ('application','inner','stage','outer','session')]
+    assert len(set(chain))==5 and all(pid>1 for pid in chain),'Invalid application ownership chain'
+    identity=[]
+    for index,pid in enumerate(chain):
+        row=rows[pid]
+        assert row['birth'] and not row['state'].startswith('Z'),'Application ownership is not live'
+        if index<len(chain)-1:
+            assert row['parent']==chain[index+1],'Application parent chain changed'
+            assert row['group']==ownership['rows'][str(pid)][1],'Application ownership group changed'
+        identity.append({key:row[key] for key in ('pid','parent','group','birth')})
+    if expected is not None:assert identity==expected,'Application process birth/ownership changed'
+    return identity
+
+
+def signal_application(ownership,expected):
+    # No status wait or file writes between the final live-chain/birth check and
+    # signalling. Darwin exposes no pidfd: this is a checked live fixture PID,
+    # not a claim of an atomic OS identity-and-signal operation.
+    identity=application_identity(ownership,process_identities(),expected)
+    os.kill(ownership['application'],signal.SIGKILL)
+    return identity
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime',type=Path,required=True)
@@ -125,15 +188,17 @@ def main():
         def wait(self,kind,predicate=lambda p:True,seconds=1200):
             deadline=time.monotonic()+seconds
             while True:
-                event=self.next(max(.01,deadline-time.monotonic()))
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise TimeoutError(f'{self.path}: no {kind} within {seconds}s')
+                event=self.next(remaining)
                 if event['type']==kind and predicate(event['payload']):return event['payload']
         def control(self,value):
             self.control_sequence+=1;request='measured-'+str(self.control_sequence);started=time.monotonic_ns()
             self.timings.sent(request,value,started)
             self.process.stdin.write(json.dumps(dict(schemaVersion=1,requestId=request,command=value))+'\n');self.process.stdin.flush()
             return request,started
-        def status(self):
-            request,_=self.control('status');return self.wait('control',lambda p:p['requestId']==request)
+        def status(self,seconds=1200):
+            request,_=self.control('status');return self.wait('control',lambda p:p['requestId']==request,seconds=seconds)
         def sample_busy_controls(self):
             self.wait('application-preparing')
             for _ in range(20):self.status()
@@ -164,8 +229,9 @@ def main():
             owned_groups={rows[pid][1] for pid in owned if rows[pid][1] in owned}
             assert rows[application][1] in owned_groups and rows[stage][1] in owned_groups
             self.pids |= owned;self.groups |= owned_groups
-            base.write_json(self.path/f'ownership-{len(self.events)}.json',dict(session=self.process.pid,outer=outer,stage=stage,inner=inner,
-                application=application,child=child,grandchild=grandchild,rows={str(pid):rows[pid] for pid in owned},groups=sorted(owned_groups)))
+            self.ownership=dict(session=self.process.pid,outer=outer,stage=stage,inner=inner,
+                application=application,child=child,grandchild=grandchild,rows={str(pid):rows[pid] for pid in owned},groups=sorted(owned_groups))
+            base.write_json(self.path/f'ownership-{len(self.events)}.json',self.ownership)
             return owned,owned_groups
         def witness(self):
             pids,groups=self.capture()
@@ -201,22 +267,85 @@ def main():
                 assert time.monotonic()<deadline;time.sleep(.01)
             stdout=execution/'application.stdout';deadline=time.monotonic()+10
             while 'runtime=runtime-external' not in stdout.read_text():assert time.monotonic()<deadline;time.sleep(.02)
-            return dict(ready=ready,record=record,execution=str(execution),generation=value['generation'])
+            self.capture()
+            inner_command=self.ownership['rows'][str(self.ownership['inner'])][2]
+            assert str(stdout) in inner_command and str(execution/'application.stderr') in inner_command, \
+                f'Captured application PID {self.ownership["application"]} belongs to another execution: expected {execution}, guardian={inner_command!r}'
+            effect=wait_application_effect(project/f'effects-{self.target}.log',self.ownership['application'],base.LITERALS,'first')
+            return dict(ready=ready,record=record,execution=str(execution),generation=value['generation'],effect=effect)
+        def crash_application(self,active):
+            pids,groups=self.witness();application=self.ownership['application']
+            identity=application_identity(self.ownership,process_identities())
+            status=self.status(seconds=5)
+            assert self.process.poll() is None and application!=self.process.pid
+            assert status['application']['active']['generation']==active['generation']
+            injection=dict(kind='application-process-SIGKILL',signal=signal.SIGKILL,application=application,
+                owner=self.process.pid,ownerAliveBefore=True,generation=active['generation'],ownership=self.ownership,statusBefore=status,
+                capturedIdentity=identity,signalSent=False,cleanupDeadlineSeconds=15,
+                scope='Signal actual running application, not compiler failure or session-owner loss')
+            # Retain the precise fault target before mutation, including on failure.
+            base.write_json(self.path/'crash.json',injection)
+            started=time.monotonic();checked_identity=signal_application(self.ownership,identity)
+            injection.update(signalSent=True,preSignalIdentity=checked_identity)
+            base.write_json(self.path/'crash.json',injection)
+            finished=self.wait('application-finished',lambda p:p['generation']==active['generation'],seconds=15)
+            for field in ('operationId','generation','revision','composition','module','target','evidenceDirectory'):
+                assert finished[field]==status['application']['active'][field]
+            assert finished['started'] and finished['exitCode']==128+signal.SIGKILL
+            assert not finished['cancelled'] and not finished['timedOut'] and not finished['stale']
+            wait_absent(pids,groups,seconds=max(0,15-(time.monotonic()-started)))
+            # Keep the audit and replacement witness, but never later signal
+            # historical PIDs/groups once their absence has been established.
+            self.pids.difference_update(pids);self.groups.difference_update(groups)
+            cleanup_seconds=time.monotonic()-started
+            assert cleanup_seconds<15 and self.process.poll() is None
+            status=self.status(seconds=5)
+            assert status['application']['active'] is None and status['application']['candidate'] is None
+            execution=Path(active['execution']);raw=(execution/'events.jsonl').read_bytes()
+            assert raw.endswith(b'\n')
+            retained=[json.loads(line) for line in raw.splitlines()]
+            for event in retained:validate(event,'event')
+            assert [event['type'] for event in retained]==['application-started','application-finished']
+            assert [event['sequence'] for event in retained]==[1,2]
+            assert retained[0]['runId']==retained[1]['runId']
+            terminal=retained[-1]['payload']
+            assert terminal['exitCode']==128+signal.SIGKILL and not terminal['cancelled'] and not terminal['timedOut']
+            assert terminal['preparationRun']==active['record']['runId']
+            assert Path(terminal['stdout'])==execution/'application.stdout' and Path(terminal['stderr'])==execution/'application.stderr'
+            injection.update(ownerAliveAfter=True,finished=finished,statusAfter=status,cleanupSeconds=cleanup_seconds,
+                capturedOwnershipAbsent=True,executionEvents=base.digest(raw))
+            base.write_json(self.path/'crash.json',injection)
+            return injection
         def finish(self,how='q'):
+            assert how in ('q','kill','int','term','eof'),how
             self.capture();started=time.monotonic()
             if how=='q':self.control('q')
             elif how=='kill':self.process.kill()
             elif how=='int':self.process.send_signal(signal.SIGINT)
             elif how=='term':self.process.terminate()
+            elif how=='eof':self.process.stdin.close()
             self.process.wait(timeout=15);expected=-9 if how=='kill' else 130 if how in ('int','term') else 0
             assert self.process.returncode==expected
             wait_absent(self.pids,self.groups);self.reader.join(timeout=5);assert not self.reader.is_alive();self.log.close();self.err.close()
             cleanup_seconds=time.monotonic()-started
             self.drain()
-            base.write_json(self.path/'result.json',dict(exitCode=self.process.returncode,cleanupSeconds=cleanup_seconds,pids=sorted(self.pids),groups=sorted(self.groups),
+            result=dict(method=how,exitCode=self.process.returncode,cleanupSeconds=cleanup_seconds,pids=sorted(self.pids),groups=sorted(self.groups),
                 cleanupBudgetSeconds=5 if how=='kill' else 2,cleanupBudgetMet=cleanup_seconds<(5 if how=='kill' else 2),
-                cleanupScope='command/signal through owner exit, captured descendant absence and output-reader drain'))
+                cleanupScope='command/signal/EOF through owner exit, captured descendant absence and output-reader drain')
+            if how=='eof':
+                session=next(event for event in reversed(self.events) if event['type']=='session-started')
+                events=[event for event in self.events if event['sessionId']==session['sessionId']]
+                assert [event['payload']['reason'] for event in events if event['type']=='closing']==['end-of-input']
+                assert events[-1]['type']=='session-finished' and events[-1]['payload']['reason']=='end-of-input'
+                active=next(event['payload'] for event in reversed(events) if event['type']=='application-started')
+                terminal=[event['payload'] for event in events if event['type']=='application-finished' and event['payload']['generation']==active['generation']]
+                assert len(terminal)==1 and terminal[0]['started'] and terminal[0]['cancelled'] and not terminal[0]['timedOut']
+                journal=Path(session['payload']['directory'])/'session.jsonl';raw=journal.read_bytes()
+                assert raw.endswith(b'\n') and [json.loads(line) for line in raw.splitlines()]==events
+                result.update(reason='end-of-input',sessionJournal=base.digest(raw),applicationFinished=terminal[0])
+            base.write_json(self.path/'result.json',result)
             self.write_measurements()
+            return result
         def write_measurements(self):
             if self.resource_summary is None:self.resource_summary=self.sampler.close()
             value=dict(resources=self.resource_summary,controls=self.timings.summary(),reloads=self.reload_measurements)
@@ -249,6 +378,21 @@ def main():
             assert len(effects(target))==before and s.status()['application']['active'] is not None
             s.finish('int')
             summaries.append(dict(target=target,initial=initial,warm=warm,repaired=repaired,test= str(records[0])))
+            # Kill the real application's PID while its foreground owner stays
+            # responsive. The retained child/grandchild ownership must drain
+            # before an explicit reload's first effect, then stdin EOF closes it.
+            s=Session(target,target+'-application-crash-eof');active=s.started();before=len(effects(target))
+            crash=s.crash_application(active)
+            assert len(effects(target))==before
+            s.control('r');recovered=s.started()
+            assert recovered['generation']>active['generation']
+            assert recovered['ready']['composition']==active['ready']['composition']
+            assert len(effects(target))==before+1
+            require_cached_preparation(active['record'],recovered['record'])
+            assert s.process.pid==crash['owner'] and s.process.poll() is None
+            assert s.status(seconds=5)['application']['active']['generation']==recovered['generation']
+            eof=s.finish('eof')
+            summaries.append(dict(target=target,applicationCrash=crash,recovered=recovered,eof=eof))
         # Both targets are simultaneously live; killing one owner must not disturb the other.
         one=Session('jvm','independent-jvm');one.started();two=Session('macosArm64','independent-native');two.started()
         one.finish('kill');assert two.process.poll() is None and two.status()['application']['active'] is not None;two.finish('term')
@@ -331,7 +475,7 @@ def main():
         if primary_failure is None:assert all(item['drained'] for item in cleanup),cleanup
     assert base.inventory(fixture)==inventory and base.inventory(test_fixture)==tests and base.inventory(witness_fixture)==witnesses
     assert all(base.inventory(project)[p]==value for p,value in inventory.items())
-    base.write_json(case/'summary.json',dict(passed=True,scope='actual JVM and Native public foreground reload/tests/ownership; optional JVM compiled-source handoff',results=summaries,
+    base.write_json(case/'summary.json',dict(passed=True,scope='actual JVM and Native public foreground reload/tests/ownership, application SIGKILL with live owner and explicit recovery, EOF cleanup; optional JVM compiled-source handoff',results=summaries,
         runtimeDigest=base.digest(runtime.read_bytes()),fixture=inventory,tests=tests,
         host=dict(name=args.host_name,os=platform.system(),release=platform.release(),architecture=platform.machine(),logicalCpuCount=os.cpu_count()),
         measurements={s.path.name:s.write_measurements() for s in sessions}))
