@@ -17,7 +17,7 @@ class ExportChecksTest(unittest.TestCase):
                 'compiler-session-worker/case-b': ['results.json'],
                 'linux-jvm/run-c/cache-invalidation-d': ['results.json', 'cold.stdout.jsonl', 'cold.stderr.log'],
                 'build-performance-cli/case-e': ['summary.json', 'phases/cold/process.json', 'phases/local/process.json'],
-                'bootstrap/cached-startup-f': ['summary.json', '000-composition.stdout', '000-composition.stderr'],
+                'bootstrap/cached-startup-f': ['summary.json', '000-composition.stdout', '000-composition.stderr', 'launcher.prof', 'launcher-profile.json'],
             }
             expected = {}
             for case_name, names in fixtures.items():

@@ -194,6 +194,20 @@ def write_summary(case, value):
     (case/'summary.json').write_text(json.dumps(value, indent=2) + '\n')
 
 
+def profile_report(path):
+    import pstats
+    stats = pstats.Stats(str(path))
+    rows = []
+    for (file, line, function), (primitive, calls, own, cumulative, _) in stats.stats.items():
+        rows.append(dict(file=file, line=line, function=function, primitiveCalls=primitive,
+                         calls=calls, ownSeconds=own, cumulativeSeconds=cumulative))
+    return dict(scope='Separate instrumented Python cached --print-runtime; includes imports and verification, '
+                      'excludes Native execution and is never included in latency/RSS samples',
+                totalCalls=stats.total_calls, primitiveCalls=stats.prim_calls,
+                instrumentedTotalSeconds=stats.total_tt,
+                topFunctions=sorted(rows, key=lambda row: row['cumulativeSeconds'], reverse=True)[:100])
+
+
 def run_quick(args, *, runner=invoke):
     count = sample_count(args.samples)
     if platform.system() not in ('Darwin', 'Linux') or not hasattr(os, 'wait4'):
@@ -286,6 +300,17 @@ def run_quick(args, *, runner=invoke):
                 stdout, stderr = run(f'rss-{operation}-{sample}', [executable, operation], rss=True,
                                      executor='directNative', operation=operation)
                 validate_output(operation, stdout, stderr, composition['hash'], launcher=False, reference=references[operation])
+        if getattr(args, 'profile_launcher', False):
+            profile = case/'launcher.prof'
+            stdout, stderr = run('launcher-profile', [command[0], '-m', 'cProfile', '-o', profile,
+                                                     *command[1:], '--print-runtime'])
+            cache_event(stderr, composition['hash'])
+            if Path(stdout.decode().strip()).resolve() != executable:
+                raise ValueError('Profiled launcher selected a different runtime')
+            report_path = case/'launcher-profile.json'
+            report_path.write_text(json.dumps(profile_report(profile), indent=2)+'\n')
+            summary['profile'] = dict(raw=profile.name, rawDigest=file_digest(profile),
+                                      report=report_path.name, reportDigest=file_digest(report_path))
         if (file_digest(executable) != expected_binary or file_digest(manifest_path) != summary['runtime']['manifest'] or
                 file_digest(executable.parent/'runtime.lock.json') != summary['runtime']['lock'] or
                 launcher_files(root) != summary['launcherFiles']):

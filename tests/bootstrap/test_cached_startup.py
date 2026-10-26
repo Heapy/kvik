@@ -166,6 +166,33 @@ class CachedStartupTest(unittest.TestCase):
                     test_launcher.main()
                 self.assertEqual(3, failure.exception.code)
 
+    def test_profile_is_a_separate_final_invocation_bound_to_the_same_runtime(self):
+        import cProfile
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            args, runner, calls = self.fixture(Path(directory))
+            args.profile_launcher = True
+            def profiled(command, **kwargs):
+                result, stdout, stderr = runner(command, **kwargs)
+                if 'cProfile' in command:
+                    self.assertEqual(125, len(calls))  # All latency/RSS samples are already complete.
+                    profile = cProfile.Profile(); profile.runcall(sum, range(10))
+                    profile.dump_stats(str(command[command.index('-o')+1]))
+                    result['elapsedNanos'] = measure.LAUNCHER_BUDGET_NANOS * 100
+                return result, stdout, stderr
+            summary = measure.run_quick(args, runner=profiled)
+            self.assertTrue(summary['passed']); self.assertTrue(summary['budgetsMet'])
+            self.assertEqual('preflight', summary['records'][-1]['measurement'])
+            self.assertIsNone(summary['records'][-1]['executor'])
+            report=Path(summary['case'])/summary['profile']['report']
+            self.assertEqual(file_digest(report), summary['profile']['reportDigest'])
+            self.assertGreater(json.loads(report.read_bytes())['totalCalls'], 0)
+            def mismatched(command, **kwargs):
+                result, stdout, stderr = runner(command, **kwargs)
+                if 'cProfile' in command: stdout=b'/different/runtime'
+                return result, stdout, stderr
+            with self.assertRaisesRegex(ValueError, 'different runtime'):
+                measure.run_quick(args, runner=mismatched)
+
     def test_failure_retains_partial_records_and_does_not_report_budget_success(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             args, runner, calls = self.fixture(Path(directory))

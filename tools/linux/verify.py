@@ -20,7 +20,7 @@ def export_checks(root):
         'compiler-session-worker': ('compiler-session-worker/case-*', ('results.json',)),
         'cache-invalidation': ('linux-jvm/run-*/cache-invalidation-*', ('results.json', '*.stdout.jsonl', '*.stderr.log')),
         'build-performance': ('build-performance-cli/case-*', ('summary.json', 'phases/*/process.json', 'phases/*/stdout.jsonl', 'phases/*/stderr.log')),
-        'cached-startup': ('bootstrap/cached-startup-*', ('summary.json', '*.stdout', '*.stderr')),
+        'cached-startup': ('bootstrap/cached-startup-*', ('summary.json', '*.stdout', '*.stderr', 'launcher.prof', 'launcher-profile.json')),
     }
     output = root / '.kvik/ci-artifacts'
     output.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,7 @@ def main():
         raise RuntimeError('Cached startup selected a different runtime')
     run([*bootstrap, '--offline', '--no-build', '--', 'runtime-info'])
     if args.prepare_only is None:
-        run([sys.executable, ROOT/'tests/bootstrap/test_launcher.py', '--quick',
+        run([sys.executable, ROOT/'tests/bootstrap/test_launcher.py', '--quick', '--profile-launcher',
              '--host-name', 'Linux x64 Docker ' + platform.node()])
     fixture_parent = ROOT/'.kvik/tests/linux-jvm'
     fixture_parent.mkdir(parents=True, exist_ok=True)

@@ -1431,6 +1431,12 @@ do not measure provisioning, builds, reloads or the absence of short-lived proce
 OS page/file caches are uncontrolled. See [foreground measurements](docs/foreground.md)
 for command acknowledgement, reload, cleanup and sampled process resources.
 
+Add `--profile-launcher` to retain a separate Python `cProfile` of cached
+`--print-runtime` after all timing and RSS samples. `launcher.prof` and
+`launcher-profile.json` identify bootstrap imports and verification costs; this
+instrumented invocation excludes Native execution and never enters latency
+percentiles. Linux CI includes both files in its cached-startup artifact.
+
 The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes, three runtime libraries and the JaCoCo agent/reporter alongside the native executable. Compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
 
 Native recomposition reuses an unchanged JVM worker bundle from

@@ -30,6 +30,8 @@ def main():
     parser.add_argument("--timeout-seconds", type=float, default=10)
     parser.add_argument("--host-name")
     parser.add_argument("--strict-budgets", action="store_true")
+    parser.add_argument("--profile-launcher", action="store_true",
+                        help="Retain a separate cProfile of cached --print-runtime after timing/RSS samples")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 60:
         parser.error("--timeout-seconds must be greater than zero and at most 60")
