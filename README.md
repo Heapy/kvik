@@ -1472,9 +1472,16 @@ are distinct tool identities; changing acquisition URLs does not reconcile them.
 The gate validates both locks before downloading and never repins them implicitly.
 
 Archive provisioning includes download, extraction and verification; it does not
-isolate network time. Each mode is one observation
-of the full source composition, not the K01 small-spike budget; process CPU/RSS are
-explicitly unavailable in this harness.
+isolate network time. Each mode is one observation of the full source composition,
+not the K01 small-spike budget. Every invocation retains raw `wait4` CPU/RSS usage
+and explicit host units, plus JSONL samples of live descendants' RSS and process
+counts. `wait4` describes the reaped invocation owner with OS-dependent child
+accounting, not exact whole-build CPU or aggregate tree peak RSS. Sampling can miss
+short-lived or detached/reparented processes and peaks; summed RSS double-counts
+shared pages and observation adds wall time. Cold, offline-rebuild and helper-mutation
+phases require valid OS usage and at least one live sample. Fast probes may explicitly
+report no live sample. Timeout and sampling failures retain partial measurements
+and command output before failing the gate; cleanup targets the owned process group.
 
 Measure a provisioned runtime with
 `python3 tests/bootstrap/test_launcher.py --quick --host-name "HOST MODEL / MEMORY"`.

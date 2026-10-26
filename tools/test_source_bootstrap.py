@@ -26,6 +26,7 @@ from bootstrap.native_libraries import RECIPES
 from bootstrap.pin_tools import NATIVE_DEPENDENCIES, native_target
 from bootstrap import tool_archives
 from bootstrap.identity import inventory as tool_inventory, file_digest, read_regular
+from source_bootstrap_resources import measured_invocation, validate_resources
 
 DEFAULT_REFERENCE = Path('/private/tmp/kvik-k14-source-store/.kvik/tests/source-store/case-rzkf8dpt/full-kvik/source.lock.json')
 
@@ -356,24 +357,33 @@ def audit_runtime(directory, expected_lock, key, records, events, worker_status,
                 ('source-acquisition.json', 'source-inputs.json', 'source-commands.jsonl', 'runtime.lock.json', 'jvm-worker-cache.json')}}
 
 
-def recorded_invocation(label, command, env, cwd, stdout, stderr, timeout, retain):
+def recorded_invocation(label, command, env, cwd, stdout, stderr, timeout, retain, *, require_samples=False):
     """Persist the attempted command and partial file output before propagating timeout."""
     started = time.monotonic()
     argv = list(map(str, command))
     result = None
     timed_out = False
+    resources = {'requiredLiveSample': require_samples}
+    samples = stdout.with_suffix('.processes.jsonl')
+    failure_text = None
     with stdout.open('wb') as out, stderr.open('wb') as err:
         try:
-            result = subprocess.run(argv, env=env, cwd=cwd, stdout=out, stderr=err, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+            result = measured_invocation(argv, cwd=cwd, environment=env, stdout=out, stderr=err,
+                                         timeout=timeout, samples_path=samples, resources=resources)
+            validate_resources(resources, require_samples=require_samples)
+        except BaseException as failure:
+            timed_out = isinstance(failure, subprocess.TimeoutExpired) or resources.get('timedOut', False)
+            failure_text = type(failure).__name__+': '+str(failure)
             raise
         finally:
             entry = {'label': label, 'argv': argv, 'environment': env,
                      'exitCode': result.returncode if result is not None else None, 'timedOut': timed_out,
                      'seconds': time.monotonic()-started, 'timeoutSeconds': timeout,
                      'stdout': stdout.name, 'stderr': stderr.name,
-                     'stdoutDigest': digest(stdout.read_bytes()), 'stderrDigest': digest(stderr.read_bytes())}
+                     'stdoutDigest': digest(stdout.read_bytes()), 'stderrDigest': digest(stderr.read_bytes()),
+                     'processResources': resources, 'resourceSamples': samples.name,
+                     'resourceSamplesDigest': digest(samples.read_bytes()) if samples.exists() else None,
+                     'failure': failure_text}
             retain(entry)
     return result
 
@@ -449,7 +459,11 @@ def main():
                'host': {'name': args.host_name, 'os': platform.system(), 'osRelease': platform.release(),
                         'architecture': platform.machine(), 'logicalCpuCount': os.cpu_count()},
                'harnessPython': platform.python_version(),
-               'processResources': {'coverage': 'unavailable', 'cpuNanos': None, 'peakRssBytes': None},
+               'processResources': {'coverage': 'per-invocation-wait4-and-sampled-live-descendants',
+                   'requiredLiveSamplePhases': ['cold', 'offline-rebuild', 'helper-mutation'],
+                   'helperDigest': digest((ROOT/'tools/source_bootstrap_resources.py').read_bytes()),
+                   'processInventoryHelperDigest': digest((ROOT/'tools/foreground_measurements.py').read_bytes()),
+                   'scope': 'See each command receipt for OS usage, sampled peaks/counts and limitations; no aggregate build CPU/RSS claim'},
                'performanceScope': 'One observation per full source-composition phase; not the K01 small-spike budget'}
     sequence = 0
     def invoke(label, command, env=environment, expected=0, timeout=None):
@@ -461,7 +475,8 @@ def main():
         def retain(entry):
             receipt['commands'].append(entry)
             write(attempt/'summary.json', receipt)
-        result = recorded_invocation(label, command, env, case, stdout, stderr, timeout, retain)
+        result = recorded_invocation(label, command, env, case, stdout, stderr, timeout, retain,
+                                     require_samples=label in receipt['processResources']['requiredLiveSamplePhases'])
         assert result.returncode == expected, (label, result.returncode, stderr.read_text(errors='replace')[-4000:])
         return stdout.read_bytes(), stderr.read_bytes()
     with HttpsFixture(case/'archives', case/'tls', port) as server:
@@ -541,7 +556,8 @@ def main():
                             assert event['buildTimings']['totalDurationNanos'] <= receipt['commands'][-1]['seconds']*1_000_000_000, 'Build phases exceed complete invocation'
                     if expected_event == 'runtime-cache-hit':
                         assert not any(e.get('kind') == 'runtime-built' or 'buildTimings' in e for e in events), 'Cached invocation fabricated build timings'
-                    receipt['phases'][label] = {'passed': True, 'runtimeInfo': info, 'bootstrapEvents': events}
+                    receipt['phases'][label] = {'passed': True, 'runtimeInfo': info, 'bootstrapEvents': events,
+                                              'processResources': receipt['commands'][-1]['processResources']}
                     return info
 
                 receipt['sourceCacheInitial'] = cache_state(source_cache)
