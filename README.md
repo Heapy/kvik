@@ -1228,9 +1228,45 @@ operation times, process counts, stdin/file-write and output bytes, UTF-8 argume
 sizes and logical repository sizes.
 This is a scripted infrastructure comparison. It does not measure LLM tokens,
 agent tool calls, conflict-resolution effort or incorrect completion claims;
-those K17 stage 5 questions still require controlled agent trials. Materialization
+those K17 stage 5 questions use the separate controlled agent trials below. Materialization
 and search timings are reported separately, without attributing query time to
 index construction. Filesystem allocation and OS page caches are not controlled.
+
+To compare real agents using Kode revisions versus Git worktrees, reuse the same
+prepared collaboration fixture and explicitly enable model-provider calls:
+
+```sh
+python3 tools/compare_workspace_agents.py \
+  --fixture /absolute/fixture.json --trials 2 --allow-model-calls \
+  --model gpt-6-sol --effort high --timeout 900
+```
+
+Each paired scenario uses two authors starting from the same source tree and a
+separate integration agent. The three scenarios cover disjoint edits with a
+concurrent integration-branch update, conflicting name normalization changes,
+and individually passing batch/worker changes that can fail after integration.
+The harness observes the actual merge condition before integration; a task that
+never produces the intended conflict or failure is marked unexercised. Two
+repeats require up to 36 model sessions. Sessions and builds run serially; this
+experiment does not measure simultaneous-agent throughput.
+
+Both backends use the same runtime, model, effort, deadline, dependency blobs,
+one build job and memory limit. Each gets a private action cache warmed once on
+the baseline. Independent grading uses another cache, freezes the submitted
+revision, preserves baseline test identities, checks the agent's own fresh test
+record, and executes additional behavior assertions. Failed attempts and false
+completion claims remain in the results. A pair is eligible for comparison only
+when its baseline and semantic tasks match and both scenarios were exercised.
+
+Results under `.kvik/tests/workspace-agent-comparison/` retain prompts, final
+answers, transcripts, tool fingerprints, verification and per-role measurements.
+They distinguish agent time from independent verification, returned command bytes
+from provider token usage, successful/failed compilation actions from process
+counts, and repository storage from materialized bytes. Integration-agent costs
+include merge and repair effort. Explicit Kode index construction is measured
+after the trial, with first and second calls reported separately; the first call
+is not assumed cold. Model calls are never part of automatic CI; CI runs only
+the grading and accounting regression tests.
 
 For real agent workflow trials against KTC 0.13.0, prepare the shared two-module
 JVM fixture and explicitly opt in to model calls:
