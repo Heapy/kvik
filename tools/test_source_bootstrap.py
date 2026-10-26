@@ -59,7 +59,7 @@ def source_selection(source_root, document):
     document['plugins'] = [dict(id=plugin['id'], source='kvik', implementation=plugin['implementation'])
                            for plugin in recipe['plugins']] + [p for p in document['plugins'] if p['source'] != 'kvik']
     return {'recipe': recipe, 'recipeDigest': digest(recipe_bytes),
-            'inventory': {'schemaVersion': 1, 'files': sorted(selected, key=lambda entry: Path(entry['path']))}}
+            'inventory': {'schemaVersion': 1, 'files': sorted(selected, key=lambda entry: entry['path'])}}
 
 
 def records_inventory_matches_selection(case, selection):

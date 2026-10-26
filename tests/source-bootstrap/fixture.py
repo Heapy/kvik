@@ -30,7 +30,7 @@ def inventory(root):
             raise ValueError(f'Nonregular/linked fixture input: {path}')
         files.append({'path': path.relative_to(root).as_posix(), 'digest': digest(path.read_bytes()),
                       'executable': bool(info.st_mode & 0o111)})
-    return {'schemaVersion': 1, 'files': files}
+    return {'schemaVersion': 1, 'files': sorted(files, key=lambda entry: entry['path'])}
 
 
 def archive(root, prefix, destination):

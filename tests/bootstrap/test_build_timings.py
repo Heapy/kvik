@@ -115,6 +115,12 @@ class BuildTimingTest(unittest.TestCase):
             harness.write(case/'template.json', document)
             selection = harness.read(case/'source-selection.json')
             self.assertTrue(harness.records_inventory_matches_selection(case, selection))
+            # Sibling names such as kode-source and kode-source-native sort
+            # differently as Path objects versus canonical logical strings.
+            from bootstrap.source_files import source_inventory
+            selected = source_inventory(case/'packages/kvik', document, document['sources'][0])
+            self.assertEqual(json.loads(selected), selection['inventory'])
+            self.assertEqual(harness.digest(selected), harness.read(case/'archive-identities.json')['kvik']['tree'])
             changed = copy.deepcopy(document)
             changed['sources'][0]['kotlinRoots'].remove('core/src')
             harness.write(case/'template.json', changed)
