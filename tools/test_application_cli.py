@@ -376,34 +376,49 @@ def main():
         boundary_result = dict(label=label, exitCode=process.returncode, preparationObserved=True, applicationStarted=False)
         write_json(case/(label+'.result.json'), boundary_result)
         summaries.append(boundary_result)
-    # One explicit config update changes package settings but preserves compile/link action identities.
-    for module in document['modules']:
-        if module['id'] == 'app':
-            for target in module['targets']:
-                target['application']['arguments'] = LITERALS + ['changed']
-                target['application']['environment']['APP_DECLARED'] = 'second'
-    write_json(project/'kvik.json', document)
-    lock_before = (project/'kvik.lock.json').read_bytes()
-    refused, = command('settings-offline-refusal', ['resolve', *shared, '--offline'], expected=2)
-    assert refused['diagnostic']['code'] == 'KVIK_LOCK_INVALID' and 'Stale dependency lock' in refused['diagnostic']['message']
-    assert (project/'kvik.lock.json').read_bytes() == lock_before
-    resolve('settings-resolve')
-    for target in TARGETS:
+    # Change one setting at a time: runtime environment/arguments affect the
+    # application bundle, but neither compilation nor Native linking.
+    baseline_keys = {target: prepared['keys'] for target, prepared in prepared_runs.items()}
+    for label, declared, arguments, bundle_status in (
+        ('environment', 'second', LITERALS, 'executed'),
+        ('restored-environment', 'first', LITERALS, 'local_hit'),
+        ('arguments', 'first', LITERALS + ['changed'], 'executed'),
+        ('settings', 'second', LITERALS + ['changed'], 'executed'),
+    ):
+        for module in document['modules']:
+            if module['id'] == 'app':
+                for target in module['targets']:
+                    target['application']['arguments'] = arguments
+                    target['application']['environment']['APP_DECLARED'] = declared
+        write_json(project/'kvik.json', document)
+        lock_before = (project/'kvik.lock.json').read_bytes()
+        refused, = command(label+'-offline-refusal', ['resolve', *shared, '--offline'], expected=2)
+        assert refused['diagnostic']['code'] == 'KVIK_LOCK_INVALID' and 'Stale dependency lock' in refused['diagnostic']['message']
+        assert (project/'kvik.lock.json').read_bytes() == lock_before
+        resolve(label+'-resolve')
+        for target in TARGETS:
+            before = list(effect_lines(target))
+            old = prepared_runs[target]
+            stale = command(target+'-'+label+'-stale-replay', replay_args(old), expected=3)
+            assert not any(v.get('type') == 'application-started' for v in stale)
+            assert effect_lines(target) == before
+            changed = audit_preparation(command(target+'-'+label+'-prepare', prepare_args(target)), target,
+                lambda action: bundle_status if action.endswith(':application') else 'local_hit')
+            assert effect_lines(target) == before
+            assert changed['keys'].keys() == old['keys'].keys()
+            for action, key in old['keys'].items():
+                assert (key != changed['keys'][action]) == action.endswith(':application'), action
+            if label == 'restored-environment':
+                assert changed['keys'] == baseline_keys[target]
+            audit_execution(command(target+'-'+label+'-run', replay_args(changed)), changed)
+            assert len(effect_lines(target)) == len(before) + 1
+            prepared_runs[target] = changed
+    for target, changed in prepared_runs.items():
         before = list(effect_lines(target))
-        changed = audit_preparation(command(target+'-settings-prepare', prepare_args(target)), target,
-            lambda action: 'executed' if action.endswith(':application') else 'local_hit')
-        assert effect_lines(target) == before
-        old = prepared_runs[target]
-        assert changed['keys'].keys() == old['keys'].keys()
-        for action, key in old['keys'].items():
-            assert (key != changed['keys'][action]) == action.endswith(':application'), action
-        audit_execution(command(target+'-settings-run', replay_args(changed)), changed)
-        assert len(effect_lines(target)) == 3
-        prepared_runs[target] = changed
         (project/f'mode-{target}.txt').write_text('nonzero')
         audit_execution(command(target+'-nonzero', replay_args(changed), expected=7), changed, exit_code=7)
         (project/f'mode-{target}.txt').unlink()
-        assert len(effect_lines(target)) == 4
+        assert len(effect_lines(target)) == len(before) + 1
     # Isolated deliberate corruptions are restored, preserving original retained evidence.
     for target, prepared in prepared_runs.items():
         mutations = [(prepared['run']/'prepared.json', b' '),
