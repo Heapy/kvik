@@ -45,6 +45,33 @@ class JvmLockProfilesTest(unittest.TestCase):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError, "Unsupported JVM artifact lock"):
                 self.validate(lock)
 
+    def test_compiler_release_redirect_is_pinned_to_each_profile(self):
+        for profile in self.profiles():
+            version = profile["kotlinVersion"]
+            item = jvm_worker.compiler_artifact(profile, "kotlin-compiler-embeddable")
+            release = f"https://github.com/JetBrains/kotlin/releases/download/v{version}/{item['filename']}"
+            with self.subTest(version=version):
+                self.assertEqual(release, item["releaseUrl"])
+                self.assertEqual([item["coordinate"]],
+                    [a["coordinate"] for a in jvm_worker.all_artifacts(profile) if "releaseUrl" in a])
+                handler = jvm_worker.LockedRedirects(item["url"], release)
+                redirected = handler.redirect_request(jvm_worker.urllib.request.Request(item["url"]),
+                    None, 301, "Moved Permanently", {}, release)
+                self.assertEqual(release, redirected.full_url)
+                asset = "https://release-assets.githubusercontent.com/github-production-release-asset/3432266/asset"
+                redirected = handler.redirect_request(jvm_worker.urllib.request.Request(release),
+                    None, 302, "Found", {}, asset)
+                self.assertEqual(asset, redirected.full_url)
+                other_version = "2.4.10" if version == "2.4.20" else "2.4.20"
+                for target in (release.replace(version, other_version), release.replace("JetBrains/kotlin", "other/repository"), asset):
+                    with self.subTest(target=target), self.assertRaises(ValueError):
+                        handler.redirect_request(jvm_worker.urllib.request.Request(item["url"]),
+                            None, 301, "Moved Permanently", {}, target)
+                changed = copy.deepcopy(profile)
+                jvm_worker.compiler_artifact(changed, "kotlin-compiler-embeddable")["releaseUrl"] = release.replace(version, other_version)
+                with self.assertRaisesRegex(ValueError, "release URL differs"):
+                    self.validate(changed)
+
     def test_every_versioned_component_must_match_selected_compiler(self):
         for profile in self.profiles():
             other = "2.4.10" if profile["kotlinVersion"] == "2.4.20" else "2.4.20"
