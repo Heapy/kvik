@@ -8,6 +8,7 @@ import kvik.core.*
 import kvik.foreground.BootstrapQuery
 import kvik.locking.effectiveConfiguration
 import kvik.projectgraph.ProjectMode
+import kvik.projectgraph.ideCompilationName
 
 /** Publish a new project generation; never overwrite an existing IDE project or workspace settings. */
 internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
@@ -25,7 +26,7 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
         }
     }
     val options = buildOptions(build)
-    require(options.targets == setOf("jvm") && !options.coverage) { "IDEA export currently requires JVM targets" }
+    require(options.targets.all { it in setOf("jvm", "js", "wasmJs") } && !options.coverage) { "IDEA export supports JVM, JS and Wasm targets" }
     val sdk = export["--sdk"] ?: error("Supply --sdk with the name of an IDEA JDK matching the build tools")
     val output = projectPath(currentDirectory(), export["--output"] ?: error("Supply --output NEW_DIRECTORY"))
     require(NativeFiles.info(output) == null) { "IDEA output already exists: $output" }
@@ -64,14 +65,14 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
     val projectIndex = forwarded.indexOf("--project")
     if (projectIndex >= 0) forwarded[projectIndex + 1] = project.path else forwarded += listOf("--project", project.path)
     val runs = listOf(IdeaRun("Kvik build", launcher + "build" + forwarded, currentDirectory())) +
-        if (options.modules.all { module -> project.configuration.project.modules.single { it.id == module }.targets.single { it.name == "jvm" }.test != null })
+        if (options.modules.all { module -> options.targets.all { target -> project.configuration.project.modules.single { it.id == module }.targets.single { it.name == target }.test != null } })
             listOf(IdeaRun("Kvik test", launcher + "test" + forwarded, currentDirectory())) else emptyList()
     val projected = compilations.map { c ->
         IdeaCompilation(c.name, c.roots.map { root -> IdeaRoot(
             if (root.generated) "$output/inputs/${root.path.value}" else "${project.root}/${root.path.value}", root.resource, root.generated) },
-            c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}", c.common) },
-            if (c.common) IdeaPlatform.Common(c.targets) else IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)), c.compilerOptions,
-            if (c.compilation == "test" && !c.common) "${c.module}.main" else null, test = c.compilation == "test",
+            c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}", c.common, c.target) },
+            if (c.common) IdeaPlatform.Common(c.targets) else if (c.target == "jvm") IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)) else IdeaPlatform.Web(c.target), c.compilerOptions,
+            if (c.compilation == "test" && !c.common) ideCompilationName(c.module, c.target, "main") else null, test = c.compilation == "test",
             refines = c.refines, friends = c.friends)
     }
     val files = ideaProjectFiles(sdk, projected, runs)

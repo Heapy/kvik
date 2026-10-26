@@ -12,10 +12,11 @@ class IdeInputsSchemaTest(unittest.TestCase):
     def validator(self, name):
         return Draft202012Validator({**SCHEMA, '$ref': '#/$defs/'+name})
 
-    def test_preparation_checks_are_jvm_only(self):
+    def test_preparation_checks_support_jvm_and_web_targets(self):
         check = self.validator('requestedCheck')
-        self.assertTrue(check.is_valid('app:jvm:ide-inputs'))
-        for value in ['app:macosArm64:ide-inputs', 'app:jvm:ide-inputs\n', 'app:js:ide-inputs']:
+        for target in ('jvm', 'js', 'wasmJs'):
+            self.assertTrue(check.is_valid(f'app:{target}:ide-inputs'))
+        for value in ['app:macosArm64:ide-inputs', 'app:jvm:ide-inputs\n', 'app:common:ide-inputs']:
             self.assertFalse(check.is_valid(value))
         event = dict(schemaVersion=1, runId='run', sequence=1, type='ide-inputs-ready', payload=dict(directory='/run/ide'))
         self.validator('event').validate(event)
@@ -48,6 +49,17 @@ class IdeInputsSchemaTest(unittest.TestCase):
             self.assertFalse(validator.is_valid({**value, **changes}), changes)
         for field in ('sourceSet', 'targets'):
             self.assertFalse(validator.is_valid({k: v for k, v in value.items() if k != field}))
+
+    def test_platform_libraries_match_the_selected_target(self):
+        validator = self.validator('ideInputs')
+        for target in ('js', 'wasmJs'):
+            compilation = dict(module='app', compilation='main', target=target, roots=[], modules=[],
+                               libraries=['deps/stdlib.klib'], compilerOptions=[], hasCompilerPlugins=False)
+            value = dict(schemaVersion=1, module='app', target=target, compilations=[compilation])
+            validator.validate(value)
+            for change in (dict(libraries=['deps/stdlib.jar']), dict(target='unknown'),
+                           dict(sourceSet='commonMain', targets=['jvm', target])):
+                self.assertFalse(validator.is_valid({**value, 'compilations': [{**compilation, **change}]}))
 
 
 if __name__ == '__main__':

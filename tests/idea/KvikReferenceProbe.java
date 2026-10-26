@@ -18,6 +18,22 @@ public final class KvikReferenceProbe extends LocalInspectionTool {
         return new PsiElementVisitor() {
             @Override public void visitFile(PsiFile file) {
                 if (!(file instanceof KtFile kotlinFile)) return;
+                if (file.getName().equals("Platform.kt")) {
+                    var module = com.intellij.openapi.module.ModuleUtilCore.findModuleForPsiElement(file);
+                    if (module != null) for (var facet : com.intellij.facet.FacetManager.getInstance(module).getAllFacets()) {
+                        if (!facet.getType().getStringId().equals("kotlin-language")) continue;
+                        try {
+                            var configuration = facet.getConfiguration();
+                            var settings = configuration.getClass().getMethod("getSettings").invoke(configuration);
+                            var platform = settings.getClass().getMethod("getTargetPlatform").invoke(settings);
+                            var arguments = settings.getClass().getMethod("getCompilerArguments").invoke(settings);
+                            holder.registerProblem(file, "KVIK_PLATFORM|" + module.getName() + "|" + platform + "|"
+                                + (arguments == null ? "null" : arguments.getClass().getName()));
+                        } catch (ReflectiveOperationException failure) {
+                            holder.registerProblem(file, "KVIK_PLATFORM_ERROR " + failure);
+                        }
+                    }
+                }
                 if (file.getName().equals("App.kt")) {
                     for (var setting : RunManager.getInstance(file.getProject()).getAllSettings()) {
                         var configuration = setting.getConfiguration();
@@ -53,7 +69,7 @@ public final class KvikReferenceProbe extends LocalInspectionTool {
                 if (!element.getClass().getName().equals("org.jetbrains.kotlin.psi.KtNameReferenceExpression")) return;
                 String name = element.getText();
                 if (!java.util.Set.of("missingSymbol", "String", "answer", "baseValue", "hiddenValue", "generatedValue",
-                    "listOf", "first", "platformName", "sharedValue", "commonValue", "secret").contains(name)) return;
+                    "listOf", "first", "platformName", "sharedValue", "commonValue", "secret", "js", "JsAny").contains(name)) return;
                 var references = PsiReferenceService.getService().getReferences(element, PsiReferenceService.Hints.NO_HINTS);
                 String result = references.isEmpty() ? "NO_REFERENCES" : "RESOLVED";
                 for (PsiReference reference : references) if (reference.resolve() == null) result = "UNRESOLVED";

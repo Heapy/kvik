@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a real common/JVM IDEA project from locked metadata without compiling edited modules."""
+"""Prepare a common/platform IDEA project from locked metadata without compiling edited modules."""
 import argparse
 import json
 import os
@@ -16,7 +16,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('runtime', 'tools', 'store'):
         parser.add_argument('--' + flag, type=Path, required=True)
+    parser.add_argument('--web', action='store_true', help='Export JVM, JS and Wasm together and compile each platform')
     args = parser.parse_args()
+    targets = ('jvm', 'js', 'wasmJs') if args.web else ('jvm', 'js')
     runtime, tools, store = [p.resolve() for p in (args.runtime, args.tools, args.store)]
     parent = ROOT / '.kvik/tests/common-idea-export'
     parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +49,7 @@ def main():
 
     def module(name, dependencies=()):
         return dict(id=name, sourceSets=[source('foundation', name, dependencies=[stdlib, *dependencies])], compilerPlugins=[],
-            targets=[dict(name=target, main='foundation', test=None, compilerOptions=[]) for target in ('jvm', 'js')])
+            targets=[dict(name=target, main='foundation', test=None, compilerOptions=[]) for target in targets])
 
     app = dict(id='app', sourceSets=[
         source('sharedBase', 'shared'),
@@ -58,6 +60,11 @@ def main():
         compilerPlugins=[], targets=[
             dict(name='jvm', main='jvmMain', test='jvmTest', compilerOptions=['-jvm-target', '17'], testSettings=dict(classes=['app.Tests'])),
             dict(name='js', main='jsMain', test='commonTest', compilerOptions=[])])
+    if args.web:
+        app['sourceSets'].extend([source('wasmMain', 'wasm', ['commonMain']),
+            source('jsTest', 'js-tests', ['commonTest']), source('wasmTest', 'wasm-tests', ['commonTest'])])
+        app['targets'][1]['test'] = 'jsTest'
+        app['targets'].append(dict(name='wasmJs', main='wasmMain', test='wasmTest', compilerOptions=[]))
     config = dict(schemaVersion=1, name='commonIdeaFixture', repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')],
         modules=[module('hidden'), module('base', [dict(module='hidden', exported=False)]), app],
         scripts=dict(generate=dict(sources=['scripts/Generator.kt'], dependencies=[dict(coordinate=stdlib['coordinate'])],
@@ -72,7 +79,11 @@ def main():
     common_test = write('common-tests/CommonTests.kt', 'package app\nimport kotlin.test.assertEquals\nfun sharedCheck() { assertEquals("", secret() + baseSecret()) }\n')
     good = 'package app\nactual fun platformName(): String = java.lang.System.getProperty("os.name")\ninternal fun answer(): String = commonValue() + generatedValue() + secret()\n'
     edited = write('app/App.kt', good + 'fun broken(): String = missingSymbol()\n')
-    write('js/Platform.kt', 'package app\nactual fun platformName(): String = "js"\n')
+    js_source = write('js/Platform.kt', 'package app\nactual fun platformName(): String = "js"\nfun webApi(): dynamic = js("({})")\ninternal fun webSecret(): String = ""\n')
+    wasm_source = write('wasm/Platform.kt', '@file:OptIn(kotlin.js.ExperimentalWasmJsInterop::class)\npackage app\nactual fun platformName(): String = "wasm"\nfun webApi(value: kotlin.js.JsAny?): kotlin.js.JsAny? = value\ninternal fun webSecret(): String = ""\n') if args.web else None
+    if args.web:
+        for directory in ('js-tests', 'wasm-tests'):
+            write(directory + '/WebTests.kt', 'package app\nfun platformCheck() { kotlin.test.assertEquals("", webSecret()) }\n')
     write('tests/Tests.kt', 'package app\nimport org.junit.jupiter.api.Test\nimport org.junit.jupiter.api.Assertions.assertEquals\nclass Tests { @Test fun checkAnswer() { sharedCheck(); assertEquals("42", answer()) } }\n')
     data = write('data/version.txt', 'one')
     write('scripts/Generator.kt', r'''import java.nio.file.Files
@@ -91,6 +102,7 @@ fun main(args: Array<String>) {
 ''')
     common = ['--project', project, '--store', store]
     build = [*common, '--tools', tools, '--module', 'app', '--target', 'jvm', '--runs', case / 'runs', '--offline']
+    export_build = [*build, '--target', 'js', '--target', 'wasmJs'] if args.web else build
     run('resolve', [runtime, 'resolve', *common])
     lock_bytes = (workspace / 'kvik.lock.json').read_bytes()
     previous = None
@@ -98,22 +110,34 @@ fun main(args: Array<String>) {
     def export(label, success=True):
         nonlocal previous
         output = case / label
-        events = run(label, [runtime, 'idea-export', *build, '--sdk', 'kvik-probe', '--output', output], success)
+        events = run(label, [runtime, 'idea-export', *export_build, '--sdk', 'kvik-probe', '--output', output], success)
         if not success:
             assert not output.exists()
             return
         receipt = events[-1]
-        model = json.loads((Path(receipt['preparation']) / 'ide/app/model.json').read_bytes())
-        Draft202012Validator({**schema, '$ref': '#/$defs/ideInputs'}).validate(model)
+        models = [json.loads((Path(receipt['preparation']) / ('ide/app/' + target + '/model.json' if args.web else 'ide/app/model.json')).read_bytes())
+                  for target in (targets if args.web else ('jvm',))]
+        assert {model.get('target', 'jvm') for model in models} == set(targets if args.web else ('jvm',))
+        for model in models:
+            Draft202012Validator({**schema, '$ref': '#/$defs/ideInputs'}).validate(model)
         record = json.loads((Path(receipt['preparation']) / 'verification.json').read_bytes())
         actions = record['actions']
         assert record['status'] == 'passed' and record['testCounts']['executed'] == 0
-        assert all(a['actionId'] not in ('app:jvm:main', 'base:jvm:main', 'hidden:jvm:main', 'app:jvm:test-compile') for a in actions)
+        project_compilations = {f'{module}:{target}:{scope}' for module in ('app', 'base', 'hidden')
+                                for target in targets for scope in ('main', 'test-compile')}
+        assert all(a['actionId'] not in project_compilations for a in actions)
+        assert all(not name.endswith(':node') for name in record['toolchains'])
         metadata = [a for a in actions if ':common:ide-metadata-' in a['actionId']]
         assert len(metadata) == 5, metadata
         assert all(a['status'] in ('executed', 'local_hit') if previous is None else a['status'] == 'local_hit'
                    for a in metadata), metadata
-        by_name = {c['module'] + ('.common.' + c['sourceSet'] if 'sourceSet' in c else '.' + c['compilation']): c for c in model['compilations']}
+        by_name = {}
+        for model in models:
+            for c in model['compilations']:
+                target = c.get('target', 'jvm')
+                name = c['module'] + ('.common.' + c['sourceSet'] if 'sourceSet' in c else ('.' if target == 'jvm' else '.' + target + '.') + c['compilation'])
+                assert name not in by_name or by_name[name] == c, name
+                by_name[name] = c
         assert by_name['app.common.commonMain']['refines'] == ['app.common.sharedBase']
         assert by_name['app.common.commonMain']['modules'] == ['base.common.foundation']
         assert by_name['app.common.commonTest']['friends'] == ['app.common.sharedBase', 'app.common.commonMain']
@@ -125,9 +149,15 @@ fun main(args: Array<String>) {
             assert [e.text for e in xml.findall('.//dependsOnModuleNames/dependsOn')] == c.get('refines', [])
             for library in c['libraries']:
                 assert (output / 'inputs' / library).is_file()
-            if 'sourceSet' in c:
+            if 'sourceSet' in c or c.get('target', 'jvm') != 'jvm':
                 assert all(p.endswith('.klib') for p in c['libraries'])
                 assert not xml.findall(".//orderEntry[@type='inheritedJdk']")
+            if c.get('target') in ('js', 'wasmJs'):
+                target = c['target']
+                facet = xml.find('.//facet/configuration')
+                assert facet.attrib['allPlatforms'] == ('JS []' if target == 'js' else 'wasm-js [JS]')
+                assert all(e.attrib.get('type') == ('kotlin.js' if target == 'js' else 'kotlin.wasm.js')
+                           for e in xml.findall('.//library'))
         assert (output / 'inputs/generated/scripts/generate/Generated.kt').is_file()
         assert (output / 'inputs/runtime/app/common/commonMain/generated.txt').read_text() == data.read_text()
         assert not (output / 'inputs/runtime/app/main/generated.txt').exists()
@@ -147,8 +177,16 @@ fun main(args: Array<String>) {
     events = run('real-tests', [runtime, 'test', *build])
     result = events[-1]['payload']
     assert result['status'] == 'passed' and result['testCounts']['executed'] == 1, result
+    if args.web:
+        for target in ('js', 'wasmJs'):
+            platform_build = list(build)
+            platform_build[platform_build.index('--target') + 1] = target
+            for command in ('build', 'compile-tests'):
+                events = run('real-' + command + '-' + target, [runtime, command, *platform_build])
+                assert events[-1]['payload']['status'] == 'passed', events[-1]
     (case / 'summary.json').write_text(json.dumps(dict(passed=True, project=str(output), workspace=str(workspace),
-        commonSource=str(common_source), commonTestSource=str(common_test)), indent=2) + '\n')
+        commonSource=str(common_source), commonTestSource=str(common_test),
+        platformSources=dict(js=str(js_source), wasmJs=str(wasm_source)) if args.web else {}), indent=2) + '\n')
     print('Passed:', case, flush=True)
 
 

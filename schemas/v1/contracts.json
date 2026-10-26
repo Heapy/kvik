@@ -5913,6 +5913,13 @@
             "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
           },
           "uniqueItems": true
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "js",
+            "wasmJs"
+          ]
         }
       },
       "required": [
@@ -5941,6 +5948,11 @@
             ]
           },
           "then": {
+            "not": {
+              "required": [
+                "target"
+              ]
+            },
             "properties": {
               "libraries": {
                 "items": {
@@ -5959,10 +5971,34 @@
             }
           },
           "else": {
-            "properties": {
-              "libraries": {
-                "items": {
-                  "pattern": "\\.jar$(?![\\s\\S])"
+            "if": {
+              "required": [
+                "target"
+              ],
+              "properties": {
+                "target": {
+                  "enum": [
+                    "js",
+                    "wasmJs"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "libraries": {
+                  "items": {
+                    "pattern": "\\.klib$(?![\\s\\S])"
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "libraries": {
+                  "items": {
+                    "pattern": "\\.jar$(?![\\s\\S])"
+                  }
                 }
               }
             }
@@ -5995,6 +6031,13 @@
         "module": {
           "type": "string",
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "target": {
+          "enum": [
+            "jvm",
+            "js",
+            "wasmJs"
+          ]
         },
         "compilations": {
           "type": "array",
@@ -6102,7 +6145,7 @@
         },
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|application|package))$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|application|package|ide-inputs))$(?![\\s\\S])"
         },
         {
           "type": "string",

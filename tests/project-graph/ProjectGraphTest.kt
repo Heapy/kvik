@@ -2057,6 +2057,48 @@ class IosFrameworkGraphTest {
 }
 
 class IdeInputGraphTest {
+    @Test fun webEditorModelsKeepPlatformLibrariesAndTestFriendsWithoutCompilersOrNode() {
+        val targets = setOf("jvm", "js", "wasmJs")
+        fun web(value: ModuleSpec) = value.copy(
+            sourceSets = value.sourceSets.filter { !it.name.startsWith("native") } + targets.filter { it != "jvm" }.flatMap {
+                listOf(source("${it}Main", "${value.id}/$it", listOf("commonMain")),
+                    source("${it}Test", "${value.id}/${it}Test", listOf("commonTest")))
+            },
+            targets = targets.map { TargetSpec(it, "${it}Main", "${it}Test", emptyList()) })
+        val config = configuration(web(base), web(app))
+        val selected = ProjectGraphRequest(setOf("app"), targets, ProjectMode.IDE_INPUTS)
+        val effective = effectiveConfiguration(config)
+        assertEquals(targets, projectToolTargets(config.project, selected))
+        val plan = projectActionGraph(effective, lock(effective), TreeManifest(emptyList()), composition,
+            tools.mapValues { it.value - "node" }, selected)
+        assertEquals(targets.map { "app:$it:ide-inputs" }.toSet(), plan.requestedChecks)
+        assertTrue(plan.compilations.isEmpty())
+        assertTrue(plan.nodes.all { it.id.endsWith(":ide-inputs") || ":ide-metadata-" in it.id })
+        val actions = resolved(plan)
+        val common = mutableMapOf<String, JvmIdeCompilation>()
+        for (target in targets) {
+            val action = actions.getValue("app:$target:ide-inputs")
+            val model = IdeInputs.fromJson(action.parameters)
+            assertEquals(target, model.target)
+            assertEquals(target, action.target)
+            assertFalse("node" in action.toolchains)
+            for (c in model.compilations.filter { it.common }) {
+                common[c.name]?.let { assertEquals(it, c) }
+                common[c.name] = c
+            }
+            val main = model.compilations.single { it.module == "app" && it.compilation == "main" && !it.common }
+            val test = model.compilations.single { it.module == "app" && it.compilation == "test" && !it.common }
+            assertEquals(ideCompilationName("app", target, "main"), main.name)
+            assertEquals(listOf(ideCompilationName("base", target, "main")), main.modules)
+            assertContains(test.modules, main.name)
+            assertTrue(main.roots.all { it.sourceSet == "${target}Main" })
+            assertTrue(test.roots.all { it.sourceSet == "${target}Test" })
+            assertTrue((main.libraries + test.libraries).all { it.value.endsWith(if (target == "jvm") ".jar" else ".klib") })
+            assertEquals(model, IdeInputs.fromJson(model.toJson()))
+        }
+        assertTrue(common.isNotEmpty())
+    }
+
     @Test fun commonSourceModulesOwnRootsDependenciesAndTestFriendsWithoutConsumerCompilation() {
         val dependency = module("base", listOf(external("g:base-api:1"))).let { original -> original.copy(sourceSets = original.sourceSets.map { set ->
             set.copy(name = if (set.name == "commonMain") "foundation" else set.name,

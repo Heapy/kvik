@@ -260,7 +260,7 @@ Debugging and unsaved-buffer support remain pending. Compatibility is exercised 
 
 ### IDEA project export
 
-Export a JVM project into a new directory and open that directory in IDEA:
+Export a JVM, JS or Wasm project into a new directory and open that directory in IDEA:
 
 ```sh
 ./kvik --no-build -- idea-export --project /project/kvik.json \
@@ -269,16 +269,19 @@ Export a JVM project into a new directory and open that directory in IDEA:
 ```
 
 `--sdk` is the name of an IDEA JDK configured to match the project's build tools.
-The export prepares locked JVM JARs, shared-source metadata KLIBs and
+Repeat `--target` to import multiple platforms together. The export prepares locked
+JVM JARs, JS/Wasm KLIBs, shared-source metadata KLIBs and
 source/resource generators, including their prerequisites. Ordinary module dependencies become source-module edges, so errors
 in the edited modules do not prevent import. Main and test compilations retain
-their own JVM settings, private dependency visibility and test friend access.
+their own platform settings, private dependency visibility and test friend access.
 Generated files and libraries are copied into the export; authored sources and
 resources remain in their original directories. The included **Kvik build** and
 **Kvik test** run configurations invoke the native build tool.
 
-`prepare-ide` accepts the same JVM build selectors and retains the editor input
-model under the run's `ide/<module>/model.json`, with ordinary files under `input/`.
+`prepare-ide` accepts the same JVM/JS/Wasm build selectors and retains the editor
+input model under the run's `ide/<module>/model.json` for JVM-only selections, or
+`ide/<module>/<target>/model.json` when selecting any web target, with ordinary
+files under each model's `input/`. Web preparation does not require Node.
 The `ide-inputs-ready` event identifies that directory. Preparation is a separate
 check from compilation or tests. Its model has a versioned `ideInputs` JSON Schema.
 
@@ -286,7 +289,7 @@ Source sets shared by at least two targets become separate common modules with
 their own roots and locked metadata. Refinement edges preserve `expect`/`actual`
 and internal visibility; shared tests receive explicit access to their main source
 sets, including when the test declaration omits a main refinement edge.
-Native/JS/Wasm platform editor models, compiler-plugin analysis, debugging and live
+Native platform editor models, compiler-plugin analysis, debugging and live
 project-model reload remain pending. `idea-export` rejects single-target common
 roots and compiler plugins; `prepare-ide` preserves their ownership/presence in
 the intermediate model.
@@ -305,7 +308,10 @@ the common-source renderer with a transitive refinement chain and extracted KLIB
 metadata. It checks `expect`/`actual`, internal visibility, and rejection of JVM
 APIs from common code. `tools/test_common_idea_export_cli.py` exercises locked
 per-source-set preparation through the public export command, including shared
-test dependencies and generated roots.
+test dependencies and generated roots. Its `--web` mode also exports JVM, JS and
+Wasm together, compiles web production/test sources and checks platform library
+kinds. Pass the resulting case to `test_idea_import.py --prepared-case` to verify
+platform-specific APIs and rejection of JVM APIs in web modules with installed IDEA.
 
 ### Configuration changes
 

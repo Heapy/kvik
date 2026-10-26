@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify the IDEA projection using the installed IDE's Kotlin resolver and diagnostics."""
 import argparse
+import atexit
 import json
 import os
 from pathlib import Path
@@ -69,6 +70,8 @@ def main():
             shutil.copytree(prepared['project'], project, dirs_exist_ok=True)
             changes = {
                 'without-friend': ('app.test', 'additionalVisibleModuleNames'),
+                'without-js-friend': ('app.js.test', 'additionalVisibleModuleNames'),
+                'without-wasmJs-friend': ('app.wasmJs.test', 'additionalVisibleModuleNames'),
                 'without-refinement': ('app.main', 'dependsOnModuleNames'),
                 'without-common-friends': ('app.common.commonTest', 'additionalVisibleModuleNames'),
             }
@@ -105,6 +108,10 @@ def main():
         (workspace/'shared/Shared.kt').write_text('package app\nfun sharedValue(): String = commonValue() + secret()\n')
         good += ('actual fun platformName(): String = java.lang.System.getProperty("os.name")\n'
                  'fun useCommon(): String = platformName() + sharedValue() + secret()\n')
+    def restore_source():
+        if source.read_text() != good:
+            source.write_text(good)
+    atexit.register(restore_source)
     source.write_text(good + 'fun broken(): String = missingSymbol()\n')
     if prepared is None:
         (workspace/'tests/Tests.kt').write_text('package app\nfun checkAnswer(): String = answer()\n')
@@ -159,6 +166,16 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
         assert any('KVIK_REFERENCE baseValue RESOLVED' == message for _, message in values), values
         if prepared:
             assert any('KVIK_REFERENCE generatedValue RESOLVED' == message for _, message in values), values
+        if prepared and prepared.get('platformSources'):
+            platforms = {text.split('|')[1]: text.split('|')[2:] for _, text in values
+                         if text.startswith('KVIK_PLATFORM|')}
+            assert not any(text.startswith('KVIK_PLATFORM_ERROR') for _, text in values), values
+            for target, platform, arguments in [('js', 'JS', 'K2JSCompilerArguments'),
+                                                ('wasmJs', 'wasm-js (JS)', 'KotlinWasmCompilerArguments')]:
+                assert platforms.get(f'app.{target}.main') == [platform, 'org.jetbrains.kotlin.cli.common.arguments.' + arguments], platforms
+            for target, name in [('js', 'js'), ('wasmJs', 'JsAny')]:
+                assert any(target.replace('wasmJs', 'wasm') + '/Platform.kt' in file and f'KVIK_REFERENCE {name} RESOLVED' == message
+                           for file, message in values), (target, values)
         if common_library:
             for name in ('listOf', 'first', 'platformName', 'sharedValue', 'commonValue'):
                 assert any(f'KVIK_REFERENCE {name} RESOLVED' == message for _, message in values), (name, values)
@@ -221,6 +238,24 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
         export('common-restored')
         assert inspect('common-restored') == []
         phases += ['common-platform-leak', 'without-refinement', 'without-common-friends', 'common-restored']
+    for target, path in (prepared or {}).get('platformSources', {}).items():
+        platform_source = Path(path)
+        original = platform_source.read_text()
+        try:
+            platform_source.write_text(original + 'fun platformLeak(): String = java.lang.System.getProperty("os.name")\n')
+            leak = inspect(target + '-platform-leak')
+            assert len(leak) == 1 and 'Platform.kt' in leak[0][0] and "'java'" in leak[0][1], leak
+        finally:
+            platform_source.write_text(original)
+        phases.append(target + '-platform-leak')
+        export('without-' + target + '-friend')
+        friend = inspect('without-' + target + '-friend')
+        assert len(friend) == 1 and 'WebTests.kt' in friend[0][0] and 'webSecret' in friend[0][1] and 'internal' in friend[0][1], friend
+        export(target + '-friends-restored')
+        phases.append('without-' + target + '-friend')
+    if prepared and prepared.get('platformSources'):
+        assert inspect('platforms-restored') == []
+        phases.append('platforms-restored')
     (case/'summary.json').write_text(json.dumps(dict(passed=True, build=product['buildNumber'],
         phases=phases,
         modelRefresh='new-project-import', sourceRefresh='explicit-content-root-refresh',

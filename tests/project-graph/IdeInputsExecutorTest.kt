@@ -4,6 +4,22 @@ import kvik.core.*
 import kotlin.test.*
 
 class IdeInputsExecutorTest {
+    @Test fun webModelsRejectMixedPlatformsAndPreserveTargetInActionIdentity() {
+        val library = LogicalPath("deps/stdlib.klib")
+        val main = JvmIdeCompilation("app", "main", emptyList(), emptyList(), listOf(library), emptyList(), false, target = "js")
+        val model = IdeInputs("app", listOf(main), "js")
+        assertEquals(model, IdeInputs.fromJson(model.toJson()))
+        assertFails { main.copy(libraries = listOf(LogicalPath("deps/stdlib.jar"))) }
+        assertFails { IdeInputs("app", listOf(main)) }
+        assertFails { IdeInputs("app", listOf(main, main.copy(module = "other", target = "wasmJs")), "js") }
+        val files = TreeManifest(listOf(FileEntry(library, composition)))
+        val js = ideInputsAction(model, files, composition, tools)
+        val wasm = ideInputsAction(IdeInputs("app", listOf(main.copy(target = "wasmJs")), "wasmJs"), files, composition, tools)
+        assertNotEquals(js.key(Sha256), wasm.key(Sha256))
+        assertEquals("js", js.target)
+        assertEquals("wasmJs", wasm.target)
+    }
+
     @Test fun sharedModelsValidateRefinementAndFriendBoundaries() {
         val main = JvmIdeCompilation("app", "main", emptyList(), emptyList(), emptyList(), emptyList(), false,
             refines = listOf("app.common.commonMain"))
