@@ -18,6 +18,18 @@ def module():
 
 
 class LibraryPublicationSchemaTest(unittest.TestCase):
+    def test_metadata_preparation_requires_targets_and_has_no_compilation_inputs(self):
+        request = json.loads((ROOT / 'schemas/examples/workerRequest.json').read_bytes())
+        request.update(operation='metadata-prepare', sources=[], classpath=['metadata.jar'],
+                       pluginClasspath=[], options=[], metadataTargets=['jvm', 'js'])
+        validator('workerRequest').validate(request)
+        for changes in (dict(sources=['Broken.kt']), dict(classpath=[]), dict(classpath=['a.jar', 'a.jar']),
+                        dict(pluginClasspath=['plugin.jar']), dict(options=['-Werror']), dict(metadataTargets=['jvm']),
+                        dict(operation='jvm-compile'), dict(operation='metadata-compile')):
+            self.assertFalse(validator('workerRequest').is_valid({**request, **changes}), changes)
+        del request['metadataTargets']
+        self.assertFalse(validator('workerRequest').is_valid(request))
+
     def test_common_source_set_domain_is_optional_and_preserves_the_aggregate_contract(self):
         domain = dict(module='library', target='common', compilation='test', usage='kotlin-metadata',
                       purpose='dependencies', sourceSet='commonTest')

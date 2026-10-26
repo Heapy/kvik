@@ -102,6 +102,35 @@ data class JvmCompilation(
     }
 }
 
+/** Dependency-only editor preparation; authored source errors cannot prevent this action. */
+data class JvmMetadataPreparation(val module: String, val classpath: List<LogicalPath>, val output: LogicalPath, val targets: Set<String>) {
+    init {
+        require(module.matches(Regex("[A-Za-z0-9_.:-]+")))
+        require(classpath.size in 1..256 && classpath.distinct().size == classpath.size && classpath.none { ':' in it.value })
+        require(targets.size >= 2 && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
+    }
+    fun toJson(): JsonValue.Object = obj("module" to module.json(), "classpath" to classpath.jsonPaths(),
+        "output" to output.value.json(), "targets" to targets.sorted().map { it.json() }.json())
+    companion object {
+        fun fromJson(value: JsonValue): JvmMetadataPreparation {
+            val d = value.fields(setOf("module", "classpath", "output", "targets"))
+            return JvmMetadataPreparation(d.getValue("module").stringValue(), d.paths("classpath"), LogicalPath(d.getValue("output").stringValue()),
+                d.getValue("targets").arrayValue().map(JsonValue::stringValue).also { require(it.distinct().size == it.size) }.toSet())
+        }
+    }
+}
+
+fun jvmMetadataPrepareAction(preparation: JvmMetadataPreparation, inputs: TreeManifest, composition: Digest,
+                             toolchains: Map<String, Digest>, timeoutMillis: Long = 120_000): ActionSpec {
+    require(toolchains.keys == jvmIdentities)
+    for (path in preparation.classpath) require(inputs.files.any {
+        it.path == path && (path.value.endsWith(".klib") || path.value.endsWith(".jar")) || it.path.value.startsWith(path.value + "/")
+    }) { "Undeclared metadata KLIB/directory: ${path.value}" }
+    return ActionSpec("kvik-jvm-metadata-prepare-v1", composition, ActionKind.GENERATE, hostPlatform, "common", toolchains.toMap(),
+        TreeManifest(inputs.files.toList()), listOf(preparation.output), listOf("kvik.jvm.CompilerWorkerKt", "metadata-prepare"),
+        workerEnvironment, preparation.toJson(), timeoutMillis, CachePolicy.LOCAL)
+}
+
 /** Genuine common metadata compilation; dependencies are explicit metadata KLIBs/directories. */
 data class JvmMetadataCompilation(
     val module: String,

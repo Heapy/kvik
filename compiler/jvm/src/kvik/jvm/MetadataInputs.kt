@@ -3,13 +3,64 @@ package kvik.jvm
 import kvik.core.*
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardOpenOption.CREATE_NEW
 import java.nio.file.StandardOpenOption.WRITE
+import java.time.LocalDateTime
 import java.util.Properties
+import java.util.zip.CRC32
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 private const val METADATA_LIMIT = 64 * 1024 * 1024
 private const val PSM_PATH = "META-INF/kotlin-project-structure-metadata.json"
+
+/** Prepare portable editor libraries without loading BTA or compiling project sources. */
+internal fun prepareMetadata(workspace: Workspace, request: WorkerRequest): WorkerResult {
+    require(request.operation == "metadata-prepare")
+    require(request.classpath.distinct().size == request.classpath.size && request.classpath.size <= 256) { "Duplicate or too many metadata inputs" }
+    val destination = workspace.path(request.outputDirectory, false)
+    if (Files.exists(destination)) reject("KVIK_OUTPUT_EXISTS", "Output directory must be new")
+    val staging = Files.createTempDirectory(destination.parent, ".kvik-metadata-output-")
+    val scratch = Files.createTempDirectory(workspace.root, ".kvik-metadata-inputs-")
+    try {
+        val libraries = metadataClasspath(workspace, request.classpath, scratch, request.metadataTargets,
+            nativeStdlibPath = request.classpath.singleOrNull { it == "input/native-stdlib/shared" })
+        require(libraries.size in 1..4096) { "Too many prepared metadata libraries" }
+        val names = libraries.mapIndexed { index, library ->
+            val name = "$index.klib"
+            val output = staging.resolve(name)
+            if (Files.isDirectory(library)) packMetadataLibrary(library, output) else Files.copy(library, output)
+            name
+        }
+        Files.writeString(staging.resolve("classpath.json"), obj("schemaVersion" to CONTRACT_VERSION.json(),
+            "classpath" to names.map { it.json() }.json()).canonical() + "\n", CREATE_NEW, WRITE)
+        Files.move(staging, destination, ATOMIC_MOVE)
+        return WorkerResult(request.requestId, WorkerStatus.SUCCESS, 0, emptyList())
+    } finally { workspace.removeTree(staging); workspace.removeTree(scratch) }
+}
+
+/** Fixed timestamps, ordering and stored entries make relocated editor KLIBs byte-identical. */
+private fun packMetadataLibrary(directory: Path, output: Path) {
+    val files = Files.walk(directory).use { paths -> paths.filter { !Files.isDirectory(it) }.limit(10001).toList() }
+    require(files.size in 1..10000 && files.all { !Files.isSymbolicLink(it) && Files.isRegularFile(it) }) { "Invalid metadata tree" }
+    require(files.sumOf { Files.size(it) } <= METADATA_LIMIT) { "Expanded metadata library exceeds 64 MiB" }
+    ZipOutputStream(Files.newOutputStream(output, CREATE_NEW, WRITE)).use { zip ->
+        for (file in files.sortedBy { directory.relativize(it).toString() }) {
+            val name = LogicalPath(directory.relativize(file).toString()).value
+            val bytes = Files.readAllBytes(file)
+            val entry = ZipEntry(name).apply {
+                method = ZipEntry.STORED
+                size = bytes.size.toLong()
+                compressedSize = size
+                crc = CRC32().apply { update(bytes) }.value
+                setTimeLocal(LocalDateTime.of(1980, 1, 1, 0, 0))
+            }
+            zip.putNextEntry(entry); zip.write(bytes); zip.closeEntry()
+        }
+    }
+}
 
 /** Read only declared metadata; no target KLIB substitution, repositories or ambient classpath. */
 internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratch: Path, targets: Set<String>, minimumTargets: Int = 2, nativeStdlibPath: String? = null): List<Path> {

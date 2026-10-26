@@ -204,8 +204,12 @@ data class WorkerRequest(
     val metadataTargets: Set<String> = if (operation == "metadata-compile") setOf("jvm", "macosArm64") else emptySet(),
 ) {
     init {
-        require(if (operation == "metadata-compile") metadataTargets.size >= 2 && metadataTargets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null } else metadataTargets.isEmpty()) { "Unsupported metadata target intersection" }
-        require(requestId.isNotBlank() && operation in setOf("jvm-compile", "metadata-compile") && sources.isNotEmpty())
+        require(if (operation in setOf("metadata-compile", "metadata-prepare")) metadataTargets.size >= 2 && metadataTargets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null } else metadataTargets.isEmpty()) { "Unsupported metadata target intersection" }
+        require(requestId.isNotBlank() && operation in setOf("jvm-compile", "metadata-compile", "metadata-prepare"))
+        if (operation == "metadata-prepare") require(sources.isEmpty() && classpath.size in 1..256 && classpath.distinct().size == classpath.size &&
+            pluginClasspath.isEmpty() && pluginApplications.isEmpty() && options.isEmpty()) {
+            "Metadata preparation accepts only dependency classpaths and explicit targets"
+        } else require(sources.isNotEmpty())
         validateJvmPluginApplications(pluginApplications)
         require(pluginClasspath.size <= 1) { "At most one pinned serialization plugin is supported" }
         require(pluginClasspath.isEmpty() || pluginApplications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }

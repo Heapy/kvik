@@ -329,7 +329,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
                             "kvik-kmp-library-package-v1" -> kmpLibrary
-                            "kvik-jvm-metadata-v1" -> jvm
+                            "kvik-jvm-metadata-v1", "kvik-jvm-metadata-prepare-v1" -> jvm
                             "kvik-ksp-native-v1" -> ksp.getValue(NativeTarget.require(action.target))
                             "kvik-kotest-native-tests-v1" -> kotest
                             "kvik-js-compiler-v1", "kvik-js-tests-v1" -> requireNotNull(js)

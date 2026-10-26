@@ -79,18 +79,20 @@ class JvmActionExecutor(
         val compilation = if (action.implementation == "kvik-jvm-compiler-v1") JvmCompilation.fromJson(action.parameters) else null
         val script = if (action.implementation == "kvik-kotlin-script-compiler-v1") KtsCompilation.fromJson(action.parameters) else null
         val metadata = if (action.implementation == "kvik-jvm-metadata-v1") JvmMetadataCompilation.fromJson(action.parameters) else null
+        val metadataPreparation = if (action.implementation == "kvik-jvm-metadata-prepare-v1") JvmMetadataPreparation.fromJson(action.parameters) else null
         val selection = if (action.implementation == "kvik-jvm-tests-v1") JvmTestSelection.fromJson(action.parameters) else null
         val expected = when {
             compilation != null -> jvmCompileAction(compilation, action.inputs, action.composition, action.toolchains, action.timeoutMillis, action.cachePolicy)
             script != null -> ktsCompileAction(script, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             metadata != null -> jvmMetadataCompileAction(metadata, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
+            metadataPreparation != null -> jvmMetadataPrepareAction(metadataPreparation, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             selection != null -> jvmTestAction(selection, action.inputs, action.composition, action.toolchains, action.timeoutMillis)
             else -> error("Unsupported JVM action implementation")
         }
         require(action == expected) { "JVM action does not match its typed parameters" }
         val key = expected.key(Sha256)
-        val module = compilation?.module ?: script?.name ?: metadata?.module ?: selection!!.module
-        val compilerOutput = compilation?.output ?: script?.output ?: metadata?.output
+        val module = compilation?.module ?: script?.name ?: metadata?.module ?: metadataPreparation?.module ?: selection!!.module
+        val compilerOutput = compilation?.output ?: script?.output ?: metadata?.output ?: metadataPreparation?.output
         startedActions += actionId
         fun startVerified(layout: JvmToolchainLayout): RunningAction {
             val reservation = NativeRunDirectory(runDirectory)
@@ -139,6 +141,9 @@ class JvmActionExecutor(
             else if (metadata != null) WorkerRequest(requestId, "metadata-compile", expected.toolchains.getValue("jvm-compiler"),
                 staged(metadata.sources), staged(metadata.classpath), staged(metadata.plugins), metadata.options("input/"), "output/${metadata.output.value}",
                 metadata.pluginApplications.map(::stagedPlugin), metadataTargets = metadata.targets).toJson()
+            else if (metadataPreparation != null) WorkerRequest(requestId, "metadata-prepare", expected.toolchains.getValue("jvm-compiler"),
+                emptyList(), staged(metadataPreparation.classpath), emptyList(), emptyList(), "output/${metadataPreparation.output.value}",
+                metadataTargets = metadataPreparation.targets).toJson()
             else obj("schemaVersion" to CONTRACT_VERSION.json(), "requestId" to requestId.json(), "module" to module.json(), "target" to "jvm".json(),
                 "classpath" to staged(selection!!.classpath).map { it.json() }.json(), "testClasses" to selection.classes.map { it.json() }.json(), "engines" to selection.engines.map { it.json() }.json(), "parallelism" to selection.parallelism.json(), "maxRetries" to selection.maxRetries.json(),
                 "discoveryRoots" to staged(selection.discoveryRoots).map { it.json() }.json()).let { JsonValue.Object(it.values + selection.tags.toJson().values) }
@@ -204,6 +209,16 @@ class JvmActionExecutor(
                                         if (script != null) require(outputs.files.any { it.path.value == "${script.output.value}/kvik-script.json" } &&
                                             outputs.files.any { it.path.value.startsWith(script.output.value + "/") && it.path.value.endsWith(".class") }) {
                                             "Script compiler did not produce its descriptor and classes"
+                                        }
+                                        if (metadataPreparation != null) {
+                                            val prefix = metadataPreparation.output.value + "/"
+                                            val fields = parseJson(readJvmFile("$directory/output/${prefix}classpath.json").decodeToString(throwOnInvalidSequence = true))
+                                                .fields(setOf("schemaVersion", "classpath"))
+                                            fields.requireVersion()
+                                            val libraries = fields.getValue("classpath").arrayValue().map(JsonValue::stringValue)
+                                            require(libraries.size in 1..4096 && libraries == libraries.indices.map { "$it.klib" }) { "Invalid prepared metadata classpath" }
+                                            require(outputs.files.map { it.path.value }.toSet() ==
+                                                (libraries.map { prefix + it } + "${prefix}classpath.json").toSet()) { "Prepared metadata inventory differs" }
                                         }
                                         status = ActionStatus.EXECUTED
                                     }

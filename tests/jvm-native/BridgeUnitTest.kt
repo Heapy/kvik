@@ -69,6 +69,70 @@ class BridgeUnitTest {
         assertFalse("metadataTargets" in ordinary.toJson().objectValue())
     }
 
+    @Test fun metadataPreparationBindsTargetsAndLibrariesWithoutCompilingSources() {
+        val preparation = JvmMetadataPreparation("sample:commonTest", listOf(LogicalPath("metadata.jar")), LogicalPath("editor"), setOf("jvm", "js"))
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("metadata.jar"), digest)))
+        val tools = jvmIdentities.associateWith { digest }
+        fun action(value: JvmMetadataPreparation = preparation, files: TreeManifest = inputs) = jvmMetadataPrepareAction(value, files, digest, tools)
+        assertEquals(preparation, JvmMetadataPreparation.fromJson(preparation.toJson()))
+        assertEquals(ActionKind.GENERATE, action().kind)
+        assertEquals(CachePolicy.LOCAL, action().cachePolicy)
+        assertNotEquals(action().key(Sha256), action(preparation.copy(targets = setOf("jvm", "wasmJs"))).key(Sha256))
+        assertNotEquals(action().key(Sha256), action(files = TreeManifest(listOf(FileEntry(LogicalPath("metadata.jar"), Sha256.digest(byteArrayOf(1)))))).key(Sha256))
+        assertFails { preparation.copy(classpath = emptyList()) }
+        assertFails { preparation.copy(targets = setOf("jvm")) }
+        assertFails { action(files = TreeManifest(emptyList())) }
+        val request = WorkerRequest("prepare", "metadata-prepare", digest, emptyList(), listOf("metadata.jar"), emptyList(), emptyList(), "editor", metadataTargets = preparation.targets)
+        assertEquals(request, WorkerRequest.fromJson(request.toJson()))
+        assertFails { WorkerRequest.fromJson(JsonValue.Object(request.toJson().objectValue() - "metadataTargets")) }
+        assertFails { request.copy(sources = listOf("Broken.kt")) }
+        assertFails { request.copy(pluginClasspath = listOf("plugin.jar")) }
+        assertFails { request.copy(options = listOf("-Werror")) }
+        assertFails { request.copy(classpath = listOf("metadata.jar", "metadata.jar")) }
+    }
+
+    @Test fun metadataPreparationWorkerRequiresAnExactClasspathInventory() {
+        val root = NativeRunDirectory("/private/tmp")
+        val store = NativeContentStore("${root.path}/store")
+        val manifest = obj("fixture" to true.json())
+        writeJvmFile("${root.path}/manifest.json", manifest.canonical().encodeToByteArray())
+        val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
+        val provider = JvmToolchainProvider { requested -> JvmToolchainLayout(requested, "/tool/java", "/tool/classes", "/tool/api.jar", "/tool/std.jar", "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json") }
+        val inputs = TreeManifest(listOf(FileEntry(LogicalPath("metadata.jar"), store.put(byteArrayOf(1)))))
+        val preparation = JvmMetadataPreparation("sample", listOf(LogicalPath("metadata.jar")), LogicalPath("editor"), setOf("jvm", "js"))
+        val action = jvmMetadataPrepareAction(preparation, inputs, digest, identities)
+        for (variant in listOf("success", "missing", "extra", "escape", "empty")) {
+            var closed = false
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess {
+                    val directory = request.workingDirectory
+                    val worker = WorkerRequest.fromJson(parseJson(readJvmFile("$directory/request.json").decodeToString()))
+                    assertEquals("metadata-prepare", worker.operation)
+                    assertEquals(preparation.targets, worker.metadataTargets)
+                    assertTrue(worker.sources.isEmpty() && worker.options.isEmpty() && worker.pluginApplications.isEmpty())
+                    assertEquals(listOf("input/metadata.jar"), worker.classpath)
+                    mkdirJvm("$directory/output/editor")
+                    val names = when (variant) { "escape" -> listOf("../0.klib"); "empty" -> emptyList(); else -> listOf("0.klib") }
+                    writeJvmFile("$directory/output/editor/classpath.json", obj("schemaVersion" to 1.json(), "classpath" to names.map { it.json() }.json()).canonical().encodeToByteArray())
+                    if (variant != "missing") writeJvmFile("$directory/output/editor/0.klib", byteArrayOf(1))
+                    if (variant == "extra") writeJvmFile("$directory/output/editor/extra", byteArrayOf(1))
+                    writeJvmFile("$directory/result.json", WorkerResult(worker.requestId, WorkerStatus.SUCCESS, 0, emptyList()).toJson().canonical().encodeToByteArray())
+                    return object : OwnedProcess {
+                        override fun poll() = ProcessResult(0)
+                        override fun cancel() = Unit
+                        override fun close() { closed = true }
+                    }
+                }
+                override fun close() = Unit
+            }
+            val executor = JvmActionExecutor(root.runId, root.path, host, store, provider)
+            val result = executor.start(root.runId, variant, action).use(::awaitBridgeResult)
+            assertTrue(closed)
+            assertEquals(if (variant == "success") ActionStatus.EXECUTED else ActionStatus.FAILED, result.status)
+            assertEquals(variant == "success", result.outputs.files.isNotEmpty())
+        }
+    }
+
     @Test fun metadataPluginInputsOptionsAndOutputsAreBoundToTheAction() {
         val plugin = JvmPluginApplication("example.plugin", "2.4.20", listOf(LogicalPath("plugin.jar")),
             listOf("mode=first"), listOf(LogicalPath("config.txt")),

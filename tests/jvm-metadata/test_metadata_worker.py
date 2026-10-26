@@ -52,7 +52,7 @@ def main():
     manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(',', ':')))
     env = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'JAVA_HOME': str(args.java_home), 'HOME': str(case), 'TMPDIR': str(case), 'LANG': 'C.UTF-8'}
     worker = case / 'worker'
-    sources = sorted((ROOT / 'core/src').rglob('*.kt')) + [ROOT / f'compiler/jvm/src/kvik/jvm/{name}.kt' for name in ('CompilerWorker', 'WorkerFiles', 'WorkspacePlugins', 'MetadataInputs', 'NativeTypedPlugin')]
+    sources = sorted((ROOT / 'core/src').rglob('*.kt')) + [ROOT / f'compiler/jvm/src/kvik/jvm/{name}.kt' for name in ('CompilerWorker', 'CompilerOperationBuilder', 'WorkerFiles', 'WorkspacePlugins', 'MetadataInputs', 'NativeTypedPlugin')]
     command = [java, '-cp', os.pathsep.join(map(str, jars)), 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '21', '-classpath', os.pathsep.join(map(str, jars)), '-d', worker, *sources]
     with (case / 'bootstrap.log').open('wb') as log:
         subprocess.run(command, env=env, stdout=log, stderr=log, check=True, timeout=120)
@@ -71,7 +71,7 @@ def main():
     def compile(name, sources=('Common.kt',), classpath=('stdlib-all.jar',), code=0, operation='metadata-compile', **changes):
         request = {'schemaVersion': 1, 'requestId': name, 'operation': operation, 'compiler': digest(manifest_path),
                    'sources': list(sources), 'classpath': list(classpath), 'pluginClasspath': [], 'options': ['-module-name', 'fixture:common', '-language-version', '2.4', '-api-version', '2.4', '-Xmulti-platform'], 'outputDirectory': name}
-        if operation == 'metadata-compile':
+        if operation in ('metadata-compile', 'metadata-prepare'):
             request['metadataTargets'] = ['jvm', 'macosArm64']
         request.update(changes)
         (work / f'{name}.request.json').write_text(json.dumps(request))
@@ -121,6 +121,50 @@ def main():
     compile('jvm-klib-still-refused', ('Plain.kt',), ('common.klib',), operation='jvm-compile', options=[], code=1)
     shutil.copyfile(args.serialization_metadata, work / 'serialization-core.jar')
     shutil.copyfile(serialization_plugin, work / 'serialization-plugin.jar')
+    # IDE preparation operates on dependencies even while authored Kotlin is broken.
+    def prepare(name, classpath=('stdlib-all.jar', 'serialization-core.jar'), **changes):
+        return compile(name, sources=(), classpath=classpath, operation='metadata-prepare', options=[], **changes)
+
+    prepare('editor-metadata')
+    prepared = json.loads((work / 'editor-metadata/classpath.json').read_text())
+    assert prepared == {'schemaVersion': 1, 'classpath': ['0.klib', '1.klib']}, prepared
+    for name in prepared['classpath']:
+        with zipfile.ZipFile(work / 'editor-metadata' / name) as archive:
+            assert 'default/manifest' in archive.namelist()
+            assert any(n.endswith('.knm') for n in archive.namelist())
+            assert archive.namelist() == sorted(archive.namelist())
+            assert all(e.date_time == (1980, 1, 1, 0, 0, 0) for e in archive.infolist())
+    # The resulting KLIBs work as genuine compiler metadata inputs.
+    compile('editor-metadata-consumer', classpath=tuple('editor-metadata/' + p for p in prepared['classpath']))
+    prepare('editor-metadata-repeat')
+    for name in ['classpath.json', *prepared['classpath']]:
+        assert (work / 'editor-metadata' / name).read_bytes() == (work / 'editor-metadata-repeat' / name).read_bytes()
+    # Relocation and input file timestamps must not enter the prepared archive bytes.
+    (work / 'relocated').mkdir()
+    for name in ('stdlib-all.jar', 'serialization-core.jar'):
+        shutil.copyfile(work / name, work / 'relocated' / name)
+        os.utime(work / 'relocated' / name, (1_000_000_000, 1_000_000_000))
+    prepare('editor-metadata-relocated', classpath=('relocated/stdlib-all.jar', 'relocated/serialization-core.jar'))
+    for name in ['classpath.json', *prepared['classpath']]:
+        assert (work / 'editor-metadata' / name).read_bytes() == (work / 'editor-metadata-relocated' / name).read_bytes()
+    prepare('editor-direct-klib', classpath=('common.klib',))
+    assert (work / 'editor-direct-klib/0.klib').read_bytes() == (work / 'common.klib').read_bytes()
+    for label, changes in [('source', dict(sources=('Broken.kt',))), ('plugin', dict(pluginClasspath=['serialization-plugin.jar'])),
+                           ('targets', dict(metadataTargets=['jvm'])), ('option', dict(options=['-Werror']))]:
+        compile('editor-refuse-' + label, sources=changes.pop('sources', ()), classpath=('stdlib-all.jar',),
+                operation='metadata-prepare', options=changes.pop('options', []), code=1, **changes)
+    for label in ('zip-slip.jar', 'zip-link.jar', 'duplicate.jar', 'jvm-stdlib.jar'):
+        prepare('editor-refuse-' + label, classpath=('stdlib-all.jar', label), code=1)
+    (work / 'late-output').mkdir()
+    (work / 'late-output/marker').write_text('preserve')
+    # Existing output is protected even when all inputs are otherwise valid.
+    (work / 'existing.request.json').write_text(json.dumps(dict(schemaVersion=1, requestId='existing', operation='metadata-prepare',
+        compiler=digest(manifest_path), sources=[], classpath=['stdlib-all.jar'], pluginClasspath=[], options=[],
+        outputDirectory='late-output', metadataTargets=['jvm', 'macosArm64'])))
+    existing = subprocess.run([java, '-cp', cp, 'kvik.jvm.CompilerWorkerKt', work, 'existing.request.json',
+                               'existing.result.json', args.compiler_artifacts, manifest_path], env=env, capture_output=True, timeout=30)
+    assert existing.returncode == 1 and (work / 'late-output/marker').read_text() == 'preserve'
+    assert any(d['code'] == 'KVIK_OUTPUT_EXISTS' for d in json.loads((work / 'existing.result.json').read_bytes())['diagnostics'])
     (work / 'Payload.kt').write_text('package serialized\nimport kotlinx.serialization.Serializable\n@Serializable public data class Payload(public val text: String)\npublic fun generated() = Payload.serializer()\n')
     (work / 'SerializedConsumer.kt').write_text('package consumer\npublic fun generated() = serialized.Payload.serializer()\n')
     serialization_cp = ('stdlib-all.jar', 'serialization-core.jar')
@@ -177,7 +221,9 @@ def main():
     workspace_plugin('workspace-unknown-option', lambda a: a['options'].append('unknown=value'), code=1)
     workspace_plugin('workspace-undeclared-output', lambda a: a['options'].append('value=escape'), code=1)
     workspace_plugin('workspace-compiler-error', code=1, sources=('Broken.kt',))
-    workspace_plugin('workspace-mixed-representation', code=1, pluginClasspath=['serialization-plugin.jar'])
+    workspace_plugin('workspace-with-serialization', pluginClasspath=['serialization-plugin.jar'])
+    workspace_plugin('workspace-duplicate-serialization', lambda a: a.update(id='org.jetbrains.kotlinx.serialization'),
+                     code=1, pluginClasspath=['serialization-plugin.jar'])
     (work / 'JvmConsumer.kt').write_text('fun message(): String = "PLUGIN_MARKER"\nfun main() { check(message() == "helper:v1:metadata-message:runtime"); print(message()) }\n')
     jvm = dict(sources=('JvmConsumer.kt',), classpath=('jvm-stdlib.jar',), operation='jvm-compile', options=['-jvm-target', '11'])
     workspace_plugin('workspace-jvm', **jvm)

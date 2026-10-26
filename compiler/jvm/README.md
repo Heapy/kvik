@@ -33,6 +33,8 @@ The BTA `CompilerMessageRenderer` supplies structured compiler warnings/errors a
 
 The native caller must require a complete result file, matching request ID, consistent success/exit status, successful owned-process completion and validated output inventory before reporting success or publishing a cache entry. These workers do not themselves publish caches.
 
+`metadata-prepare` prepares dependency libraries for common source-set editors without compiling authored sources or loading compiler plugins. It requires explicit `metadataTargets` (at least two), a nonempty unique classpath of up to 256 metadata archives/trees, and empty sources, options and plugin lists. It uses the same validated project-structure metadata intersection as metadata compilation. The output directory contains deterministic numbered `.klib` files and `classpath.json` with `schemaVersion: 1` and an ordered `classpath` list relative to that directory. Directory fragments are packed with sorted entries and fixed timestamps; existing KLIB archives retain their bytes. Preparation publishes atomically after all inputs pass validation. The native `JvmMetadataPreparation` action validates the exact returned inventory and uses local caching. This adapter is ready for IDE graph integration; it does not yet enable common source sets in `idea-export`.
+
 ## JVM tests
 
 Launch a fresh JVM with the compiled worker/core classes, JUnit Platform 1.13.4, **every declared test runtime classpath entry** in order, then the verified worker stdlib as a fallback:

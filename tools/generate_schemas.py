@@ -977,12 +977,17 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "application-finished": object_({"preparationRun": NONEMPTY, "exitCode": {"type": "integer", "minimum": 0, "maximum": 255},
         "cancelled": BOOL, "timedOut": BOOL, "stdout": NONEMPTY, "stderr": NONEMPTY}),
 }.items()]
-DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile"), "compiler": ref("digest"), "sources": array(STRING, minItems=1), "classpath": array(STRING), "pluginClasspath": array(STRING, maxItems=1), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=16, uniqueItems=True), "metadataTargets": array(enum(*PROJECT_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
+DEFS["workerRequest"] = versioned({"requestId": STRING, "operation": enum("jvm-compile", "metadata-compile", "metadata-prepare"), "compiler": ref("digest"), "sources": array(STRING), "classpath": array(STRING), "pluginClasspath": array(STRING, maxItems=1), "options": array(STRING), "outputDirectory": STRING, "pluginApplications": array(ref("jvmPluginApplication"), maxItems=16, uniqueItems=True), "metadataTargets": array(enum(*PROJECT_TARGETS), uniqueItems=True)}, optional=("pluginApplications", "metadataTargets"))
 DEFS["workerRequest"]["allOf"] = [{"if": {"properties": {"pluginClasspath": {"minItems": 1}}},
     "then": {"properties": {"pluginApplications": {"items": {"properties": {"id": {"not": {"const": "org.jetbrains.kotlinx.serialization"}}}}}}}}]
-DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-compile"}}},
+DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": enum("metadata-compile", "metadata-prepare")}},
     "then": {"properties": {"metadataTargets": {"minItems": 2, "maxItems": len(PROJECT_TARGETS)}}},
     "else": {"properties": {"metadataTargets": {"maxItems": 0}}}})
+DEFS["workerRequest"]["allOf"].append({"if": {"properties": {"operation": {"const": "metadata-prepare"}}},
+    "then": {"required": ["metadataTargets"], "properties": {
+        **{key: {"maxItems": 0} for key in ("sources", "pluginClasspath", "pluginApplications", "options")},
+        "classpath": {"minItems": 1, "maxItems": 256, "uniqueItems": True}}},
+    "else": {"properties": {"sources": {"minItems": 1}}}})
 
 DEFS["workerResult"] = versioned({"requestId": STRING, "status": enum("success", "compilation-error", "infrastructure-error", "cancelled"), "exitCode": {"type": "integer"}, "diagnostics": array(ref("diagnostic"))})
 DEFS["workerResult"]["allOf"] = [{"if": {"properties": {"status": {"const": "success"}}}, "then": {"properties": {"exitCode": {"const": 0}}}, "else": {"properties": {"exitCode": {"not": {"const": 0}}}}}]

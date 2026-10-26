@@ -12564,7 +12564,8 @@
         "operation": {
           "enum": [
             "jvm-compile",
-            "metadata-compile"
+            "metadata-compile",
+            "metadata-prepare"
           ]
         },
         "compiler": {
@@ -12574,8 +12575,7 @@
           "type": "array",
           "items": {
             "type": "string"
-          },
-          "minItems": 1
+          }
         },
         "classpath": {
           "type": "array",
@@ -12664,7 +12664,10 @@
           "if": {
             "properties": {
               "operation": {
-                "const": "metadata-compile"
+                "enum": [
+                  "metadata-compile",
+                  "metadata-prepare"
+                ]
               }
             }
           },
@@ -12680,6 +12683,46 @@
             "properties": {
               "metadataTargets": {
                 "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "metadata-prepare"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "metadataTargets"
+            ],
+            "properties": {
+              "sources": {
+                "maxItems": 0
+              },
+              "pluginClasspath": {
+                "maxItems": 0
+              },
+              "pluginApplications": {
+                "maxItems": 0
+              },
+              "options": {
+                "maxItems": 0
+              },
+              "classpath": {
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "sources": {
+                "minItems": 1
               }
             }
           }

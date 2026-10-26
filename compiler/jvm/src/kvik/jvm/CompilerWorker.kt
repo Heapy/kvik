@@ -101,8 +101,9 @@ internal fun compile(workspace: Workspace, request: WorkerRequest, distribution:
     reusableToolchains: KotlinToolchains? = null): WorkerResult {
     require(reusableToolchains == null || request.operation == "jvm-compile" && request.pluginClasspath.isEmpty() && request.pluginApplications.isEmpty())
     val metadata = request.operation == "metadata-compile"
-    if (metadata && distribution.version != "2.4.20")
+    if ((metadata || request.operation == "metadata-prepare") && distribution.version != "2.4.20")
         reject("KVIK_UNSUPPORTED_COMPILER", "Metadata compilation requires Kotlin 2.4.20")
+    if (request.operation == "metadata-prepare") return prepareMetadata(workspace, request)
     val options = safeOptions(request, workspace)
     val sources = request.sources.map { logical ->
         val path = workspace.path(logical)
