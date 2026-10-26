@@ -7,6 +7,7 @@ concurrency. Results, including failures, stay in the generated trial directory.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import platform
 import shlex
@@ -21,6 +22,7 @@ from compare_agent_workflows import (digest, environment, launch_agent, process,
 from compare_source_workflows import (GitWorkspace, KodeWorkspace, Meter,
                                      compilation_counts, comparable_run, require, stored_bytes)
 from test_kode_workflow_cli import OWNED, TASK_GOALS
+import workspace_storage_meter as storage_meter
 from workspace_agent_grading import (matching_agent_run, oracle_source,
                                      oracle_test_ids, validate_run)
 
@@ -167,7 +169,7 @@ class Trial:
         self.workspace.git('commit', '-m', intent, cwd=self.workspace.paths[role])
         return self.head(role)
 
-    def prompt(self, role, heads, allowed):
+    def prompt(self, role, heads, allowed, storage_wrapper=None):
         goal = INTEGRATION[self.scenario] if role == 'integrated' else TASK_GOALS[self.scenario+'-'+role]
         if self.scenario == 'conflict' and role == 'b':
             goal += ' Whitespace means Kotlin Char.isWhitespace(), including U+2003 and U+00A0.'
@@ -197,7 +199,7 @@ do not establish that the merged result passes. Do not reset the integrated bran
         runs = self.agent_root / 'runs' / role
         revision = self.head(role)
         if self.backend == 'kode':
-            kode = shlex.join([self.state['kode'], '--home', str(self.workspace.home)])
+            kode = shlex.join([str(storage_wrapper or self.state['kode']), '--home', str(self.workspace.home)])
             backend = f'''Use Kode CLI exclusively to read/search/edit project sources; no filesystem checkout,
 materialization, Git backend access, or direct store-file reads/writes. Project is workflow;
 your reference is {role}, currently {revision}. Kode prefix: {kode}
@@ -222,6 +224,12 @@ Test the final committed contents with:
 {shlex.join(list(map(str, self.test_command(role, revision, runs))))}
 Return git rev-parse HEAD as revision.
 '''
+        if storage_wrapper:
+            backend += f'''Storage instrumentation: use {storage_wrapper} for every {self.backend} command.
+This transparent measurement wrapper runs the real provider and records command-boundary storage.
+Do not bypass it using absolute provider paths, shell aliases, alternate PATH, or direct metadata writes.
+Do not edit its files. For Git, PATH also resolves git to the wrapper; use the explicit path if a login shell resets PATH.
+'''
         return common, backend
 
     def run_agent(self, role, heads):
@@ -232,7 +240,16 @@ Return git rev-parse HEAD as revision.
         others = {r: self.head(r) for r in ('a', 'b', 'integrated') if r != role}
         logs = self.root / ('agent-' + role)
         logs.mkdir()
-        common, backend_prompt = self.prompt(role, heads, allowed)
+        cwd = self.workspace.paths[role] if self.backend == 'git' else self.control
+        measurement = self.agent_root / 'storage-meter' / role
+        git_binary = shutil.which('git', path=self.meter.env['PATH'])
+        config, wrapper = storage_meter.prepare(measurement, self.backend, self.workspace.storage,
+            cwd, role, git_binary if self.backend == 'git' else self.state['kode'], git_binary,
+            self.meter.env, home=getattr(self.workspace, 'home', None))
+        agent_env = dict(self.meter.env)
+        if self.backend == 'git':
+            agent_env['PATH'] = str(measurement) + os.pathsep + agent_env['PATH']
+        common, backend_prompt = self.prompt(role, heads, allowed, wrapper)
         (logs / 'task.txt').write_text(common)
         (logs / 'backend.txt').write_text(backend_prompt)
         launch = SimpleNamespace(**vars(self.args))
@@ -246,7 +263,11 @@ Return git rev-parse HEAD as revision.
             launch.writable_cache.append(Path(git_dir))
         cwd = self.workspace.paths[role] if self.backend == 'git' else self.control
         size_before = stored_bytes(self.workspace.storage)
-        receipt = launch_agent(launch, cwd, self.meter.env, logs, common+backend_prompt, ANSWER)
+        storage_before = storage_meter.observe(config)
+        receipt = launch_agent(launch, cwd, agent_env, logs, common+backend_prompt, ANSWER)
+        storage_after = storage_meter.observe(config)
+        storage_attribution = storage_meter.summarize(measurement, storage_before, storage_after)
+        write_json(logs / 'storage-attribution.json', storage_attribution)
         answer = read_answer(logs)
         try:
             metrics = transcript_metrics(logs / 'agent.stdout')
@@ -256,6 +277,10 @@ Return git rev-parse HEAD as revision.
         result = dict(role=role, startRevision=start, answer=answer, process=receipt, metrics=metrics,
             taskSha256=digest(logs / 'task.txt'), backendInstructionsSha256=digest(logs / 'backend.txt'),
             storageBeforeBytes=size_before, storageAfterBytes=stored_bytes(self.workspace.storage),
+            storageAttribution=dict(complete=storage_attribution['attributionComplete'],
+                exact=False, edits=storage_attribution['edits'],
+                measuredInstrumentationNs=storage_attribution['measuredInstrumentationNs'],
+                errors=storage_attribution['errors'], report=str(logs / 'storage-attribution.json')),
             verified=False, falseCompletionClaim=False, errors=[])
         result['taskSpecification'] = dict(scenario=self.scenario, role=role, ownedPaths=sorted(allowed),
             goal=INTEGRATION[self.scenario] if role == 'integrated' else TASK_GOALS[self.scenario+'-'+role])
@@ -445,7 +470,8 @@ def run(args):
     shutil.copytree(Path(state['cache']) / 'blobs', blobs)
     harnesses = [Path(__file__), Path(__file__).with_name('workspace_agent_grading.py'),
         Path(__file__).with_name('compare_agent_workflows.py'), Path(__file__).with_name('compare_source_workflows.py'),
-        Path(__file__).with_name('test_kode_workflow_cli.py')]
+        Path(__file__).with_name('test_kode_workflow_cli.py'),
+        Path(__file__).with_name('workspace_storage_meter.py')]
     (root / 'harness').mkdir()
     for path in harnesses:
         shutil.copyfile(path, root / 'harness' / path.name)
@@ -461,6 +487,8 @@ def run(args):
         limitations=['Small controlled fixture; no general productivity or concurrent-throughput claim.',
             'OS page caches and provisioned tool installations are shared; backend order alternates.',
             'Storage is logical regular-file bytes, not disk allocation; materialized bytes are separate.',
+            'Per-edit storage is command-boundary observation, not exact or tamper-proof attribution; inspect completeness.',
+            'Agent timings include storage instrumentation and cannot be compared directly to prior uninstrumented trials.',
             'Returned bytes count completed command output, possibly truncated; tokens are provider usage totals.',
             'Agent-chosen source/test contents can differ; only baseline action keys must agree.',
             'First/second explicit Kode text indexing is measured after agent tasks; agents may already have built indexes.',
