@@ -59,20 +59,42 @@ def read_regular(path, limit):
         return data
 
 
+def _inventory_children(directory):
+    # Path.rglob suppresses directory scan errors. Keep that behavior, but let
+    # lstat/open/resolve errors below propagate as before. Close the scan before
+    # descending so an arbitrarily deep tree does not retain open descriptors.
+    try:
+        with os.scandir(directory) as entries:
+            return iter(sorted(entries, key=lambda entry: entry.name))
+    except OSError:
+        return iter(())
+
+
 def inventory(root, allow_internal_symlinks=False):
     root = Path(root).resolve(strict=True)
     files = []
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root).as_posix()
-        status = path.lstat()
+    # Depth-first traversal of sorted names is Path-component order, unlike
+    # sorting complete relative strings ("a/z" precedes "a-b" here). Keep this
+    # order exactly: the canonical inventories are already pinned in locks.
+    pending = [(_inventory_children(str(root)), "")]
+    while pending:
+        children, prefix = pending[-1]
+        entry = next(children, None)
+        if entry is None:
+            pending.pop()
+            continue
+        relative = prefix + entry.name
+        status = entry.stat(follow_symlinks=False)
         if stat.S_ISLNK(status.st_mode):
-            target = path.resolve(strict=True)
+            target = Path(entry.path).resolve(strict=True)
             if not allow_internal_symlinks or not target.is_relative_to(root):
                 raise ValueError(f"Unsupported symlink in inventory: {relative}")
-            files.append({"path": relative, "symlink": os.readlink(path)})
+            files.append({"path": relative, "symlink": os.readlink(entry.path)})
         elif stat.S_ISREG(status.st_mode):
-            files.append({"path": relative, "digest": file_digest(path), "executable": bool(status.st_mode & 0o111)})
-        elif not stat.S_ISDIR(status.st_mode):
+            files.append({"path": relative, "digest": file_digest(entry.path), "executable": bool(status.st_mode & 0o111)})
+        elif stat.S_ISDIR(status.st_mode):
+            pending.append((_inventory_children(entry.path), relative + "/"))
+        else:
             raise ValueError(f"Unsupported special file: {relative}")
     return {"schemaVersion": 1, "files": files}
 
