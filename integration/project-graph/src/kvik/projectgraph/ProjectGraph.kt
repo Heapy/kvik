@@ -875,7 +875,9 @@ private class Builder(
             val generated = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
             val scriptSources = sourceGeneratorOutputs(generators, results)
             val compiledSource = withGeneratedSources(module, withSqlDelight(module, source, generated), scriptSources)
-            val inputs = merge(compiledSource.entries, resource.resolve(results), compilerInputs.files, plugin, workspace.entries)
+            // Resolve even when omitted: generator outputs and resource overlays still require validation.
+            val compilerResources = resource.resolve(results).takeUnless { target == "jvm" && plugin.isEmpty() && workspace.applications.isEmpty() }.orEmpty()
+            val inputs = merge(compiledSource.entries, compilerResources, compilerInputs.files, plugin, workspace.entries)
             val classpath = classpathPaths(compilationClasspath, target)
             if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
                 jvmTarget = options.jvmTarget, optIns = options.optIns, explicitApi = options.explicitApi, warningsAsErrors = options.warningsAsErrors,
@@ -1276,7 +1278,9 @@ private class Builder(
                 val sqlSources = sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()
                 val scriptSources = sourceGeneratorOutputs(generators, results)
                 val compiledSource = withGeneratedSources(module, withSqlDelight(module, source, sqlSources), scriptSources)
-                val inputs = merge(compiledSource.entries, resource.resolve(results), compilerInputs.files, plugin, workspace.entries, generated)
+                // Keep generator prerequisites/validation without invalidating a plain JVM compiler on resource edits.
+                val compilerResources = resource.resolve(results).takeUnless { target == "jvm" && plugin.isEmpty() && workspace.applications.isEmpty() }.orEmpty()
+                val inputs = merge(compiledSource.entries, compilerResources, compilerInputs.files, plugin, workspace.entries, generated)
                 val classpath = classpathPaths(compilationClasspath, target)
                 if (target == "jvm") jvmCompileAction(JvmCompilation(module, compiledSource.paths, classpath, LogicalPath("classes"), plugin.map { it.path }, compiledSource.common,
                     friendPaths = listOf(modulePath(module, target, "main")), jvmTarget = options.jvmTarget, optIns = options.optIns,

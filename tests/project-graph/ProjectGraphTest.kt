@@ -318,6 +318,28 @@ class ProjectGraphTest {
             val original = test.key(Sha256)
             assertNotEquals(original, resolved(plan, producer).getValue("app:$target:test").key(Sha256))
             assertNotEquals(original, resolved(plan, testProducer).getValue("app:$target:test").key(Sha256))
+            if (target == "jvm") {
+                assertContains(plan.nodes.single { it.id == "base:jvm:main" }.dependencies, producer)
+                assertContains(plan.nodes.single { it.id == "app:jvm:test-compile" }.dependencies, testProducer)
+                for (changedProducer in listOf(producer, testProducer)) {
+                    val changed = resolved(plan, changedProducer)
+                    for ((id, action) in actions.filterKeys { it in setOf("base:jvm:main", "app:jvm:main", "app:jvm:test-compile") })
+                        assertEquals(action.key(Sha256), changed.getValue(id).key(Sha256), "$changedProducer recompiles $id")
+                }
+                for ((nodeId, generator) in listOf("base:jvm:main" to producer, "app:jvm:test-compile" to testProducer)) {
+                    val node = plan.nodes.single { it.id == nodeId }
+                    val prerequisites = node.dependencies.associateWith { id -> ActionResult(id, actions.getValue(id).key(Sha256),
+                        ActionStatus.EXECUTED, outputs(actions.getValue(id), id), 0) }
+                    node.resolve(prerequisites)
+                    assertFails { node.resolve(prerequisites - generator) }
+                    for (invalid in listOf(TreeManifest(emptyList()), TreeManifest(listOf(FileEntry(LogicalPath("generated/unexpected.txt"), digest("wrong")))),
+                        TreeManifest(listOf(FileEntry(LogicalPath("generated/generated/version.json"), digest("executable"), true))))) {
+                        assertFails { node.resolve(prerequisites + (generator to prerequisites.getValue(generator).copy(outputs = invalid))) }
+                    }
+                }
+                val collision = TreeManifest(files.files + FileEntry(LogicalPath("base/resources/generated/version.json"), digest("collision")))
+                assertFails { graph(config(), collision, request(ProjectMode.TEST)) }
+            }
         }
         for (target in listOf("jvm", "macosArm64")) {
             val actions = resolved(graph(config(target), files, request(ProjectMode.APPLICATION, target)))
@@ -1636,6 +1658,60 @@ class ProjectGraphTest {
         assertFalse(actions.getValue("app:jvm:main").inputs.files.any { it.digest == digest("g:stdlib:117") })
         assertFails { effectiveConfiguration(configuration(at(base, 21), at(app, 17))) }
     }
+    @Test fun ownJvmResourceEditsChangeConsumersWithoutRecompilingSources() {
+        val (application, files) = applicationFixture()
+        val library = configuration(*application.project.modules.map { module -> published(module.copy(
+            targets = module.targets.filter { it.name == "jvm" }.map { it.copy(application = null) })) }.toTypedArray())
+        for (path in listOf("app/resources/config.txt", "app/test-resources/config.txt")) {
+            val changed = TreeManifest(files.files.map { if (it.path.value == path) it.copy(digest = digest("changed $path")) else it })
+            for (mode in listOf(ProjectMode.TEST, ProjectMode.APPLICATION, ProjectMode.PACKAGE)) {
+                val config = if (mode == ProjectMode.PACKAGE) library else application
+                val before = resolved(graph(config, files, request(mode)))
+                val after = resolved(graph(config, changed, request(mode)))
+                for ((id, action) in before) {
+                    if (action.kind == ActionKind.COMPILE) {
+                        assertEquals(action.key(Sha256), after.getValue(id).key(Sha256), "$path recompiles $id in $mode")
+                        assertFalse(action.inputs.files.any { it.path.value.startsWith("runtime/") })
+                    }
+                }
+                val terminal = "app:jvm:" + when (mode) {
+                    ProjectMode.TEST -> "test"
+                    ProjectMode.APPLICATION -> "application"
+                    else -> "package"
+                }
+                val action = after.getValue(terminal)
+                if (mode == ProjectMode.TEST || path == "app/resources/config.txt") {
+                    assertNotEquals(before.getValue(terminal).key(Sha256), action.key(Sha256), "$path omitted from $terminal")
+                    val input = if (mode == ProjectMode.PACKAGE) "classes/config.txt"
+                        else "runtime/app/${if (path.contains("test-resources")) "test" else "main"}/config.txt"
+                    assertEquals(digest("changed $path"), action.inputs.files.single { it.path.value == input }.digest)
+                } else assertEquals(before.getValue(terminal).key(Sha256), action.key(Sha256))
+            }
+        }
+    }
+
+    @Test fun compilerPluginAndNativeCompilationsRetainOwnResources() {
+        val serialization = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"),
+            setOf("jvm"), setOf("main", "test"), emptyList(), emptyList())
+        val explicit = serialization.copy(coordinate = Coordinate.parse("g:plugin:1"), id = "example.plugin", compilerVersion = "2.4.20",
+            inputs = listOf(LogicalPath("app/resources/config.txt")))
+        for ((target, plugins) in listOf("jvm" to listOf(serialization), "jvm" to listOf(explicit), "macosArm64" to emptyList())) {
+            val config = configuration(base, app.copy(compilerPlugins = plugins))
+            val before = resolved(graph(config, request = request(ProjectMode.TEST, target)))
+            for (path in listOf("app/resources/config.txt", "app/test-resources/config.txt")) {
+                val changed = TreeManifest(snapshot().files.map { if (it.path.value == path) it.copy(digest = digest("changed resource")) else it })
+                val after = resolved(graph(config, changed, request(ProjectMode.TEST, target)))
+                assertNotEquals(before.getValue("app:$target:test-compile").key(Sha256), after.getValue("app:$target:test-compile").key(Sha256))
+                if (path == "app/resources/config.txt")
+                    assertNotEquals(before.getValue("app:$target:main").key(Sha256), after.getValue("app:$target:main").key(Sha256))
+                else assertEquals(before.getValue("app:$target:main").key(Sha256), after.getValue("app:$target:main").key(Sha256))
+                if (plugins == listOf(explicit)) assertEquals(
+                    after.getValue("app:$target:main").inputs.files.single { it.path.value == "runtime/app/main/config.txt" }.digest,
+                    after.getValue("app:$target:main").inputs.files.single { it.path.value == "plugin-inputs/example.plugin/app/resources/config.txt" }.digest)
+            }
+        }
+    }
+
     @Test fun transitiveModulesAndResourcesEnterConsumerInputsWithoutTargetLeakage() {
         val leaf = module("leaf", listOf(external("g:leaf-api:1")))
         val intermediate = base.copy(sourceSets = base.sourceSets.map { if(it.name == "commonMain") it.copy(dependencies = it.dependencies + Dependency.Module("leaf", exported = true)) else it })

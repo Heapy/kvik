@@ -83,7 +83,12 @@ class PluginGenerationTest {
             assertEquals(digest("edited source"), compilation.resolve(result(output("edited source"))).sourceFiles().files.single().digest)
             assertFails { compilation.resolve(emptyMap()) }
             assertContains(action.inputs.files.map { it.path }, generated)
-            assertContains(action.inputs.files.map { it.path }, LogicalPath("runtime/app/main/settings.json"))
+            val resource = LogicalPath("runtime/app/main/settings.json")
+            assertEquals(target != "jvm", resource in action.inputs.files.map { it.path })
+            val editedResource = output().map { if (it.path == LogicalPath("assets/settings.json")) it.copy(digest = digest("edited resource")) else it }
+            val changedKey = node.resolve(result(editedResource)).key(Sha256)
+            if (target == "jvm") assertEquals(action.key(Sha256), changedKey)
+            else assertNotEquals(action.key(Sha256), changedKey)
             val common = when (target) {
                 "jvm" -> JvmCompilation.fromJson(action.parameters).commonSources
                 "js" -> JsCompilation.fromJson(action.parameters).commonSources
