@@ -78,6 +78,7 @@ class NativeUnitTest {
                 error("Mismatched provider did not fail preparation")
             }
             assertEquals("Verified Native toolchain target differs from action", failure.message)
+            assertTrue(executor.toolVerifications.isEmpty())
         }
     }
 
@@ -150,6 +151,7 @@ class NativeUnitTest {
         } finally { releaseSlow.store(1) }
         assertEquals(1, slowExited.load(), "Cancellation must join the preparation thread")
         assertEquals(2, launches, "Cancelled preparation must not launch a compiler")
+        assertTrue(executor.toolVerifications.isEmpty(), "Native tests and cancelled preparations are unmeasured")
     }
 
     @Test fun sourceFreeLinkIncludesDeclaredKlibWithoutExposingRuntimeLibrariesToCompilation() {
@@ -279,6 +281,8 @@ class NativeUnitTest {
                         running.cancel()
                     }
                     val result = awaitResult(running)
+                    assertEquals("native", executor.toolVerifications.getValue(id).scope)
+                    assertTrue(executor.toolVerifications.getValue(id).durationNanos >= 0)
                     assertEquals(result, running.poll())
                     assertTrue(result.outputs.files.isEmpty())
                     assertNull(store.get(Sha256.digest(partial)), "Failed/cancelled partial output must not enter CAS")

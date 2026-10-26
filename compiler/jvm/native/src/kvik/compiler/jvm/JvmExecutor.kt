@@ -68,6 +68,8 @@ class JvmActionExecutor(
     private val compilerSessions: JvmCompilerSessionPool? = null,
 ) : ActionExecutor {
     private val recorded = linkedMapOf<String, JvmActionObservation>()
+    private val verifiedTools = linkedMapOf<String, ActionToolVerification>()
+    val toolVerifications: Map<String, ActionToolVerification> get() = verifiedTools.toMap()
     private val startedActions = mutableSetOf<String>()
     val observations: Map<String, JvmActionObservation> get() = recorded.toMap()
     override fun resources(action: ActionSpec) = if (action.kind == ActionKind.TEST)
@@ -302,6 +304,7 @@ class JvmActionExecutor(
             }
         }
         return preparingAction(actionId, expected, prepare = { checkpoint ->
+            val verificationStarted = kotlin.time.TimeSource.Monotonic.markNow()
             val layout = if (compilerOutput != null) toolchains.verified(expected.toolchains, checkpoint)
                 else toolchains.verifiedExecution(expected.toolchains, checkpoint)
             layout.also { layout ->
@@ -316,7 +319,12 @@ class JvmActionExecutor(
                 }
                 checkpoint()
             }
-        }, start = ::startVerified)
+            layout to ActionToolVerification(actionId, "jvm", verificationStarted.elapsedNow().inWholeNanoseconds)
+        }, start = { (layout, verification) ->
+            // The preparation thread has joined; only the scheduler thread publishes observations.
+            verifiedTools[actionId] = verification
+            startVerified(layout)
+        })
     }
 }
 

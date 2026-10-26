@@ -48,6 +48,9 @@ def main():
             assert stats['inputCapture'] == events[0]['payload'].get('inputCapture')
             started = {e['payload']['actionId'] for e in events if e['type'] == 'action-started'}
             timings = [e['payload'] for e in events if e['type'] == 'action-timing']
+            tools = [e['payload'] for e in events if e['type'] == 'action-tool-verification']
+            assert stats['toolVerification'] == dict(coverage='measured-actions-only', measuredActions=len(tools),
+                summedDurationNanos=sum(t['durationNanos'] for t in tools) if tools else None)
             transfers = [e['payload'] for e in events if e['type'] == 'action-cache-transfer']
             measured = [t['stats'] for t in transfers if t['stats'] is not None]
             assert stats['runId'] == record['runId'] and stats['status'] == record['status'] and stats['currentFreshness'] is None

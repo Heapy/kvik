@@ -7,6 +7,7 @@ fun runStatistics(record: VerificationRecord, events: List<RunEvent>): JsonValue
     val capture = events.first().payload.values["inputCapture"]?.let(InputCaptureStatistics::fromJson)
     val started = events.filter { it.type == "action-started" }.map { it.payload.values.getValue("actionId").stringValue() }.toSet()
     val timings = events.filter { it.type == "action-timing" }.map { ActionTiming.fromJson(it.payload) }
+    val toolVerifications = events.filter { it.type == "action-tool-verification" }.map { ActionToolVerification.fromJson(it.payload) }
     val transfers = events.filter { it.type == "action-cache-transfer" }.map { ActionCacheTransfer.fromJson(it.payload) }
     val measuredTransfers = transfers.mapNotNull { it.stats }
     val results = record.actions.associateBy { it.actionId }
@@ -48,6 +49,8 @@ fun runStatistics(record: VerificationRecord, events: List<RunEvent>): JsonValue
         "requestedChecks" to record.requestedChecks.sorted().map { it.json() }.json(),
         "completedChecks" to record.completedChecks.sorted().map { it.json() }.json(),
         "testCounts" to record.testCounts.toJson(),
+        "toolVerification" to obj("coverage" to "measured-actions-only".json(), "measuredActions" to toolVerifications.size.json(),
+            "summedDurationNanos" to (if (toolVerifications.isEmpty()) JsonValue.Null else toolVerifications.map { it.durationNanos }.boundedSum().json())),
         "processUsage" to obj("measuredActions" to measuredActions.size.json(), "measuredProcesses" to processUsage.size.json(),
             "userCpuNanos" to processValue(processUsage.map { it.userCpuNanos }),
             "systemCpuNanos" to processValue(processUsage.map { it.systemCpuNanos }),

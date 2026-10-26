@@ -112,6 +112,8 @@ class NativeWorkspacePluginTest {
             }
             val result = awaitResult(running)
             running.close(); assertTrue(closed)
+            assertEquals(setOf("valid"), executor.toolVerifications.keys)
+            assertEquals("native", executor.toolVerifications.getValue("valid").scope)
             assertEquals(if (scenario == "success") ActionStatus.EXECUTED else if (scenario == "cancelled") ActionStatus.CANCELLED else ActionStatus.FAILED, result.status)
             assertEquals(if (scenario == "success") 2 else 0, result.outputs.files.size)
             if (scenario in setOf("wrong-id", "wrong-exit", "missing-result")) assertTrue(executor.observations.getValue("valid").diagnostics.any { it.code == "KVIK_NATIVE_RESULT_INVALID" })

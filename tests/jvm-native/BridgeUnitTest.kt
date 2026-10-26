@@ -158,6 +158,8 @@ class BridgeUnitTest {
                 awaitBridgeResult(running)
             }
             assertTrue(closed)
+            assertEquals("jvm", executor.toolVerifications.getValue(variant).scope)
+            assertTrue(executor.toolVerifications.getValue(variant).durationNanos >= 0)
             assertEquals(if (variant == "success") ActionStatus.EXECUTED else if (variant == "cancel") ActionStatus.CANCELLED else ActionStatus.FAILED, result.status)
             assertEquals(variant == "success", result.outputs.files.isNotEmpty())
             assertTrue(executor.observations.getValue(variant).diagnostics.all { it.target == "common" })
@@ -399,6 +401,56 @@ class BridgeUnitTest {
             assertEquals(1, exited.load())
             assertEquals(ActionStatus.CANCELLED, awaitBridgeResult(running).status)
             assertTrue(executor.observations.isEmpty())
+            assertTrue(executor.toolVerifications.isEmpty())
+        }
+    }
+
+    @Test fun completedVerificationIsPublishedOnlyAfterJoinEvenWhenStagingFails() {
+        val root = NativeRunDirectory("/private/tmp")
+        val manifest = obj("fixture" to true.json())
+        writeJvmFile("${root.path}/manifest.json", manifest.canonical().encodeToByteArray())
+        val identities = jvmIdentities.associateWith { if (it == "jvm-compiler") Sha256.digest(manifest) else digest }
+        for (mode in listOf("success", "failure", "cancel", "close")) {
+            val entered = AtomicInt(0); val release = AtomicInt(0); val exited = AtomicInt(0)
+            val provider = object : JvmToolchainProvider {
+                override fun verified(identities: Map<String, Digest>): JvmToolchainLayout = error("checkpoint overload required")
+                override fun verified(identities: Map<String, Digest>, checkpoint: () -> Unit): JvmToolchainLayout {
+                    entered.store(1)
+                    try {
+                        repeat(10_000) { if (release.load() == 0) { checkpoint(); usleep(1000u) } }
+                        check(release.load() == 1) { "verification was not released" }
+                        if (mode == "failure") error("verification refused")
+                        return JvmToolchainLayout(identities, "/tool/java", "/tool/classes", "/tool/api.jar", "/tool/std.jar",
+                            "/tool/junit.jar", "/tool/compiler", "${root.path}/manifest.json")
+                    } finally { exited.store(1) }
+                }
+            }
+            val host = object : ProcessHost {
+                override fun start(request: ProcessRequest): OwnedProcess = error("must not launch")
+                override fun close() = Unit
+            }
+            val content = object : ContentStore {
+                override fun get(digest: Digest): ByteArray? = error("staging refused")
+                override fun put(bytes: ByteArray): Digest = error("unexpected write")
+            }
+            val executor = JvmActionExecutor(root.runId, root.path, host, content, provider)
+            val action = jvmCompileAction(JvmCompilation("m", listOf(LogicalPath("A.kt")), emptyList(), LogicalPath("classes")),
+                TreeManifest(listOf(FileEntry(LogicalPath("A.kt"), digest))), digest, identities)
+            executor.start(root.runId, mode, action).use { running ->
+                repeat(10_000) { if (entered.load() == 0) usleep(1000u) }
+                assertEquals(1, entered.load())
+                assertTrue(executor.toolVerifications.isEmpty())
+                if (mode == "cancel") { running.cancel(); assertEquals(ActionStatus.CANCELLED, running.poll()?.status) }
+                else if (mode == "close") running.close()
+                else {
+                    release.store(1)
+                    assertTrue(executor.toolVerifications.isEmpty(), "Background preparation cannot publish observations")
+                    val failure = assertFailsWith<IllegalStateException> { awaitBridgeResult(running) }
+                    assertEquals(if (mode == "success") "staging refused" else "verification refused", failure.message)
+                }
+                assertEquals(1, exited.load())
+                assertEquals(if (mode == "success") setOf(mode) else emptySet(), executor.toolVerifications.keys)
+            }
         }
     }
 

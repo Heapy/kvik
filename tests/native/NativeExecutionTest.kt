@@ -47,6 +47,7 @@ class NativeExecutionTest {
             assertNull(running.poll()) // Discovery completes and starts the actual test process.
             assertEquals(ActionStatus.EXECUTED, running.poll()?.status)
         }
+        assertTrue(executor.toolVerifications.isEmpty(), "Native test execution does not verify compiler installations")
         assertEquals(2, starts)
         assertEquals(2, closes)
         assertEquals(VerificationStatus.PASSED, executor.observations.getValue("test").tests?.status)

@@ -30,6 +30,8 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
     val started = mutableSetOf<String>()
     val decisions = mutableSetOf<String>()
     val timed = mutableSetOf<String>()
+    val timings = mutableMapOf<String, ActionTiming>()
+    val toolVerifications = mutableMapOf<String, ActionToolVerification>()
     val transfers = mutableSetOf<Pair<String, String>>()
     val lookupTransfers = mutableListOf<ActionCacheTransfer>()
     val choices = mutableMapOf<String, String>()
@@ -46,11 +48,21 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
             }
             if (transfer.operation == "lookup") lookupTransfers += transfer
         }
+        "action-tool-verification" -> {
+            val verification = ActionToolVerification.fromJson(event.payload)
+            require(verification.actionId in started && verification.actionId !in toolVerifications &&
+                results[verification.actionId]?.status in setOf(ActionStatus.EXECUTED, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
+                "Tool verification requires one started, non-cached action"
+            }
+            // Foreground observation collection can follow action-finished in the same scheduler tick.
+            toolVerifications[verification.actionId] = verification
+        }
         "action-timing" -> {
             val timing = ActionTiming.fromJson(event.payload)
             require(timing.actionId in started && timing.actionId !in finished && timed.add(timing.actionId)) {
                 "Action timing requires one started, unfinished action"
             }
+            timings[timing.actionId] = timing
         }
         "action-cache-decision" -> {
             val fields = cacheDecisionFields(event.payload)
@@ -70,6 +82,9 @@ fun committedRunEvents(record: VerificationRecord, completion: JsonValue, journa
         }
     }
     require(finished == results.keys) { "Journal does not contain every retained action result" }
+    for ((id, verification) in toolVerifications) timings[id]?.let { timing ->
+        require(verification.durationNanos <= timing.durationNanos) { "Tool verification exceeds action duration" }
+    }
     lookupTransfers.forEach { validateSuccessfulLookup(it, results.getValue(it.actionId), choices[it.actionId]) }
     return events
 }

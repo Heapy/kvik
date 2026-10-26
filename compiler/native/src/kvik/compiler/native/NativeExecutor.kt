@@ -48,6 +48,8 @@ class NativeCompilerExecutor(
     private val executionHost: () -> NativeTarget = ::nativeExecutionTarget,
 ) : ActionExecutor {
     val observations: MutableMap<String, NativeActionObservation> = linkedMapOf()
+    private val verifiedTools = linkedMapOf<String, ActionToolVerification>()
+    val toolVerifications: Map<String, ActionToolVerification> get() = verifiedTools.toMap()
     private val startedActions = mutableSetOf<String>()
     override fun resources(action: ActionSpec) = if (action.kind == ActionKind.TEST)
         nativeTestResources(action).resourceRequest() else ResourceRequest(2048)
@@ -77,6 +79,7 @@ class NativeCompilerExecutor(
         val nativeIdentities = action.toolchains.filterKeys { it in target.toolIdentityNames }
         val workspacePlugins = compile.pluginApplications.isNotEmpty()
         return preparingAction(actionId, action, prepare = { checkpoint ->
+            val verificationStarted = kotlin.time.TimeSource.Monotonic.markNow()
             val layout = toolchains.verified(nativeIdentities, checkpoint)
             require(layout.target == target) { "Verified Native toolchain target differs from action" }
             val jvm = if (workspacePlugins) {
@@ -87,8 +90,12 @@ class NativeCompilerExecutor(
                     require(Sha256.digest(parseJson(readNativeFile(it.compilerManifest, 4 * 1024 * 1024).decodeToString(throwOnInvalidSequence = true))) == identities.getValue("jvm-compiler")) { "Native plugin JVM manifest identity mismatch" }
                 }
             } else null
-            layout to jvm
-        }, start = { (layout, jvm) ->
+            checkpoint()
+            Triple(layout, jvm, ActionToolVerification(actionId, "native", verificationStarted.elapsedNow().inWholeNanoseconds))
+        }, start = { (layout, jvm, verification) ->
+            // Includes this adapter's JVM plugin-host verification, when present. Native tests
+            // execute their staged binary without toolchain verification and remain unmeasured.
+            verifiedTools[actionId] = verification
             startVerified(actionId, action, compile, module, executable, filter, layout, jvm)
         })
     }

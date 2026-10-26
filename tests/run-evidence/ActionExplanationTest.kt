@@ -45,6 +45,41 @@ class ActionExplanationTest {
         assertEquals("unbound-retained", explanation.values.getValue("dependencyEvidence").stringValue())
         assertEquals(emptyList(), explanation.values.getValue("dependencies").arrayValue())
     }
+    @Test fun toolVerificationAcceptsOnlyOneStartedNonCachedActionAndFitsItsTiming() {
+        val verification = ActionToolVerification("main", "jvm", 34)
+        assertEquals(verification, ActionToolVerification.fromJson(verification.toJson()))
+        fun journal(record: VerificationRecord, value: JsonValue.Object = verification.toJson(), at: Int = 2,
+            duplicate: Boolean = false, timing: ActionTiming? = null): List<RunEvent> = events(record).toMutableList().also {
+            it.add(at, RunEvent(record.runId, 1, "action-tool-verification", value))
+            if (duplicate) it.add(at, RunEvent(record.runId, 1, "action-tool-verification", value))
+            if (timing != null) it.add(2, RunEvent(record.runId, 1, "action-timing", timing.toJson()))
+        }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+        for (status in listOf(ActionStatus.EXECUTED, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
+            val record = record(listOf(result(status = status)))
+            for (at in listOf(2, 3)) validate(record, journal(record, at = at, timing = ActionTiming("main", 12, 34)))
+        }
+        for (status in listOf(ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT, ActionStatus.BLOCKED)) {
+            val record = record(listOf(result(status = status)))
+            assertFails { validate(record, journal(record)) }
+        }
+        val record = record(listOf(result()))
+        assertFails { validate(record, journal(record, at = 1)) }
+        assertFails { validate(record, journal(record, duplicate = true)) }
+        assertFails { validate(record, journal(record, timing = ActionTiming("main", 12, 33))) }
+        for ((key, value) in listOf("actionId" to "unknown".json(), "actionId" to " ".json(),
+            "scope" to "all".json(), "durationNanos" to (-1).json(), "extra" to true.json())) {
+            assertFails { validate(record, journal(record, JsonValue.Object(verification.toJson().values + (key to value)))) }
+        }
+        for (key in verification.toJson().values.keys) {
+            assertFails { validate(record, journal(record, JsonValue.Object(verification.toJson().values - key))) }
+        }
+        val shared = record(listOf(result("main"), result("shared")))
+        val unstarted = events(shared, started = setOf("main")).toMutableList().also {
+            it.add(4, RunEvent(shared.runId, 1, "action-tool-verification", verification.copy(actionId = "shared").toJson()))
+        }.mapIndexed { i, e -> e.copy(sequence = i + 1L) }
+        assertFails { validate(shared, unstarted) }
+    }
+
     @Test fun timingIsRetainedForSuccessReuseFailureAndCancellation() {
         for (status in listOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT, ActionStatus.FAILED, ActionStatus.CANCELLED)) {
             val record = record(listOf(result(status = status)))

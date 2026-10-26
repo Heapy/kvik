@@ -855,10 +855,11 @@ DEFS["actionCacheTransfer"]["allOf"] = [{"if": {"properties": {"operation": {"co
 DEFS["actionTiming"] = object_({"actionId": NONEMPTY,
     "startedAfterNanos": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
     "durationNanos": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}})
+DEFS["actionToolVerification"] = object_({"actionId": NONEMPTY, "scope": enum("jvm", "native"), "durationNanos": INT})
 DEFS["hashingStatistics"] = object_({"operations": INT, "bytes": INT, "durationNanos": INT})
 DEFS["inputCaptureStatistics"] = object_({"kind": enum("filesystem", "source-provider"),
     "durationNanos": INT, "hashing": ref("hashingStatistics")})
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "action-cache-transfer", "action-timing", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "action-cache-transfer", "action-timing", "action-tool-verification", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
 DEFS["configurationEditOperation"] = {"oneOf": [
     object_({"op": {"const": "set-dependency"}, "module": ID, "sourceSet": ID, "dependency": ref("dependency")}),
     object_({"op": {"const": "set-dependency-version"}, "module": ID, "sourceSet": ID, "package": NONEMPTY, "version": NONEMPTY}),
@@ -931,6 +932,7 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-cache-decision": ref("actionCacheDecision"),
     "action-timing": ref("actionTiming"),
+    "action-tool-verification": ref("actionToolVerification"),
     "action-cache-transfer": ref("actionCacheTransfer"),
     "action-finished": ref("actionResult"), "diagnostic": ref("diagnostic"), "test-result": ref("testResult"),
     "run-finished": ref("verification"), "session-state": object_({"state": enum("idle", "building", "testing", "failed", "restarting", "stopping"), "runningSnapshot": nullable(ref("digest"))}),
@@ -1097,6 +1099,8 @@ DEFS["runStatistics"] = versioned({
     "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
     "completedChecks": array(ref("requestedCheck"), uniqueItems=True), "testCounts": ref("testCounts"),
     "actions": object_({"total": RUN_COUNT, "startedOutcomes": RUN_OUTCOMES, "unstartedOutcomes": RUN_OUTCOMES}),
+    "toolVerification": object_({"coverage": {"const": "measured-actions-only"}, "measuredActions": RUN_COUNT,
+        "summedDurationNanos": nullable(RUN_METRIC)}),
     "processUsage": object_({"measuredActions": RUN_COUNT, "measuredProcesses": RUN_COUNT,
         "userCpuNanos": nullable(RUN_METRIC), "systemCpuNanos": nullable(RUN_METRIC), "largestChildPeakRssBytes": nullable(RUN_METRIC)}),
     "timing": object_({"coverage": RUN_COVERAGE, "measuredActions": RUN_COUNT, "unmeasuredStartedActions": RUN_COUNT,
@@ -1108,7 +1112,12 @@ DEFS["runStatistics"] = versioned({
         "summedMeasuredOperationNanos": nullable(RUN_METRIC)}),
     "slowestActions": array(object_({"actionId": NONEMPTY, "status": enum("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked"),
         "startedAfterNanos": RUN_METRIC, "durationNanos": RUN_METRIC}), maxItems=10),
-}, optional=("inputCapture", "processUsage"))
+}, optional=("inputCapture", "processUsage", "toolVerification"))
+DEFS["runStatistics"]["properties"]["toolVerification"]["allOf"] = [
+    {"if": {"properties": {"measuredActions": {"const": 0}}},
+     "then": {"properties": {"summedDurationNanos": {"type": "null"}}},
+     "else": {"properties": {"summedDurationNanos": RUN_METRIC}}},
+]
 
 
 DEFS["doctor"] = versioned({

@@ -354,6 +354,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         cacheDecision = { journal.emit("action-cache-decision", it.toJson()) })
                     try {
                     val seen = mutableSetOf<String>()
+                    val seenToolVerifications = mutableSetOf<String>()
                     fun retain(id: String, value: JsonValue) {
                         NativeFiles.writeNew("${run.path}/observations/${Sha256.digest(id.encodeToByteArray()).hash}.json",
                             obj("schemaVersion" to CONTRACT_VERSION.json(), "actionId" to id.json(), "observation" to value).canonical().encodeToByteArray())
@@ -378,6 +379,9 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         } ?: test }
                     }
                     fun observations() {
+                        for (verification in jvm.toolVerifications.values + native.values.flatMap { it.toolVerifications.values }) {
+                            if (seenToolVerifications.add(verification.actionId)) journal.emit("action-tool-verification", verification.toJson())
+                        }
                         for ((id, observation) in sqlDelight.observations) if (seen.add(id)) {
                             retain(id, observation.toJson())
                             observation.diagnostics.forEach { journal.diagnostic(it.copy(actionId = id, module = it.module ?: id.substringBefore(':'), target = "jvm")) }

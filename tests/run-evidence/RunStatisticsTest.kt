@@ -7,7 +7,7 @@ class RunStatisticsTest {
     private val digest = Sha256.digest(byteArrayOf())
     private fun result(id: String, status: ActionStatus = ActionStatus.EXECUTED) = ActionResult(id, digest, status, exitCode = 0)
     private fun summary(actions: List<ActionResult>, timings: List<ActionTiming> = emptyList(),
-        started: Set<String> = actions.map { it.actionId }.toSet(), transfers: List<ActionCacheTransfer> = emptyList(), capture: JsonValue? = null): JsonValue.Object {
+        started: Set<String> = actions.map { it.actionId }.toSet(), transfers: List<ActionCacheTransfer> = emptyList(), capture: JsonValue? = null, tools: List<ActionToolVerification> = emptyList()): JsonValue.Object {
         val record = VerificationRecord("run-stats", setOf("app:jvm:build"), emptySet(), digest, digest, digest, digest, emptyMap(),
             actions, emptyList(), TestCounts(0, 0, 0, 0, true), VerificationStatus.INCOMPLETE, Freshness.STALE, listOf("kvik", "build"))
         val events = mutableListOf<RunEvent>()
@@ -18,6 +18,7 @@ class RunStatisticsTest {
             transfers.filter { it.actionId == action.actionId && it.operation == "lookup" }.forEach { event("action-cache-transfer", it.toJson()) }
             timings.filter { it.actionId == action.actionId }.forEach { event("action-timing", it.toJson()) }
             event("action-finished", action.toJson())
+            tools.filter { it.actionId == action.actionId }.forEach { event("action-tool-verification", it.toJson()) }
             transfers.filter { it.actionId == action.actionId && it.operation == "publish" }.forEach { event("action-cache-transfer", it.toJson()) }
         }
         event("run-finished", record.toJson())
@@ -30,6 +31,21 @@ class RunStatisticsTest {
     }
     private fun JsonValue.field(name: String): JsonValue = objectValue().getValue(name)
     private fun JsonValue.number(name: String) = field(name).longValue()
+
+    @Test fun toolVerificationAggregatesOnlyMeasuredActionsAndNeverInventsZeroForOldRuns() {
+        val actions = listOf(result("jvm"), result("native", ActionStatus.FAILED), result("cached", ActionStatus.LOCAL_HIT), result("unsupported"))
+        val tools = listOf(ActionToolVerification("jvm", "jvm", 15), ActionToolVerification("native", "native", 7))
+        val measured = summary(actions, tools = tools).field("toolVerification")
+        assertEquals("measured-actions-only", measured.field("coverage").stringValue())
+        assertEquals(2L, measured.number("measuredActions"))
+        assertEquals(22L, measured.number("summedDurationNanos"))
+        val old = summary(actions).field("toolVerification")
+        assertEquals(0L, old.number("measuredActions"))
+        assertEquals(JsonValue.Null, old.field("summedDurationNanos"))
+        val zero = summary(listOf(result("jvm")), tools = listOf(tools.first().copy(durationNanos = 0))).field("toolVerification")
+        assertEquals(0L, zero.number("summedDurationNanos"))
+        assertFails { summary(actions, tools = listOf(tools[0].copy(durationNanos = Long.MAX_VALUE), tools[1])) }
+    }
 
     @Test fun processCpuIsSummedButResidentHighWaterMarksAreNot() {
         val first = ProcessUsage(10, 20, 1000)
