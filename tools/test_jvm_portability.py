@@ -13,12 +13,15 @@ from pathlib import Path
 import platform
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 
 import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap import jvm_worker
 
 
 def digest(data):
@@ -114,6 +117,7 @@ def main():
     bundle_bytes = read_regular(runtime_root / 'jvm/manifest.json')
     assert digest(bundle_bytes) == runtime_manifest['jvmWorkerBundle']
     bundle = json.loads(bundle_bytes)
+    worker_classpath = jvm_worker.worker_classpath(runtime_root, runtime_manifest['jvmWorkerBundle'])
     # Pin the source used to reconstruct the physical worker launch recipe below.
     adapter = 'compiler/jvm/native/src/kvik/compiler/jvm/JvmExecutor.kt'
     adapter_root = 'compiler/jvm/native/src'
@@ -213,7 +217,7 @@ def main():
             request = json.loads(read_regular(work / 'request.json'))
             worker_result = json.loads(read_regular(work / 'result.json'))
             assert request['requestId'] == worker_result['requestId'] and worker_result['exitCode'] == 0
-            classpath = [runtime_root / 'jvm/classes', runtime_root / 'jvm' / bundle['api']['path'], runtime_root / 'jvm' / bundle['stdlib']['path']]
+            classpath = [worker_classpath, runtime_root / 'jvm' / bundle['api']['path'], runtime_root / 'jvm' / bundle['stdlib']['path']]
             physical_recipe = dict(provenance='derived from digest-matched JvmExecutor.kt; not an OS argv trace',
                 workingDirectory=str(work), arguments=[tools['roots']['jdk'] + '/bin/java', '-Djava.io.tmpdir=' + str(work / 'tmp'),
                     '-Duser.home=' + str(work / 'home'), '-cp', ':'.join(map(str, classpath)), 'kvik.jvm.CompilerWorkerKt', str(work),

@@ -86,8 +86,8 @@ def main():
         def compile_worker(argv, environment, log):
             assert environment == env
             command('build-worker', argv)
-        jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, env, None, compile_worker)
-        worker = case/'jvm/classes'
+        worker_bundle_digest = jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, env, None, compile_worker)
+        worker = jvm_worker.worker_classpath(case, worker_bundle_digest)
     manifest = dict(schemaVersion=1, version=lock['kotlinVersion'],
         artifacts=[dict(path=item['filename'], digest=jvm_worker.artifact_digest(item)) for item in lock['compilerArtifacts']],
         serializationPlugin=jvm_worker.artifact_digest(lock['serializationPlugin']))

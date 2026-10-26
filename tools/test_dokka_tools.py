@@ -123,8 +123,9 @@ def main():
         def compile_worker(command, environment, log):
             with (case/'worker-compile.log').open('wb') as output:
                 subprocess.run(list(map(str, command)), env=environment, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=240)
-        jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, args.java_home/'bin/java', env, None, compile_worker)
-        cp = os.pathsep.join(map(str, [case/'jvm/classes', artifacts['kotlin-build-tools-api-2.4.20.jar'], artifacts['kotlin-stdlib-2.4.20.jar']]))
+        worker_bundle_digest = jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, args.java_home/'bin/java', env, None, compile_worker)
+        worker_path = jvm_worker.worker_classpath(case, worker_bundle_digest)
+        cp = os.pathsep.join(map(str, [worker_path, artifacts['kotlin-build-tools-api-2.4.20.jar'], artifacts['kotlin-stdlib-2.4.20.jar']]))
         shared = case/'shared-native'; shared.mkdir()
         shutil.copytree(args.konan_home/'klib/common/stdlib', shared/'input/native-stdlib/shared')
         (shared/'NativeToken.kt').write_text('package shared\n/** Shared Native-only public type. */\nclass NativeToken(val worker: kotlin.native.concurrent.Worker)\n')
@@ -192,7 +193,7 @@ def main():
         for path in files: path.chmod(0o644)
         tree = dict(schemaVersion=1, files=[dict(path=p.relative_to(workspace/'input').as_posix(), digest=file_digest(p), executable=False) for p in files])
         (workspace/'request.json').write_bytes(canonical(dict(specification=specification, configuration=config, distribution=distribution, inputs=tree)))
-        cp = os.pathsep.join(map(str, [case/'jvm/classes', artifacts['kotlin-build-tools-api-2.4.20.jar'], artifacts['kotlin-stdlib-2.4.20.jar']]))
+        cp = os.pathsep.join(map(str, [worker_path, artifacts['kotlin-build-tools-api-2.4.20.jar'], artifacts['kotlin-stdlib-2.4.20.jar']]))
         command = [str(args.java_home/'bin/java'), '-Xmx1536m', '-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8',
             '-cp', cp, 'kvik.jvm.DocumentationInputs', str(workspace), 'request.json']
     html_root = Path(config['outputDir'])

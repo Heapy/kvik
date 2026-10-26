@@ -1604,6 +1604,19 @@ percentiles. Linux CI includes both files in its cached-startup artifact.
 
 The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes, three runtime libraries and the JaCoCo agent/reporter alongside the native executable. Compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
 
+Worker bundle v2 stores the implementation in a deterministic, uncompressed
+`worker.jar`. The manifest and worker identity bind the archive's complete bytes;
+both the Python launcher and Native runtime hash them before use. Cached checking
+does not parse or extract ZIP entries. Construction validates the class inventory,
+normalizes archive timestamps and modes, and orders entry names by UTF-16.
+Libraries and compiler manifests retain their separate integrity checks.
+
+The complete archive must fit the existing 64 MiB CAS blob limit. Larger valid
+worker outputs use the legacy v1 class-directory representation at construction,
+preserving its existing capacity and complete tree verification. An invalid v2
+bundle never falls back to a class directory. The format changes the worker and
+bootstrap cache identities; the first invocation rebuilds the affected composition.
+
 Native recomposition reuses an unchanged JVM worker bundle from
 `<cache-dir>/jvm-worker-cache`. Its key includes ordered worker source paths and
 bytes, the complete artifact lock, verified JDK identity, compiler arguments,

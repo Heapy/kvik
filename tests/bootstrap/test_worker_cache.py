@@ -133,7 +133,7 @@ from bootstrap.identity import read_json
 root = Path(sys.argv[1])
 key = read_json(root/'manifest.json')['composition']
 assert launcher.cached(root, key)
-file = root/'jvm/classes/Worker.class'
+file = root/'jvm/worker.jar'
 before = file.read_bytes()
 file.write_bytes(bytes([before[0] ^ 1]) + before[1:])
 assert not launcher.cached(root, key)
@@ -194,7 +194,7 @@ assert not launcher.cached(root, key)
     def test_corrupt_blob_and_semantically_invalid_record_are_rebuilt(self):
         _, bundle, first = self.build()
         store = RuntimeStore(self.cache); record = store.lookup(first['inputKey'])
-        entry = next(item for item in record.outputs['files'] if item['path'].endswith('Worker.class'))
+        entry = next(item for item in record.outputs['files'] if item['path'] == 'jvm/worker.jar')
         blob = self.cache/'blobs'/f"{entry['digest']['hash']}-{entry['digest']['sizeBytes']}"
         blob.chmod(0o644); stamp = blob.stat(); blob.write_bytes(b'broken')
         os.utime(blob, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))

@@ -220,9 +220,9 @@ class ArtifactBoundaryTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "differs from runtime"):
                     jvm_worker.verify_bundle(runtime, expected)
                 path.write_bytes(original)
-            old = jvm_worker.worker_identity(bundle["classes"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")])
+            old = jvm_worker.worker_identity({"schemaVersion": 1, "files": [{"path": "Fake.class", "digest": digest(b"fixture compiler output"), "executable": False}]}, *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")])
             self.assertNotEqual(old, bundle["worker"])
-            changed = jvm_worker.worker_identity(bundle["classes"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")],
+            changed = jvm_worker.worker_archive_identity(bundle["workerArchive"]["digest"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")],
                 digest(b"changed agent"), bundle["jacocoCli"]["digest"], "0.8.14")
             self.assertNotEqual(changed, bundle["worker"])
             for mutate in (lambda m: m.update(jacocoVersion="0.8.13"), lambda m: m.pop("jacocoAgent"),
@@ -251,8 +251,10 @@ class ArtifactBoundaryTest(unittest.TestCase):
             source = root/"Fixture.kt"; source.write_text("// fixture")
             def compile_fixture(argv, environment, log):
                 (Path(argv[argv.index("-d")+1])/"Fixture.class").write_bytes(b"fixture")
-            expected = jvm_worker.build_bundle(root, root, "unused", lock, artifacts, "/java", {}, None,
-                compile_fixture, source_files=[source])
+            # Deliberately select legacy v1 by size, even for this tiny fixture.
+            with patch.object(jvm_worker, "WORKER_ARCHIVE_BYTES", 1):
+                expected = jvm_worker.build_bundle(root, root, "unused", lock, artifacts, "/java", {}, None,
+                    compile_fixture, source_files=[source])
             bundle = jvm_worker.verify_bundle(root, expected)
             self.assertNotIn("documentationManifest", bundle)
             self.assertEqual(jvm_worker.worker_identity(bundle["classes"], *[bundle[r]["digest"] for r in ("api", "stdlib", "junit")],
@@ -288,7 +290,7 @@ def main():
             return document
         assert native()["jvmWorker"] == bundle["worker"]
         passed("relocated-direct-native-bundle")
-        targets = [relocated / "jvm/classes" / bundle["classes"]["files"][0]["path"],
+        targets = [relocated / "jvm/classes" / bundle["classes"]["files"][0]["path"] if bundle["schemaVersion"] == 1 else relocated / "jvm/worker.jar",
                    relocated / "jvm" / bundle["api"]["path"], relocated / "jvm/compiler-manifest.json",
                    relocated / "jvm/manifest.json", relocated / "jvm" / bundle["jacocoAgent"]["path"],
                    relocated / "jvm" / bundle["jacocoCli"]["path"]]
@@ -308,13 +310,13 @@ def main():
         extra.write_bytes(b"extra")
         native(2)
         extra.unlink()
-        classes = relocated / "jvm/classes"
+        classes = jvm_worker.worker_classpath(relocated, manifest["jvmWorkerBundle"])
         classes.rename(relocated / "external-classes")
-        classes.symlink_to(relocated / "external-classes", target_is_directory=True)
+        classes.symlink_to(relocated / "external-classes", target_is_directory=bundle["schemaVersion"] == 1)
         native(2)
         classes.unlink()
         (relocated / "external-classes").rename(classes)
-        passed("extra-library-and-class-directory-symlink-rejected")
+        passed("extra-library-and-worker-classpath-symlink-rejected")
         assert native()["jvmWorker"] == bundle["worker"]
         # Invoke the actual built BTA/JUnit workers from their relocated bundle.
         workspace = work / "action"

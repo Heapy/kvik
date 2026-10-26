@@ -166,6 +166,16 @@ class BridgeUnitTest {
         }
     }
 
+    @Test fun archiveWorkerIdentityHasDistinctPinnedEncoding() {
+        val empty = Sha256.digest(byteArrayOf())
+        val archive = jvmWorkerArchiveIdentity(empty, empty, empty, empty, empty, empty, JACOCO_VERSION)
+        assertEquals(Digest("292eba912d2d1c6db2f909f7f19ddec6f25706d92f04358d7cbb95f97f5c55a3", 694), archive)
+        assertNotEquals(jvmWorkerIdentity(empty, empty, empty, empty, empty, empty, JACOCO_VERSION), archive)
+        assertNotEquals(archive, jvmWorkerArchiveIdentity(Sha256.digest(byteArrayOf(1)), empty, empty, empty, empty, empty, JACOCO_VERSION))
+        assertNotEquals(archive, jvmWorkerArchiveIdentity(empty, empty, empty, empty, empty, empty, JACOCO_VERSION, empty))
+        assertFails { jvmWorkerArchiveIdentity(empty, empty, empty, empty, empty, empty, "0.8.13") }
+    }
+
     @Test fun optionalCoverageToolsBindIdentityAndRequireCompleteLayout() {
         val old = Sha256.digest(obj("schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
             "workerTree" to digest.toJson(), "api" to digest.toJson(), "stdlib" to digest.toJson(), "junit" to digest.toJson()))

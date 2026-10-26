@@ -28,10 +28,10 @@ def main():
         with (case / 'compile.log').open('wb') as output:
             subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=180)
 
-    jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, dict(os.environ), None, compile_worker,
+    worker_bundle_digest = jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, dict(os.environ), None, compile_worker,
         source_files=[*sorted((ROOT / 'core/src').rglob('*.kt')), *sorted((ROOT / 'compiler/jvm/src').rglob('*.kt')),
                       ROOT / 'tests/js-workspace-plugin/WorkerArgumentsTest.kt'])
-    classpath = os.pathsep.join(map(str, [case / 'jvm/classes', cache / 'kotlin-stdlib-2.4.20.jar']))
+    classpath = os.pathsep.join(map(str, [jvm_worker.worker_classpath(case, worker_bundle_digest), cache / 'kotlin-stdlib-2.4.20.jar']))
     subprocess.run([str(java), '-cp', classpath, 'kvik.jvm.WorkerArgumentsTest'], check=True, timeout=60)
 
 

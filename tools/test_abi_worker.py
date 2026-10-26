@@ -37,15 +37,15 @@ def main():
             result = subprocess.run(list(map(str, command)), env=env, stdout=stdout, stderr=stderr, timeout=240)
         assert result.returncode == expected, (label, result.returncode, (case/(label+'.stderr')).read_text())
     lock = jvm_worker.read_lock(ROOT)
-    assert len(lock['compilerArtifacts']) == 17 and len(jvm_worker.all_artifacts(lock)) == 26
+    assert len(lock['compilerArtifacts']) == 22 and len(jvm_worker.all_artifacts(lock)) == 31
     artifacts = jvm_worker.acquire(lock, args.artifacts, True)
-    jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, env, None,
+    worker_bundle_digest = jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, env, None,
         lambda command, environment, log: run('compile-worker', command))
     compiler = [artifacts[item['filename']] for item in lock['compilerArtifacts']]
     stdlib = artifacts['kotlin-stdlib-2.4.20.jar']
     api = artifacts['kotlin-build-tools-api-2.4.20.jar']
     manifest = case/'jvm/compiler-manifest.json'
-    cp = os.pathsep.join(map(str, [case/'jvm/classes', api, stdlib]))
+    cp = os.pathsep.join(map(str, [jvm_worker.worker_classpath(case, worker_bundle_digest), api, stdlib]))
     source = case/'Fixture.kt'
     original = '''package fixture
 public class PublicApi { public fun answer(): Int = 42; internal fun hidden(): Int = 7 }

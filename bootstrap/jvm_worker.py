@@ -13,6 +13,14 @@ from bootstrap.identity import canonical, digest, file_digest, inventory, read_j
 
 
 SUPPORTED_KOTLIN_VERSIONS = ("2.4.10", "2.4.20", "2.4.21")
+WORKER_FILE_LIMIT = 4096
+WORKER_ENTRY_LIMIT = 8192
+WORKER_DEPTH_LIMIT = 64
+WORKER_FILE_BYTES = 8 * 1024 * 1024
+WORKER_TOTAL_BYTES = 256 * 1024 * 1024
+# V2's complete archive must fit the existing CAS per-blob limit, including ZIP
+# headers. Legacy v1 retains its separate 256 MiB class-payload capacity.
+WORKER_ARCHIVE_BYTES = 64 * 1024 * 1024
 COMPILER_COMPONENTS = (
     "kotlin-compiler-embeddable", "kotlin-build-tools-api", "kotlin-build-tools-impl",
     "kotlin-build-tools-cri-impl", "kotlin-tooling-core", "kotlin-compiler-runner",
@@ -189,6 +197,87 @@ def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None
     return digest(canonical(identity))
 
 
+def worker_archive_identity(archive, api, stdlib, junit, jacoco_agent, jacoco_cli, jacoco_version, documentation_manifest=None):
+    if jacoco_version != "0.8.14":
+        raise ValueError("Unsupported JaCoCo worker identity")
+    identity = {"schemaVersion": 2, "implementation": "kvik-jvm-worker-bundle-v2", "workerArchive": archive,
+        "api": api, "stdlib": stdlib, "junit": junit, "jacocoAgent": jacoco_agent, "jacocoCli": jacoco_cli,
+        "jacocoVersion": jacoco_version}
+    if documentation_manifest is not None:
+        identity["documentationManifest"] = documentation_manifest
+    return digest(canonical(identity))
+
+
+def archive_source_tree(classes):
+    """Bounded private compiler output; reject aliases before ZIP construction."""
+    if classes.is_symlink() or not classes.is_dir():
+        raise ValueError("Worker classes must be a real directory")
+    files = []; visited = 0; total = 0
+    def visit(directory, prefix, depth):
+        nonlocal visited, total
+        if depth > WORKER_DEPTH_LIMIT:
+            raise ValueError("Worker class directory depth exceeds limit")
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                visited += 1
+                if visited > WORKER_ENTRY_LIMIT:
+                    raise ValueError("Worker class entries exceed limit")
+                logical = prefix + entry.name
+                if (any(ord(char) < 32 for char in logical) or '\\' in logical or ':' in logical or
+                        any(part in ('', '.', '..') for part in logical.split('/')) or len(logical.encode('utf-8')) > 65535):
+                    raise ValueError("Invalid worker archive path")
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    visit(Path(entry.path), logical + '/', depth + 1)
+                else:
+                    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o111:
+                        raise ValueError("Worker archive input must be regular and non-executable")
+                    if len(files) >= WORKER_FILE_LIMIT or not 0 <= info.st_size <= WORKER_FILE_BYTES:
+                        raise ValueError("Worker class count/size exceeds limit")
+                    measured = digest(read_regular(Path(entry.path), WORKER_FILE_BYTES))
+                    total += measured['sizeBytes']
+                    if total > WORKER_TOTAL_BYTES:
+                        raise ValueError("Worker classes exceed total size limit")
+                    files.append({'path': logical, 'digest': measured, 'executable': False})
+    visit(classes, '', 0)
+    if not files:
+        raise ValueError("Worker archive requires class outputs")
+    return {'schemaVersion': 1, 'files': sorted(files, key=lambda entry: entry['path'].encode('utf-16-be'))}
+
+
+def build_worker_archive(classes, archive):
+    # Archive support is cold-path-only: cached launchers hash the complete JAR
+    # without parsing or extracting it, just as they verify pinned library JARs.
+    import zipfile
+    tree = archive_source_tree(classes)
+    # ZIP_STORED local+central headers (30+46), two UTF-8 names per entry,
+    # and the 22-byte end record. No extras, comments, descriptors or ZIP64.
+    archive_size = 22 + sum(entry['digest']['sizeBytes'] + 76 + 2 * len(entry['path'].encode('utf-8')) for entry in tree['files'])
+    if archive_size > WORKER_ARCHIVE_BYTES:
+        if archive_source_tree(classes) != tree:
+            raise ValueError("Worker class tree changed during representation selection")
+        # Size alone selects the legacy representation at construction time.
+        # Invalid v2 bundles never fall back to classes during verification.
+        return tree, None
+    with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_STORED, allowZip64=False) as output:
+        for entry in tree['files']:
+            content = read_regular(classes / entry['path'], WORKER_FILE_BYTES)
+            if digest(content) != entry['digest']:
+                raise ValueError("Worker class changed during archive construction")
+            info = zipfile.ZipInfo(entry['path'], date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.create_version = info.extract_version = 20
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
+            info.compress_type = zipfile.ZIP_STORED
+            output.writestr(info, content)
+    if archive_source_tree(classes) != tree:
+        raise ValueError("Worker class tree changed during archive construction")
+    archive.chmod(0o644)
+    if archive.stat().st_size != archive_size or archive_size > WORKER_ARCHIVE_BYTES:
+        raise ValueError("Worker archive size differs from deterministic ZIP layout")
+    return tree, {'path': 'worker.jar', 'digest': file_digest(archive), 'executable': False}
+
+
 def bundle_sources(source_root, worker_sources, source_files=None):
     sources = (sorted((source_root / "core/src").rglob("*.kt")) + sorted((source_root / worker_sources).rglob("*.kt"))) if source_files is None else list(source_files)
     if not sources or len(sources) != len(set(sources)):
@@ -227,7 +316,13 @@ def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, 
     # Detect changes to any compiler input before trusting or publishing generated classes.
     if any(not valid_artifact(artifacts[a["filename"]], a) for a in all_artifacts(lock)):
         raise ValueError("Pinned JVM artifact changed during worker compilation")
-    manifest = {"schemaVersion": 1, "classes": tree_manifest(classes), "jacocoVersion": lock["jacocoVersion"]}
+    tree, archive = build_worker_archive(classes, bundle / "worker.jar")
+    manifest = {"schemaVersion": 2 if archive is not None else 1, "jacocoVersion": lock["jacocoVersion"]}
+    if archive is None:
+        manifest['classes'] = tree
+    else:
+        manifest['workerArchive'] = archive
+        shutil.rmtree(classes)
     (bundle / "lib").mkdir()
     for role, item in bundle_libraries(lock):
         logical = "lib/" + item["filename"]
@@ -242,7 +337,8 @@ def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, 
         data = canonical(documentation_distribution(lock))
         (bundle / "documentation-manifest.json").write_bytes(data)
         manifest["documentationManifest"] = {"path": "documentation-manifest.json", "digest": digest(data), "executable": False}
-    manifest["worker"] = worker_identity(manifest["classes"], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
+    identity = worker_identity if archive is None else worker_archive_identity
+    manifest["worker"] = identity(tree if archive is None else archive['digest'], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
         manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"],
         manifest.get("documentationManifest", {}).get("digest"))
     (bundle / "manifest.json").write_bytes(canonical(manifest))
@@ -257,27 +353,34 @@ def verify_bundle(directory, expected):
     if digest(data) != expected:
         raise ValueError("JVM worker bundle manifest differs from runtime")
     manifest = parse_json(data.decode("utf-8", errors="strict"))
-    if (not isinstance(manifest, dict) or set(manifest) - {"documentationManifest"} != {"schemaVersion", "classes", "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"}
-            or type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 1 or manifest["jacocoVersion"] != "0.8.14"):
+    version = manifest.get("schemaVersion") if isinstance(manifest, dict) else None
+    worker_role = "classes" if version == 1 else "workerArchive"
+    if (not isinstance(manifest, dict) or set(manifest) - {"documentationManifest"} != {"schemaVersion", worker_role, "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"}
+            or type(version) is not int or version not in (1, 2) or manifest["jacocoVersion"] != "0.8.14"):
         raise ValueError("Unsupported JVM worker bundle")
-    if tree_manifest(bundle / "classes") != manifest["classes"]:
+    if version == 1 and tree_manifest(bundle / "classes") != manifest["classes"]:
         raise ValueError("JVM worker classes differ from runtime")
     files = set()
-    roles = ["api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli"] + (["documentationManifest"] if "documentationManifest" in manifest else [])
+    roles = ["api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli"] + (["documentationManifest"] if "documentationManifest" in manifest else []) + (["workerArchive"] if version == 2 else [])
     for role in roles:
         entry = manifest[role]
         if (not isinstance(entry, dict) or set(entry) != {"path", "digest", "executable"} or entry["executable"] is not False
-                or not isinstance(entry["path"], str) or not re.fullmatch(r"lib/[A-Za-z0-9][A-Za-z0-9_.-]*\.jar" if role not in ("compilerManifest", "documentationManifest") else (r"compiler-manifest\.json" if role == "compilerManifest" else r"documentation-manifest\.json"), entry["path"])):
+                or not isinstance(entry["path"], str) or not re.fullmatch(
+                    {'compilerManifest': r'compiler-manifest\.json', 'documentationManifest': r'documentation-manifest\.json',
+                     'workerArchive': r'worker\.jar'}.get(role, r'lib/[A-Za-z0-9][A-Za-z0-9_.-]*\.jar'), entry["path"])):
             raise ValueError("Invalid worker bundle entry")
         path = bundle / entry["path"]
-        if not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_mode & 0o111 or file_digest(path) != entry["digest"]:
+        info = path.lstat()
+        limit = WORKER_ARCHIVE_BYTES if role == 'workerArchive' else WORKER_FILE_BYTES
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o111 or not 0 <= info.st_size <= limit or file_digest(path) != entry["digest"]:
             raise ValueError("Worker bundle artifact differs from runtime")
         files.add(entry["path"])
     if len(files) != len(roles) or {p.name for p in (bundle / "lib").iterdir()} != {p.split('/')[1] for p in files if p.startswith('lib/')}:
         raise ValueError("Unexpected worker bundle libraries")
-    if {p.name for p in bundle.iterdir()} != {"classes", "lib", "manifest.json", "compiler-manifest.json"} | ({"documentation-manifest.json"} if "documentationManifest" in manifest else set()):
+    if {p.name for p in bundle.iterdir()} != {"classes" if version == 1 else "worker.jar", "lib", "manifest.json", "compiler-manifest.json"} | ({"documentation-manifest.json"} if "documentationManifest" in manifest else set()):
         raise ValueError("Unexpected worker bundle entries")
-    if manifest["worker"] != worker_identity(manifest["classes"], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
+    identity = worker_identity if version == 1 else worker_archive_identity
+    if manifest["worker"] != identity(manifest["classes"] if version == 1 else manifest["workerArchive"]["digest"], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
         manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"],
         manifest.get("documentationManifest", {}).get("digest")):
         raise ValueError("Worker identity differs from bundle")
@@ -288,6 +391,11 @@ def verify_bundle(directory, expected):
         if canonical(document) != data:
             raise ValueError("Documentation manifest must be canonical")
     return manifest
+
+
+def worker_classpath(directory, expected_manifest_digest):
+    manifest = verify_bundle(directory, expected_manifest_digest)
+    return directory / 'jvm' / ('classes' if manifest['schemaVersion'] == 1 else manifest['workerArchive']['path'])
 
 
 def sync_tree(directory):

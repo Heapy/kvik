@@ -12,7 +12,7 @@ from bootstrap import jvm_worker
 from bootstrap.identity import canonical, digest, file_digest, parse_json, read_json
 
 
-IMPLEMENTATION = 'kvik-bootstrap-jvm-worker-cache-v1'
+IMPLEMENTATION = 'kvik-bootstrap-jvm-worker-cache-v2'
 ENVIRONMENT_NAMES = ('HOME', 'TMPDIR', 'PATH', 'JAVA_HOME', 'LANG', 'LC_ALL', 'TZ')
 
 

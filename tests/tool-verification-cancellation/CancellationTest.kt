@@ -8,6 +8,7 @@ import kotlin.test.*
 import kvik.cache.NativeFiles
 import kvik.compilertools.*
 import kvik.compiler.native.environment
+import kvik.compiler.jvm.jvmWorkerArchiveIdentity
 import kvik.core.*
 import kvik.toolchains.*
 
@@ -283,10 +284,20 @@ class CancellationTest {
         }
     }
 
-    @Test fun workerBundleAndJvmProviderPropagateCancellationThroughCompilerJars() = fixture { root ->
+    @Test fun workerBundleAndJvmProviderPropagateCancellationThroughCompilerJars() = workerBundle(false)
+    @Test fun archivedWorkerBundleAndJvmProviderPreserveIntegrityAndCancellation() = workerBundle(true)
+
+    private fun workerBundle(archived: Boolean) = fixture { root ->
         val (roots, lock) = installations(root)
         val bundle = "$root/bundle"
-        val classDigest = put("$bundle/classes/Fake.class", "fake class".encodeToByteArray())
+        val classDigest = if (archived) Sha256.digest("fake class".encodeToByteArray())
+            else put("$bundle/classes/Fake.class", "fake class".encodeToByteArray())
+        // Exact deterministic ZIP_STORED fixture, also pinned by the Python builder test.
+        val archiveBytes = "504b0304140000000000000021001c915a7001000200010002000a00000046616b652e636c617373".hexToByteArray() +
+            ByteArray(131073) { 2 } +
+            "504b01021403140000000000000021001c915a7001000200010002000a0000000000000000000000a4810000000046616b652e636c617373504b0506000000000100010038000000290002000000".hexToByteArray()
+        val archive = if (archived) put("$bundle/worker.jar", archiveBytes) else null
+        if (archived) assertEquals(Digest("cf55e61d7d937d59e6049be058ee52b3d0f0256c4ebff50119c9d59b1a51dd4f", 131191), archive)
         val classes = TreeManifest(listOf(FileEntry(LogicalPath("Fake.class"), classDigest)))
         val entries = listOf("api", "stdlib", "junit", "jacocoAgent", "jacocoCli").associateWith { role ->
             FileEntry(LogicalPath("lib/$role.jar"), put("$bundle/lib/$role.jar", "$role jar".encodeToByteArray()))
@@ -295,16 +306,44 @@ class CancellationTest {
             obj("path" to "compiler.jar".json(), "digest" to put("$root/artifacts/compiler.jar", ByteArray(131073) { 2 }).toJson())
         ).json(), "serializationPlugin" to JsonValue.Null)
         val compilerDigest = put("$bundle/compiler-manifest.json", compiler.canonical().encodeToByteArray())
-        val worker = Sha256.digest(obj("schemaVersion" to 1.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
+        val worker = if (archive != null) jvmWorkerArchiveIdentity(archive, entries.getValue("api").digest,
+            entries.getValue("stdlib").digest, entries.getValue("junit").digest,
+            entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, "0.8.14")
+        else Sha256.digest(obj("schemaVersion" to 1.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
             "workerTree" to Sha256.digest(classes.toJson()).toJson(), "api" to entries.getValue("api").digest.toJson(),
             "stdlib" to entries.getValue("stdlib").digest.toJson(), "junit" to entries.getValue("junit").digest.toJson(),
             "jacocoVersion" to "0.8.14".json(), "jacocoAgent" to entries.getValue("jacocoAgent").digest.toJson(),
             "jacocoCli" to entries.getValue("jacocoCli").digest.toJson()))
-        val manifest = JsonValue.Object(entries.mapValues { it.value.toJson() } + mapOf("schemaVersion" to 1.json(),
-            "classes" to classes.toJson(), "compilerManifest" to FileEntry(LogicalPath("compiler-manifest.json"), compilerDigest).toJson(),
+        val manifest = JsonValue.Object(entries.mapValues { it.value.toJson() } + mapOf("schemaVersion" to (if (archived) 2 else 1).json(),
+            (if (archived) "workerArchive" else "classes") to (archive?.let { FileEntry(LogicalPath("worker.jar"), it).toJson() } ?: classes.toJson()),
+            "compilerManifest" to FileEntry(LogicalPath("compiler-manifest.json"), compilerDigest).toJson(),
             "worker" to worker.toJson(), "jacocoVersion" to "0.8.14".json()))
         val expectedManifest = put("$bundle/manifest.json", manifest.canonical().encodeToByteArray())
         cancelAtRepresentativeBoundaries { checkpoint -> verifyJvmWorkerBundle(bundle, expectedManifest, checkpoint) }
+        assertEquals(if (archived) "$bundle/worker.jar" else "$bundle/classes", verifyJvmWorkerBundle(bundle, expectedManifest).classes)
+        if (archived) {
+            val path = "$bundle/worker.jar"
+            NativeFiles.removeEntry(path)
+            assertFails { verifyJvmWorkerBundle(bundle, expectedManifest) }
+            put(path, archiveBytes.copyOf().also { it[40] = 3 })
+            assertFails { verifyJvmWorkerBundle(bundle, expectedManifest) }
+            NativeFiles.removeEntry(path); put("$root/external.jar", archiveBytes)
+            assertEquals(0, symlink("$root/external.jar", path))
+            assertFails { verifyJvmWorkerBundle(bundle, expectedManifest) }
+            NativeFiles.removeEntry(path); put(path, archiveBytes, true)
+            assertFails { verifyJvmWorkerBundle(bundle, expectedManifest) }
+            NativeFiles.removeEntry(path); put(path, archiveBytes)
+            NativeFiles.ensureDirectory("$bundle/classes")
+            assertFails { verifyJvmWorkerBundle(bundle, expectedManifest) }
+            NativeFiles.removeTree("$bundle/classes")
+            val oversized = JsonValue.Object(manifest.values + ("workerArchive" to
+                FileEntry(LogicalPath("worker.jar"), Digest(checkNotNull(archive).hash, 64L * 1024 * 1024 + 1)).toJson()))
+            NativeFiles.removeEntry("$bundle/manifest.json")
+            val oversizedDigest = put("$bundle/manifest.json", oversized.canonical().encodeToByteArray())
+            assertFails { verifyJvmWorkerBundle(bundle, oversizedDigest) }
+            NativeFiles.removeEntry("$bundle/manifest.json"); put("$bundle/manifest.json", manifest.canonical().encodeToByteArray())
+            assertEquals(worker, verifyJvmWorkerBundle(bundle, expectedManifest).identity)
+        }
         val identities = mapOf("jdk" to inventory(roots.getValue(ToolComponent.JDK)).digest, "jvm-compiler" to compilerDigest,
             "jvm-worker" to worker, "junit" to entries.getValue("junit").digest)
         val provider = InstalledJvmToolchainProvider(lock, roots, bundle, expectedManifest, "$root/artifacts")

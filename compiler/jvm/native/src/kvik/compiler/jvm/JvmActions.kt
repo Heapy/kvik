@@ -16,6 +16,17 @@ fun jvmWorkerIdentity(workerTree: Digest, api: Digest, stdlib: Digest, junit: Di
     return Sha256.digest(if (documentationManifest == null) measured else JsonValue.Object(measured.values +
         ("documentationManifest" to documentationManifest.toJson())))
 }
+
+/** V2 pins every byte of a deterministic worker JAR; v1 tree identity remains unchanged. */
+fun jvmWorkerArchiveIdentity(workerArchive: Digest, api: Digest, stdlib: Digest, junit: Digest,
+    jacocoAgent: Digest, jacocoCli: Digest, jacocoVersion: String, documentationManifest: Digest? = null): Digest {
+    require(jacocoVersion == "0.8.14") { "Unsupported JaCoCo bundle version" }
+    val identity = obj("schemaVersion" to 2.json(), "implementation" to "kvik-jvm-worker-bundle-v2".json(),
+        "workerArchive" to workerArchive.toJson(), "api" to api.toJson(), "stdlib" to stdlib.toJson(), "junit" to junit.toJson(),
+        "jacocoAgent" to jacocoAgent.toJson(), "jacocoCli" to jacocoCli.toJson(), "jacocoVersion" to jacocoVersion.json())
+    return Sha256.digest(if (documentationManifest == null) identity else JsonValue.Object(identity.values +
+        ("documentationManifest" to documentationManifest.toJson())))
+}
 @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
 fun jvmHostPlatform(): Map<String, String> = when (kotlin.native.Platform.osFamily to kotlin.native.Platform.cpuArchitecture) {
     kotlin.native.OsFamily.MACOSX to kotlin.native.CpuArchitecture.ARM64 -> mapOf("os" to "macos", "arch" to "arm64")

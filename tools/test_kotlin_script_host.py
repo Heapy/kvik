@@ -42,8 +42,6 @@ def main():
         'kotlin-scripting-compiler-impl-embeddable']
     compiler_cp = ':'.join(str(compiler_jar(name)) for name in compiler_components)
     runtime_components = ['kotlin-stdlib', 'kotlin-script-runtime', 'kotlin-scripting-common', 'kotlin-scripting-jvm']
-    host = case / 'jvm/classes'
-    runtime_cp = ':'.join(map(str, [host, *[compiler_jar(name) for name in runtime_components]]))
 
     def process(label, arguments, expected=0):
         result = subprocess.run([str(java), *map(str, arguments)], cwd=case, capture_output=True, timeout=120)
@@ -52,10 +50,12 @@ def main():
         assert result.returncode == expected, (label, result.returncode, result.stdout.decode(errors='replace'), result.stderr.decode(errors='replace'))
         return result
 
-    jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, dict(__import__('os').environ), None,
+    worker_bundle_digest = jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, dict(__import__('os').environ), None,
         lambda command, environment, log: process('compile-host', command[1:]),
         source_files=[*sorted((ROOT / 'core/src').rglob('*.kt')), *sorted((ROOT / 'compiler/jvm/src').rglob('*.kt')),
                       ROOT / 'tests/jvm-kts/Driver.kt'])
+    host = jvm_worker.worker_classpath(case, worker_bundle_digest)
+    runtime_cp = ':'.join(map(str, [host, *[compiler_jar(name) for name in runtime_components]]))
     cp = [str(compiler_jar('kotlin-stdlib')), str(compiler_jar('kotlin-script-runtime'))]
 
     def request(label, operation, **fields):
