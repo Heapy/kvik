@@ -23,6 +23,7 @@ from fixture import HttpsFixture, archive, canonical, certificates, digest, inve
 sys.path.insert(0, str(ROOT))
 from bootstrap.source_graph import parse_source_lock, observe_graph
 from bootstrap.native_libraries import RECIPES
+from bootstrap.pin_tools import NATIVE_DEPENDENCIES
 
 DEFAULT_REFERENCE = Path('/private/tmp/kvik-k14-source-store/.kvik/tests/source-store/case-rzkf8dpt/full-kvik/source.lock.json')
 
@@ -245,7 +246,10 @@ def audit_runtime(directory, expected_lock, key, records, events):
     native = [c for c in commands if Path(c['command'][0]).name == 'konanc']
     assert len(native) == 1
     native_argv = native[0]['command']
-    assert '-Xoverride-konan-properties=airplaneMode=true' in native_argv
+    properties = [argument.split('=', 1)[1] for argument in native_argv
+                  if argument.startswith('-Xoverride-konan-properties=')]
+    assert properties == ['airplaneMode=true;dependencies.' + expected_lock['target'] + '=' +
+                          ' '.join(NATIVE_DEPENDENCIES[expected_lock['target']].values())]
     build_root = Path(native_argv[native_argv.index('-o') + 1]).parent
     assert build_root.parent == directory.parent and build_root.name.startswith(key['hash'] + '-')
     expected_native = [str(build_root/'sources'/item['path']) for item in inputs if 'native-kotlin' in item['roles']]
