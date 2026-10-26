@@ -117,7 +117,9 @@ class ScriptsSchemaTest(unittest.TestCase):
             self.assertFalse(validator('compilerPlugin').is_valid(plugin))
             for change in [dict(scopes=['main']), dict(scopes=['script', 'main']), dict(targets=['macosArm64']), dict(inputs=['bad\n'])]:
                 self.assertFalse(validator('scriptCompilerPlugin').is_valid({**plugin, **change}), change)
-        for change in [dict(id='bad\n'), dict(module='producer\n'), dict(compilerVersion='2.4.10'), dict(options=['invalid'])]:
+        for version in ('2.4.10', '2.4.20', '2.4.21'):
+            validator('scriptCompilerPlugin').validate({**workspace, 'compilerVersion': version})
+        for change in [dict(id='bad\n'), dict(module='producer\n'), dict(compilerVersion='2.3.0'), dict(options=['invalid'])]:
             self.assertFalse(validator('scriptCompilerPlugin').is_valid({**workspace, **change}), change)
 
     def test_generated_schema_is_structurally_valid(self):

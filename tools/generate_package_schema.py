@@ -52,9 +52,11 @@ script_declaration.update(script=script_id,origin=ref('scriptOrigin'),kind=enum(
 defs['scriptDeclaration']=obj(**script_declaration)
 for name in ('moduleDeclaration', 'scriptDeclaration'):
     defs[name]['properties'].update(pluginId={'type':'string','pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END},
-                                    compilerVersion={'const':'2.4.20'})
+                                    compilerVersion=enum('2.4.10','2.4.20','2.4.21'))
     defs[name]['allOf']=[{'if':{'anyOf':[{'required':['pluginId']},{'required':['compilerVersion']}]},
-                         'then':{'required':['pluginId','compilerVersion'],'properties':{'kind':{'const':'compiler-plugin'}}}}]
+                         'then':{'required':['pluginId','compilerVersion'],'properties':{'kind':{'const':'compiler-plugin'}}}},
+                        {'if':{'required':['compilerVersion'],'properties':{'compilerVersion':enum('2.4.10','2.4.21')}},
+                         'then':{'properties':{'targets':{'const':['jvm']}}}}]
 defs['declaration']={'oneOf':[ref('moduleDeclaration'),ref('scriptDeclaration')]}
 defs['projectQuery']['properties']['scripts']=arr(script_id,256)
 defs['projectQuery']['properties']['compilation']=nullable(enum('main','test','script'))

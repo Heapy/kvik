@@ -192,7 +192,7 @@ DEFS["compilerPlugin"]["oneOf"] = [
     {"required": ["coordinate"], "not": {"anyOf": [{"required": [name]} for name in ("module", "id", "compilerVersion")]},
      "properties": {"pathOptions": {"maxItems": 0}, "outputs": {"maxItems": 0}}}]
 DEFS["compilerPlugin"]["allOf"] = [{"if": {"required": ["compilerVersion"],
-    "properties": {"compilerVersion": {"const": "2.4.21"}}},
+    "properties": {"compilerVersion": enum("2.4.10", "2.4.21")}},
     "then": {"properties": {"targets": array({"const": "jvm"}, minItems=1, uniqueItems=True)}}}]
 DEFS["libraryPublication"] = object_({"coordinate": {"allOf": [COORDINATE,
     {"type": "string", "pattern": r"^[^\u0000-\u0020]*(?![\s\S])"}]}})

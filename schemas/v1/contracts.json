@@ -1548,7 +1548,10 @@
             ],
             "properties": {
               "compilerVersion": {
-                "const": "2.4.21"
+                "enum": [
+                  "2.4.10",
+                  "2.4.21"
+                ]
               }
             }
           },
@@ -2222,7 +2225,10 @@
             ],
             "properties": {
               "compilerVersion": {
-                "const": "2.4.21"
+                "enum": [
+                  "2.4.10",
+                  "2.4.21"
+                ]
               }
             }
           },

@@ -1135,7 +1135,11 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
         },
         "compilerVersion": {
-          "const": "2.4.20"
+          "enum": [
+            "2.4.10",
+            "2.4.20",
+            "2.4.21"
+          ]
         }
       },
       "required": [
@@ -1174,6 +1178,30 @@
             "properties": {
               "kind": {
                 "const": "compiler-plugin"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "compilerVersion"
+            ],
+            "properties": {
+              "compilerVersion": {
+                "enum": [
+                  "2.4.10",
+                  "2.4.21"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "const": [
+                  "jvm"
+                ]
               }
             }
           }
@@ -1285,7 +1313,11 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
         },
         "compilerVersion": {
-          "const": "2.4.20"
+          "enum": [
+            "2.4.10",
+            "2.4.20",
+            "2.4.21"
+          ]
         }
       },
       "required": [
@@ -1325,6 +1357,30 @@
             "properties": {
               "kind": {
                 "const": "compiler-plugin"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "compilerVersion"
+            ],
+            "properties": {
+              "compilerVersion": {
+                "enum": [
+                  "2.4.10",
+                  "2.4.21"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "const": [
+                  "jvm"
+                ]
               }
             }
           }

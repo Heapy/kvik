@@ -18,10 +18,11 @@ class PluginSchemaTest(unittest.TestCase):
             legacy = {**common, **owner}
             validator.validate(legacy)
             explicit = {**legacy, 'pluginId': 'example.plugin', 'compilerVersion': '2.4.20'}
-            validator.validate(explicit)
+            for version in ('2.4.10', '2.4.20', '2.4.21'):
+                validator.validate({**explicit, 'compilerVersion': version})
             validator.validate({**explicit, 'coordinate': None, 'dependencyModule': 'producer'})
             for changes in [dict(kind='external'), dict(pluginId='bad/id'), dict(pluginId=None), dict(compilerVersion=None),
-                            dict(compilerVersion='2.4.10')]:
+                            dict(compilerVersion='2.3.0')]:
                 self.assertFalse(validator.is_valid({**explicit, **changes}), changes)
             for name in ('pluginId', 'compilerVersion'):
                 self.assertFalse(validator.is_valid({k: v for k, v in explicit.items() if k != name}))
@@ -85,17 +86,37 @@ class PluginSchemaTest(unittest.TestCase):
         validator.validate(published)
         validator.validate({**published, 'inputs': ['schema.json'], 'outputs': ['report'], 'pathOptions': [
             dict(name='schema', kind='input-file', path='schema.json'), dict(name='report', kind='output-directory', path='report')]})
-        for change in [dict(module='producer'), dict(compilerVersion='2.4.10'), dict(options=['missing'])]:
+        for change in [dict(module='producer'), dict(compilerVersion='2.3.0'), dict(options=['missing'])]:
             self.assertFalse(validator.is_valid({**published, **change}))
         self.assertFalse(validator.is_valid({k: v for k, v in published.items() if k != 'compilerVersion'}))
         validator.validate(dict(coordinate='org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20', targets=['jvm'], scopes=['main'], options=[], inputs=[]))
         for targets in [['macosArm64'], ['linuxX64'], ['js'], ['wasmJs'], ['jvm', 'macosArm64', 'linuxX64', 'js', 'wasmJs']]:
             for scopes in [['main'], ['test'], ['main', 'test']]:
                 validator.validate({**workspace, 'targets': targets, 'scopes': scopes})
-        for change in [dict(id=None), dict(compilerVersion='2.4.10'), dict(targets=['linuxArm64']), dict(targets=['jvm', 'jvm']), dict(targets=[]), dict(scopes=['script']), dict(options=['missing']), dict(extra=True)]:
+        for change in [dict(id=None), dict(compilerVersion='2.3.0'), dict(targets=['linuxArm64']), dict(targets=['jvm', 'jvm']), dict(targets=[]), dict(scopes=['script']), dict(options=['missing']), dict(extra=True)]:
             self.assertFalse(validator.is_valid({**workspace, **change}))
         for name in ['id', 'compilerVersion']:
             self.assertFalse(validator.is_valid({k: v for k, v in workspace.items() if k != name}))
+
+    def test_alternate_compiler_profiles_remain_jvm_only(self):
+        packages = json.loads((Path(__file__).resolve().parents[2] / 'schemas/v1/packages.json').read_text())
+        project = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/compilerPlugin'})
+        dependency = Draft202012Validator({'$defs': packages['$defs'], '$ref': '#/$defs/declaration'})
+        for version in ('2.4.10', '2.4.20', '2.4.21'):
+            for reference in (dict(module='producer'), dict(coordinate='example:plugin:1')):
+                plugin = dict(**reference, id='example.plugin', compilerVersion=version,
+                              targets=['jvm'], scopes=['main'], options=[], inputs=[])
+                declaration = dict(module='consumer', sourceSet=None, kind='compiler-plugin',
+                                   coordinate=reference.get('coordinate'), dependencyModule=reference.get('module'),
+                                   scope='compile', exported=False, targets=['jvm'], compilations=['main'],
+                                   pluginId='example.plugin', compilerVersion=version)
+                project.validate(plugin)
+                dependency.validate(declaration)
+                for targets in (['macosArm64'], ['linuxX64'], ['iosArm64'], ['iosSimulatorArm64'],
+                                ['js'], ['wasmJs'], ['jvm', 'macosArm64']):
+                    with self.subTest(version=version, reference=reference, targets=targets):
+                        self.assertEqual(version == '2.4.20', project.is_valid({**plugin, 'targets': targets}))
+                        self.assertEqual(version == '2.4.20', dependency.is_valid({**declaration, 'targets': targets}))
 
     def test_script_plugins_stay_jvm_only(self):
         validator = Draft202012Validator({**SCHEMA, '$ref': '#/$defs/scriptCompilerPlugin'})
