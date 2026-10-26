@@ -1416,12 +1416,20 @@ report help/inspection p95 of 84.26/89.84 ms on the Mac and 79.75/87.94 ms in
 150 ms budget on both measured hosts. These are not controlled speedup comparisons;
 the Mac sample retains one 263.70 ms inspection outlier. A later isolated plugin
 edit takes 142.24 s, of which 101.15 s is the final Native compiler command despite
-verified JVM worker reuse. Reusing compiled core artifacts is the next candidate
-to investigate, with no savings established yet.
+verified JVM worker reuse. A separate private compiler experiment extracts 194
+stable source files into a core KLIB (14.25 s). Plain final compilation takes
+86.92 s; first object-cache population plus final compilation takes 162.64 s,
+including standard/platform caches. A subsequent plugin-description edit links
+in 16.52 s with unchanged core/cache bytes and zero rebuilt cache archives.
+Runtime identity and project inspection pass for all three executables. The warm
+command excludes 30.14 s of installed-tool verification, 10.42 s of interop
+preparation and other launcher work; these single samples establish feasibility,
+not an end-to-end budget result. The experiment uses private outputs and does not
+publish an ordinary runtime cache entry.
 Native outputs remain local-only where relocation is unsafe, and the pinned
 Grogu Linux fixture cannot yet be fetched from its upstream repository.
 
-The next bounded work is to test reusable Native core compilation, reduce
+The next bounded work is to integrate and validate local Native core/object caching, reduce
 default agent output volume while preserving queryable detail, and make the
 pinned real-project fixture available to CI. K17 remains an experiment: its
 separate comparison did not demonstrate an economy or reliability advantage.
