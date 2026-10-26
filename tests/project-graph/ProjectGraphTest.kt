@@ -84,6 +84,7 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-documentation-native-stdlib-v1" -> listOf(FileEntry(LogicalPath("stdlib/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
+    "kvik-jvm-metadata-prepare-v1" -> listOf("metadata/0.klib", "metadata/classpath.json").map { FileEntry(LogicalPath(it), digest("$salt:$it")) }
     "kvik-jvm-benchmark-harness-v1" -> listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "kvik-metadata.json", "generated/Harness.class").map { FileEntry(LogicalPath("benchmark-harness/$it"), digest("$salt:$it")) }
     "kvik-jvm-compiler-v1" -> listOf(FileEntry(LogicalPath("classes/Example.class"), digest(salt)))
     "kvik-native-compiler-v1" -> if (action.kind == ActionKind.LINK) NativeCompilation.fromJson(action.parameters).let { compilation ->
@@ -523,10 +524,11 @@ class ProjectGraphTest {
 
     @Test fun documentationOptInChangesOnlyExplicitCommonResolutionAndRequiresIncludes() {
         val plain = configuration(module("app"))
-        assertTrue(effectiveConfiguration(plain).requests.none { it.domain.target == "common" })
+        assertTrue(effectiveConfiguration(plain).requests.none { it.domain.target == "common" && it.domain.sourceSet == null })
+        assertTrue(effectiveConfiguration(plain).requests.any { it.domain.target == "common" && it.domain.sourceSet == "commonMain" })
         assertFails { graph(plain, snapshot(), request(ProjectMode.DOCUMENTATION)) }
         val config = configuration(module("app").copy(documentation = DocumentationSettings(includes = listOf(LogicalPath("missing.md")))))
-        assertTrue(effectiveConfiguration(config).requests.any { it.domain.target == "common" && it.coordinate.name == "kotlin-stdlib" })
+        assertTrue(effectiveConfiguration(config).requests.any { it.domain.target == "common" && it.domain.sourceSet == null && it.coordinate.name == "kotlin-stdlib" })
         assertFails { graph(config, snapshot(), request(ProjectMode.DOCUMENTATION)) }
     }
 
@@ -685,7 +687,7 @@ class ProjectGraphTest {
                     listOf("linux", "js", "wasmJs").map { source("${it}Main", "${value.id}/$it", listOf("commonMain")) },
                 targets = selected.sorted().map { name ->
                     (if (name == "jvm") value.targets.first() else value.targets.last()).let {
-                        it.copy(name = name, main = if (name == "linuxX64") "linuxMain" else if (KotlinJsTarget.find(name) != null) "${name}Main" else it.main)
+                        it.copy(name = name, test = null, main = if (name == "linuxX64") "linuxMain" else if (KotlinJsTarget.find(name) != null) "${name}Main" else it.main)
                     }
                 })
             val config = configuration(forTargets(base), forTargets(app))
@@ -2055,11 +2057,59 @@ class IosFrameworkGraphTest {
 }
 
 class IdeInputGraphTest {
+    @Test fun commonSourceModulesOwnRootsDependenciesAndTestFriendsWithoutConsumerCompilation() {
+        val dependency = module("base", listOf(external("g:base-api:1"))).let { original -> original.copy(sourceSets = original.sourceSets.map { set ->
+            set.copy(name = if (set.name == "commonMain") "foundation" else set.name,
+                dependsOn = set.dependsOn.map { if (it == "commonMain") "foundation" else it })
+        }) }
+        val app = module("app", listOf(Dependency.Module("base"), external("g:main-api:1"))).let { original -> original.copy(
+            sourceSets = listOf(source("sharedBase", "app/shared", dependencies = listOf(external("g:root-api:1")))) + original.sourceSets.map { set -> when (set.name) {
+                "commonMain" -> set.copy(dependsOn = listOf("sharedBase"))
+                "commonTest" -> set.copy(dependsOn = emptyList())
+                else -> set
+            } }) }
+        val config = configuration(dependency, app)
+        val plan = graph(config, TreeManifest(emptyList()), request(ProjectMode.IDE_INPUTS))
+        assertTrue(plan.nodes.all { it.id.endsWith(":ide-inputs") || ":ide-metadata-" in it.id })
+        assertTrue(plan.compilations.isEmpty())
+        val actions = resolved(plan)
+        val model = IdeInputs.fromJson(actions.getValue("app:jvm:ide-inputs").parameters)
+        val byName = model.compilations.associateBy { it.name }
+        assertEquals(setOf("app.main", "app.test", "base.main", "app.common.sharedBase", "app.common.commonMain", "app.common.commonTest", "base.common.foundation"), byName.keys)
+        assertEquals(listOf("app.common.sharedBase"), byName.getValue("app.common.commonMain").refines)
+        assertEquals(listOf("base.common.foundation"), byName.getValue("app.common.commonMain").modules)
+        assertEquals(listOf("app.common.sharedBase", "app.common.commonMain"), byName.getValue("app.common.commonTest").friends)
+        assertTrue(byName.getValue("app.common.commonTest").refines.isEmpty())
+        assertEquals(listOf("app.common.commonTest"), byName.getValue("app.test").refines)
+        assertTrue(byName.getValue("app.main").roots.all { it.sourceSet == "jvmMain" })
+        assertTrue(byName.getValue("app.test").roots.all { it.sourceSet == "jvmTest" })
+        val roots = model.compilations.flatMap { it.roots }.map { it.path }
+        assertEquals(roots.size, roots.distinct().size)
+        for (c in model.compilations.filter { it.common }) {
+            assertTrue(c.roots.all { it.sourceSet == c.sourceSet && it.common })
+            assertTrue(c.libraries.isNotEmpty() && c.libraries.all { it.value.endsWith(".klib") })
+            assertEquals(setOf("jvm", "macosArm64"), c.targets)
+        }
+        val common = actions.getValue("app:common:ide-metadata-commonMain")
+        val test = actions.getValue("app:common:ide-metadata-commonTest")
+        val testsArtifact = artifact("g:tests:1", "common", "kotlin-metadata").digest
+        assertTrue(test.inputs.files.any { it.digest == testsArtifact })
+        assertTrue(common.inputs.files.none { it.digest == testsArtifact })
+        assertEquals(model, IdeInputs.fromJson(model.toJson()))
+        val consumer = plan.nodes.single { it.id == "app:jvm:ide-inputs" }
+        val results = actions.filterKeys { it in consumer.dependencies }.mapValues { (id, action) -> ActionResult(id, action.key(Sha256), ActionStatus.EXECUTED, outputs(action, id), 0) }
+        assertFails { consumer.resolve(results - "app:common:ide-metadata-commonMain") }
+        val first = consumer.resolve(results)
+        val changedId = "app:common:ide-metadata-commonTest"
+        val changed = results.getValue(changedId).copy(outputs = outputs(test, "changed"))
+        assertNotEquals(first.key(Sha256), consumer.resolve(results + (changedId to changed)).key(Sha256))
+    }
+
     @Test fun importPreparesEditableClosureWithoutCompilingBrokenOrEmptySources() {
         val hidden = module("hidden")
         val base = module("base", listOf(Dependency.Module("hidden", exported = false)))
         val app = module("app", listOf(Dependency.Module("base", exported = true)))
-        val config = configuration(hidden, base, app)
+        val config = configuration(*listOf(hidden, base, app).map { it.copy(targets = it.targets.filter { it.name == "jvm" }) }.toTypedArray())
         val plan = graph(config, TreeManifest(emptyList()), request(ProjectMode.IDE_INPUTS))
         assertEquals(listOf("app:jvm:ide-inputs"), plan.nodes.map { it.id })
         assertEquals(setOf("app:jvm:ide-inputs"), plan.requestedChecks)
@@ -2079,7 +2129,7 @@ class IdeInputGraphTest {
     }
 
     @Test fun declaredGeneratedSourcesArePreparedWithoutConsumerCompilationAndAffectIdentity() {
-        val config = configuration(module("app"))
+        val config = configuration(module("app").let { it.copy(targets = it.targets.filter { it.name == "jvm" }) })
         val effective = effectiveConfiguration(config)
         val producer = "plugin:fixture:generate:source"
         val output = LogicalPath("generated")

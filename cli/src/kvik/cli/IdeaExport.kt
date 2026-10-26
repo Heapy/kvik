@@ -50,8 +50,8 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
     require(compilations.none { it.hasCompilerPlugins }) {
         "IDEA compiler-plugin analysis is not implemented; prepare-ide retains the model without claiming editor plugin support"
     }
-    require(compilations.none { c -> c.roots.any { it.common } }) {
-        "IDEA common metadata preparation is not implemented; prepare-ide retains source-set ownership for a future multiplatform import"
+    require(compilations.none { c -> !c.common && c.roots.any { it.common } }) {
+        "IDEA single-target common source-set projection is not implemented"
     }
     val data = TreeManifest(actions.flatMap { action -> action.outputs.files.filter { it.path.value.startsWith("ide/input/") }.map {
         it.copy(path = LogicalPath(it.path.value.removePrefix("ide/input/")))
@@ -69,9 +69,10 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
     val projected = compilations.map { c ->
         IdeaCompilation(c.name, c.roots.map { root -> IdeaRoot(
             if (root.generated) "$output/inputs/${root.path.value}" else "${project.root}/${root.path.value}", root.resource, root.generated) },
-            c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}") },
-            IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)), c.compilerOptions,
-            if (c.compilation == "test") "${c.module}.main" else null, test = c.compilation == "test")
+            c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}", c.common) },
+            if (c.common) IdeaPlatform.Common(c.targets) else IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)), c.compilerOptions,
+            if (c.compilation == "test" && !c.common) "${c.module}.main" else null, test = c.compilation == "test",
+            refines = c.refines, friends = c.friends)
     }
     val files = ideaProjectFiles(sdk, projected, runs)
     val parent = output.substringBeforeLast('/')

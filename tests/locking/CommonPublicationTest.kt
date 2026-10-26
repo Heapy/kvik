@@ -203,8 +203,10 @@ class CommonPublicationTest {
         val published = commonProject(commonModule("root"))
         assertTrue(commonScope in defaultDependencyScopes(published))
         val old = commonProject(commonModule("root", published = false))
-        assertFalse(defaultDependencyScopes(old).any { it.target == "common" })
-        assertNull(effectiveConfiguration(old).document.objectValue().getValue("resolver").objectValue()["commonMetadata"])
+        assertFalse(defaultDependencyScopes(old).any { it.target == "common" && it.sourceSet == null })
+        assertEquals(setOf("sharedBase", "sharedMain", "tests"), defaultDependencyScopes(old).filter { it.target == "common" }.map { it.sourceSet }.toSet())
+        assertEquals(obj("stdlib" to "org.jetbrains.kotlin:kotlin-stdlib:2.4.20".json()),
+            effectiveConfiguration(old).document.objectValue().getValue("resolver").objectValue()["commonMetadata"])
         assertEquals(obj("stdlib" to "org.jetbrains.kotlin:kotlin-stdlib:2.4.20".json()),
             effectiveConfiguration(published).document.objectValue().getValue("resolver").objectValue()["commonMetadata"])
         assertFails { effectiveConfiguration(old, scopes = listOf(commonScope)) }

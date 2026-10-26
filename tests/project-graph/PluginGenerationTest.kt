@@ -39,6 +39,13 @@ class PluginGenerationTest {
     private fun graph(inputs: ProjectGeneratedInputs = declarations(), mode: ProjectMode = ProjectMode.BUILD,
                       targets: Set<String> = setOf("jvm", "js", "macosArm64")): ProjectActionGraph {
         val effective = effectiveConfiguration(config())
+        val lock = DependencyLock(effective.digest, effective.requests.map { request ->
+            val coordinate = request.coordinate
+            ScopedSelection(request.domain, LockedSelection(coordinate, request.variant,
+                listOf(LockedArtifact(coordinate, request.variant.usage, "central",
+                    "https://repo.example.test/maven/${coordinate.name}.jar", digest(coordinate.toString()))),
+                listOf(MetadataIdentity("https://repo.example.test/maven/${coordinate.name}.module", digest("metadata")))))
+        })
         val plugin = object : ProjectGenerationContributor, ProjectGraphContributor {
             override val id = "example.codegen"
             override val apiVersion = CONTRACT_VERSION
@@ -52,7 +59,7 @@ class PluginGenerationTest {
                 } }
         }
         return composedProjectActionGraph(listOf(KotlinBuildPlugin(), plugin),
-            ProjectBuildContext(effective, DependencyLock(effective.digest, emptyList()), TreeManifest(emptyList()), composition, tools),
+            ProjectBuildContext(effective, lock, TreeManifest(emptyList()), composition, tools),
             ProjectGraphRequest(setOf("app"), targets, mode))
     }
     private fun result(files: List<FileEntry>) = mapOf(producer to ActionResult(producer, digest("key"), ActionStatus.EXECUTED, TreeManifest(files), 0))

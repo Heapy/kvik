@@ -4,6 +4,23 @@ import kvik.core.*
 import kotlin.test.*
 
 class IdeInputsExecutorTest {
+    @Test fun sharedModelsValidateRefinementAndFriendBoundaries() {
+        val main = JvmIdeCompilation("app", "main", emptyList(), emptyList(), emptyList(), emptyList(), false,
+            refines = listOf("app.common.commonMain"))
+        val shared = JvmIdeCompilation("app", "main", listOf(IdeInputRoot(LogicalPath("common"), "commonMain", common = true)),
+            emptyList(), listOf(LogicalPath("metadata/0.klib")), emptyList(), false, "commonMain", setOf("jvm", "js"))
+        val test = shared.copy(compilation = "test", sourceSet = "commonTest", roots = emptyList(), friends = listOf(shared.name))
+        val model = IdeInputs("app", listOf(main, shared, test))
+        assertEquals(model, IdeInputs.fromJson(model.toJson()))
+        assertFails { shared.copy(libraries = listOf(LogicalPath("jvm.jar"))) }
+        assertFails { shared.copy(targets = setOf("jvm")) }
+        assertFails { shared.copy(roots = listOf(IdeInputRoot(LogicalPath("other"), "other", common = true))) }
+        assertFails { IdeInputs("app", listOf(main, shared, test.copy(refines = listOf(shared.name)))) }
+        assertFails { IdeInputs("app", listOf(main, shared.copy(refines = listOf(main.name)))) }
+        assertFails { IdeInputs("app", listOf(main, shared.copy(targets = setOf("js", "wasmJs")))) }
+        assertFails { IdeInputs("app", listOf(main, shared, test.copy(friends = listOf(main.name)))) }
+        assertFails { IdeInputs("app", listOf(main, shared, test.copy(friends = listOf("missing")))) }
+    }
     @Test fun successfulPreparationHasADistinctProtocolEvent() {
         val event = RunEvent("run", 1, "ide-inputs-ready", obj("directory" to "/run/ide".json()))
         assertEquals("ide-inputs-ready", event.toJson().objectValue().getValue("type").stringValue())

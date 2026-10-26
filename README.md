@@ -269,8 +269,8 @@ Export a JVM project into a new directory and open that directory in IDEA:
 ```
 
 `--sdk` is the name of an IDEA JDK configured to match the project's build tools.
-The export prepares locked JARs and source/resource generators, including their
-prerequisites. Ordinary module dependencies become source-module edges, so errors
+The export prepares locked JVM JARs, shared-source metadata KLIBs and
+source/resource generators, including their prerequisites. Ordinary module dependencies become source-module edges, so errors
 in the edited modules do not prevent import. Main and test compilations retain
 their own JVM settings, private dependency visibility and test friend access.
 Generated files and libraries are copied into the export; authored sources and
@@ -282,10 +282,14 @@ model under the run's `ide/<module>/model.json`, with ordinary files under `inpu
 The `ide-inputs-ready` event identifies that directory. Preparation is a separate
 check from compilation or tests. Its model has a versioned `ideInputs` JSON Schema.
 
-This is an initial JVM adapter. Common-source metadata preparation, Native/JS/Wasm editor
-models, compiler-plugin analysis, debugging and live project-model reload remain
-pending. `idea-export` rejects unsupported common roots and compiler plugins;
-`prepare-ide` preserves their ownership/presence in the intermediate model.
+Source sets shared by at least two targets become separate common modules with
+their own roots and locked metadata. Refinement edges preserve `expect`/`actual`
+and internal visibility; shared tests receive explicit access to their main source
+sets, including when the test declaration omits a main refinement edge.
+Native/JS/Wasm platform editor models, compiler-plugin analysis, debugging and live
+project-model reload remain pending. `idea-export` rejects single-target common
+roots and compiler plugins; `prepare-ide` preserves their ownership/presence in
+the intermediate model.
 After configuration or generator changes, export to another new directory and
 open that generation. Existing exports are never overwritten.
 
@@ -299,8 +303,9 @@ as new projects, so it does not establish live GUI model reload.
 The same import harness accepts `--common-stdlib PATH_TO_STDLIB_ALL_JAR` to test
 the common-source renderer with a transitive refinement chain and extracted KLIB
 metadata. It checks `expect`/`actual`, internal visibility, and rejection of JVM
-APIs from common code. Connecting this projection to locked, per-source-set
-metadata preparation in `idea-export` remains pending.
+APIs from common code. `tools/test_common_idea_export_cli.py` exercises locked
+per-source-set preparation through the public export command, including shared
+test dependencies and generated roots.
 
 ### Configuration changes
 

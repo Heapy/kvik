@@ -481,7 +481,17 @@ IDE_ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"}
 DEFS["ideInputRoot"] = object_({"path": PATH, "sourceSet": STRING, "generated": BOOL, "resource": BOOL, "common": BOOL})
 DEFS["jvmIdeCompilation"] = object_({"module": IDE_ID, "compilation": enum("main", "test"),
     "roots": array(ref("ideInputRoot"), uniqueItems=True), "modules": array(IDE_ID, uniqueItems=True),
-    "libraries": array(PATH, uniqueItems=True), "compilerOptions": array(STRING), "hasCompilerPlugins": BOOL})
+    "libraries": array(PATH, uniqueItems=True), "compilerOptions": array(STRING), "hasCompilerPlugins": BOOL,
+    "sourceSet": IDE_ID, "targets": array(enum(*PROJECT_TARGETS), minItems=2, uniqueItems=True),
+    "refines": array(IDE_ID, uniqueItems=True), "friends": array(IDE_ID, uniqueItems=True)},
+    optional=("sourceSet", "targets", "refines", "friends"))
+DEFS["jvmIdeCompilation"]["dependentRequired"] = {"sourceSet": ["targets"], "targets": ["sourceSet"]}
+DEFS["jvmIdeCompilation"]["allOf"] = [
+    {"if": {"required": ["sourceSet"]}, "then": {"properties": {
+        "libraries": {"items": {"pattern": r"\.klib$(?![\s\S])"}}, "roots": {"items": {"properties": {"common": {"const": True}}}}}},
+     "else": {"properties": {"libraries": {"items": {"pattern": r"\.jar$(?![\s\S])"}}}}},
+    {"if": {"properties": {"compilation": {"const": "main"}}}, "then": {"properties": {"friends": {"maxItems": 0}}}},
+]
 DEFS["ideInputs"] = versioned({"module": IDE_ID, "compilations": array(ref("jvmIdeCompilation"), minItems=1, uniqueItems=True)})
 DEFS["ideaExport"] = versioned({"kind": {"const": "idea-export"}, "directory": STRING, "preparation": STRING,
     "sdk": {"type": "string", "minLength": 1}, "compilations": array(IDE_ID, minItems=1, uniqueItems=True)})

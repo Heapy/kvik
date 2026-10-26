@@ -67,11 +67,17 @@ def main():
         project.mkdir(exist_ok=True)
         if prepared:
             shutil.copytree(prepared['project'], project, dirs_exist_ok=True)
-            if mode == 'without-friend':
-                path = project/'.idea/modules/app.test.iml'
+            changes = {
+                'without-friend': ('app.test', 'additionalVisibleModuleNames'),
+                'without-refinement': ('app.main', 'dependsOnModuleNames'),
+                'without-common-friends': ('app.common.commonTest', 'additionalVisibleModuleNames'),
+            }
+            if mode in changes:
+                name, element = changes[mode]
+                path = project/f'.idea/modules/{name}.iml'
                 document = ET.parse(path)
                 facet = document.find('.//facet/configuration')
-                facet.remove(facet.find('additionalVisibleModuleNames'))
+                facet.remove(facet.find(element))
                 document.write(path, encoding='utf-8', xml_declaration=True)
             return
         extra = [mode or 'normal', common_library] if common_library else ([mode] if mode else [])
@@ -195,6 +201,26 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
     if prepared is None:
         output = run('quoted-command', ['/bin/sh', project/'.idea/kvik-command-0.sh'])
         assert output == "quote' dollar$ backtick` space & < >", output
+    if prepared and 'commonSource' in prepared:
+        common_source = Path(prepared['commonSource'])
+        common_good = common_source.read_text()
+        try:
+            common_source.write_text(common_good + 'fun platformLeak(): String = java.lang.System.getProperty("os.name")\n')
+            leak = inspect('common-platform-leak')
+            assert len(leak) == 1 and 'Common.kt' in leak[0][0] and "'java'" in leak[0][1], leak
+        finally:
+            common_source.write_text(common_good)
+        export('without-refinement')
+        refinement = inspect('without-refinement')
+        assert any("no corresponding 'expect'" in text for _, text in refinement), refinement
+        assert any('secret' in text and 'internal' in text for _, text in refinement), refinement
+        export('without-common-friends')
+        friends = inspect('without-common-friends')
+        assert friends and all('CommonTests.kt' in file and 'internal' in text for file, text in friends), friends
+        assert all(any(name in text for _, text in friends) for name in ('secret', 'baseSecret')), friends
+        export('common-restored')
+        assert inspect('common-restored') == []
+        phases += ['common-platform-leak', 'without-refinement', 'without-common-friends', 'common-restored']
     (case/'summary.json').write_text(json.dumps(dict(passed=True, build=product['buildNumber'],
         phases=phases,
         modelRefresh='new-project-import', sourceRefresh='explicit-content-root-refresh',

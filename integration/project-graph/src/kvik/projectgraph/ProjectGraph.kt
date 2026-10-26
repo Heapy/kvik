@@ -693,25 +693,78 @@ private class Builder(
         return id
     }
 
+    private fun ensureIdeMetadata(source: CommonMetadataSource): String {
+        val id = "${source.module}:common:ide-metadata-${source.sourceSet}"
+        if (id in nodes) return id
+        val domain = source.domain()
+        require(domain in authorized) { "IDE source set requires a locked metadata domain: $domain; run resolve" }
+        val roots = (commonMetadataDependencyClosure(project, source.module, source.sourceSet).external +
+            Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct()
+        val artifacts = roots.flatMap { coordinate ->
+            selections[ResolutionRequest(coordinate, VariantRequest("common", "kotlin-metadata", emptyMap()), domain)]?.artifacts
+                ?: error("Missing locked IDE metadata: $coordinate:$domain")
+        }.map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
+        nodes[id] = ActionNode(id, emptySet(), ActionOutputContract(treeOutput("metadata", "kotlin-metadata"))) {
+            jvmMetadataPrepareAction(JvmMetadataPreparation(source.module, artifacts.map { it.path }, LogicalPath("metadata"), source.targets),
+                TreeManifest(artifacts), composition, tools.getValue("jvm"))
+        }
+        return id
+    }
+
     private fun ensureIdeInputs(owner: String): String {
         data class Prepared(val module: String, val scope: String, val sets: List<SourceSet>,
             val libraries: List<FileEntry>, val modules: List<String>, val generators: List<SourceGenerator>,
-            val sql: String?, val resources: ResourceSelection)
-        val prepared = linkedMapOf<Pair<String, String>, Prepared>()
+            val sql: String?, val resources: ResourceSelection, val resourcePrefix: String,
+            val source: CommonMetadataSource? = null, val metadata: String? = null,
+            val refines: List<String> = emptyList(), val friends: List<String> = emptyList())
+        val prepared = linkedMapOf<String, Prepared>()
+        fun commonName(module: String, source: String) = "$module.common.$source"
+        fun shared(module: String) = commonMetadataSourceSets(modules.getValue(module)).associateBy { it.sourceSet }
+        fun selectedResources(module: String, sets: List<SourceSet>, prefix: String) =
+            sourceSetResources(project, files, module, sets, prefix, generatedInputs.resources).also { selection ->
+                selection.generators.forEach(::ensureScriptGenerator)
+                selection.pluginDependencies.forEach(::ensurePluginGenerator)
+            }
+        fun visitCommon(source: CommonMetadataSource) {
+            val name = commonName(source.module, source.sourceSet)
+            if (name in prepared) return
+            val spec = modules.getValue(source.module)
+            val set = spec.sourceSets.single { it.name == source.sourceSet }
+            val own = commonMetadataInputs(spec, source.sourceSet).filter { it.name != source.sourceSet }
+                .map { commonMetadataSource(spec, it.name) }
+            val dependencies = commonMetadataDependencyClosure(project, source.module, source.sourceSet).sources
+            val prefix = "runtime/${source.module}/common/${source.sourceSet}"
+            prepared[name] = Prepared(source.module, source.compilation, listOf(set), emptyList(),
+                dependencies.map { commonName(it.module, it.sourceSet) }, ensureSourceGenerators(source.module, listOf(set)),
+                spec.sqlDelight?.takeIf { it.sourceSet == set.name }?.let { ensureSqlDelight(source.module) },
+                selectedResources(source.module, listOf(set), prefix), prefix, source, ensureIdeMetadata(source),
+                own.filter { it.compilation == source.compilation }.map { commonName(it.module, it.sourceSet) },
+                own.filter { it.compilation != source.compilation }.map { commonName(it.module, it.sourceSet) })
+            (own + dependencies).forEach(::visitCommon)
+        }
         fun visit(module: String, scope: String) {
-            if (module to scope in prepared) return
+            val name = "$module.$scope"
+            if (name in prepared) return
             val mainNames = sourceSets(module, "jvm", "main").map { it.name }.toSet()
-            val sets = sourceSets(module, "jvm", scope).filter { scope == "main" || it.name !in mainNames }
+            val all = sourceSets(module, "jvm", scope)
+            val common = shared(module)
+            val sets = all.filter { (scope == "main" || it.name !in mainNames) && it.name !in common }
             val classpath = compilationClasspath(module, "jvm", scope)
-            val generators = ensureSourceGenerators(module, sets)
-            val sql = if (scope == "main") sqlDelightFor(module, "jvm") else null
-            val resources = resources(module, "jvm", scope)
-            prepared[module to scope] = Prepared(module, scope, sets, classpath.artifacts, classpath.modules, generators, sql, resources)
+            val prefix = "runtime/$module/$scope"
+            // Validate the real resource overlay before partitioning it among editor modules.
+            moduleResources(project, files, module, "jvm", scope, generatedInputs.resources)
+            val selected = all.mapNotNull { common[it.name] }
+            prepared[name] = Prepared(module, scope, sets, classpath.artifacts, classpath.modules.map { "$it.main" },
+                ensureSourceGenerators(module, sets), modules.getValue(module).sqlDelight?.takeIf { sql -> sets.any { it.name == sql.sourceSet } }?.let { ensureSqlDelight(module) },
+                selectedResources(module, sets, prefix), prefix,
+                refines = selected.filter { it.compilation == scope }.map { commonName(module, it.sourceSet) },
+                friends = if (scope == "test") selected.filter { it.compilation == "main" }.map { commonName(module, it.sourceSet) } else emptyList())
+            selected.forEach(::visitCommon)
             classpath.modules.forEach { visit(it, "main") }
         }
         visit(owner, "main")
         if (target(owner, "jvm").test != null) visit(owner, "test")
-        val edges = prepared.values.flatMap { item -> item.generators.map(::generatorId) + listOfNotNull(item.sql) + item.resources.dependencies }.toSet()
+        val edges = prepared.values.flatMap { item -> item.generators.map(::generatorId) + listOfNotNull(item.sql, item.metadata) + item.resources.dependencies }.toSet()
         val id = "$owner:jvm:ide-inputs"
         nodes[id] = ActionNode(id, edges, ActionOutputContract(treeOutput("ide", "ide-inputs"))) { results ->
             validateResults(results, edges)
@@ -720,9 +773,18 @@ private class Builder(
                 val common = commonSets(item.module)
                 val roots = item.sets.flatMap { set ->
                     set.directories.map { IdeInputRoot(it, set.name, common = set.name in common) } +
-                        set.resources.map { IdeInputRoot(it, set.name, resource = true) }
+                        set.resources.map { IdeInputRoot(it, set.name, resource = true, common = set.name in common) }
                 }.toMutableList()
-                inputs += item.libraries
+                val libraries = item.metadata?.let { producer ->
+                    val output = results.getValue(producer).outputs.files
+                    require(output.none { it.executable } && output.any { it.path.value == "metadata/classpath.json" }) { "Missing IDE metadata descriptor" }
+                    val klibs = output.filter { it.path.value != "metadata/classpath.json" }
+                    require(klibs.size in 1..4096 && klibs.map { it.path.value }.toSet() == klibs.indices.map { "metadata/$it.klib" }.toSet()) { "Unexpected IDE metadata outputs" }
+                    klibs.sortedBy { it.path.value.substringAfter('/').substringBefore('.').toInt() }.map {
+                        it.copy(path = LogicalPath("ide-metadata/${item.module}/${item.source!!.sourceSet}/" + it.path.value.removePrefix("metadata/")))
+                    }
+                } ?: item.libraries
+                inputs += libraries
                 inputs += sourceGeneratorOutputs(item.generators, results).values.flatten()
                 roots += item.generators.map { generator -> IdeInputRoot(LogicalPath(generator.prefix.removeSuffix("/")),
                     generator.sourceSet, generated = true, common = generator.sourceSet in common) }
@@ -733,14 +795,21 @@ private class Builder(
                 }
                 val resourceFiles = item.resources.resolveGenerated(results)
                 inputs += resourceFiles
-                // Resource overlays are already checked by ResourceSelection. This single root
-                // contains generated files only; authored resources remain editable in place.
-                if (resourceFiles.isNotEmpty()) roots += IdeInputRoot(LogicalPath("runtime/${item.module}/${item.scope}"),
-                    if (item.scope == "main") target(item.module, "jvm").main else checkNotNull(target(item.module, "jvm").test),
-                    generated = true, resource = true)
-                JvmIdeCompilation(item.module, item.scope, roots.distinct(), item.modules.map { "$it.main" },
-                    item.libraries.map { it.path }, target(item.module, "jvm").optionsFor(item.scope),
-                    selectedPlugins(item.module, "jvm", item.scope).isNotEmpty())
+                if (resourceFiles.isNotEmpty()) roots += IdeInputRoot(LogicalPath(item.resourcePrefix),
+                    item.source?.sourceSet ?: if (item.scope == "main") target(item.module, "jvm").main else checkNotNull(target(item.module, "jvm").test),
+                    generated = true, resource = true, common = item.source != null)
+                val options = item.source?.let { source ->
+                    val settings = source.targets.sorted().map { compilerOptions(item.module, it, target(item.module, it).optionsFor(item.scope)) }
+                    require(settings.all { it.nativeLanguageOptions == NativeLanguageOptions() }) { "Common IDE Native language options are not implemented" }
+                    settings.flatMap { it.optIns }.distinct().sorted().map { "-opt-in=$it" } +
+                        (if (settings.any { it.explicitApi }) listOf("-Xexplicit-api=strict") else emptyList()) +
+                        (if (settings.any { it.warningsAsErrors }) listOf("-Werror") else emptyList())
+                } ?: target(item.module, "jvm").optionsFor(item.scope)
+                JvmIdeCompilation(item.module, item.scope, roots.distinct(), item.modules,
+                    libraries.map { it.path }, options,
+                    item.source?.targets?.any { selectedPlugins(item.module, it, item.scope).isNotEmpty() }
+                        ?: selectedPlugins(item.module, "jvm", item.scope).isNotEmpty(),
+                    item.source?.sourceSet, item.source?.targets ?: emptySet(), item.refines, item.friends)
             }
             ideInputsAction(IdeInputs(owner, compilations), TreeManifest(inputs.distinct()), composition, tools.getValue("jvm"))
         }

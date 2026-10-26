@@ -5877,6 +5877,42 @@
         },
         "hasCompilerPlugins": {
           "type": "boolean"
+        },
+        "sourceSet": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "jvm",
+              "macosArm64",
+              "linuxX64",
+              "iosArm64",
+              "iosSimulatorArm64",
+              "js",
+              "wasmJs"
+            ]
+          },
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "refines": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+          },
+          "uniqueItems": true
+        },
+        "friends": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -5888,7 +5924,67 @@
         "compilerOptions",
         "hasCompilerPlugins"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "sourceSet": [
+          "targets"
+        ],
+        "targets": [
+          "sourceSet"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "sourceSet"
+            ]
+          },
+          "then": {
+            "properties": {
+              "libraries": {
+                "items": {
+                  "pattern": "\\.klib$(?![\\s\\S])"
+                }
+              },
+              "roots": {
+                "items": {
+                  "properties": {
+                    "common": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "libraries": {
+                "items": {
+                  "pattern": "\\.jar$(?![\\s\\S])"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "compilation": {
+                "const": "main"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "friends": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "ideInputs": {
       "type": "object",

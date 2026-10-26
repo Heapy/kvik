@@ -154,6 +154,8 @@ def main():
          '--tools', fixtures[0]/'tools.json'])
     run([sys.executable, ROOT/'tools/test_idea_export_cli.py', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache'])
+    run([sys.executable, ROOT/'tools/test_common_idea_export_cli.py', '--runtime', executable,
+         '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache'])
     run([sys.executable, ROOT/'tools/test_compiler_session_worker.py', '--java-home', java,
          '--compiler-artifacts', ROOT/'.kvik/tool-artifacts', '--offline'])
     run([sys.executable, ROOT/'tools/test_foreground_jvm.py', '--runtime', executable,

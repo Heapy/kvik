@@ -144,9 +144,10 @@ fun defaultDependencyScopes(configuration: ProjectConfiguration): List<Dependenc
         (if (target.name == "jvm") listOf("java-api", "java-runtime") else listOf("kotlin-api", "kotlin-runtime")).map { usage ->
             DependencyScope(module.id, target.name, scope, usage)
         }
-    } } + if (hasCommonPublicationSources(module) ||
+    } } + (if (hasCommonPublicationSources(module) ||
         module.documentation != null && documentationCommonSourceSets(module).isNotEmpty())
-        listOf(DependencyScope(module.id, "common", "main", "kotlin-metadata")) else emptyList()
+        listOf(DependencyScope(module.id, "common", "main", "kotlin-metadata")) else emptyList()) +
+        commonMetadataSourceSets(module).map { DependencyScope(module.id, "common", it.compilation, "kotlin-metadata", it.sourceSet) }
 }
 
 /** Each compilation owns its conflict domain. Prerequisite compiles have their own domains. */

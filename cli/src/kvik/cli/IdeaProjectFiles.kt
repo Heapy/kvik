@@ -27,6 +27,7 @@ internal data class IdeaCompilation(
     val friend: String? = null,
     val test: Boolean = false,
     val refines: List<String> = emptyList(),
+    val friends: List<String> = emptyList(),
 )
 internal data class IdeaRun(val name: String, val arguments: List<String>, val directory: String)
 
@@ -82,13 +83,14 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
         val common = c.platform as? IdeaPlatform.Common
         val refined = refinementClosures.getValue(c.name)
         val multiplatform = common != null || refined.isNotEmpty()
-        val moduleEdges = (c.modules + refined).distinct()
+        val friends = (listOfNotNull(c.friend) + c.friends).distinct()
+        val moduleEdges = (c.modules + refined + c.friends).distinct()
         require(c.modules.distinct().size == c.modules.size && c.modules.all { it in names && it != c.name })
         if (common != null) require(c.modules.all { dependency ->
             val other = byName.getValue(dependency)
             other.platform is IdeaPlatform.Common && targets(other).containsAll(common.targets)
         }) { "Common IDEA sources cannot depend on platform-specific modules" }
-        require(c.friend == null || c.friend in moduleEdges)
+        require(friends.all { it in moduleEdges && it in names && it != c.name })
         require(c.roots.map { it.path }.distinct().size == c.roots.size)
         c.roots.forEach { ideaPath(it.path) }
         c.libraries.forEach {
@@ -115,7 +117,10 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
                         if (refined.isNotEmpty()) element("dependsOnModuleNames") {
                             refined.forEach { textElement("dependsOn", it) }
                         }
-                        c.friend?.let { textElement("additionalVisibleModuleNames", it) }
+                        if (friends.size == 1) textElement("additionalVisibleModuleNames", friends.single())
+                        else if (friends.isNotEmpty()) element("additionalVisibleModuleNames") {
+                            friends.forEach { textElement("friend", it) }
+                        }
                         element("compilerSettings") {
                             element("option", "name" to "additionalArguments", "value" to c.compilerArguments.joinToString(" ", transform = ::ideaArgument))
                         }

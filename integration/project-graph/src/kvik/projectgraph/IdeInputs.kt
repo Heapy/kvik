@@ -21,35 +21,57 @@ data class IdeInputRoot(val path: LogicalPath, val sourceSet: String, val genera
 /** Ordinary module dependencies remain source edges. They are never substituted with stale classes. */
 data class JvmIdeCompilation(val module: String, val compilation: String, val roots: List<IdeInputRoot>,
     val modules: List<String>, val libraries: List<LogicalPath>, val compilerOptions: List<String>,
-    val hasCompilerPlugins: Boolean) {
-    val name get() = "$module.$compilation"
+    val hasCompilerPlugins: Boolean, val sourceSet: String? = null, val targets: Set<String> = emptySet(),
+    val refines: List<String> = emptyList(), val friends: List<String> = emptyList()) {
+    val name get() = if (sourceSet == null) "$module.$compilation" else "$module.common.$sourceSet"
+    val common get() = sourceSet != null
     init {
         require(module.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilation in setOf("main", "test"))
         require(roots.distinct().size == roots.size && modules.distinct().size == modules.size)
-        require(libraries.distinct().size == libraries.size && libraries.all { it.value.endsWith(".jar") })
+        require(sourceSet == null && targets.isEmpty() || sourceSet != null && sourceSet.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) &&
+            targets.size >= 2 && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
+        require(libraries.distinct().size == libraries.size && libraries.all { it.value.endsWith(if (common) ".klib" else ".jar") })
+        require(refines.distinct().size == refines.size && friends.distinct().size == friends.size)
+        require(friends.isEmpty() || compilation == "test")
+        require(!common || roots.all { it.sourceSet == sourceSet && it.common })
         compilerOptions(module, "jvm", compilerOptions)
     }
     fun toJson(): JsonValue = obj("module" to module.json(), "compilation" to compilation.json(),
         "roots" to roots.map { it.toJson() }.json(), "modules" to modules.map(String::json).json(),
         "libraries" to libraries.map { it.value.json() }.json(), "compilerOptions" to compilerOptions.map(String::json).json(),
-        "hasCompilerPlugins" to hasCompilerPlugins.json())
+        "hasCompilerPlugins" to hasCompilerPlugins.json()).let { base -> JsonValue.Object(base.values + buildMap {
+            sourceSet?.let { put("sourceSet", it.json()); put("targets", targets.sorted().map(String::json).json()) }
+            if (refines.isNotEmpty()) put("refines", refines.map(String::json).json())
+            if (friends.isNotEmpty()) put("friends", friends.map(String::json).json())
+        }) }
     companion object {
         fun fromJson(value: JsonValue): JvmIdeCompilation {
-            val f = value.fields(setOf("module", "compilation", "roots", "modules", "libraries", "compilerOptions", "hasCompilerPlugins"))
+            val f = value.fields(setOf("module", "compilation", "roots", "modules", "libraries", "compilerOptions", "hasCompilerPlugins"), setOf("sourceSet", "targets", "refines", "friends"))
             return JvmIdeCompilation(f.getValue("module").stringValue(), f.getValue("compilation").stringValue(),
                 f.getValue("roots").arrayValue().map(IdeInputRoot::fromJson), f.getValue("modules").arrayValue().map { it.stringValue() },
                 f.getValue("libraries").arrayValue().map { LogicalPath(it.stringValue()) },
-                f.getValue("compilerOptions").arrayValue().map { it.stringValue() }, f.getValue("hasCompilerPlugins").booleanValue())
+                f.getValue("compilerOptions").arrayValue().map { it.stringValue() }, f.getValue("hasCompilerPlugins").booleanValue(),
+                f["sourceSet"]?.stringValue(), f["targets"]?.arrayValue()?.map(JsonValue::stringValue)?.also { require(it.distinct().size == it.size) }?.toSet() ?: emptySet(),
+                f["refines"]?.arrayValue()?.map(JsonValue::stringValue) ?: emptyList(), f["friends"]?.arrayValue()?.map(JsonValue::stringValue) ?: emptyList())
         }
     }
 }
 
 data class IdeInputs(val module: String, val compilations: List<JvmIdeCompilation>) {
     init {
-        require(compilations.isNotEmpty() && compilations.any { it.module == module && it.compilation == "main" })
+        require(compilations.isNotEmpty() && compilations.any { it.module == module && it.compilation == "main" && !it.common })
         val names = compilations.map { it.name }.toSet()
         require(names.size == compilations.size)
-        require(compilations.all { c -> c.modules.all { it in names && it != c.name } })
+        require(compilations.all { c -> (c.modules + c.refines + c.friends).all { it in names && it != c.name } })
+        val byName = compilations.associateBy { it.name }
+        fun targets(c: JvmIdeCompilation) = if (c.common) c.targets else setOf("jvm")
+        for (c in compilations) {
+            require(c.refines.all { byName.getValue(it).let { parent -> parent.common && parent.targets.containsAll(targets(c)) && parent.compilation == c.compilation } }) { "Invalid IDE source refinement" }
+            require(c.friends.all { byName.getValue(it).let { friend -> friend.module == c.module && friend.compilation == "main" &&
+                targets(friend).containsAll(targets(c)) && (!c.common || friend.common) } }) { "Invalid IDE test friend" }
+            require(!c.common || c.modules.all { byName.getValue(it).let { dependency -> dependency.common && dependency.targets.containsAll(c.targets) } })
+        }
+        validateGraph(compilations.associate { it.name to (it.modules + it.refines + it.friends).toSet() })
     }
     fun requireInputs(inputs: TreeManifest) {
         val libraries = compilations.flatMap { it.libraries }.toSet()

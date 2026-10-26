@@ -36,6 +36,19 @@ class IdeInputsSchemaTest(unittest.TestCase):
             changed['compilations'][0]['roots'][0]['path'] = path
             self.assertFalse(validator.is_valid(changed), path)
 
+    def test_common_model_requires_targets_and_klibs_and_preserves_test_friends(self):
+        value = dict(module='app', compilation='test', sourceSet='commonTest', targets=['jvm', 'js'],
+            roots=[dict(path='tests', sourceSet='commonTest', generated=False, resource=False, common=True)],
+            modules=[], libraries=['metadata/0.klib'], compilerOptions=[], hasCompilerPlugins=False,
+            refines=[], friends=['app.common.commonMain'])
+        validator = self.validator('jvmIdeCompilation')
+        validator.validate(value)
+        for changes in (dict(targets=['jvm']), dict(targets=['jvm', 'jvm']), dict(libraries=['jvm.jar']),
+                        dict(compilation='main'), dict(sourceSet='bad\n'), dict(targets=['jvm', 'unknown'])):
+            self.assertFalse(validator.is_valid({**value, **changes}), changes)
+        for field in ('sourceSet', 'targets'):
+            self.assertFalse(validator.is_valid({k: v for k, v in value.items() if k != field}))
+
 
 if __name__ == '__main__':
     unittest.main()

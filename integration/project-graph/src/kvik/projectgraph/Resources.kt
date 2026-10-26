@@ -53,6 +53,12 @@ internal fun moduleResources(project: ProjectSpec, files: List<FileEntry>, name:
     val sets = sourceSetClosure(module, if (scope == "main") listOf(selected.main) else listOf(checkNotNull(selected.test)))
         .filter { scope == "main" || it.name !in main }
     val prefix = "runtime/$name/$scope"
+    return sourceSetResources(project, files, name, sets, prefix, pluginRoots)
+}
+
+/** Editor modules own exact source sets; platform compilations still use their complete closure. */
+internal fun sourceSetResources(project: ProjectSpec, files: List<FileEntry>, name: String, sets: List<SourceSet>,
+                               prefix: String, pluginRoots: List<GeneratedResourceRoot>): ResourceSelection {
     val static = sets.flatMap { set -> set.resources.flatMap { root ->
         require(files.none { it.path == root }) { "Resource root is a file: ${root.value}" }
         files.filter { it.path.value.startsWith(root.value + "/") }.map {
