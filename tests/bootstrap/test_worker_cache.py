@@ -137,6 +137,15 @@ key = read_json(root/'manifest.json')['composition']
 assert launcher.cached(root, key)
 # Exercise actual main routing with a synthetic, byte-verified runtime bundle
 # bound to this checkout's real composition; never execute fixture binaries.
+# No compiler runs here: bind host policy to the checked-in fixture lock so
+# import-boundary tests also run before tool provisioning on another OS.
+fixture_tools = launcher.read_json(launcher.ROOT/'bootstrap/toolchains.lock.json')
+fixture_target = {('Darwin', 'arm64'): 'macos_arm64',
+                  ('Linux', 'x86_64'): 'linux_x64'}[
+    fixture_tools['host']['os'], fixture_tools['host']['architecture']]
+launcher.host_identity = lambda: fixture_tools['host']
+launcher.component_names = lambda: set(fixture_tools['components'])
+launcher.native_target = lambda: fixture_target
 _, _, lock, key = launcher.composition()
 (root/'runtime.lock.json').write_bytes(canonical(lock))
 manifest = read_json(root/'manifest.json')

@@ -32,6 +32,15 @@ class CachedImportsTest(unittest.TestCase):
         # standard-library CLI behavior rather than a cold bootstrap dependency.
         output = self.child(FORBID_COLD_IMPORTS.replace("'shutil', ", '') + '''
 from bootstrap import launcher
+# No compiler runs here: bind host policy to the checked-in fixture lock so
+# import-boundary tests also run before tool provisioning on another OS.
+fixture_tools = launcher.read_json(launcher.ROOT/'bootstrap/toolchains.lock.json')
+fixture_target = {('Darwin', 'arm64'): 'macos_arm64',
+                  ('Linux', 'x86_64'): 'linux_x64'}[
+    fixture_tools['host']['os'], fixture_tools['host']['architecture']]
+launcher.host_identity = lambda: fixture_tools['host']
+launcher.component_names = lambda: set(fixture_tools['components'])
+launcher.native_target = lambda: fixture_target
 sys.argv = ['kvik', '--print-composition']
 launcher.main()
 # A repeated observation must still hash the complete current composition.
