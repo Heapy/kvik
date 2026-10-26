@@ -1087,11 +1087,48 @@ For several source windows in one call, pass a request file to Kode:
 
 Both commands accept `--view FILE`. Batch reads preserve request order and return
 each file's blob identity, requested range, actual context range and total lines.
+`read` and `read-batch` also return absolute `startByte`/`endByte` offsets for the
+returned content, so a later window can be edited without reading preceding
+lines. Add the UTF-8 byte offset within that window to `startByte` when preparing
+a patch. Ranged responses exclude the terminal LF and preserve CR bytes; a
+whole-file `read` preserves all bytes.
 Missing, hidden, binary or oversized files fail the whole request. Each file's
 `next` value is a ready-to-use request document for the next window; it includes
 the immutable revision. Defaults are 200 lines and no context. Limits are 128
 windows, 1,000 requested lines per window, 100 context lines on either side,
 8 MiB per file, 32 MiB of unique file bytes and 16 MiB of response JSON.
+
+For an exact edit without sending the whole file, use a `patch` operation in
+`kode tx --ops`. For example, if the base file contains `val x = 1\n`, this
+operation changes only the digit:
+
+```json
+{
+  "schemaVersion": 1,
+  "operations": [{
+    "op": "patch",
+    "path": "src/Value.kt",
+    "expectBlob": "BLOB_ID_FROM_THE_BASE_REVISION",
+    "hunks": [{"startByte": 8, "endByte": 9, "expected": "1", "replacement": "2"}]
+  }]
+}
+```
+
+Offsets are zero-based UTF-8 byte positions in the immutable base file, with an
+exclusive end. They must fall on character boundaries. `expectBlob` is required,
+and each hunk must match its exact expected bytes. No fuzzy matching or newline
+normalization occurs; untouched CRLF bytes and executable mode are preserved.
+Hunks must be ordered and disjoint, with unique starting positions. An empty
+range inserts text, and an empty replacement deletes it. A patched path cannot
+overlap another operation's path, including rename endpoints and parent/child
+paths. Source and resulting files are limited to 8 MiB; each patch accepts up to
+256 hunks. A transaction allows at most 4,096 hunks and 8 MiB of combined
+expected/replacement text, within a 16 MiB operations document.
+
+Submit the operations with the usual `--base`, `--intent` and optional guarded
+`--ref main --expect-head BASE_REVISION`. All file edits publish atomically.
+`--request ID` retains the existing retry contract: retry the same payload to
+recover its result; changing a hunk under that request ID conflicts.
 
 `tree-page` returns up to `--limit` entries (default 200, maximum 1,000), `total`,
 `complete` and `nextCursor`. Pass the returned cursor string as `--cursor` for the

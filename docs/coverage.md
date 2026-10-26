@@ -135,7 +135,21 @@ For one retained run, the default expected matrix is its requested test checks. 
 
 The command requires compatible input snapshots, configurations, dependency locks and runtime compositions. Overlapping toolchain identities must agree. Each report must match the exact committed verification from one supplied run, and each selected report’s original artifacts must still match their digests. Aggregation reads retained data without running tests or tools. It does not combine arbitrary CI jobs from different source or build configurations.
 
-Within each JVM target, matching logical source paths are counted once. Their content digests, line counts and executable-line maps must agree. Contributors that share a production module must declare the same source inventory for that module. A line is covered if any contributor observed it covered, but an unknown observation remains unknown even when another contributor observed a hit. A non-executable versus executable mapping conflict is rejected. Sources retain their module/source-set owners and contributing check IDs. Coverage is never combined across targets.
+Within each JVM target, matching logical source paths are counted once. Their content digests, line counts and executable-line maps must agree. Contributors that share a production module must declare the same source inventory for that module. A line is covered if any contributor observed it covered, but an unknown observation remains unknown even when another contributor observed a hit. A non-executable versus executable mapping conflict is rejected. Sources retain their module/source-set owners and contributing check IDs. Targets remain separate by default.
+
+Repeat `--union-target ID` to request an additional `targetUnion` over explicitly
+selected targets in the expected matrix. Its meaning is **covered on at least one
+selected target**. The ordinary per-target results remain available; the union
+does not establish coverage on every target. Shared logical paths count once only
+when source digests, line counts, executable/excluded line maps and instrumentation
+policies are compatible. Unknown measurements remain unknown.
+
+The union policy participates in the aggregation action identity. A missing or
+unsupported selected target leaves the union incomplete with null counters;
+it cannot silently disappear from the requested scope. Coverage capture still
+supports JVM only, so requesting a union that includes Native or JS does not
+produce a complete cross-target measurement. Threshold checks and exports keep
+their existing per-target policies.
 
 Missing checks remain visible. Unsupported targets remain both missing and unsupported. A target with missing or incomplete measurements has null counters rather than a partial percentage. Data completeness is separate from source-run success: failed, cancelled or incomplete verification cannot become passed through aggregation.
 
