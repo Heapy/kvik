@@ -22,8 +22,11 @@ def main():
     parent = ROOT/'.kvik/tests/idea-export'
     parent.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=parent))
-    workspace = case/'workspace ü # % &'
-    workspace.mkdir()
+    # Linux deliberately treats non-ASCII path components as potential aliases.
+    # Separate mutable stores/runs and source/export trees at an ASCII component,
+    # while still exercising Unicode and reserved characters in the IDE paths.
+    workspace = case/'workspace-root/workspace ü # % &'
+    workspace.mkdir(parents=True)
     print('Fixture:', case, flush=True)
     schema = json.loads((ROOT/'schemas/v1/contracts.json').read_bytes())
     def validate(name, value):
@@ -94,7 +97,7 @@ fun main(args: Array<String>) {
     assert not (workspace/'app/export').exists()
 
     def export(label, success=True):
-        output = case/'exports ü # % &'/label
+        output = case/'export-root/exports ü # % &'/label
         result = run(label, [runtime, 'idea-export', *build, '--sdk', 'kvik-probe', '--output', output], success)
         if not success:
             assert not output.exists()

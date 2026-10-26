@@ -41,4 +41,13 @@ jobs:
           tar -xzf "$RUNNER_TEMP/kotlin-native.tar.gz" -C "$RUNNER_TEMP"
           echo "KONAN_HOME=$RUNNER_TEMP/kotlin-native-prebuilt-macos-aarch64-2.4.20" >> "$GITHUB_ENV"
       - name: Build native runtime and verify device and simulator frameworks
-        run: python tools/macos/verify.py --java-home "$JAVA_HOME" --konan-home "$KONAN_HOME" --pin-tools
+        run: python tools/macos/verify.py --java-home "$JAVA_HOME" --konan-home "$KONAN_HOME" --pin-tools --bootstrap-command-timeout 900
+      - name: Retain native bootstrap diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-bootstrap-logs
+          path: .kvik/runtime/logs/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
