@@ -1399,10 +1399,14 @@ error are excluded. Their raw results remain retained. Two repeats per task, a
 small JVM fixture, shared provisioned tools, and local approval overhead limit
 generalization; these totals combine distinct tasks rather than a throughput test.
 
-The interim K11 decision is to continue the bounded internal prototype while
+The K11 decision is to continue the bounded internal prototype while
 keeping existing builds available. Source-built Kotlin/Native compositions,
 owned foreground lifecycle, fresh tests after compilation reuse and two-runner
-JVM remote caching have working acceptance paths. The measured source bootstrap
+JVM remote caching have working acceptance paths. The scoped completion audit
+finds coverage for all eight runtime/lifecycle, five build/dependency, nine cache
+and six agent-interface functional gates. This covers the pinned fixtures and
+supported policies, including explicit Native local-only restrictions.
+The measured source bootstrap
 takes 591.215 s on the named Mac, including 445.447 s of archive provisioning;
 offline reconstruction and helper recomposition still take 97.352/107.663 s.
 This is a substantial plugin-development cost. After deterministic worker
@@ -1417,15 +1421,15 @@ to investigate, with no savings established yet.
 Native outputs remain local-only where relocation is unsafe, and the pinned
 Grogu Linux fixture cannot yet be fetched from its upstream repository.
 
-The next bounded work is to finish the requirement audit, reduce Native plugin
-recomposition cost without skipping content checks, reduce
+The next bounded work is to test reusable Native core compilation, reduce
 default agent output volume while preserving queryable detail, and make the
 pinned real-project fixture available to CI. K17 remains an experiment: its
 separate comparison did not demonstrate an economy or reliability advantage.
 These results do not justify replacing KTC generally or claiming broad KMP
 compatibility. Total maintenance cost versus extending KTC has not been measured;
 structured inspection and freshness contracts remain candidates for reuse there.
-The full requirement audit and final K11 decision remain open in
+The prototype assessment does not close the separate extension work, including
+K17's per-edit storage attribution or the performance follow-ups tracked in
 [implementation status](docs/STATUS.md).
 
 The runtime/foreground functional audit now covers all eight mandatory cases.
