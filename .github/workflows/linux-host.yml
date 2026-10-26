@@ -39,6 +39,11 @@ jobs:
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_worker_cache.py'
       - name: Check Native core cache isolation and fallback
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_native_core_cache.py'
+      - name: Check thin-launcher core inventory and source-build audits
+        run: |
+          python3 tools/pin_native_core.py --check
+          python3 -m unittest discover -s tests/bootstrap -p 'test_core_inventory.py'
+          python3 -m unittest discover -s tools -p 'test_source_core_cache_unit.py'
       - name: Check source bootstrap worker reuse assertions
         run: python3 -m unittest discover -s tools -p 'test_source_worker_cache_unit.py'
       - name: Check source bootstrap archive policy and timeout records

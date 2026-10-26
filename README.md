@@ -1532,6 +1532,17 @@ Cancellation during the live final compiler leaves no published runtime and
 preserves shared cache contents. An ordinary retry succeeds in 47.62 s including
 Python process startup, reusing the core and object seed. The composed executable
 also passes fresh JVM/Native consumer tests and foreground test/quit cleanup.
+The full HTTPS source composition now exercises the same cache through a thin
+launcher, two source plugins and a shared source helper. With provisioned tools
+and JVM artifact downloads, but fresh source/runtime/core/object/worker caches,
+one macOS ARM64 run takes 183.033 s initially, 40.124 s after a plugin edit and
+37.997 s after a helper edit, including Python process startup. Both edits reuse
+identical core, object and worker caches with zero rebuilt archives; runtime
+construction takes 18.298/18.031 s and installed-tool verification takes
+20.750/18.873 s. Both plugin outputs reflect the intended source changes.
+Cached original-composition launches take 0.107 s before the edits and 0.117 s
+afterward. These are single observations using loopback HTTPS, not a tool-download
+benchmark or a controlled comparison with the earlier compositions.
 Native outputs remain local-only where relocation is unsafe, and the pinned
 Grogu Linux fixture cannot yet be fetched from its upstream repository.
 
@@ -1774,13 +1785,25 @@ Native interop/helper outputs and compiler object caches from
 remain in the final compilation. The local source architecture requires the core
 to remain independent of CLI/plugin declarations; compatible core edits rebuild
 its cache. Source-graph runtimes use this split only when their core matches the
-invoking launcher's core and has no separate runtime source dependencies. Other
-graphs, Linux and optimized builds retain monolithic compilation.
+invoking launcher's curated sources and has no separate runtime source
+dependencies. A thin launcher containing only `kvik` and `bootstrap` checks the
+acquired sources against `bootstrap/native-core.lock.json`; a full checkout
+compares its current source bytes. Missing, stale or malformed inventory, and
+partially present local source roots, select monolithic compilation. Other graphs,
+Linux and optimized builds also retain monolithic compilation.
+
+After changing core sources or their declared roots, review the core/CLI boundary
+and run `python3 tools/pin_native_core.py` to update the packaged inventory.
+`python3 tools/pin_native_core.py --check` verifies it without editing files and
+runs in Linux CI. The inventory is part of the bootstrap recipe identity; plugin
+and helper edits outside the core leave it unchanged.
 
 Core keys bind ordered source/support bytes, extra libraries, tool identities,
 flags, recipes, controlled Native dependencies and conservative environment/path
 assumptions. These caches are local and location-bound. Published objects stay
 immutable; each final compilation receives private writable object-cache copies.
+Object filenames are encoded in immutable storage and restored to their original
+compiler-visible paths, including external KLIB names containing colons.
 New cache entries created there are recorded without replacing the shared seed,
 and every seeded byte is checked again. A core-key lock protects stable dependency
 paths through final linking and validation. `native-core-cache.json` records reuse,
