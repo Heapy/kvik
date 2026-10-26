@@ -355,5 +355,73 @@ class NativeCoreCacheTest(unittest.TestCase):
             path = output / cache.RECEIPT; path.write_bytes(canonical(value))
             with self.assertRaises(ValueError): cache.verify_receipt(output, file_digest(path))
 
+    def test_object_path_encoding_roundtrips_colon_percent_unicode_and_rejects_aliases(self):
+        paths = ['auto/org.jetbrains.kotlinx:serialization/cache.a', 'auto/org.jetbrains.kotlinx%3Aserialization/cache.a',
+                 'auto/percent%/cache.a', 'system/é space/cache.a', 'auto/back\\slash/file']
+        encoded = [cache._encode_object_path(path) for path in paths]
+        self.assertEqual(len(paths), len(set(encoded)))
+        self.assertEqual(paths, [cache._decode_object_path(path) for path in encoded])
+        self.assertTrue(all(':' not in path and '\\' not in path for path in encoded))
+        for name in ['auto/%2Fetc', 'auto/%2E', 'auto/%2e', 'auto/%00x', 'auto/%41', 'auto/%', 'auto/%GG',
+                     'auto/%C3', 'auto/é', 'auto/../escape', '/auto/file', 'other/file', 'auto//file']:
+            with self.subTest(name=name), self.assertRaises(ValueError): cache._decode_object_path(name)
+
+    def test_object_cache_preserves_original_compiler_names_across_cold_restore_and_corruption(self):
+        first, output = self.prepare()
+        names = ['org.jetbrains.kotlinx:serialization', 'org.jetbrains.kotlinx%3Aserialization', 'unicode-文', 'percent%']
+        def initial(command, environment, log):
+            compiler(command, environment, log)
+            for name in names:
+                path = first.auto_cache / name / 'cache.a'; path.parent.mkdir()
+                path.write_bytes(name.encode())
+                if name == names[0]: path.chmod(0o755)
+            with first.built_caches.open('a') as stream: stream.write('external caches\n')
+        seed = self.finish(first, output, initial)
+        paths = [item['path'] for item in first.object_record.outputs['files']]
+        self.assertIn('auto/org.jetbrains.kotlinx%3Aserialization/cache.a', paths)
+        self.assertIn('auto/org.jetbrains.kotlinx%253Aserialization/cache.a', paths)
+        second, output = self.prepare()
+        for name in names:
+            path = second.auto_cache/name/'cache.a'
+            self.assertEqual(name.encode(), path.read_bytes())
+            self.assertEqual(name == names[0], bool(path.stat().st_mode & 0o111))
+        reused = self.finish(second, output)
+        self.assertEqual('cache-hit', reused['objects']['status'])
+        self.assertEqual(seed['privateOutputs'], reused['privateOutputs'])
+        self.assertEqual(0, reused['builtArchiveCount'])
+        third, output = self.prepare()
+        path = third.auto_cache/names[0]/'cache.a'; old = path.stat(); data = path.read_bytes()
+        path.write_bytes(bytes([data[0] ^ 1]) + data[1:]); os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns))
+        with self.assertRaisesRegex(ValueError, 'encoded record'): self.finish(third, output)
+
+    def test_invalid_encoded_store_record_never_creates_escaped_or_partial_private_tree(self):
+        for name in ('auto/%2Fescape', 'auto/%2E%2E/file', 'other/file', 'auto/raw:colon'):
+            # ':' cannot enter RuntimeStore in the first place; exercise decode directly.
+            if ':' in name:
+                with self.assertRaises(ValueError): cache._decode_object_path(name)
+                continue
+            encoded = self.root / ('encoded-' + str(len(list(self.root.glob('encoded-*')))))
+            target = encoded/name; target.parent.mkdir(parents=True); target.write_bytes(b'bad')
+            key = digest(name.encode()); store = RuntimeStore(self.root/'malformed-store')
+            with store.coordinate(key): record = store.publish(key, encoded)
+            destination = self.root/'restored'
+            with self.assertRaises(ValueError): cache._restore_objects(store, record, destination)
+            self.assertFalse(destination.exists())
+        directory = self.root/'linked'; (directory/'auto').mkdir(parents=True)
+        (directory/'auto/link').symlink_to(self.root/'source/core/src/Core.kt')
+        with self.assertRaises(ValueError): cache._object_tree(directory)
+
+    def test_unrepresentable_encoded_name_keeps_successful_runtime_without_shared_seed(self):
+        session, output = self.prepare()
+        def long_name(command, environment, log):
+            compiler(command, environment, log)
+            path = session.auto_cache / ('文' * 80) / 'cache.a'; path.parent.mkdir()
+            path.write_bytes(b'valid compiler output')
+            with session.built_caches.open('a') as stream: stream.write('long library cache\n')
+        receipt = self.finish(session, output, long_name)
+        self.assertEqual('uncached-capacity', receipt['objects']['status'])
+        self.assertTrue((output/'runtime').is_file())
+        self.assertIsNone(RuntimeStore(self.root/'cache/objects').lookup(session.object_key))
+
 
 if __name__ == '__main__': unittest.main()

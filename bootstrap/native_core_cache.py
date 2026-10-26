@@ -17,6 +17,77 @@ class CoreCacheCapacity(ValueError):
     """Successful core output cannot be represented by the bounded CAS."""
 
 
+CURATED_INVENTORY = 'native-core.lock.json'
+
+
+def curated_inventory(root, recipe):
+    """Generate the reviewed runtime module cut from the complete local checkout."""
+    root = Path(root)
+    directories = [name for name in recipe['coreSources'] if name != 'cli/src']
+    files = [{'path': name + '/' + item['path'], 'digest': item['digest']}
+             for name in directories for item in inventory(root / name)['files']
+             if item['path'].endswith('.kt')]
+    return {'schemaVersion': 1, 'policy': 'curated-core-excludes-cli-v1',
+            'coreSources': directories, 'files': files}
+
+
+def valid_curated_inventory(value, recipe):
+    """The reference is a complete ordered declaration, never a path-prefix hint."""
+    directories = [name for name in recipe['coreSources'] if name != 'cli/src']
+    if (type(value) is not dict or set(value) != {'schemaVersion', 'policy', 'coreSources', 'files'} or
+            type(value['schemaVersion']) is not int or value['schemaVersion'] != 1 or
+            value['policy'] != 'curated-core-excludes-cli-v1' or value['coreSources'] != directories or
+            type(value['files']) is not list or not value['files']):
+        return False
+    previous = None
+    for item in value['files']:
+        if type(item) is not dict or set(item) != {'path', 'digest'} or not _digest(item['digest']):
+            return False
+        name = item['path']
+        if (type(name) is not str or not name.endswith('.kt') or len(name) > 4096 or
+                '\\' in name or '\x00' in name or any(p in ('', '.', '..') for p in name.split('/'))):
+            return False
+        matches = [index for index, directory in enumerate(directories) if name.startswith(directory + '/')]
+        if len(matches) != 1:
+            return False
+        order = (matches[0], tuple(name.split('/')))
+        if previous is not None and order <= previous:
+            return False
+        previous = order
+    return True
+
+
+def matching_curated_core(launcher_root, source_root, core, recipe):
+    """Thin launchers use a generated reference; full checkouts observe live bytes.
+
+    A partially present checkout never silently substitutes the packaged reference.
+    Missing/stale/malformed reference disables this optimization, not source builds.
+    IO/verification failures of present local source are not treated as absence.
+    """
+    from bootstrap.identity import read_regular
+    launcher_root, source_root = Path(launcher_root), Path(source_root)
+    roots = [launcher_root / name for name in recipe['coreSources'] if name != 'cli/src']
+    present = [root.exists() or root.is_symlink() for root in roots]
+    if all(present) and roots:
+        expected = curated_inventory(launcher_root, recipe)
+    elif any(present) or any((launcher_root / name.split('/')[0]).exists() or
+                             (launcher_root / name.split('/')[0]).is_symlink()
+                             for name in recipe['coreSources'] if name != 'cli/src'):
+        return False
+    else:
+        path = launcher_root / 'bootstrap' / CURATED_INVENTORY
+        if not path.exists() and not path.is_symlink():
+            return False
+        try:
+            expected = parse_json(read_regular(path, 2 * 1024 * 1024).decode('utf-8'))
+        except (ValueError, UnicodeError, RecursionError):
+            return False
+    if not valid_curated_inventory(expected, recipe):
+        return False
+    observed = {path.relative_to(source_root).as_posix(): file_digest(path) for path in core}
+    return len(observed) == len(core) and observed == {item['path']: item['digest'] for item in expected['files']}
+
+
 def runtime_dependencies(document):
     if document is None:
         return False
@@ -103,14 +174,16 @@ def input_document(source_root, core, support, extra_libraries, recipe, roots, t
         'sources': sources, 'coreSources': [p.relative_to(source_root).as_posix() for p in core],
         'libraries': [{'index': index, 'digest': file_digest(path)} for index, path in enumerate(extra_libraries)],
         'recipe': [{'path': 'bootstrap/' + name, 'digest': file_digest(here / name)} for name in
-                   ('native_core_cache.py', 'launcher.py', 'native_libraries.py', 'identity.py', 'runtime_store.py', 'source_files.py', 'pin_tools.py', 'tool_archives.py')],
+                   ('native_core_cache.py', 'launcher.py', 'native_libraries.py', 'identity.py', 'runtime_store.py', 'source_files.py', 'pin_tools.py', 'tool_archives.py')] +
+                  ([{'path': 'bootstrap/' + CURATED_INVENTORY, 'digest': file_digest(here / CURATED_INVENTORY)}]
+                   if (here / CURATED_INVENTORY).exists() else []),
         'nativePlatform': recipe['nativePlatform'], 'nativeLibraries': recipe['nativeLibraries'],
         'compilerOptions': recipe['compilerOptions'], 'toolchains': toolchains,
         'toolPaths': {name: str(Path(path).absolute()) for name, path in roots.items()},
         'environment': {**environment, 'KONAN_DATA_DIR': NATIVE_DATA_POLICY},
         'workingDirectory': os.getcwd(), 'workspaceRoot': str(Path(cache).absolute()),
         'coreModule': 'kvik_bootstrap_core', 'entryPolicy': 'separate-cli-with-friend-core',
-        'objectCachePolicy': 'immutable-seed-private-supplementation'}
+        'objectCachePolicy': 'immutable-seed-private-supplementation-percent-path-v2'}
 
 
 def _files(root):
@@ -152,11 +225,98 @@ def object_key(inputs, core_outputs):
         'stage': 'native-objects', 'inputs': inputs, 'coreOutputs': core_outputs}))
 
 
+def _encode_object_path(path):
+    """Portable, collision-free CAS names for compiler-produced POSIX paths."""
+    parts = path.split('/')
+    if len(parts) < 2 or parts[0] not in ('system', 'auto') or any(part in ('', '.', '..') or '\x00' in part for part in parts):
+        raise ValueError('Invalid Native object cache path')
+    safe = b'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-'
+    return '/'.join(''.join(chr(byte) if byte in safe else f'%{byte:02X}' for byte in part.encode('utf-8')) for part in parts)
+
+
+def _decode_object_path(path):
+    # Decode components independently: encoded separators cannot create directories.
+    parts = []
+    for part in path.split('/'):
+        data = bytearray()
+        index = 0
+        while index < len(part):
+            if part[index] == '%':
+                if index + 3 > len(part):
+                    raise ValueError('Invalid Native object path escape')
+                try:
+                    data.append(int(part[index + 1:index + 3], 16))
+                except ValueError as failure:
+                    raise ValueError('Invalid Native object path escape') from failure
+                index += 3
+            else:
+                data.extend(part[index].encode('utf-8'))
+                index += 1
+        decoded = data.decode('utf-8', errors='strict')
+        if '/' in decoded or decoded in ('', '.', '..') or '\x00' in decoded:
+            raise ValueError('Invalid decoded Native object path component')
+        parts.append(decoded)
+    decoded = '/'.join(parts)
+    if _encode_object_path(decoded) != path:
+        raise ValueError('Noncanonical Native object path encoding')
+    return decoded
+
+
 def _object_tree(root):
     tree = _files(root)
-    if not tree['files'] or any(not item['path'].startswith(('system/', 'auto/')) for item in tree['files']):
+    if not tree['files']:
         raise ValueError('Invalid Native object cache tree')
-    return tree
+    entries = [{**item, 'path': _encode_object_path(item['path'])} for item in tree['files']]
+    return {'schemaVersion': 1, 'files': sorted(entries, key=lambda item: item['path'].encode('utf-16-be'))}
+
+
+def _verify_objects(root, record):
+    if canonical(_object_tree(root)) != record.outputs_bytes:
+        raise ValueError('Native object workspace differs from immutable encoded record')
+
+
+def _restore_objects(store, record, destination):
+    import tempfile
+    # Validate every mapping before materialization; never treat old/raw records as v2.
+    paths = [_decode_object_path(item['path']) for item in record.outputs['files']]
+    if len(set(paths)) != len(paths):
+        raise ValueError('Duplicate decoded Native object path')
+    names = set(paths)
+    if any('/'.join(path.split('/')[:i]) in names for path in paths for i in range(1, len(path.split('/')))):
+        raise ValueError('Decoded Native object file/directory collision')
+    with tempfile.TemporaryDirectory(prefix='objects-restore-', dir=destination.parent) as temporary:
+        encoded = Path(temporary) / 'encoded'
+        store.materialize(record, encoded)
+        destination.mkdir()
+        for item, path in zip(record.outputs['files'], paths):
+            target = destination / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            (encoded / item['path']).rename(target)
+    _verify_objects(destination, record)
+
+
+def _publish_objects(store, key, root, expected):
+    import shutil
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix='objects-publish-', dir=root.parent) as temporary:
+        encoded = Path(temporary)
+        for item in expected['files']:
+            target = encoded / item['path']
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = root / _decode_object_path(item['path'])
+            from bootstrap.identity import regular_file
+            with regular_file(source) as input_file, target.open('xb') as output_file:
+                shutil.copyfileobj(input_file, output_file, 1024 * 1024)
+            target.chmod(0o755 if item['executable'] else 0o644)
+            if file_digest(target) != item['digest']:
+                raise ValueError('Native object bytes changed during encoding')
+        if _object_tree(root) != expected:
+            raise ValueError('Native object tree changed during encoding')
+        record = store.publish(key, encoded)
+        if record.outputs != expected:
+            raise ValueError('Published Native object encoding differs')
+        _verify_objects(root, record)
+        return record
 
 
 def _seed_unchanged(tree, record):
@@ -184,7 +344,9 @@ def _publishable(key, tree, *, blob_limit=None, record_limit=None):
     from bootstrap.runtime_store import BLOB_LIMIT, RECORD_LIMIT
     blob_limit = BLOB_LIMIT if blob_limit is None else blob_limit
     record_limit = RECORD_LIMIT if record_limit is None else record_limit
-    return (all(item['digest']['sizeBytes'] <= blob_limit for item in tree['files']) and
+    return (all(item['digest']['sizeBytes'] <= blob_limit and
+                all(len(part.encode('utf-8')) <= 255 for part in item['path'].split('/'))
+                for item in tree['files']) and
             len(canonical({'schemaVersion': 1, 'key': key, 'outputs': tree})) <= record_limit)
 
 
@@ -206,7 +368,7 @@ class Session:
         self.current_inputs()
         _verify(self.dependencies, self.core_record)
         if self.object_record is not None:
-            _verify(self.object_workspace, self.object_record)
+            _verify_objects(self.object_workspace, self.object_record)
         flags = [*self.recipe['compilerOptions'], *native_libraries.linker_options(self.roots),
             '-Xoverride-konan-properties=' + native_libraries.runtime_properties(self.roots)]
         command = [self.home / 'bin/konanc', *flags, '-library', self.core_klib,
@@ -230,8 +392,13 @@ class Session:
             if count == 0:
                 raise ValueError('Native object cache producer emitted no archives')
             if _publishable(self.object_key, final_tree):
-                self.object_record = self.object_store.publish(self.object_key, self.object_workspace)
-                _verify(self.object_workspace, self.object_record)
+                try:
+                    self.object_record = _publish_objects(self.object_store, self.object_key, self.object_workspace, final_tree)
+                except OSError as failure:
+                    import errno
+                    if failure.errno != errno.ENAMETOOLONG:
+                        raise
+                    self.object_status = 'uncached-capacity'
             else:
                 # Keep the successful executable; the bounded shared CAS is an
                 # optimization and must not narrow valid compiler output sizes.
@@ -332,9 +499,7 @@ def prepare(directory, source_root, core, support, extra_libraries, recipe, root
         session.object_workspace = directory / 'native-objects'
         if session.object_record is not None:
             try:
-                session.object_store.materialize(session.object_record, session.object_workspace)
-                _verify(session.object_workspace, session.object_record)
-                _object_tree(session.object_workspace)
+                _restore_objects(session.object_store, session.object_record, session.object_workspace)
             except (ValueError, FileNotFoundError):
                 session.object_store.invalidate(session.object_record)
                 session.object_record = None

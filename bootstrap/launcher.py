@@ -109,6 +109,9 @@ def composition():
 def runtime_lock(pins, registry, arguments):
     validate_options(arguments)
     bootstrap_files = [ROOT / "kvik", *sorted((ROOT / "bootstrap").glob("*.py")), ROOT / "bootstrap/composition.json", ROOT / "bootstrap/jvm-artifacts.lock.json"]
+    reference = ROOT / "bootstrap/native-core.lock.json"
+    if reference.exists() or reference.is_symlink():
+        bootstrap_files.append(reference)
     bootstrap_identity = [{"path": str(p.relative_to(ROOT)), "digest": file_digest(p)} for p in bootstrap_files]
     tools = read_json(ROOT / "bootstrap/toolchains.lock.json")
     host = host_identity()
@@ -442,15 +445,9 @@ def native_core_partition(source_root, source_files, recipe, inputs=None):
 
 def graph_core_matches_launcher(source_root, core):
     """Only the invoking launcher's curated module cut is known for remote code."""
-    expected = {}
-    for directory in read_json(ROOT / 'bootstrap/composition.json')['coreSources']:
-        if directory == 'cli/src':
-            continue
-        for item in inventory(ROOT / directory)['files']:
-            if item['path'].endswith('.kt'):
-                expected[directory + '/' + item['path']] = item['digest']
-    observed = {path.relative_to(source_root).as_posix(): file_digest(path) for path in core}
-    return bool(expected) and observed == expected
+    from bootstrap import native_core_cache
+    return native_core_cache.matching_curated_core(ROOT, source_root, core,
+        read_json(ROOT / 'bootstrap/composition.json'))
 
 
 def build(args, recipe, selected, lock, key, destination):
