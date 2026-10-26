@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inventory compatibility; optional serial before/after comparison of one tree."""
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -126,6 +127,26 @@ class InventoryTest(unittest.TestCase):
             self.equal()
         with patch('bootstrap.identity.regular_file', side_effect=PermissionError('denied file')):
             self.same_failure(PermissionError)
+
+    def test_readdir_io_failure_aborts_instead_of_returning_partial_inventory(self):
+        self.add('first'); self.add('second')
+        with os.scandir(self.root) as entries:
+            first = next(entries)
+        class FailingScan:
+            closed = False
+            def __enter__(self): return self
+            def __exit__(self, *_args): self.closed = True
+            def __iter__(self):
+                yield first
+                raise OSError(errno.EIO, 'injected readdir failure')
+        scan = FailingScan()
+        # This must fail on every supported Python version. Newer rglob's more
+        # permissive suppression is not an acceptable oracle for incomplete I/O.
+        with patch('os.scandir', return_value=scan):
+            with self.assertRaises(OSError) as failure:
+                inventory(self.root)
+        self.assertEqual(errno.EIO, failure.exception.errno)
+        self.assertTrue(scan.closed)
 
     def test_content_changes_even_with_preserved_size_and_timestamp(self):
         file = self.add('value', b'abc')

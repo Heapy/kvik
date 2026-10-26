@@ -60,14 +60,16 @@ def read_regular(path, limit):
 
 
 def _inventory_children(directory):
-    # Path.rglob suppresses directory scan errors. Keep that behavior, but let
-    # lstat/open/resolve errors below propagate as before. Close the scan before
-    # descending so an arbitrarily deep tree does not retain open descriptors.
+    # Match Path.rglob's handling of directory-open errors. Once opened, a
+    # readdir failure must abort rather than publish a partial inventory (Python
+    # 3.12 also propagates it; newer rglob versions suppress more errors).
+    # Close before descending so deep trees do not retain open descriptors.
     try:
-        with os.scandir(directory) as entries:
-            return iter(sorted(entries, key=lambda entry: entry.name))
+        entries = os.scandir(directory)
     except OSError:
         return iter(())
+    with entries:
+        return iter(sorted(entries, key=lambda entry: entry.name))
 
 
 def inventory(root, allow_internal_symlinks=False):
