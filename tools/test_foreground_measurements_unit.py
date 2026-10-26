@@ -1,6 +1,6 @@
 import unittest
 
-from foreground_measurements import ControlTimings, owned_processes, percentile95, process_rows
+from foreground_measurements import ControlTimings, owned_processes, percentile95, process_rows, terminal_response, terminal_summary
 
 
 class ForegroundMeasurementTest(unittest.TestCase):
@@ -60,6 +60,49 @@ class ForegroundMeasurementTest(unittest.TestCase):
         self.assertIsNone(percentile95([]))
         metrics=ControlTimings();metrics.sent('waiting','status',0)
         self.assertEqual(['waiting'],metrics.summary()['unacknowledgedRequests'])
+
+    def test_terminal_samples_require_matching_key_receipt_and_work_phase(self):
+        event=dict(type='control',sessionId='s',sequence=3,
+                   payload=dict(command='?',active='build',compositionReady=True))
+        sample=terminal_response('initial-build',10,40,event)
+        self.assertEqual(30,sample['durationNanos'])
+        self.assertEqual(3,sample['sequence'])
+        for phase,sent,received,value in (
+            ('initial-build',41,40,event),
+            ('source-recomposition',10,40,event),
+            ('replacement-test',10,40,event),
+            ('unknown',10,40,event),
+            ('initial-build',10,40,{**event,'payload':{**event['payload'],'command':'r'}}),
+            ('initial-build',10,40,{**event,'type':'operation-started'}),
+        ):
+            with self.subTest(phase=phase,value=value),self.assertRaises(ValueError):
+                terminal_response(phase,sent,received,value)
+
+    def test_terminal_budget_requires_all_phases_and_preserves_outliers(self):
+        samples=[]
+        for phase in ('initial-build','source-recomposition','replacement-test','before-ctrl-c'):
+            count=1 if phase=='before-ctrl-c' else 20
+            samples.extend(dict(phase=phase,durationNanos=10) for _ in range(count))
+        self.assertTrue(terminal_summary(samples)['budgetsMet'])
+        self.assertIsNone(terminal_summary(samples)['phases']['before-ctrl-c']['p95Nanos'])
+        samples[19]['durationNanos']=100_000_000
+        report=terminal_summary(samples)
+        self.assertFalse(report['budgetsMet'])
+        self.assertEqual(10,report['phases']['initial-build']['p95Nanos'])
+        self.assertFalse(report['phases']['initial-build']['budgetMet'])
+        self.assertIsNone(terminal_summary(samples[1:])['phases']['initial-build']['budgetMet'])
+
+    def test_terminal_recomposition_requires_an_open_same_session_rebuild(self):
+        event=dict(type='control',sessionId='s',sequence=5,
+                   payload=dict(command='?',active=None,compositionReady=False))
+        started=dict(type='rebuild-started',sessionId='s',sequence=2)
+        ended=dict(type='rebuild-finished',sessionId='s',sequence=4)
+        sample=terminal_response('source-recomposition',10,40,event,[started])
+        self.assertEqual(2,sample['rebuildStartSequence'])
+        for events in ([],[started,ended],[{**started,'sessionId':'other'}],
+                       [{**started,'sequence':6}]):
+            with self.subTest(events=events),self.assertRaises(ValueError):
+                terminal_response('source-recomposition',10,40,event,events)
 
 
 if __name__ == '__main__':unittest.main()

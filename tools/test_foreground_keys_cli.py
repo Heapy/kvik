@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import pty
 import queue
 import shutil
@@ -22,6 +23,7 @@ import time
 
 import jsonschema
 from referencing import Registry, Resource
+from foreground_measurements import terminal_response, terminal_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 BROKER = r'''
@@ -91,10 +93,21 @@ def main():
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--artifact-cache', type=Path, default=Path('/Users/yoda/dev/pet/kvik/.kvik/tool-artifacts'))
+    parser.add_argument('--host-name')
+    parser.add_argument('--strict-budgets', action='store_true')
     args = parser.parse_args()
     runtime=args.runtime.resolve(); original=args.source_root.resolve(); fixture=args.fixture.resolve()
     output=ROOT/'.kvik/tests/foreground-keys';output.mkdir(parents=True,exist_ok=True)
     evidence=Path(tempfile.mkdtemp(prefix='cli-',dir=output));source=evidence/'source $(literal)';project=evidence/'project'
+    print('Terminal fixture:',evidence,flush=True)
+    summary=dict(schemaVersion=1,passed=False,budgetsMet=None,
+                 host=dict(name=args.host_name or platform.node(),os=platform.system(),osRelease=platform.release(),
+                           architecture=platform.machine(),logicalCpuCount=os.cpu_count()),
+                 inputs={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in
+                         (runtime,Path(__file__),ROOT/'tools/foreground_measurements.py',original/'tests/foreground-keys/TerminalProbe.c')})
+    def save_summary():
+        (evidence/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+    save_summary()
     source.mkdir();project.mkdir()
     for name in ('bootstrap','core','cache','execution','resolution','integration','compiler','cli','plugins'):
         shutil.copytree(original/name,source/name,ignore=shutil.ignore_patterns('__pycache__'))
@@ -123,7 +136,7 @@ def main():
     # This C inspector is only a measurement helper; the session uses its bundled guardian.
     flags=['/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang','-isysroot',
            '/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk','-std=c11','-D_DARWIN_C_SOURCE','-Wall','-Wextra','-Werror']
-    built=command([*flags,'-I'+str(source/'execution/platform'),source/'execution/platform/process.c',ROOT/'tests/foreground-keys/TerminalProbe.c','-o',evidence/'terminal-inspector'])
+    built=command([*flags,'-I'+str(source/'execution/platform'),source/'execution/platform/process.c',original/'tests/foreground-keys/TerminalProbe.c','-o',evidence/'terminal-inspector'])
     assert built.returncode==0,built.stderr
     assert all('coordinate' not in dependency for module in configuration['modules'] for item in module['sourceSets'] for dependency in item['dependencies'])
     assert all(not module['compilerPlugins'] for module in configuration['modules']), 'Setup resolve must be dependency-free'
@@ -147,6 +160,7 @@ def main():
         result=subprocess.run(['ps','-p',str(pid),'-o','stat='],capture_output=True,text=True)
         return result.returncode==0 and not result.stdout.strip().startswith('Z')
     sessions=[]
+    samples=[]
     class Session:
         def __init__(self,label,prefix):
             self.path=evidence/label;self.path.mkdir();self.master,self.slave=pty.openpty();self.messages=queue.Queue();self.events=[];self.sequences={};self.tracked=set();self.lines=[]
@@ -155,14 +169,17 @@ def main():
             self.proc=subprocess.Popen([sys.executable,'-c',BROKER,os.ttyname(self.slave),str(evidence/'terminal-inspector'),json.dumps(argv)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err,text=True,bufsize=1)
             sessions.append(self)
             def read():
-                for line in self.proc.stdout:self.log.write(line);self.log.flush();self.messages.put(line.strip())
-                self.messages.put(None)
+                for line in self.proc.stdout:
+                    received=time.monotonic_ns()
+                    self.messages.put((line.strip(),received))
+                    self.log.write(line);self.log.flush()
+                self.messages.put((None,time.monotonic_ns()))
             self.thread=threading.Thread(target=read,daemon=True);self.thread.start()
             self.before=self.line('state');self.pid=int(self.line('broker').split()[1]);self.start=self.wait('session-started')
             assert self.start['payload']['control']=='keys'
             self.helper=next(pid for pid,cmd in owned(self.pid).items() if ' --terminal ' in cmd)
         def next(self,timeout=120):
-            value=self.messages.get(timeout=timeout);assert value is not None,(self.path,self.proc.poll(),self.events[-5:])
+            value,self.received=self.messages.get(timeout=timeout);assert value is not None,(self.path,self.proc.poll(),self.events[-5:])
             if value.startswith('{'):
                 event=json.loads(value);validate(event,'event',True);sid=event['sessionId'];self.sequences[sid]=self.sequences.get(sid,0)+1
                 assert event['sequence']==self.sequences[sid];self.events.append(event);self.lines.append(value+'\n');return event
@@ -177,26 +194,37 @@ def main():
                 value=self.next(max(.01,deadline-time.monotonic()))
                 if isinstance(value,dict) and value['type']==kind and predicate(value):return value
         def key(self,value):os.write(self.master,value)
-        def status(self):
-            start=time.monotonic();self.key(b'?');event=self.wait('control',lambda e:e['payload']['command']=='?',timeout=2)
-            elapsed=time.monotonic()-start;assert elapsed<1,elapsed;return event,elapsed
+        def status(self,phase):
+            # Exactly one outstanding '?' and a receipt after its write boundary
+            # prevent an earlier queued event from satisfying a new sample.
+            start=time.monotonic_ns();self.key(b'?');event=self.wait('control',lambda e:e['payload']['command']=='?',timeout=2)
+            sample=terminal_response(phase,start,self.received,event,self.events);samples.append(sample)
+            summary['controls']=terminal_summary(samples);save_summary()
+            return event,sample['durationNanos']/1e9
+        def status_series(self,phase):
+            for _ in range(20):self.status(phase)
+            print('Measured terminal phase:',phase,flush=True)
         def finish(self,reason='q'):
             self.tracked.update(owned(self.pid));start=time.monotonic();self.key(b'q' if reason=='q' else b'\x03')
             self.proc.stdin.write('wait\n');self.proc.stdin.flush();assert self.line('exit')=='exit '+str(0 if reason=='q' else 130)
             restored=self.line('state');assert restored==self.before,(self.before,restored)
-            elapsed=time.monotonic()-start;assert elapsed<4,elapsed
+            restored_seconds=time.monotonic()-start;assert restored_seconds<4,restored_seconds
             self.proc.stdin.write('end\n');self.proc.stdin.flush();os.close(self.master);os.close(self.slave);self.proc.wait(timeout=5)
-            self.thread.join(timeout=5);self.log.close();self.err.close()
+            self.thread.join(timeout=5);assert not self.thread.is_alive(),'Terminal output reader did not stop'
+            self.log.close();self.err.close()
             for pid in self.tracked:
                 deadline=time.monotonic()+5
                 while alive(pid) and time.monotonic()<deadline:time.sleep(.02)
                 assert not alive(pid),('owned survivor',pid)
+            elapsed=time.monotonic()-start
             # Exact stream framing agrees with each retained session journal across exec.
             for event in [e for e in self.events if e['type']=='session-started']:
                 directory=Path(event['payload']['directory']);sid=event['sessionId']
                 lines=''.join(line for line in self.lines if json.loads(line)['sessionId']==sid)
                 assert (directory/'session.jsonl').read_text()==lines
-            return dict(reason=reason,seconds=elapsed,original=self.before,restored=restored)
+            return dict(reason=reason,seconds=elapsed,terminalRestoredSeconds=restored_seconds,
+                        scope='Key write through owner exit, terminal restoration, reader join and captured owned-process absence',
+                        budgetSeconds=2,budgetMet=elapsed<2,original=self.before,restored=restored)
     def cleanup():
         for session in sessions:
             if session.proc.poll() is None:
@@ -208,13 +236,13 @@ def main():
                 try:session.proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:session.proc.kill();session.proc.wait(timeout=5)
     atexit.register(cleanup)
-    session=Session('reload',bootstrap+['--']);session.wait('operation-started');_,first_response=session.status()
+    session=Session('reload',bootstrap+['--']);session.wait('operation-started');session.status_series('initial-build')
     first_done=session.wait('operation-finished',lambda e:not e['payload']['cancelled']);assert first_done['payload']['exitCode']==0,first_done
     plugin=source/'plugins/kotlin/src/kvik/plugins/kotlin/KotlinBuildPlugin.kt';before=plugin.read_text()
     needle='Kotlin consumes the core project or standalone script authoring document.';assert needle in before
     plugin.write_text(before.replace(needle,'raw-terminal-recomposition-proof'))
     session.wait('rebuild-started');session.key(b't');control=session.wait('control',lambda e:e['payload']['command']=='t');assert control['payload']['pending']=='test'
-    status,rebuild_response=session.status();assert not status['payload']['compositionReady']
+    session.status_series('source-recomposition')
     session.wait('replacement-checked',lambda e:e['payload']['compatible']);boundary=session.wait('session-restarting');resumed=session.wait('session-started')
     assert resumed['payload']['previousSessionDirectory']==session.start['payload']['directory'];assert resumed['payload']['composition']!=composition
     tree=owned(session.pid)
@@ -224,7 +252,7 @@ def main():
     (evidence/'replacement-runtime-info.json').write_text(information.stdout)
     assert any(item['schema'].get('description')=='raw-terminal-recomposition-proof' for item in json.loads(information.stdout)['plugins'])
     state=json.loads((Path(resumed['payload']['directory'])/'handoff.json').read_text());validate(state,'resume',True);assert state['schemaVersion']==2 and state['pending']=='test'
-    started=session.wait('operation-started');assert started['payload']['operation']=='test';_,replacement_response=session.status()
+    started=session.wait('operation-started');assert started['payload']['operation']=='test';session.status_series('replacement-test')
     done=session.wait('operation-finished',lambda e:not e['payload']['cancelled']);assert done['payload']['exitCode']==0,done
     child=Path(done['payload']['evidenceDirectory']);run_events=[json.loads(line) for line in (child/'stdout.jsonl').read_text().splitlines()]
     for event in run_events:validate(event,'event')
@@ -242,6 +270,7 @@ def main():
     query=command([boundary['payload']['runtime'],'verification','--run',run],timeout=300);(evidence/'verification-query.json').write_text(query.stdout)
     assert query.returncode==0,query.stdout+query.stderr;value=json.loads(query.stdout);validate(value,'verificationQuery');assert value['freshness']=='current'
     quit_result=session.finish()
+    summary['restoration']=[quit_result];save_summary()
     # The cached replacement launches directly; Ctrl-C interrupts actual owned tool verification.
     interrupted=Session('physical-ctrl-c',[boundary['payload']['runtime']]);active=interrupted.wait('operation-started')
     child=Path(active['payload']['evidenceDirectory']);deadline=time.monotonic()+10
@@ -250,12 +279,15 @@ def main():
         if path.exists() and 'run-started' in path.read_text():break
         time.sleep(.01)
     else:raise AssertionError('Actual child verification did not begin')
-    _,signal_response=interrupted.status();signal_result=interrupted.finish('ctrl-c')
-    summary=dict(runtime=str(runtime),pid=session.pid,terminalGuardian=session.helper,initialComposition=composition,replacement=resumed['payload']['composition'],
-                 run=str(run),testIds=[expected_id],actions=record['actions'],controlResponseSeconds=[first_response,rebuild_response,replacement_response,signal_response],
-                 restoration=[quit_result,signal_result])
+    interrupted.status('before-ctrl-c');signal_result=interrupted.finish('ctrl-c')
+    summary.update(runtime=str(runtime),pid=session.pid,terminalGuardian=session.helper,initialComposition=composition,replacement=resumed['payload']['composition'],
+                   run=str(run),testIds=[expected_id],actions=record['actions'],controls=terminal_summary(samples),
+                   restoration=[quit_result,signal_result])
     assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest for path,digest in preserved.items()), 'Supplied fixture changed'
-    (evidence/'summary.json').write_text(json.dumps(summary,indent=2));print('PASS public raw CLI, actual source handoff, fresh exact Native test, current query and restoration',evidence,flush=True)
+    summary['passed']=True
+    summary['budgetsMet']=summary['controls']['budgetsMet'] and all(value['budgetMet'] for value in summary['restoration'])
+    save_summary();print('PASS public raw CLI, actual source handoff, fresh exact Native test, current query and restoration',evidence,flush=True)
+    if args.strict_budgets and not summary['budgetsMet']:raise SystemExit(3)
 
 
 if __name__=='__main__':main()

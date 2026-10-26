@@ -60,3 +60,19 @@ applications, tests and fixture witnesses. The maximum observed owner RSS is
 separate from summed descendant RSS. Sampling can miss short-lived processes and
 memory peaks; summed RSS also counts shared pages repeatedly. These measurements
 do not establish physical-key/TTY latency or isolated idle-runtime memory.
+
+`tools/test_foreground_keys_cli.py` measures the terminal path separately. Supply
+the exact runtime, its complete source checkout, a passed Native consumer fixture
+and `--host-name`. It sends 20 serial `?` bytes through a PTY during each of the
+initial build, source-plugin rebuild and replacement session's fresh test, plus one
+before Ctrl-C. Reader timestamps bind every acknowledgement to the preceding key;
+rebuild samples must fall between that session's rebuild-started/rebuild-finished
+events. Reports retain every sample, p95 for the 20-sample phases, and whether
+every response is below 100 ms. Graphical terminal rendering is outside this scope.
+
+The same run measures `q` and Ctrl-C through owner exit, complete terminal-state
+restoration, output-reader completion and captured owned-process absence against
+the 2 s graceful-shutdown budget. Functional and budget outcomes are separate;
+`--strict-budgets` exits 3 on a budget miss. Partial summaries and raw streams stay
+under `.kvik/tests/foreground-keys/cli-*`, including on failure. The C inspector
+comes from the supplied source checkout; the runtime uses its bundled guardian.

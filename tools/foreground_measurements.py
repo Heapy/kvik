@@ -10,6 +10,44 @@ def percentile95(values):
     return sorted(values)[math.ceil(.95 * len(values)) - 1] if values else None
 
 
+def terminal_response(phase, sent, received, event, events=()):
+    """Bind one serial '?' byte to its reader-timestamped key acknowledgement."""
+    payload = event['payload']
+    if event['type'] != 'control' or payload['command'] != '?' or received < sent:
+        raise ValueError('Terminal acknowledgement does not match the sent key')
+    active = payload.get('active')
+    boundaries = [item for item in events if item['sessionId'] == event['sessionId']
+                  and item['sequence'] < event['sequence']
+                  and item['type'] in ('rebuild-started', 'rebuild-finished')]
+    boundary = max(boundaries, key=lambda item: item['sequence'], default=None)
+    rebuilding = (not payload['compositionReady'] and boundary is not None
+                  and boundary['type'] == 'rebuild-started')
+    expected = {'initial-build': active == 'build', 'source-recomposition': rebuilding,
+                'replacement-test': active == 'test', 'before-ctrl-c': active == 'build'}
+    if phase not in expected or not expected[phase]:
+        raise ValueError('Terminal sample was not acknowledged during the expected work')
+    return dict(phase=phase, sentNanos=sent, receivedNanos=received, durationNanos=received-sent,
+                sessionId=event['sessionId'], sequence=event['sequence'], active=active,
+                compositionReady=payload['compositionReady'],
+                rebuildStartSequence=boundary['sequence'] if rebuilding else None)
+
+
+def terminal_summary(samples):
+    phases = {}
+    for phase in ('initial-build', 'source-recomposition', 'replacement-test', 'before-ctrl-c'):
+        durations = [sample['durationNanos'] for sample in samples if sample['phase'] == phase]
+        required = 1 if phase == 'before-ctrl-c' else 20
+        complete = len(durations) >= required
+        phases[phase] = dict(sampleCount=len(durations), requiredSampleCount=required,
+                             p95Nanos=percentile95(durations) if len(durations) >= 20 else None,
+                             maximumNanos=max(durations, default=None), budgetNanos=100_000_000,
+                             budgetMet=all(n < 100_000_000 for n in durations) if complete else None)
+    return dict(scope='Serial PTY master ? byte write start through reader receipt of its control event',
+                samples=samples, phases=phases,
+                budgetsMet=all(value['budgetMet'] is True for value in phases.values()),
+                limitations='Includes PTY, output pipe and scheduling latency; excludes graphical terminal rendering and human key travel.')
+
+
 def process_rows(text):
     result = {}
     for line in text.splitlines():
