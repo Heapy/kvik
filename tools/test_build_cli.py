@@ -11,6 +11,7 @@ import time
 
 import jsonschema
 from check_run_journal import check_run_journal
+from check_tool_verification_cli import check_measurements
 from check_active_input_mutation import check_active_input_mutation
 from check_worktree_isolation import check_worktree_isolation
 from check_cache_invalidation import check_cache_invalidation
@@ -133,6 +134,9 @@ class PassingTests {
             statistics = json.loads(query.stdout)
             validate(statistics, 'runStatistics')
             assert statistics['inputCapture'] == capture
+            if status == 'passed':
+                check_measurements(values, record, statistics,
+                    {action['actionId'] for action in record['actions'] if action['status'] == 'executed'}, 'jvm')
             if command == 'test':
                 if status == 'passed':
                     assert record['testCounts']['executed'] == 1 and record['testCounts']['discoveryComplete']

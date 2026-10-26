@@ -9,6 +9,7 @@ import time
 
 import jsonschema
 from check_run_journal import check_run_journal
+from check_tool_verification_cli import check_measurements
 from tool_installation_roots import host_native_target, installation_roots
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,6 +146,14 @@ class AnswerTest {
         run = project/'.kvik/runs'/record['runId']
         assert json.loads((run/'verification.json').read_text()) == record
         assert (run/'events.jsonl').read_text() == result.stdout
+        query = subprocess.run([str(executable), 'run-stats', '--run', str(run)],
+                               capture_output=True, text=True, timeout=20, check=True)
+        statistics = json.loads(query.stdout)
+        validate(statistics, 'runStatistics')
+        if status == 'passed':
+            check_measurements(events, record, statistics,
+                {action['actionId'] for action in record['actions']
+                 if action['status'] == 'executed' and not action['actionId'].endswith(':test')}, 'native')
         traces = [json.loads(path.read_text()) for path in (run/'actions').glob('*.json')]
         assert {trace['actionId']: trace['key'] for trace in traces} == {action['actionId']: action['key'] for action in record['actions']}
         observations = [json.loads(path.read_text()) for path in (run/'observations').glob('*.json')]
@@ -152,7 +161,7 @@ class AnswerTest {
         if executed:
             assert any('KVIK_NATIVE_TEST_EFFECT' in Path(log).read_text() for log in tests['logs'])
             assert [test['id'] for test in record['tests']] == ['fixture.AnswerTest.dependencyAndInternalDeclaration']
-        summaries.append(dict(label=label, seconds=time.monotonic()-started, run=str(run), actions=record['actions']))
+        summaries.append(dict(label=label, seconds=time.monotonic()-started, run=str(run), actions=record['actions'], statistics=statistics))
         write('summary.json', json.dumps(summaries, indent=2))
         print('PASS', label, round(summaries[-1]['seconds'], 3), 'seconds', flush=True)
         return record, run
