@@ -13,7 +13,16 @@ _STRING_ESCAPE = re.compile(r'[\x00-\x1f"\\]')
 
 
 def canonical(value):
-    # Bootstrap lock keys are ASCII; validate strings and canonicalize control escapes.
+    # Inventory entries repeat the same keys. Reuse their UTF-16 sort bytes and
+    # escaped spelling only within this call; values are still fully encoded.
+    keys = {}
+    def order_key(key):
+        entry = keys.get(key)
+        if entry is None:
+            order = key.encode("utf-16-be")
+            entry = keys[key] = (order, encode(key))
+        return entry[0]
+
     def encode(item):
         if item is None:
             return "null"
@@ -31,7 +40,7 @@ def canonical(value):
         if isinstance(item, list):
             return "[" + ",".join(encode(x) for x in item) + "]"
         if isinstance(item, dict):
-            return "{" + ",".join(encode(k) + ":" + encode(item[k]) for k in sorted(item, key=lambda key: key.encode("utf-16-be"))) + "}"
+            return "{" + ",".join(keys[k][1] + ":" + encode(item[k]) for k in sorted(item, key=order_key)) + "}"
         raise TypeError(type(item))
     return encode(value).encode()
 

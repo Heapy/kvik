@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,37 @@ sys.path.insert(0, str(ROOT))
 from bootstrap.identity import canonical, digest, file_digest, inventory, parse_json, read_json
 from bootstrap.launcher import cached, validate_options
 from bootstrap.pin_tools import native_target
+
+
+_STRING_ESCAPES = {chr(code): f'\\u{code:04x}' for code in range(32)}
+_STRING_ESCAPES.update({'"': '\\"', '\\': '\\\\'})
+_STRING_ESCAPE = re.compile(r'[\x00-\x1f"\\]')
+
+
+def prior_canonical(value):
+    # Frozen pre-optimization byte encoder; do not share candidate helpers.
+    # Bootstrap lock keys are ASCII; validate strings and canonicalize control escapes.
+    def encode(item):
+        if item is None:
+            return "null"
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, int):
+            if not -(2 ** 63) <= item < 2 ** 63:
+                raise ValueError("Integer outside v1 range")
+            return str(item)
+        if isinstance(item, str):
+            item.encode("utf-8", errors="strict")
+            # Scan ordinary text in C; preserve the v1 all-controls-as-\uXXXX
+            # spelling rather than JSON's short escapes (\n, \t, ...).
+            return '"' + _STRING_ESCAPE.sub(lambda match: _STRING_ESCAPES[match[0]], item) + '"'
+        if isinstance(item, list):
+            return "[" + ",".join(encode(x) for x in item) + "]"
+        if isinstance(item, dict):
+            return "{" + ",".join(encode(k) + ":" + encode(item[k]) for k in sorted(item, key=lambda key: key.encode("utf-16-be"))) + "}"
+        raise TypeError(type(item))
+    return encode(value).encode()
+
 
 
 def parse_with_serializing_validation(text):
@@ -25,11 +57,47 @@ def parse_with_serializing_validation(text):
     def invalid(value):
         raise ValueError(f"Unsupported JSON number: {value}")
     result = json.loads(text, object_pairs_hook=pairs, parse_float=invalid, parse_constant=invalid)
-    canonical(result)
+    prior_canonical(result)
     return result
 
 
 class IdentityTest(unittest.TestCase):
+    def test_canonical_matches_prior_encoder_for_locks_and_inventory_records(self):
+        for name in ('toolchains.lock.json', 'jvm-artifacts.lock.json', 'composition.json'):
+            value = json.loads((ROOT/'bootstrap'/name).read_text())
+            self.assertEqual(canonical(value), prior_canonical(value), name)
+        # Exercise the repeated dictionary shapes found in source/tool
+        # inventories without walking installed distributions in a unit test.
+        records = [{'path': f'root/{index}/Source😀.kt',
+                    'digest': {'hash': f'{index:064x}', 'sizeBytes': index*103},
+                    'executable': index % 7 == 0} for index in range(300)]
+        records.extend([{'path': 'root/link', 'symlink': '../target'},
+                        {'path': 'root/control\nname', 'digest': {'sizeBytes': 0, 'hash': '0'*64},
+                         'executable': False}])
+        value = {'files': records, 'schemaVersion': 1}
+        self.assertEqual(canonical(value), prior_canonical(value))
+        first = canonical(value)
+        records[0]['digest']['sizeBytes'] = 2**63-1
+        records[1]['path'] = 'changed\\name'
+        self.assertNotEqual(canonical(value), first)
+        self.assertEqual(canonical(value), prior_canonical(value))
+
+    def test_canonical_key_reuse_preserves_utf16_order_and_escaping(self):
+        keys = ['😀', '\ue000', '\U00010000', '\uffff', '\u0000', '\n', '\\n', '"', '', 'a']
+        value = [{key: [None, False, True, -(2**63), 2**63-1, key]
+                  for key in order} for order in (keys, list(reversed(keys)), sorted(keys))]
+        self.assertEqual(canonical(value), prior_canonical(value))
+        encoded = [canonical(item) for item in value]
+        self.assertEqual(encoded[0], encoded[1])
+        self.assertEqual(encoded[0], encoded[2])
+        for bad in (1.0, float('nan'), float('inf'), 2**63, -(2**63)-1,
+                    '\ud800', '\udfff', {'\ud800': 0}, {'nested': ['\udfff']}, b'bytes', (1, 2)):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaises((ValueError, TypeError)) as old:
+                    prior_canonical(bad)
+                with self.assertRaises(type(old.exception)):
+                    canonical(bad)
+
     def test_core_vectors(self):
         for vector in read_json(ROOT / "schemas/examples/identity-vectors.json"):
             value = read_json(ROOT / "schemas/examples" / (vector["name"] + ".json"))
