@@ -43,3 +43,20 @@ against the local working directory; session results live in its `.kvik/sessions
 The observer watches the full revision, including changes outside the selected
 module. Offline sessions require an immutable revision and previously cached
 source data; following a moving reference requires access to Kode.
+
+The public acceptance runner `tools/test_foreground_applications_cli.py` retains
+performance measurements alongside its JVM and macOS Native reload, test and
+cleanup checks. Pass `--host-name` to identify the measured hardware. Each initial
+build receives 20 JSONL status requests; matching request IDs bind send and receive
+timestamps. The results report p95, maximum latency and whether every response
+meets K01's 100 ms budget. Warm reload timing includes old-application cleanup and
+replacement launch, with compilation actions required to be local cache hits.
+Graceful shutdown and owner-loss cleanup report their 2 s and 5 s budgets
+separately from functional success.
+
+Each session retains `process-samples.jsonl` and `measurements.json`. Process counts
+and RSS cover the live session owner and reachable descendants throughout builds,
+applications, tests and fixture witnesses. The maximum observed owner RSS is
+separate from summed descendant RSS. Sampling can miss short-lived processes and
+memory peaks; summed RSS also counts shared pages repeatedly. These measurements
+do not establish physical-key/TTY latency or isolated idle-runtime memory.

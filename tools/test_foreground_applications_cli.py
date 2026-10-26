@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import queue
 import shutil
 import signal
@@ -22,6 +23,7 @@ from referencing import Registry, Resource
 
 import test_application_cli as base
 from test_foreground_applications import table, descendants
+from foreground_measurements import ProcessSampler, ControlTimings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +36,7 @@ def main():
     parser.add_argument('--konan-home',type=Path,required=True)
     parser.add_argument('--artifact-cache',type=Path,default=ROOT/'.kvik/tool-artifacts')
     parser.add_argument('--prepare-only',action='store_true')
+    parser.add_argument('--host-name',default=platform.node())
     parser.add_argument('--source-handoff',action='store_true',help='Also compile changed copied runtime sources and prove JVM application handoff/stale-pointer fallback')
     args=parser.parse_args()
     runtime=args.runtime.resolve(strict=True)
@@ -68,7 +71,8 @@ def main():
     validate(document,'project');validate(tools,'toolInstallation')
     session_validator=jsonschema.Draft202012Validator({**schemas['session'],'$ref':'#/$defs/event'},registry=registry)
     base.write_json(case/'invocation.json',dict(runtime=str(runtime),runtimeDigest=base.digest(runtime.read_bytes()),fixture=inventory,tests=tests,witnesses=witnesses,
-        harness=base.digest(Path(__file__).read_bytes()),schemas={name:base.digest((case/f'{name}.json').read_bytes()) for name in schemas},prepareOnly=args.prepare_only))
+        harness=base.digest(Path(__file__).read_bytes()),measurementHelper=base.digest((ROOT/'tools/foreground_measurements.py').read_bytes()),
+        schemas={name:base.digest((case/f'{name}.json').read_bytes()) for name in schemas},prepareOnly=args.prepare_only))
     print('Evidence:',case,flush=True)
     if args.prepare_only:return
     environment=dict(os.environ,AMBIENT_APPLICATION_POISON='must-not-propagate',JAVA_TOOL_OPTIONS='-Dapplication.ambient=forbidden')
@@ -91,6 +95,7 @@ def main():
     class Session:
         def __init__(self,target,label,bootstrap=None):
             self.target=target;self.path=case/label;self.path.mkdir();self.events=[];self.messages=queue.Queue();self.sequence={};self.pids=set();self.groups=set()
+            self.timings=ControlTimings();self.control_sequence=0;self.reload_measurements=[];self.resource_summary=None
             (project/f'mode-{target}.txt').write_text('wait:'+label)
             command=([*bootstrap,'--'] if bootstrap else [str(runtime)])+['dev','--mode','application','--control','jsonl','--watch-ms','500',*shared,'--tools',str(project/'tools.json'),
                 '--module','app','--target',target,'--jobs','1','--offline']
@@ -98,22 +103,41 @@ def main():
             self.log=(self.path/'stdout.jsonl').open('w');self.err=(self.path/'stderr.log').open('w')
             self.process=subprocess.Popen(command,cwd=case,env=environment,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err,text=True,bufsize=1)
             sessions.append(self)
+            self.sampler=ProcessSampler(self.process,self.path/'process-samples.jsonl')
             def reader():
-                for line in self.process.stdout:self.log.write(line);self.log.flush();self.messages.put(line)
+                for line in self.process.stdout:
+                    received=time.monotonic_ns();self.log.write(line);self.log.flush();self.messages.put((line,received))
                 self.messages.put(None)
             self.reader=threading.Thread(target=reader,daemon=True);self.reader.start();self.wait('session-started')
         def next(self,timeout):
-            line=self.messages.get(timeout=timeout);assert line is not None,(self.path,self.process.poll(),self.events[-6:])
+            message=self.messages.get(timeout=timeout);assert message is not None,(self.path,self.process.poll(),self.events[-6:])
+            return self.accept(message)
+        def accept(self,message):
+            line,self.received_nanos=message
             event=json.loads(line);session_validator.validate(event);sid=event['sessionId'];self.sequence[sid]=self.sequence.get(sid,0)+1;assert event['sequence']==self.sequence[sid]
+            self.timings.observed(event,self.received_nanos)
             self.events.append(event);return event
+        def drain(self):
+            while not self.messages.empty():
+                message=self.messages.get_nowait()
+                if message is None:break
+                self.accept(message)
         def wait(self,kind,predicate=lambda p:True,seconds=1200):
             deadline=time.monotonic()+seconds
             while True:
                 event=self.next(max(.01,deadline-time.monotonic()))
                 if event['type']==kind and predicate(event['payload']):return event['payload']
         def control(self,value):
-            self.process.stdin.write(json.dumps(dict(schemaVersion=1,requestId=str(len(self.events)),command=value))+'\n');self.process.stdin.flush()
-        def status(self):self.control('status');return self.wait('control',lambda p:p['command']=='status')
+            self.control_sequence+=1;request='measured-'+str(self.control_sequence);started=time.monotonic_ns()
+            self.timings.sent(request,value,started)
+            self.process.stdin.write(json.dumps(dict(schemaVersion=1,requestId=request,command=value))+'\n');self.process.stdin.flush()
+            return request,started
+        def status(self):
+            request,_=self.control('status');return self.wait('control',lambda p:p['requestId']==request)
+        def sample_busy_controls(self):
+            self.wait('application-preparing')
+            for _ in range(20):self.status()
+            assert self.timings.summary()['duringBuild']['sampleCount']>=20,'Controls did not observe an active build'
         def capture(self):
             deadline=time.monotonic()+10
             files=[project/f'{self.path.name}-{role}.pid' for role in ('app','child','grandchild')]
@@ -150,6 +174,7 @@ def main():
             return pids,groups
         def started(self):
             value=self.wait('application-started')
+            self.application_started_nanos=self.received_nanos
             matches=[e['payload'] for e in self.events if e['type']=='application-ready' and e['payload']['ready']['token']==value['started']['token']]
             assert len(matches)==1,matches
             ready_event=matches[0];ready=ready_event['ready']
@@ -186,11 +211,25 @@ def main():
             self.process.wait(timeout=15);expected=-9 if how=='kill' else 130 if how in ('int','term') else 0
             assert self.process.returncode==expected
             wait_absent(self.pids,self.groups);self.reader.join(timeout=5);assert not self.reader.is_alive();self.log.close();self.err.close()
-            base.write_json(self.path/'result.json',dict(exitCode=self.process.returncode,cleanupSeconds=time.monotonic()-started,pids=sorted(self.pids),groups=sorted(self.groups)))
+            cleanup_seconds=time.monotonic()-started
+            self.drain()
+            base.write_json(self.path/'result.json',dict(exitCode=self.process.returncode,cleanupSeconds=cleanup_seconds,pids=sorted(self.pids),groups=sorted(self.groups),
+                cleanupBudgetSeconds=5 if how=='kill' else 2,cleanupBudgetMet=cleanup_seconds<(5 if how=='kill' else 2),
+                cleanupScope='command/signal through owner exit, captured descendant absence and output-reader drain'))
+            self.write_measurements()
+        def write_measurements(self):
+            if self.resource_summary is None:self.resource_summary=self.sampler.close()
+            value=dict(resources=self.resource_summary,controls=self.timings.summary(),reloads=self.reload_measurements)
+            base.write_json(self.path/'measurements.json',value)
+            return value
     try:
         for target in base.TARGETS:
-            s=Session(target,target+'-reload');initial=s.started();initial_effects=len(effects(target));old_pids,old_groups=s.witness()
-            s.control('r');warm=s.started()
+            s=Session(target,target+'-reload');s.sample_busy_controls();initial=s.started();initial_effects=len(effects(target));old_pids,old_groups=s.witness()
+            reload_request,reload_started=s.control('r');warm=s.started()
+            s.reload_measurements.append(dict(requestId=reload_request,sentNanos=reload_started,receivedNanos=s.application_started_nanos,
+                durationNanos=s.application_started_nanos-reload_started,generation=warm['generation'],
+                scope='warm explicit reload through application-started event; includes old-application cleanup and new launch',
+                actions=[dict(actionId=a['actionId'],status=a['status']) for a in warm['record']['actions']]))
             # The replacement witness checked exact old ownership before its first effect; also observe cleanup here.
             assert not [row for row in table() if row[0] in old_pids or row[2] in old_groups]
             assert len(effects(target))==initial_effects+1
@@ -277,6 +316,8 @@ def main():
                 session.reader.join(timeout=5);assert not session.reader.is_alive()
                 if not session.log.closed:session.log.close()
                 if not session.err.closed:session.err.close()
+                if primary_failure is None:session.drain()
+                session.write_measurements()
                 cleanup.append(dict(session=session.process.pid,pids=sorted(session.pids),groups=sorted(session.groups),drained=True))
             except BaseException as failure:
                 cleanup.append(dict(session=session.process.pid,pids=sorted(session.pids),groups=sorted(session.groups),drained=False,error=str(failure)))
@@ -291,7 +332,9 @@ def main():
     assert base.inventory(fixture)==inventory and base.inventory(test_fixture)==tests and base.inventory(witness_fixture)==witnesses
     assert all(base.inventory(project)[p]==value for p,value in inventory.items())
     base.write_json(case/'summary.json',dict(passed=True,scope='actual JVM and Native public foreground reload/tests/ownership; optional JVM compiled-source handoff',results=summaries,
-        runtimeDigest=base.digest(runtime.read_bytes()),fixture=inventory,tests=tests))
+        runtimeDigest=base.digest(runtime.read_bytes()),fixture=inventory,tests=tests,
+        host=dict(name=args.host_name,os=platform.system(),release=platform.release(),architecture=platform.machine(),logicalCpuCount=os.cpu_count()),
+        measurements={s.path.name:s.write_measurements() for s in sessions}))
     print('PASS public foreground applications',case,flush=True)
 
 if __name__=='__main__':main()
