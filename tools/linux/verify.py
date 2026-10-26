@@ -21,6 +21,7 @@ def export_checks(root):
         'cache-invalidation': ('linux-jvm/run-*/cache-invalidation-*', ('results.json', '*.stdout.jsonl', '*.stderr.log')),
         'build-performance': ('build-performance-cli/case-*', ('summary.json', 'phases/*/process.json', 'phases/*/stdout.jsonl', 'phases/*/stderr.log')),
         'cached-startup': ('bootstrap/cached-startup-*', ('summary.json', '*.stdout', '*.stderr', 'launcher.prof', 'launcher-profile.json')),
+        'unavailable-target': ('unavailable-target-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log')),
     }
     output = root / '.kvik/ci-artifacts'
     output.mkdir(parents=True, exist_ok=True)
@@ -142,6 +143,8 @@ def main():
     fixtures = list(fixture_output.glob('case-*'))
     if len(fixtures) != 1:
         raise RuntimeError('Expected one JVM fixture for parallel test measurements')
+    run([sys.executable, ROOT/'tools/test_unavailable_target_cli.py', '--runtime', executable,
+         '--tools', fixtures[0]/'tools.json'])
     run([sys.executable, ROOT/'tools/test_compiler_session_worker.py', '--java-home', java,
          '--compiler-artifacts', ROOT/'.kvik/tool-artifacts', '--offline'])
     run([sys.executable, ROOT/'tools/test_foreground_jvm.py', '--runtime', executable,

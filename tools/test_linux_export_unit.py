@@ -18,6 +18,7 @@ class ExportChecksTest(unittest.TestCase):
                 'linux-jvm/run-c/cache-invalidation-d': ['results.json', 'cold.stdout.jsonl', 'cold.stderr.log'],
                 'build-performance-cli/case-e': ['summary.json', 'phases/cold/process.json', 'phases/local/process.json'],
                 'bootstrap/cached-startup-f': ['summary.json', '000-composition.stdout', '000-composition.stderr', 'launcher.prof', 'launcher-profile.json'],
+                'unavailable-target-cli/case-g': ['summary.json', 'mixed.stdout.jsonl', 'foreign-only.stderr.log'],
             }
             expected = {}
             for case_name, names in fixtures.items():
@@ -33,6 +34,8 @@ class ExportChecksTest(unittest.TestCase):
                         category = 'build-performance'
                     if category == 'bootstrap':
                         category = 'cached-startup'
+                    if category == 'unavailable-target-cli':
+                        category = 'unavailable-target'
                     expected[f'{category}/{case.name}/{name}'] = name
                 (case / 'private-input').write_text('do not export')
                 (case / 'symlink.stdout.jsonl').symlink_to(case / 'private-input')

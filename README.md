@@ -1837,3 +1837,9 @@ and 2 for invalid command arguments. Passing covers the selected tool
 installations at query time; it does not compile a project, check its dependencies
 or establish compatibility of project-specific compiler plugins and test engines.
 The source launcher can still provision/build Kvik before this command starts.
+
+The regression gate `python3 tools/test_unavailable_target_cli.py --runtime /path/to/kvik.kexe
+--tools /path/to/tools.json` checks foreign-host Native requests alone and alongside
+JVM. It requires an incomplete result with every requested check retained, no
+completed checks or compiler actions, and a toolchain diagnostic. Linux CI runs
+the gate and retains its results as `unavailable-target-linux`.

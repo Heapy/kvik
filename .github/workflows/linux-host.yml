@@ -97,3 +97,11 @@ jobs:
           path: .kvik/ci-artifacts/cached-startup
           include-hidden-files: true
           if-no-files-found: ignore
+      - name: Retain unavailable-target verification checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unavailable-target-linux
+          path: .kvik/ci-artifacts/unavailable-target
+          include-hidden-files: true
+          if-no-files-found: ignore
