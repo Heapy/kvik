@@ -10,7 +10,6 @@ import tempfile
 
 from bootstrap import jvm_worker
 from bootstrap.identity import canonical, digest, file_digest, parse_json, read_json
-from bootstrap.runtime_store import RuntimeStore, _digest, _logical
 
 
 IMPLEMENTATION = 'kvik-bootstrap-jvm-worker-cache-v1'
@@ -24,6 +23,7 @@ def worker_environment(environment):
 
 
 def input_document(source_root, sources, lock, java, jdk_identity, environment):
+    from bootstrap.runtime_store import _digest, _logical
     selected = []
     for path in sources:
         logical = _logical(path.relative_to(source_root).as_posix())
@@ -73,6 +73,7 @@ def record_bundle(record):
 
 def build_or_restore(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned,
                      *, cache, jdk_identity, source_files=None):
+    from bootstrap.runtime_store import RuntimeStore
     sources = jvm_worker.bundle_sources(source_root, worker_sources, source_files)
     effective_environment = worker_environment(environment)
     # Freeze the declaration so callback-side mutations cannot rewrite the key.

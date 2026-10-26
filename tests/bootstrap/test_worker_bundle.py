@@ -17,16 +17,16 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from bootstrap.identity import canonical, digest, read_json
-from bootstrap import jvm_worker
+from bootstrap import jvm_worker, jvm_acquisition
 
 
 class ArtifactBoundaryTest(unittest.TestCase):
     def test_only_locked_kotlin_release_and_its_asset_redirects_are_allowed(self):
         item = jvm_worker.read_lock(ROOT)['compilerArtifacts'][0]
-        handler = jvm_worker.LockedRedirects(item['url'], item['releaseUrl'])
+        handler = jvm_acquisition.LockedRedirects(item['url'], item['releaseUrl'])
         asset = 'https://release-assets.githubusercontent.com/github-production-release-asset/3432266/id?signature=secret'
         for source, target in ((item['url'], item['releaseUrl']), (item['releaseUrl'], asset)):
-            redirected = handler.redirect_request(jvm_worker.urllib.request.Request(source), None, 302, 'Found', {}, target)
+            redirected = handler.redirect_request(jvm_acquisition.urllib.request.Request(source), None, 302, 'Found', {}, target)
             self.assertEqual(redirected.full_url, target)
         for source, target in ((item['url'], asset), (asset, item['releaseUrl']),
                                (item['url'], item['releaseUrl'].replace('/v2.4.20/', '/v2.4.10/')),
@@ -34,15 +34,15 @@ class ArtifactBoundaryTest(unittest.TestCase):
                                (item['releaseUrl'], asset.replace('/3432266/', '/another-repository/')),
                                (item['releaseUrl'], asset.replace('release-assets.githubusercontent.com', 'cdn.example'))):
             with self.subTest(source=source, target=target), self.assertRaises(ValueError):
-                handler.redirect_request(jvm_worker.urllib.request.Request(source), None, 302, 'Found', {}, target)
+                handler.redirect_request(jvm_acquisition.urllib.request.Request(source), None, 302, 'Found', {}, target)
         with self.assertRaises(ValueError):
-            jvm_worker.LockedRedirects(item['url']).redirect_request(
-                jvm_worker.urllib.request.Request(item['url']), None, 302, 'Found', {}, item['releaseUrl'])
+            jvm_acquisition.LockedRedirects(item['url']).redirect_request(
+                jvm_acquisition.urllib.request.Request(item['url']), None, 302, 'Found', {}, item['releaseUrl'])
 
     def test_redirect_error_identifies_artifact_without_leaking_destination_credentials(self):
-        request = jvm_worker.urllib.request.Request('https://repo.maven.apache.org/maven2/example/tool.jar')
+        request = jvm_acquisition.urllib.request.Request('https://repo.maven.apache.org/maven2/example/tool.jar')
         with self.assertRaises(ValueError) as raised:
-            jvm_worker.LockedRedirects().redirect_request(request, None, 302, 'Found', {},
+            jvm_acquisition.LockedRedirects().redirect_request(request, None, 302, 'Found', {},
                 'https://user:password@cdn.example/private/token-path?signature=secret')
         message = str(raised.exception)
         self.assertIn('tool.jar', message)
@@ -63,15 +63,15 @@ class ArtifactBoundaryTest(unittest.TestCase):
                 if self.opening: time.sleep(2)
                 return SlowBody(b"one")
         previous = signal.getsignal(signal.SIGALRM)
-        real_deadline = jvm_worker.transfer_deadline
+        real_deadline = jvm_acquisition.transfer_deadline
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             item = {"filename": "small.jar", "sha256": digest(b"one")["hash"], "size": 3, "url": "https://invalid.local/small.jar"}
             lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item, "jacocoAgent": item, "jacocoCli": item}
             for opening in (True, False):
                 started = time.monotonic()
-                with patch.object(jvm_worker.urllib.request, "build_opener", return_value=SlowOpener(opening)), \
-                     patch.object(jvm_worker, "transfer_deadline", side_effect=lambda _: real_deadline(0.05)), \
+                with patch.object(jvm_acquisition.urllib.request, "build_opener", return_value=SlowOpener(opening)), \
+                     patch.object(jvm_acquisition, "transfer_deadline", side_effect=lambda _: real_deadline(0.05)), \
                      self.assertRaisesRegex(ValueError, "download exceeded"):
                     jvm_worker.acquire(lock, root, False)
                 self.assertLess(time.monotonic() - started, 1)
@@ -153,11 +153,11 @@ class ArtifactBoundaryTest(unittest.TestCase):
             item = {"filename": "small.jar", "sha256": digest(b"one")["hash"], "size": 3, "url": "https://invalid.local/small.jar"}
             lock = {"compilerArtifacts": [item], "testPlatform": item, "serializationPlugin": item, "jacocoAgent": item, "jacocoCli": item}
             for content in [b"", b"on", b"two", b"one!"]:
-                with patch.object(jvm_worker.urllib.request, "build_opener", return_value=Opener(content)), self.assertRaises(ValueError):
+                with patch.object(jvm_acquisition.urllib.request, "build_opener", return_value=Opener(content)), self.assertRaises(ValueError):
                     jvm_worker.acquire(lock, root, False)
                 self.assertFalse((root / "small.jar").exists())
                 self.assertEqual(["small.jar.lock"], sorted(p.name for p in root.iterdir()))
-            with patch.object(jvm_worker.urllib.request, "build_opener", return_value=Opener(b"one")):
+            with patch.object(jvm_acquisition.urllib.request, "build_opener", return_value=Opener(b"one")):
                 jvm_worker.acquire(lock, root, False)
             self.assertEqual(b"one", (root / "small.jar").read_bytes())
 

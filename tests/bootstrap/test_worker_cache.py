@@ -8,6 +8,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -101,6 +102,45 @@ class WorkerCacheTest(unittest.TestCase):
         self.assertEqual({'jvm'}, {path.name for path in first.iterdir()})
         self.assertEqual({'jvm'}, {path.name for path in second.iterdir()})
         self.assertEqual(digest(canonical(receipt['inputs'])), receipt['inputKey'])
+
+    def test_cached_runtime_checks_bytes_without_loading_acquisition_modules(self):
+        output, bundle, receipt = self.build()
+        lock = {'schemaVersion': 1}
+        key = digest(canonical(lock))
+        for name in ('kvik.kexe', 'guardian'):
+            (output/name).write_bytes(b'fixture executable; never executed')
+            (output/name).chmod(0o755)
+        (output/'runtime.lock.json').write_bytes(canonical(lock))
+        (output/'jvm-worker-cache.json').write_bytes(canonical(receipt))
+        manifest = {'schemaVersion': 1, 'composition': key, 'jvmWorkerBundle': bundle,
+                    'jvmWorkerCache': file_digest(output/'jvm-worker-cache.json'),
+                    'executable': file_digest(output/'kvik.kexe'), 'guardian': file_digest(output/'guardian')}
+        (output/'manifest.json').write_bytes(canonical(manifest))
+        # A fresh interpreter makes imports observable despite this test module's
+        # fixture-building imports. A real bundle is verified, then corrupted.
+        code = '''
+import sys
+class NoAcquisition:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in ('urllib.request', 'ssl', 'tarfile', 'zipfile',
+                        'bootstrap.jvm_acquisition', 'bootstrap.tool_archives',
+                        'bootstrap.source_store', 'bootstrap.runtime_store'):
+            raise AssertionError('Cached verification imported ' + fullname)
+sys.meta_path.insert(0, NoAcquisition())
+from pathlib import Path
+from bootstrap import launcher
+from bootstrap.identity import read_json
+root = Path(sys.argv[1])
+key = read_json(root/'manifest.json')['composition']
+assert launcher.cached(root, key)
+file = root/'jvm/classes/Worker.class'
+before = file.read_bytes()
+file.write_bytes(bytes([before[0] ^ 1]) + before[1:])
+assert not launcher.cached(root, key)
+'''
+        result = subprocess.run([sys.executable, '-c', code, str(output)], cwd=ROOT,
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_source_and_artifact_cache_relocation_plugin_edit_and_native_env_preserve_key(self):
         _, bundle, first = self.build()

@@ -14,7 +14,7 @@ import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
 from bootstrap.pin_tools import host_identity, tool_roots, native_target, component_names
-from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier, tool_archives, worker_cache
+from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier, worker_cache
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -192,6 +192,7 @@ def validate_runtime_store(args, selected, lock):
 
 def validate_tool_outputs(args, selected, lock):
     """Validate acquisition policy before any cache directory is created."""
+    from bootstrap import tool_archives
     from bootstrap.source_files import overlap
     tool_archives.read_lock(args.tool_archives, lock['toolchains'], lock['platform'])
     protected = [ROOT / 'kvik', ROOT / 'bootstrap', args.tool_archives, Path(args.konan_data)]
@@ -285,6 +286,7 @@ class BuildTimings:
 
 
 def validate_tools(args, expected, timings=None):
+    from bootstrap import tool_archives
     archive_lock = getattr(args, 'tool_archives', None)
     if archive_lock is None and (not args.java_home or not args.konan_home):
         raise ValueError("Native rebuild requires --java-home and --konan-home (or JAVA_HOME and KONAN_HOME)")
@@ -401,6 +403,7 @@ def run_owned(command, environment, log, timeout=300):
 
 
 def build(args, recipe, selected, lock, key, destination):
+    from bootstrap import tool_archives
     timings = BuildTimings()
     roots = validate_tools(args, lock["toolchains"], timings)
     graph_mode = isinstance(selected, source_graph.ObservedGraph)

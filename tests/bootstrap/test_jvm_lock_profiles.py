@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from bootstrap import jvm_worker
+from bootstrap import jvm_worker, jvm_acquisition
 
 
 class JvmLockProfilesTest(unittest.TestCase):
@@ -58,24 +58,24 @@ class JvmLockProfilesTest(unittest.TestCase):
                     # 2.4.21 is served directly by Maven; no speculative redirect is authorized.
                     self.assertEqual("2.4.21", version)
                     with self.assertRaises(ValueError):
-                        jvm_worker.LockedRedirects(item["url"]).redirect_request(
-                            jvm_worker.urllib.request.Request(item["url"]), None, 302, "Found", {}, release)
+                        jvm_acquisition.LockedRedirects(item["url"]).redirect_request(
+                            jvm_acquisition.urllib.request.Request(item["url"]), None, 302, "Found", {}, release)
                     continue
                 self.assertEqual(release, item["releaseUrl"])
                 self.assertEqual([item["coordinate"]],
                     [a["coordinate"] for a in jvm_worker.all_artifacts(profile) if "releaseUrl" in a])
-                handler = jvm_worker.LockedRedirects(item["url"], release)
-                redirected = handler.redirect_request(jvm_worker.urllib.request.Request(item["url"]),
+                handler = jvm_acquisition.LockedRedirects(item["url"], release)
+                redirected = handler.redirect_request(jvm_acquisition.urllib.request.Request(item["url"]),
                     None, 301, "Moved Permanently", {}, release)
                 self.assertEqual(release, redirected.full_url)
                 asset = "https://release-assets.githubusercontent.com/github-production-release-asset/3432266/asset"
-                redirected = handler.redirect_request(jvm_worker.urllib.request.Request(release),
+                redirected = handler.redirect_request(jvm_acquisition.urllib.request.Request(release),
                     None, 302, "Found", {}, asset)
                 self.assertEqual(asset, redirected.full_url)
                 other_version = "2.4.10" if version == "2.4.20" else "2.4.20"
                 for target in (release.replace(version, other_version), release.replace("JetBrains/kotlin", "other/repository"), asset):
                     with self.subTest(target=target), self.assertRaises(ValueError):
-                        handler.redirect_request(jvm_worker.urllib.request.Request(item["url"]),
+                        handler.redirect_request(jvm_acquisition.urllib.request.Request(item["url"]),
                             None, 301, "Moved Permanently", {}, target)
                 changed = copy.deepcopy(profile)
                 jvm_worker.compiler_artifact(changed, "kotlin-compiler-embeddable")["releaseUrl"] = release.replace(version, other_version)
