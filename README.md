@@ -17,6 +17,31 @@ With tools matching the explicitly provisioned host lock:
 ./kvik --offline --no-build -- verification --run /absolute/project/.kvik/runs/RUN_ID
 ```
 
+For agent-driven one-shot builds and tests, add `--output summary`:
+
+```sh
+./kvik --offline --no-build -- test --project /absolute/project/kvik.json \
+  --tools /absolute/project/tools.json --module library --target jvm --output summary
+```
+
+This prints diagnostics and a compact `build-summary` after the run is committed.
+It includes the run directory, exact input identity, status, freshness at completion,
+requested/completed checks, test counts and action outcomes. Full events, test
+details and verification remain in that directory. Use `verification --run PATH`
+to check current freshness, `run-stats --run PATH` for timings and cache counts,
+`explain --run PATH --action ID` for an action, or `test-report --run PATH
+--output NEW_DIRECTORY` for test details. A summary describes the completed run;
+later source edits can make it stale.
+
+`--output events` is the default full JSONL stream. The output selector applies
+to direct `build` and `test` commands; foreground, MCP and BSP keep their existing
+protocols. Output selection does not affect action keys or which tests execute.
+
+On the same warm JVM fixture, stdout shrank from 7,140 to 1,569 bytes for
+`build` and from 12,508 to 1,693 bytes for `test`. Both formats reused the same
+compilation keys and ran fresh tests; these are output-size observations for one
+fixture, not measurements of agent productivity.
+
 `resolve` explicitly publishes `kvik.lock.json` and fills `.kvik/cache` relative to the project. `--store` selects a shared content store, `--lock` selects a lockfile, and repeated `--pin group:artifact:version` options declare resolver policy. Supply the same pins to inspection and lock checks. `check-lock` verifies the lock and cached artifacts without downloading or repairing anything. `resolve --offline` also performs only that check; the launcher's `--offline` propagates to dependency commands. Publication uses a persistent `.kvik-dependency-publication.lock` in the destination directory and rejects configuration/lock changes observed during resolution. See [CLI dependency evidence](docs/evidence/k09-dependency-cli.md).
 
 `inspect` exports the versioned project model for tools and editor integrations:
@@ -1473,9 +1498,9 @@ also passes fresh JVM/Native consumer tests and foreground test/quit cleanup.
 Native outputs remain local-only where relocation is unsafe, and the pinned
 Grogu Linux fixture cannot yet be fetched from its upstream repository.
 
-The next bounded work is to broaden Native core/object-cache measurements, reduce
-default agent output volume while preserving queryable detail, and make the
-pinned real-project fixture available to CI. K17 remains an experiment: its
+The next bounded work is to broaden Native core/object-cache measurements, evaluate
+compact output in larger agent workflows, and make the pinned real-project
+fixture available to CI. K17 remains an experiment: its
 separate comparison did not demonstrate an economy or reliability advantage.
 These results do not justify replacing KTC generally or claiming broad KMP
 compatibility. Total maintenance cost versus extending KTC has not been measured;
