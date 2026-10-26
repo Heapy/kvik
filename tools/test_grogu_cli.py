@@ -184,11 +184,20 @@ def reference_data(directory, manifest, started, finished):
                 trace=dict(path=str(traces[0]), digest=digest(traces[0])), xml=dict(path=str(xml), digest=digest(xml)))
 
 
+def jdk_identity(java_home):
+    java_home = java_home.resolve()
+    release = java_home/'release'
+    match = re.search(r'^JAVA_VERSION="([^"\n]+)"$', release.read_text(), re.MULTILINE)
+    assert match and re.split(r'[.+-]', match.group(1))[0] == '25', 'Grogu differential reference and execution require JDK 25'
+    return dict(version=match.group(1), release=digest(release), java=digest(java_home/'bin/java'))
+
+
 def capture_reference(files, manifest, destination, java_home):
     directory = destination/MODULE
     assert not directory.exists(), 'Reference capture must use a clean export'
     export(files, directory)
     verify_fixture(directory, manifest)
+    jdk_before = jdk_identity(java_home)
     environment = dict(os.environ, JAVA_HOME=str(java_home.resolve()))
     started = time.time_ns()
     result = subprocess.run(COMMAND, cwd=directory, env=environment, capture_output=True, text=True, timeout=600)
@@ -202,6 +211,9 @@ def capture_reference(files, manifest, destination, java_home):
     assert result.returncode == 0, ('KTC reference failed; see', destination/'ktc.stderr.log', destination/'ktc.stdout.log')
     verify_fixture(directory, manifest)
     receipt['after'] = source_manifest(files)
+    receipt['jdkBefore'] = jdk_before
+    receipt['jdkAfter'] = jdk_identity(java_home)
+    assert receipt['jdkBefore'] == receipt['jdkAfter'], 'Reference JDK changed during execution'
     data = reference_data(directory, manifest, started, finished)
     write(destination/'reference.json', dict(schemaVersion=1, fixtureCommit=COMMIT, manifest=manifest,
           process=receipt, **data))
@@ -215,6 +227,8 @@ def load_reference(path, manifest):
     process = reference['process']
     assert process['exitCode'] == 0 and process['command'] == COMMAND
     assert process['before'] == process['after'] == manifest, 'Unbound reference source/configuration'
+    assert 'jdkBefore' in process and 'jdkAfter' in process, 'Reference lacks captured JDK identity; recapture with --capture-reference'
+    assert process['jdkBefore'] == process['jdkAfter'] == jdk_identity(Path(process['javaHome'])), 'Reference JDK changed'
     directory = Path(process['cwd'])
     verify_fixture(directory, manifest)
     actual = reference_data(directory, manifest, process['startedUnixNano'], process['finishedUnixNano'])
@@ -381,8 +395,7 @@ def run_cli(args, project, reference, manifest, validate):
     executable = args.runtime.resolve()
     tools = json.loads(args.tools.read_text())
     validate(tools, 'toolInstallation')
-    release = (Path(tools['roots']['jdk'])/'release').read_text()
-    assert re.search(r'^JAVA_VERSION="25(?:\.|\")', release, re.MULTILINE), 'Grogu differential tests require JDK 25'
+    assert jdk_identity(Path(tools['roots']['jdk'])) == reference['process']['jdkBefore'], 'Kvik JDK differs from captured reference'
     write(project/'tools.json', tools)
     compiler_identity = verify_runtime(executable, tools, reference)
     write(project/'compiler-identity.json', compiler_identity)
