@@ -109,10 +109,49 @@ class StorageMeterTest(unittest.TestCase):
         record['endedNs'] -= record['startedNs'] - shifted_start
         record['startedNs'] = shifted_start
         meter.write(second, record)
-        self.assertIn('Overlapping command observations', self.report()['errors'])
+        result = self.report()
+        self.assertTrue(result['attributionComplete'], result['errors'])
+        self.assertEqual(result['overlapGroups'], [dict(commandIndexes=[0, 1], reconciledZeroChange=True)])
         record['completed'] = False
         meter.write(second, record)
         self.assertIn('Incomplete command observation', self.report()['errors'])
+
+    def test_changing_overlap_is_incomplete(self):
+        self.call('status', '--porcelain')
+        (self.repo / 'source').write_text('changed\n')
+        self.call('add', '.')
+        paths = sorted((self.directory / 'ledger').glob('*.json'),
+            key=lambda p: json.loads(p.read_text())['startedNs'])
+        first, second = [json.loads(p.read_text()) for p in paths]
+        shift = second['startedNs'] - first['startedNs'] - 1
+        second['startedNs'] -= shift
+        second['endedNs'] -= shift
+        meter.write(paths[1], second)
+        result = self.report()
+        self.assertFalse(result['attributionComplete'])
+        self.assertFalse(result['overlapGroups'][0]['reconciledZeroChange'])
+
+    def test_transitive_overlap_grouping(self):
+        observation = dict(store=dict(bytes=0, files=0, sha256='same'), revision='base', observationNs=0)
+        records = [dict(startedNs=start, endedNs=end, before=observation, after=observation, completed=True)
+            for start, end in [(0, 10), (9, 20), (19, 30), (30, 40)]]
+        self.assertEqual(meter.overlapping_groups(records),
+            [dict(commandIndexes=[0, 1, 2], reconciledZeroChange=True)])
+
+    def test_agent_test_command_uses_explicit_kode_wrapper(self):
+        from compare_workspace_agents import Trial
+        from types import SimpleNamespace
+        trial = Trial.__new__(Trial)
+        trial.workspace = SimpleNamespace(source_args=lambda role, revision:
+            ['--project', 'kvik.json', '--kode', '/real/kode', '--revision', revision])
+        trial.state = dict(runtime='/runtime', tools='/tools')
+        trial.cache = '/cache'
+        raw = trial.test_command('a', 'revision', '/runs')
+        measured = trial.test_command('a', 'revision', '/runs', kode_executable='/measured-kode')
+        self.assertEqual(raw[raw.index('--kode')+1], '/real/kode')
+        self.assertEqual(measured[measured.index('--kode')+1], '/measured-kode')
+        measured[measured.index('--kode')+1] = '/real/kode'
+        self.assertEqual(measured, raw)
 
     def test_merge_transition_separate(self):
         self.raw('checkout', '-b', 'side')

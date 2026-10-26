@@ -207,6 +207,24 @@ def valid_record(value):
         and value['instrumentationNs'] >= value['observationNs'])
 
 
+def overlapping_groups(records):
+    """Connected interval components, including transitive overlaps."""
+    groups, current, end = [], [], -1
+    for index, record in enumerate(records):
+        if current and record['startedNs'] >= end:
+            if len(current) > 1:
+                groups.append(current)
+            current = []
+        current.append(index)
+        end = max(end, record['endedNs'] if record['completed'] else float('inf'))
+    if len(current) > 1:
+        groups.append(current)
+    return [dict(commandIndexes=indices, reconciledZeroChange=all(
+        records[i]['completed'] and same(records[indices[0]]['before'], records[i]['before'])
+        and same(records[indices[0]]['before'], records[i]['after']) for i in indices))
+        for indices in groups]
+
+
 def summarize(directory, before, after):
     records, errors = [], []
     paths = []
@@ -233,6 +251,9 @@ def summarize(directory, before, after):
     records.sort(key=lambda r: r['startedNs'])
     if before.get('error') or after.get('error'):
         errors.append('Failed role boundary observation')
+    overlaps = overlapping_groups(records)
+    if any(not group['reconciledZeroChange'] for group in overlaps):
+        errors.append('Overlapping command observations with ambiguous storage changes')
     previous = before
     pending, edits = [], []
     overhead = 0
@@ -242,8 +263,6 @@ def summarize(directory, before, after):
         if not record.get('completed'):
             errors.append('Incomplete command observation')
             continue
-        if index and record['startedNs'] < records[index-1].get('endedNs', float('inf')):
-            errors.append('Overlapping command observations')
         if not same(previous, record['before']):
             errors.append('Unobserved store or revision change between commands')
         previous = record['after']
@@ -270,13 +289,15 @@ def summarize(directory, before, after):
     return dict(schemaVersion=1, attributionComplete=not errors, exact=False,
         scope='Logical regular-file bytes in provider store, reconciled at observed command boundaries; not disk allocation.',
         limitations=['Transient bypasses and writes restored between observations are not detectable.',
+            'Overlapping commands reconcile only when every boundary in the connected group has identical store and HEAD.',
             'Agents can bypass PATH or modify instrumentation; this is not a tamper-proof audit.',
             'If every instrumentation output path is unavailable, lost read-only invocations may be undetectable.',
             'Retained asynchronous writes are detected only when they cross a later observation boundary.',
             'Instrumentation adds queries, hashing and ledger I/O; timings are not comparable to uninstrumented trials.',
-            'Reported instrumentation overhead excludes Python startup and final ledger publication.',
+            'Measured instrumentation duration is cumulative across commands, including concurrent observations; it is not critical-path latency and must not be subtracted from agent elapsed time.',
+            'Reported instrumentation duration excludes Python startup and final ledger publication.',
             'Edit cost includes all commands since the previous observed revision; trailing commands are separate.'],
-        errors=sorted(set(errors)), before=before, after=after, commands=records,
+        errors=sorted(set(errors)), before=before, after=after, commands=records, overlapGroups=overlaps,
         measuredEditCount=len(edits) if not errors else None,
         attributedEditStorageDeltaBytes=sum(e['storageDeltaBytes'] for e in edits) if not errors else None,
         edits=edits, trailingCommandIndexes=pending,

@@ -133,8 +133,10 @@ class Trial:
             return self.workspace.call('resolve', 'workflow', role)['revision']
         return self.workspace.git('rev-parse', role).decode().strip()
 
-    def test_command(self, role, revision, runs, project=None, cache=None):
+    def test_command(self, role, revision, runs, project=None, cache=None, kode_executable=None):
         source = ['--project', project / 'kvik.json'] if project else self.workspace.source_args(role, revision)
+        if kode_executable is not None and not project:
+            source[source.index('--kode') + 1] = kode_executable
         return [self.state['runtime'], 'test', *source, '--tools', self.state['tools'],
                 '--store', cache or self.cache, '--runs', runs, '--module', 'library', '--target', 'jvm',
                 '--jobs', '1', '--memory-mib', '4096']
@@ -211,7 +213,7 @@ Use the latest revision and matching blob guards each time. An unchanged transac
 Merge: merge workflow OTHER_REV --into {role} --expect-head CURRENT_REV --intent TEXT.
 Conflicts return data and do not move the reference; resolve via a guarded transaction on the current head.
 Test (replace FINAL_REV with your immutable final revision):
-{shlex.join(list(map(str, self.test_command(role, 'FINAL_REV', runs))))}
+{shlex.join(list(map(str, self.test_command(role, 'FINAL_REV', runs, kode_executable=storage_wrapper))))}
 '''
         else:
             path = self.workspace.paths[role]
@@ -514,6 +516,9 @@ def run(args):
             pair['controlsValid'] = pair['sameBaseline'] and len(specifications[0]) == 3 and specifications[0] == specifications[1]
             pair['comparisonEligible'] = pair['controlsValid'] and all(
                 w.get('verified') and w.get('scenarioProbe', {}).get('exercised') for w in pair['workflows'].values())
+            pair['storageComparisonEligible'] = pair['comparisonEligible'] and all(
+                agent.get('storageAttribution', {}).get('complete') is True
+                for workflow in pair['workflows'].values() for agent in workflow.get('agents', []))
             write_json(root / 'comparison.json', result)
     print('Results:', root / 'comparison.json', flush=True)
 
