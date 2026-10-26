@@ -824,8 +824,6 @@ DEFS["abiSnapshot"] = versioned({**ABI_SCOPE, "inputs": ref("digest"), "format":
 DEFS["abiSnapshot"]["allOf"] = [{"if": {"properties": {"target": {"const": "jvm"}}},
     "then": {"properties": {"format": {"const": "bcv-jvm-v1"}}},
     "else": {"properties": {"format": {"const": "bcv-klib-v1"}}}}]
-DEFS["abiSnapshot"]["allOf"].append({"if": {"properties": {"compilerVersion": {"const": "2.4.21"}}},
-    "then": {"properties": {"target": {"const": "jvm"}}}})
 DEFS["abiSnapshot"]["description"] = "Exact public API text with LF line endings; semantic validation additionally limits UTF-8 to 8 MiB."
 DEFS["abiComparison"] = object_({**ABI_SCOPE, "snapshot": PATH, "baseline": PATH})
 DEFS["abiComparison"]["description"] = "Snapshot and baseline paths must be distinct."

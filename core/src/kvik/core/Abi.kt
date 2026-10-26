@@ -62,7 +62,6 @@ data class AbiSnapshot(val module: String, val target: String, val inputs: Diges
     init {
         requireAbiScope(module, target)
         require(isSupportedJvmCompilerVersion(compilerVersion)) { "Unsupported ABI compiler version" }
-        require(compilerVersion != "2.4.21" || target == "jvm") { "Kotlin 2.4.21 ABI extraction supports JVM only" }
         require(api.length <= ABI_MAX_BYTES && api.encodeToByteArray(throwOnInvalidSequence = true).size <= ABI_MAX_BYTES)
         require('\r' !in api && '\u0000' !in api && (api.isEmpty() || api.endsWith('\n'))) { "ABI text must use LF with a final newline" }
     }

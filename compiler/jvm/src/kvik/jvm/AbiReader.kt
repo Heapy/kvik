@@ -17,7 +17,6 @@ object AbiReader {
         require(kvik.core.isSupportedJvmCompilerVersion(compilerVersion) && version == compilerVersion) {
             "ABI reader compiler version does not match manifest: expected $compilerVersion, found $version"
         }
-        require(compilerVersion != "2.4.21" || target == "jvm") { "Kotlin 2.4.21 ABI extraction supports JVM only" }
         val output = BoundedText()
         if (target == "jvm") {
             JarFile(artifact).use { it.loadApiFromJvmClasses() }.filterOutNonPublic().dump(output)

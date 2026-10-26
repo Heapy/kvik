@@ -38,8 +38,8 @@ snapshot_validator = Draft202012Validator({**schema, "$ref": "#/$defs/abiSnapsho
 snapshot = dict(schemaVersion=1, module="library", target="jvm", format="bcv-jvm-v1", compilerVersion="2.4.21",
     readerVersion="0.18.1", inputs={"hash": "0" * 64, "sizeBytes": 0}, api="public class Sample\n")
 snapshot_validator.validate(snapshot)
-for target in ("macosArm64", "js", "wasmJs"):
-    assert not snapshot_validator.is_valid({**snapshot, "target": target, "format": "bcv-klib-v1"})
+for target in ("macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64", "js", "wasmJs"):
+    snapshot_validator.validate({**snapshot, "target": target, "format": "bcv-klib-v1"})
 plugin_validator = Draft202012Validator({**schema, "$ref": "#/$defs/compilerPlugin"})
 plugin = dict(module="producer", id="example.plugin", compilerVersion="2.4.21", targets=["jvm"], scopes=["main"], options=[], inputs=[])
 plugin_validator.validate(plugin)

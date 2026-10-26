@@ -10209,22 +10209,6 @@
               }
             }
           }
-        },
-        {
-          "if": {
-            "properties": {
-              "compilerVersion": {
-                "const": "2.4.21"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "target": {
-                "const": "jvm"
-              }
-            }
-          }
         }
       ],
       "description": "Exact public API text with LF line endings; semantic validation additionally limits UTF-8 to 8 MiB."

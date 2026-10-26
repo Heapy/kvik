@@ -9,17 +9,15 @@ class AbiTest {
         for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64", "js", "wasmJs")) {
             val snapshot = AbiSnapshot("library", target, digest, "public class Sample\n")
             assertEquals(snapshot, AbiSnapshot.fromJson(snapshot.toJson()))
-            val previousReader = snapshot.copy(compilerVersion = "2.4.10")
-            assertEquals(previousReader, AbiSnapshot.fromJson(previousReader.toJson()))
-            assertNotEquals(snapshot.toJson(), previousReader.toJson())
+            for (version in listOf("2.4.10", "2.4.21")) {
+                val reader = snapshot.copy(compilerVersion = version)
+                assertEquals(reader, AbiSnapshot.fromJson(reader.toJson()))
+                assertNotEquals(snapshot.toJson(), reader.toJson())
+            }
             for ((field, value) in listOf("readerVersion" to "0.18.0", "compilerVersion" to "2.3.0", "format" to "unknown")) {
                 assertFails { AbiSnapshot.fromJson(JsonValue.Object(snapshot.toJson().values + (field to value.json()))) }
             }
         }
-        val latest = AbiSnapshot("library", "jvm", digest, "public class Sample\n", compilerVersion = "2.4.21")
-        assertEquals(latest, AbiSnapshot.fromJson(latest.toJson()))
-        for (target in listOf("macosArm64", "js", "wasmJs"))
-            assertFails { latest.copy(target = target) }
         assertFails { AbiSnapshot("library", "unknown", digest, "") }
         assertFails { AbiSnapshot("library", "jvm", digest, "public class Sample\r\n") }
         assertFails { AbiSnapshot("library", "jvm", digest, "unterminated") }
