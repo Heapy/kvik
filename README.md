@@ -1369,6 +1369,58 @@ This small JVM experiment does not cover the Kode/Git agent comparison from K17.
 CI runs only the harness accounting/failure tests; model
 calls are manual and incur provider usage.
 
+The completed comparison contains two repeats for each of the five tasks and
+both backends: 20 final agent runs, all independently verified, with no graded
+false completion claims. Mean time to the independently verified result is:
+
+| Task (two runs per backend) | KTC 0.13.0 | Kvik |
+| --- | ---: | ---: |
+| Compilation-error repair | 29.06 s | 31.09 s |
+| Failing-test repair | 33.74 s | 31.26 s |
+| File ownership | 25.52 s | 15.24 s |
+| Stale verification | 26.53 s | 23.08 s |
+| Independent worktrees | 59.07 s | 54.34 s |
+
+Across ten runs per backend, verified-result time totals 347.844 s for KTC and
+310.039 s for Kvik; tool calls total 110 and 83. Returned command-output bytes
+total 148,019 and 271,860 respectively. Observed compiler invocations total 11
+and 1, with the different counting semantics described above. Both backends
+passed all final trials, so this sample does not establish a reliability advantage.
+The higher Kvik output volume is a concrete interface cost to reduce.
+
+The retained final set under `.kvik/tests/agent-comparison/` is
+`case-nys6pb55/trials-lzx0alky` (repairs),
+`case-rx23w4z2/trials-pneety38` (stale-verification records only),
+`case-rx23w4z2/trials-lhle_gmn` (ownership) and
+`case-rx23w4z2/trials-n1zns5mj` (worktrees). Original ownership trials rejected by
+an overly strict source-set description grader are superseded by the replacement
+set; an earlier repair pair and a worktree pair interrupted by a harness setup
+error are excluded. Their raw results remain retained. Two repeats per task, a
+small JVM fixture, shared provisioned tools, and local approval overhead limit
+generalization; these totals combine distinct tasks rather than a throughput test.
+
+The interim K11 decision is to continue the bounded internal prototype while
+keeping existing builds available. Source-built Kotlin/Native compositions,
+owned foreground lifecycle, fresh tests after compilation reuse and two-runner
+JVM remote caching have working acceptance paths. The measured source bootstrap
+takes 591.215 s on the named Mac, including 445.447 s of archive provisioning;
+offline reconstruction and helper recomposition still take 97.352/107.663 s.
+This is a substantial plugin-development cost despite cached Mac startup meeting
+150 ms. Linux help/inspection p95 remains 161.94/210.38 ms, above that budget.
+Native outputs remain local-only where relocation is unsafe, and the pinned
+Grogu Linux fixture cannot yet be fetched from its upstream repository.
+
+The next bounded work is to close the remaining lifecycle and verification gate
+audit, reduce cached Linux launch cost without skipping content checks, reduce
+default agent output volume while preserving queryable detail, and make the
+pinned real-project fixture available to CI. K17 remains an experiment: its
+separate comparison did not demonstrate an economy or reliability advantage.
+These results do not justify replacing KTC generally or claiming broad KMP
+compatibility. Total maintenance cost versus extending KTC has not been measured;
+structured inspection and freshness contracts remain candidates for reuse there.
+The full requirement audit and final K11 decision remain open in
+[implementation status](docs/STATUS.md).
+
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;
 see [workspace compiler plugins](docs/workspace-compiler-plugins.md).
