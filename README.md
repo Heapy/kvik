@@ -1268,6 +1268,46 @@ after the trial, with first and second calls reported separately; the first call
 is not assumed cold. Model calls are never part of automatic CI; CI runs only
 the grading and accounting regression tests.
 
+The 2026-10-26 macOS ARM64 run completed two repetitions of each scenario:
+six paired workflows and 36 agent roles using `gpt-6-sol` at `high` effort.
+All pairs met the recorded comparison controls, all submissions passed independent
+verification, and the grader found no false completion claims. Every conflict and
+integration-budget probe exercised its intended failure before repair.
+
+| Aggregate for 18 roles per backend | Git worktrees | Kode |
+| --- | ---: | ---: |
+| Agent process time | 913.854 s | 1,150.148 s |
+| Independent grading time | 160.776 s | 240.199 s |
+| Tool calls | 212 | 254 |
+| Returned command-output bytes | 501,823 | 643,811 |
+| Output tokens | 41,482 | 56,848 |
+| Successful compilation actions | 40 | 40 |
+| Redundant / failed compilation actions | 0 / 0 | 0 / 0 |
+| Summed role repository-storage increases | 32,281 B | 39,458 B |
+| Snapshot materialization time | 0.332 s | 0.851 s |
+
+Kode took more agent time in all six pairs: 25.9% more in aggregate, with 19.8%
+more tool calls. Integration-agent time alone was 407.150 s for Git and 438.031 s
+for Kode. The six explicit Kode index measurements built 12 blobs on their first
+call and reused all 12 on their second; median latency was 125.51/31.10 ms, outside
+agent timing. This does not compare Git search latency. Storage deltas cover whole
+roles rather than individual CLI edits; finer per-edit attribution remains open.
+
+These results demonstrate the bounded revision/edit/test/merge workflow, but do
+not demonstrate better reliability or lower cost than Git. Keep Kode as an
+experiment and defer IDE overlays, composed projects and remote-execution expansion
+until a broader comparison justifies them. Prioritize command batching and smaller
+responses before another economy trial. The fixture is small, execution is serial,
+generated tests differ, and provisioned tools and OS caches are shared.
+
+One integration agent used a temporary transaction file outside its prescribed
+scratch directory. Its committed project scope and verified result passed the
+rubric; the grader does not enforce every filesystem instruction, and repository
+storage omits that scratch file. Excluding that whole pair still leaves Kode with
+more agent time and tool calls. The retained run is
+`.kvik/tests/workspace-agent-comparison/case-n9gmbbwq/comparison.json`
+(SHA-256 `af37fd7efa7e54402eec1343968fd58ef9550a0309e4c4b961c5320705fa2cbb`).
+
 For real agent workflow trials against KTC 0.13.0, prepare the shared two-module
 JVM fixture and explicitly opt in to model calls:
 
