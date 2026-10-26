@@ -105,6 +105,7 @@ def main():
              '--konan-home', native, '--konan-data', data])
 
     if args.prepare_only is None:
+        run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/contracts', '-p', 'test_*schema.py'])
         run([sys.executable, ROOT/'tools/test_files_platform.py'])
         run([sys.executable, ROOT/'tools/test_foreground_keys_boundary.py'])
         run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/bootstrap', '-p', 'test_linux*.py'])
