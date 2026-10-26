@@ -85,7 +85,16 @@ def main():
     resolved = invoke('resolve', [runtime, 'resolve', '--project', case/'kvik.json'])
     assert resolved.returncode == 0, resolved.stdout+resolved.stderr
     resolution = json.loads(resolved.stdout)
-    assert resolution['artifacts'] == resolution['metadata'] == resolution['selections'] == 0
+    # Shared source sets now lock their editor metadata by default, even when the
+    # platform compilations have no external declarations. This must not make a
+    # foreign-host request proceed to compiler/tool verification below.
+    selections = json.loads((case/'kvik.lock.json').read_bytes())['selections']
+    assert resolution['selections'] == len(selections) == 2
+    assert {(s['domain']['target'], s['domain']['sourceSet'], s['domain']['compilation'])
+            for s in selections} == {('common', 'main', 'main'), ('common', 'tests', 'test')}
+    assert all(s['requested'] == 'org.jetbrains.kotlin:kotlin-stdlib:2.4.20' and
+               s['variant']['usage'] == 'kotlin-metadata' and s['metadata'] and
+               len(s['artifacts']) == 1 and s['artifacts'][0]['url'].endswith('-all.jar') for s in selections)
     for label, targets in [('foreign-only', [foreign]), ('mixed', ['jvm', foreign])]:
         command = [runtime, 'test', '--project', case/'kvik.json', '--tools', case/'tools.json',
                    '--module', 'app', '--offline']
