@@ -149,6 +149,28 @@ def main():
         assert (work / 'editor-metadata' / name).read_bytes() == (work / 'editor-metadata-relocated' / name).read_bytes()
     prepare('editor-direct-klib', classpath=('common.klib',))
     assert (work / 'editor-direct-klib/0.klib').read_bytes() == (work / 'common.klib').read_bytes()
+    # Published PSM can include an empty ancestor with no packaged KLIB, as in kotlin-test.
+    psm_path = 'META-INF/kotlin-project-structure-metadata.json'
+    with zipfile.ZipFile(work / 'stdlib-all.jar') as archive:
+        entries = {e.filename: archive.read(e) for e in archive.infolist()}
+    psm = json.loads(entries[psm_path])
+    structure = psm['projectStructure']
+    for variant in structure['variants']:
+        variant['sourceSet'].append('emptyMain')
+    for source_set in structure['sourceSets']:
+        if source_set['name'] == 'commonMain':
+            source_set['dependsOn'].append('emptyMain')
+    structure['sourceSets'].append(dict(name='emptyMain', dependsOn=[], moduleDependency=[], binaryLayout='klib'))
+    entries[psm_path] = json.dumps(psm).encode()
+    for label, payload in [('absent', {}), ('resources', {'emptyMain/default/resources/data.txt': b'resource'}),
+                           ('partial', {'emptyMain/default/linkdata/module': b'incomplete'})]:
+        with zipfile.ZipFile(work / f'{label}-fragment.jar', 'w') as archive:
+            for name, data in (entries | payload).items():
+                archive.writestr(name, data)
+        prepare('editor-' + label + '-fragment', classpath=(label + '-fragment.jar',), code=1 if label == 'partial' else 0)
+        if label != 'partial':
+            assert json.loads((work / f'editor-{label}-fragment/classpath.json').read_text())['classpath'] == ['0.klib']
+    compile('empty-ancestor-consumer', classpath=('absent-fragment.jar',))
     for label, changes in [('source', dict(sources=('Broken.kt',))), ('plugin', dict(pluginClasspath=['serialization-plugin.jar'])),
                            ('targets', dict(metadataTargets=['jvm'])), ('option', dict(options=['-Werror']))]:
         compile('editor-refuse-' + label, sources=changes.pop('sources', ()), classpath=('stdlib-all.jar',),

@@ -91,13 +91,17 @@ internal fun metadataClasspath(workspace: Workspace, paths: List<String>, scratc
                     listOf(path)
                 } else {
                     val selected = commonSourceSets(parseJson(read(PSM_PATH, 1024 * 1024).decodeToString(throwOnInvalidSequence = true)), targets, minimumTargets)
-                    selected.map { source ->
-                        val destination = scratch.resolve(index.toString()).resolve(source)
-                        Files.createDirectories(destination)
+                    selected.mapNotNull { source ->
                         val prefix = "$source/"
                         val entries = zip.entries().asSequence().filter { !it.isDirectory && it.name.startsWith(prefix) }.toList()
-                        require(entries.isNotEmpty()) { "Selected metadata source set has no KLIB: $source" }
+                        // KGP retains empty/suppressed fragments in project-structure metadata
+                        // without publishing a KLIB (for example kotlin-test's commonMain).
+                        // Resource-only fragments likewise contribute no compiler library.
+                        if (entries.all { it.name.startsWith("${prefix}resources/") || it.name.startsWith("${prefix}default/resources/") })
+                            return@mapNotNull null
                         requireCommonManifest(read("${source}/default/manifest", 1024 * 1024), targets)
+                        val destination = scratch.resolve(index.toString()).resolve(source)
+                        Files.createDirectories(destination)
                         for (entry in entries) {
                             val relative = LogicalPath(entry.name.removePrefix(prefix))
                             val output = destination.resolve(relative.value)
