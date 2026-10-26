@@ -6,7 +6,7 @@ import kvik.core.*
 data class TestObservation(val tests: List<TestResult>, val counts: TestCounts, val status: VerificationStatus)
 data class RunEvidence(val record: VerificationRecord, val exitStatus: ExitStatus)
 
-internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)")) ||
+internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|ide-inputs|benchmark-smoke|benchmark-measurement)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(js|wasmJs):(build|test|compile-tests|application|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)")) ||
@@ -42,7 +42,7 @@ fun aggregateRunEvidence(
 ): RunEvidence {
     val checks = requestedChecks.sorted().toSet()
     require(checks.isNotEmpty() && checks.all(::validCheck)) {
-        "Requested checks must identify module:target:build|test|compile-tests|classpath-main|classpath-test|benchmark-smoke|benchmark-measurement|application|package|abi-dump|abi-check or script:name:jvm:prepare|run"
+        "Requested checks must identify module:target:build|test|compile-tests|classpath-main|classpath-test|ide-inputs|benchmark-smoke|benchmark-measurement|application|package|abi-dump|abi-check or script:name:jvm:prepare|run"
     }
     val terminals = terminalActions.toMap()
     val graph = actionDependencies.mapValues { it.value.toSet() }

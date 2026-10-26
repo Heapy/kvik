@@ -473,10 +473,19 @@ DEFS["testResult"] = object_({"id": NONEMPTY, "module": ID, "target": NONEMPTY, 
     "message": nullable(STRING), "details": ref("testDetails")}, optional=("details",))
 DEFS["testCounts"] = object_({"discovered": nullable(INT), "executed": INT, "failed": INT, "skipped": INT, "discoveryComplete": BOOL})
 DEFS["testScopeSummary"] = object_({"status": enum("passed", "failed", "incomplete", "cancelled"), "counts": ref("testCounts")})
+IDE_ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*$(?![\s\S])"}
+DEFS["ideInputRoot"] = object_({"path": PATH, "sourceSet": STRING, "generated": BOOL, "resource": BOOL, "common": BOOL})
+DEFS["jvmIdeCompilation"] = object_({"module": IDE_ID, "compilation": enum("main", "test"),
+    "roots": array(ref("ideInputRoot"), uniqueItems=True), "modules": array(IDE_ID, uniqueItems=True),
+    "libraries": array(PATH, uniqueItems=True), "compilerOptions": array(STRING), "hasCompilerPlugins": BOOL})
+DEFS["ideInputs"] = versioned({"module": IDE_ID, "compilations": array(ref("jvmIdeCompilation"), minItems=1, uniqueItems=True)})
+DEFS["ideaExport"] = versioned({"kind": {"const": "idea-export"}, "directory": STRING, "preparation": STRING,
+    "sdk": {"type": "string", "minLength": 1}, "compilations": array(IDE_ID, minItems=1, uniqueItems=True)})
+
 DEFS["jvmClasspath"] = versioned({"module": ID, "compilation": enum("main", "test"), "classpath": array(PATH, uniqueItems=True)})
 DEFS["jvmClasspath"]["description"] = "Ordered compiler classpath; accompanying input tree must cover every JAR or directory and contain no unrelated files."
 DEFS["requestedCheck"] = {"oneOf": [
-    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|ide-inputs|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|application|package))$(?![\s\S])"},
@@ -880,7 +889,7 @@ DEFS["actionToolVerification"] = object_({"actionId": NONEMPTY, "scope": enum("j
 DEFS["hashingStatistics"] = object_({"operations": INT, "bytes": INT, "durationNanos": INT})
 DEFS["inputCaptureStatistics"] = object_({"kind": enum("filesystem", "source-provider"),
     "durationNanos": INT, "hashing": ref("hashingStatistics")})
-DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "action-cache-transfer", "action-timing", "action-tool-verification", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready"), "payload": ANY_OBJECT})
+DEFS["event"] = versioned({"runId": STRING, "sequence": {"type": "integer", "minimum": 1}, "type": enum("run-started", "action-started", "action-finished", "action-cache-decision", "action-cache-transfer", "action-timing", "action-tool-verification", "diagnostic", "test-result", "run-finished", "session-state", "application-prepared", "application-started", "application-finished", "framework-ready", "abi-ready", "documentation-ready", "benchmark-ready", "ide-inputs-ready"), "payload": ANY_OBJECT})
 DEFS["configurationEditOperation"] = {"oneOf": [
     object_({"op": {"const": "set-dependency"}, "module": ID, "sourceSet": ID, "dependency": ref("dependency")}),
     object_({"op": {"const": "set-dependency-version"}, "module": ID, "sourceSet": ID, "package": NONEMPTY, "version": NONEMPTY}),
@@ -950,6 +959,7 @@ DEFS["event"]["allOf"] = [{"if": {"properties": {"type": {"const": kind}}}, "the
     "abi-ready": ref("abiReady"),
     "documentation-ready": ref("documentationReady"),
     "benchmark-ready": ref("benchmarkReady"),
+    "ide-inputs-ready": object_({"directory": {"type": "string", "minLength": 1}}),
     "action-started": object_({"actionId": STRING, "key": ref("digest")}),
     "action-cache-decision": ref("actionCacheDecision"),
     "action-timing": ref("actionTiming"),
@@ -1151,7 +1161,7 @@ DEFS["doctor"] = versioned({
 })
 
 
-GRAPH_MODES = ("build", "test", "compile-tests", "classpath-main", "classpath-test", "benchmark-smoke",
+GRAPH_MODES = ("build", "test", "compile-tests", "classpath-main", "classpath-test", "ide-inputs", "benchmark-smoke",
     "benchmark-measurement", "application", "package", "abi-dump", "abi-check", "documentation")
 DEFS["outputArtifact"] = object_({"path": PATH, "kind": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
     "shape": enum("file", "tree", "file-or-tree")})

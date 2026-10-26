@@ -134,6 +134,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         ProjectMode.TEST -> "test"
         ProjectMode.COMPILE_TESTS -> "compile-tests"
         ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST -> "jvm-classpath"
+        ProjectMode.IDE_INPUTS -> "prepare-ide"
         ProjectMode.APPLICATION -> "prepare-application"
         ProjectMode.PACKAGE -> "package-library"
         ProjectMode.ABI_DUMP -> "abi-dump"
@@ -307,6 +308,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val sqlDelight = SqlDelightExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val benchmarks = JvmBenchmarkExecutor(run.runId, run.path, host, content, tools.jvmProvider())
                     val classpath = JvmClasspathExecutor(content)
+                    val ideInputs = IdeInputsExecutor(content)
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
                     val kmpLibrary = KmpLibraryPackageExecutor(content)
@@ -322,6 +324,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-sqldelight-v1" -> sqlDelight
                             "kvik-jvm-script-v1", "kvik-kotlin-script-v1", "kvik-jvm-script-generator-v1", "kvik-kotlin-script-generator-v1" -> scripts
                             "kvik-jvm-classpath-v1" -> classpath
+                            "kvik-ide-inputs-v1" -> ideInputs
                             "kvik-jvm-benchmark-harness-v1", "kvik-jvm-benchmark-v1" -> benchmarks
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library
@@ -542,6 +545,25 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                 record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
                 journal.diagnostic(Diagnostic("KVIK_ABI_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
                     failure.message ?: "Cannot materialize ABI candidates"))
+            }
+        }
+        if (mode == ProjectMode.IDE_INPUTS && record.status == VerificationStatus.PASSED) {
+            try {
+                var current = Freshness.INDETERMINATE
+                val exposed = materializeIdeInputs(record, content, run.path) {
+                    current = try { inputFreshness() } catch (_: Exception) { Freshness.INDETERMINATE }
+                    cancelled = kvik_interrupt_requested() != 0
+                    !cancelled && current == Freshness.CURRENT
+                }
+                if (!exposed) record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.INCOMPLETE,
+                    freshnessAtCompletion = current)
+                else journal.emit("ide-inputs-ready", obj("directory" to "${run.path}/ide".json()))
+            } catch (failure: Exception) {
+                failedSetup = true; failureExit = ExitStatus.FAILED
+                cancelled = kvik_interrupt_requested() != 0
+                record = record.copy(status = if (cancelled) VerificationStatus.CANCELLED else VerificationStatus.FAILED)
+                journal.diagnostic(Diagnostic("KVIK_IDE_MATERIALIZATION_FAILED", DiagnosticCategory.INFRASTRUCTURE,
+                    failure.message ?: "Cannot materialize IDE inputs"))
             }
         }
         if (mode in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST) && record.status == VerificationStatus.PASSED) {

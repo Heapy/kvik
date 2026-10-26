@@ -29,12 +29,14 @@ fun main(args: Array<String>) {
 private fun command(args: Array<String>) {
     when (args.firstOrNull() ?: "help") {
         "jvm-classpath" -> exitProcess(jvmClasspathCommand(args.drop(1)).code)
+        "prepare-ide" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.IDE_INPUTS).status.code)
+        "idea-export" -> exitProcess(ideaExportCommand(args.drop(1)).code)
         "bsp" -> exitProcess(bspCommand(args.drop(1)))
         "mcp" -> exitProcess(mcpCommand(args.drop(1)))
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, inspect-graph, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, inspect-graph, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, prepare-ide, idea-export, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
             Tool diagnostics: doctor --tools PATH --target TARGET (repeatable) [--check build|test]; reads installed tools without launching or downloading them
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
@@ -57,6 +59,8 @@ private fun command(args: Array<String>) {
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs (repeatable) --tools PATH
             Direct build/test output: --output events|summary (default events); summary retains diagnostics and committed evidence paths
             IDE classpath: jvm-classpath --compilation main|test plus JVM build options; prepares prerequisite outputs without compiling the requested source set
+            IDE preparation: prepare-ide plus JVM build options; prepares source-module edges, JARs and generated roots without compiling ordinary modules
+            IDEA export: idea-export --sdk IDEA_JDK_NAME --output NEW_DIRECTORY plus JVM build options; currently JVM source sets without common refinement or compiler plugins
             Test compilation: compile-tests uses build options and compiles/links tests without running them
             JS/Wasm: build/test use explicit stdlib/test KLIB dependencies; test execution requires node.root and pinned node.identity; browser and WASI runtimes are not yet supported
             Configuration edits: config validate --project PATH; config plan --project PATH --edits FILE; config apply --plan FILE

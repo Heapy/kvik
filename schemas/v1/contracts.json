@@ -5770,6 +5770,159 @@
       ],
       "additionalProperties": false
     },
+    "ideInputRoot": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+        },
+        "sourceSet": {
+          "type": "string"
+        },
+        "generated": {
+          "type": "boolean"
+        },
+        "resource": {
+          "type": "boolean"
+        },
+        "common": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "sourceSet",
+        "generated",
+        "resource",
+        "common"
+      ],
+      "additionalProperties": false
+    },
+    "jvmIdeCompilation": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "compilation": {
+          "enum": [
+            "main",
+            "test"
+          ]
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ideInputRoot"
+          },
+          "uniqueItems": true
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+          },
+          "uniqueItems": true
+        },
+        "libraries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+          },
+          "uniqueItems": true
+        },
+        "compilerOptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hasCompilerPlugins": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "module",
+        "compilation",
+        "roots",
+        "modules",
+        "libraries",
+        "compilerOptions",
+        "hasCompilerPlugins"
+      ],
+      "additionalProperties": false
+    },
+    "ideInputs": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
+        "compilations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jvmIdeCompilation"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "module",
+        "compilations"
+      ],
+      "additionalProperties": false
+    },
+    "ideaExport": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "idea-export"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "preparation": {
+          "type": "string"
+        },
+        "sdk": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compilations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "directory",
+        "preparation",
+        "sdk",
+        "compilations"
+      ],
+      "additionalProperties": false
+    },
     "jvmClasspath": {
       "type": "object",
       "properties": {
@@ -5809,7 +5962,7 @@
       "oneOf": [
         {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|benchmark-smoke|benchmark-measurement)$(?![\\s\\S])"
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|ide-inputs|benchmark-smoke|benchmark-measurement)$(?![\\s\\S])"
         },
         {
           "type": "string",
@@ -10935,7 +11088,8 @@
             "framework-ready",
             "abi-ready",
             "documentation-ready",
-            "benchmark-ready"
+            "benchmark-ready",
+            "ide-inputs-ready"
           ]
         },
         "payload": {
@@ -11069,6 +11223,32 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/benchmarkReady"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ide-inputs-ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "directory"
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -15822,6 +16002,7 @@
             "compile-tests",
             "classpath-main",
             "classpath-test",
+            "ide-inputs",
             "benchmark-smoke",
             "benchmark-measurement",
             "application",

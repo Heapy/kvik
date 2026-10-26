@@ -2054,6 +2054,58 @@ class IosFrameworkGraphTest {
     }
 }
 
+class IdeInputGraphTest {
+    @Test fun importPreparesEditableClosureWithoutCompilingBrokenOrEmptySources() {
+        val hidden = module("hidden")
+        val base = module("base", listOf(Dependency.Module("hidden", exported = false)))
+        val app = module("app", listOf(Dependency.Module("base", exported = true)))
+        val config = configuration(hidden, base, app)
+        val plan = graph(config, TreeManifest(emptyList()), request(ProjectMode.IDE_INPUTS))
+        assertEquals(listOf("app:jvm:ide-inputs"), plan.nodes.map { it.id })
+        assertEquals(setOf("app:jvm:ide-inputs"), plan.requestedChecks)
+        val action = plan.nodes.single().resolve(emptyMap())
+        val model = IdeInputs.fromJson(action.parameters)
+        assertEquals(model, IdeInputs.fromJson(model.toJson()))
+        assertEquals(setOf("app.main", "app.test", "base.main", "hidden.main"), model.compilations.map { it.name }.toSet())
+        assertEquals(listOf("base.main"), model.compilations.single { it.name == "app.main" }.modules)
+        assertEquals(listOf("hidden.main"), model.compilations.single { it.name == "base.main" }.modules)
+        val test = model.compilations.single { it.name == "app.test" }
+        assertEquals(listOf("app.main", "base.main"), test.modules)
+        assertTrue(test.roots.none { it.sourceSet.endsWith("Main") })
+        assertTrue(test.roots.any { it.resource })
+        assertTrue(action.inputs.files.all { it.path.value.startsWith("deps/") })
+        assertTrue(model.compilations.all { it.roots.isNotEmpty() })
+        assertFails { graph(config, request = request(ProjectMode.IDE_INPUTS, "macosArm64")) }
+    }
+
+    @Test fun declaredGeneratedSourcesArePreparedWithoutConsumerCompilationAndAffectIdentity() {
+        val config = configuration(module("app"))
+        val effective = effectiveConfiguration(config)
+        val producer = "plugin:fixture:generate:source"
+        val output = LogicalPath("generated")
+        val node = ActionNode(producer, emptySet(), ActionOutputContract(treeOutput(output.value, "generated-sources"))) {
+            ActionSpec("fixture-generator", composition, ActionKind.GENERATE, mapOf("os" to "test"), "jvm", tools.getValue("jvm"),
+                TreeManifest(emptyList()), listOf(output), emptyList(), emptyMap())
+        }
+        val generated = ProjectGeneratedInputs(nodes = listOf(node), sources = listOf(GeneratedSourceRoot(producer, "app", "jvmMain", "plugin",
+            "/pluginSettings/fixture", output)))
+        val plan = projectActionGraph(effective, lock(effective), TreeManifest(emptyList()), composition, tools,
+            request(ProjectMode.IDE_INPUTS), generated)
+        assertEquals(setOf(producer, "app:jvm:ide-inputs"), plan.nodes.map { it.id }.toSet())
+        val consumer = plan.nodes.single { it.id == "app:jvm:ide-inputs" }
+        assertEquals(setOf(producer), consumer.dependencies)
+        fun resolve(text: String): ActionSpec = consumer.resolve(mapOf(producer to ActionResult(producer, digest("generator"),
+            ActionStatus.EXECUTED, TreeManifest(listOf(FileEntry(LogicalPath("generated/Generated.kt"), digest(text)))), 0)))
+        val first = resolve("one")
+        val model = IdeInputs.fromJson(first.parameters)
+        val generatedRoot = model.compilations.single { it.name == "app.main" }.roots.single { it.generated }
+        assertTrue(first.inputs.files.any { it.path.value == "${generatedRoot.path.value}/Generated.kt" })
+        assertTrue(model.compilations.single { it.name == "app.test" }.roots.none { it.generated })
+        assertNotEquals(first.key(Sha256), resolve("two").key(Sha256))
+        assertFails { consumer.resolve(emptyMap()) }
+    }
+}
+
 class JvmClasspathGraphTest {
     @Test fun queryClasspathOrderAndCapturedBytesExactlyMatchMainAndTestCompilers() {
         val (original, files) = applicationFixture()

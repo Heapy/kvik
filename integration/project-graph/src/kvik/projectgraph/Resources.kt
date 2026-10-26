@@ -20,6 +20,10 @@ internal class ResourceSelection(private val static: List<FileEntry>, private va
     }
     fun isEmpty() = paths.isEmpty()
     fun isNotEmpty() = !isEmpty()
+    fun resolveGenerated(results: Map<String, ActionResult>): List<FileEntry> {
+        val authored = static.map { it.path }.toSet()
+        return resolve(results).filter { it.path !in authored }
+    }
     operator fun plus(other: ResourceSelection) = ResourceSelection(static + other.static, generated + other.generated, pluginRoots + other.pluginRoots)
     fun resolve(results: Map<String, ActionResult>): List<FileEntry> = (static + generated.flatMap { (script, prefix) ->
         val id = "script:${script.name}:jvm:generate"

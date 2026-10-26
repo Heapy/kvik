@@ -258,6 +258,44 @@ old diagnostic mappings.
 Debugging and unsaved-buffer support remain pending. Compatibility is exercised by the framed protocol clients in
 `tools/test_bsp*_cli.py`; individual IDE clients still need integration testing.
 
+### IDEA project export
+
+Export a JVM project into a new directory and open that directory in IDEA:
+
+```sh
+./kvik --no-build -- idea-export --project /project/kvik.json \
+  --tools /project/tools.json --module app --target jvm \
+  --sdk my-jdk-25 --output /project/.kvik/idea/first
+```
+
+`--sdk` is the name of an IDEA JDK configured to match the project's build tools.
+The export prepares locked JARs and source/resource generators, including their
+prerequisites. Ordinary module dependencies become source-module edges, so errors
+in the edited modules do not prevent import. Main and test compilations retain
+their own JVM settings, private dependency visibility and test friend access.
+Generated files and libraries are copied into the export; authored sources and
+resources remain in their original directories. The included **Kvik build** and
+**Kvik test** run configurations invoke the native build tool.
+
+`prepare-ide` accepts the same JVM build selectors and retains the editor input
+model under the run's `ide/<module>/model.json`, with ordinary files under `input/`.
+The `ide-inputs-ready` event identifies that directory. Preparation is a separate
+check from compilation or tests. Its model has a versioned `ideInputs` JSON Schema.
+
+This is an initial JVM adapter. Common-source refinement, Native/JS/Wasm editor
+models, compiler-plugin analysis, debugging and live project-model reload remain
+pending. `idea-export` rejects unsupported common roots and compiler plugins;
+`prepare-ide` preserves their ownership/presence in the intermediate model.
+After configuration or generator changes, export to another new directory and
+open that generation. Existing exports are never overwritten.
+
+`tools/test_idea_export_cli.py` exercises preparation, generator changes and the
+generated build/test commands. `tools/test_idea_import.py --prepared-case PATH`
+checks the resulting project with installed IDEA's Kotlin resolver and diagnostics
+in an isolated headless profile. The current inspector fixture is pinned to IDEA
+build `263.7307.44`; it explicitly refreshes source roots and imports model changes
+as new projects, so it does not establish live GUI model reload.
+
 ### Configuration changes
 
 `config validate` parses the configuration and validates the project graph and

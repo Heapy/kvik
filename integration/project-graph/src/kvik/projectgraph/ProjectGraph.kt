@@ -12,7 +12,7 @@ import kvik.library.*
 import kvik.abi.*
 import kvik.documentation.*
 
-enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, CLASSPATH_MAIN, CLASSPATH_TEST, BENCHMARK_SMOKE, BENCHMARK_MEASUREMENT, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
+enum class ProjectMode { BUILD, TEST, COMPILE_TESTS, CLASSPATH_MAIN, CLASSPATH_TEST, IDE_INPUTS, BENCHMARK_SMOKE, BENCHMARK_MEASUREMENT, APPLICATION, PACKAGE, ABI_DUMP, ABI_CHECK, DOCUMENTATION }
 private fun ProjectMode.isClasspath() = this in setOf(ProjectMode.CLASSPATH_MAIN, ProjectMode.CLASSPATH_TEST)
 private fun ProjectMode.isBenchmark() = this in setOf(ProjectMode.BENCHMARK_SMOKE, ProjectMode.BENCHMARK_MEASUREMENT)
 private fun ProjectMode.checkScope() = name.lowercase().replace('_', '-')
@@ -54,7 +54,7 @@ fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
 
 /** Host JVM producers may be prerequisites even when only a Native target was requested. */
 fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<String> {
-    if (request.mode.isClasspath()) {
+    if (request.mode.isClasspath() || request.mode == ProjectMode.IDE_INPUTS) {
         require(request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
         return setOf("jvm")
     }
@@ -153,6 +153,7 @@ private class Builder(
             "JS/Wasm currently supports build, test, compile-tests, packaging, ABI checks and documentation; unsupported JS/Wasm operation"
         }
         require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
+        require(this.request.mode != ProjectMode.IDE_INPUTS || this.request.targets == setOf("jvm")) { "IDE preparation currently requires JVM targets" }
         require(!this.request.mode.isBenchmark() || this.request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
@@ -189,7 +190,7 @@ private class Builder(
         }
         val terminals = linkedMapOf<String, String>()
         for (module in request.modules.sorted()) for (target in request.targets.sorted()) {
-            if (!request.mode.isClasspath()) ensureMain(module, target)
+            if (!request.mode.isClasspath() && request.mode != ProjectMode.IDE_INPUTS) ensureMain(module, target)
             val check = "$module:$target:${request.mode.checkScope()}"
             terminals[check] = when (request.mode) {
                 ProjectMode.BUILD -> if (target(module, target).nativeFramework == null) mainId(module, target) else ensureFramework(module, target)
@@ -197,6 +198,7 @@ private class Builder(
                 ProjectMode.COMPILE_TESTS -> ensureTest(module, target, execute = false)
                 ProjectMode.CLASSPATH_MAIN -> ensureClasspath(module, "main")
                 ProjectMode.CLASSPATH_TEST -> ensureClasspath(module, "test")
+                ProjectMode.IDE_INPUTS -> ensureIdeInputs(module)
                 ProjectMode.BENCHMARK_SMOKE -> ensureBenchmark(module, BenchmarkProfile.SMOKE)
                 ProjectMode.BENCHMARK_MEASUREMENT -> ensureBenchmark(module, BenchmarkProfile.MEASUREMENT)
                 ProjectMode.APPLICATION -> ensureApplication(module, target)
@@ -688,6 +690,61 @@ private class Builder(
                 classpathInputs(classpath, "jvm", results), composition, tools.getValue("jvm"))
         }
         exposeArtifacts(module, "jvm", scope, id)
+        return id
+    }
+
+    private fun ensureIdeInputs(owner: String): String {
+        data class Prepared(val module: String, val scope: String, val sets: List<SourceSet>,
+            val libraries: List<FileEntry>, val modules: List<String>, val generators: List<SourceGenerator>,
+            val sql: String?, val resources: ResourceSelection)
+        val prepared = linkedMapOf<Pair<String, String>, Prepared>()
+        fun visit(module: String, scope: String) {
+            if (module to scope in prepared) return
+            val mainNames = sourceSets(module, "jvm", "main").map { it.name }.toSet()
+            val sets = sourceSets(module, "jvm", scope).filter { scope == "main" || it.name !in mainNames }
+            val classpath = compilationClasspath(module, "jvm", scope)
+            val generators = ensureSourceGenerators(module, sets)
+            val sql = if (scope == "main") sqlDelightFor(module, "jvm") else null
+            val resources = resources(module, "jvm", scope)
+            prepared[module to scope] = Prepared(module, scope, sets, classpath.artifacts, classpath.modules, generators, sql, resources)
+            classpath.modules.forEach { visit(it, "main") }
+        }
+        visit(owner, "main")
+        if (target(owner, "jvm").test != null) visit(owner, "test")
+        val edges = prepared.values.flatMap { item -> item.generators.map(::generatorId) + listOfNotNull(item.sql) + item.resources.dependencies }.toSet()
+        val id = "$owner:jvm:ide-inputs"
+        nodes[id] = ActionNode(id, edges, ActionOutputContract(treeOutput("ide", "ide-inputs"))) { results ->
+            validateResults(results, edges)
+            val inputs = mutableListOf<FileEntry>()
+            val compilations = prepared.values.map { item ->
+                val common = commonSets(item.module)
+                val roots = item.sets.flatMap { set ->
+                    set.directories.map { IdeInputRoot(it, set.name, common = set.name in common) } +
+                        set.resources.map { IdeInputRoot(it, set.name, resource = true) }
+                }.toMutableList()
+                inputs += item.libraries
+                inputs += sourceGeneratorOutputs(item.generators, results).values.flatten()
+                roots += item.generators.map { generator -> IdeInputRoot(LogicalPath(generator.prefix.removeSuffix("/")),
+                    generator.sourceSet, generated = true, common = generator.sourceSet in common) }
+                item.sql?.let { producer ->
+                    inputs += sqlDelightOutputs(item.module, producer, results)
+                    val set = checkNotNull(modules.getValue(item.module).sqlDelight).sourceSet
+                    roots += IdeInputRoot(LogicalPath("generated/sqldelight/${item.module}"), set, generated = true, common = set in common)
+                }
+                val resourceFiles = item.resources.resolveGenerated(results)
+                inputs += resourceFiles
+                // Resource overlays are already checked by ResourceSelection. This single root
+                // contains generated files only; authored resources remain editable in place.
+                if (resourceFiles.isNotEmpty()) roots += IdeInputRoot(LogicalPath("runtime/${item.module}/${item.scope}"),
+                    if (item.scope == "main") target(item.module, "jvm").main else checkNotNull(target(item.module, "jvm").test),
+                    generated = true, resource = true)
+                JvmIdeCompilation(item.module, item.scope, roots.distinct(), item.modules.map { "$it.main" },
+                    item.libraries.map { it.path }, target(item.module, "jvm").optionsFor(item.scope),
+                    selectedPlugins(item.module, "jvm", item.scope).isNotEmpty())
+            }
+            ideInputsAction(IdeInputs(owner, compilations), TreeManifest(inputs.distinct()), composition, tools.getValue("jvm"))
+        }
+        exposeArtifacts(owner, "jvm", "main", id)
         return id
     }
 
