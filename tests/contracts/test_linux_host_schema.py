@@ -15,7 +15,10 @@ def validator(name):
 
 class LinuxHostSchemaTest(unittest.TestCase):
     def test_host_specific_components_and_roots(self):
-        darwin = json.loads((ROOT / 'bootstrap/toolchains.lock.json').read_bytes())
+        darwin = dict(schemaVersion=1, kotlinVersion='2.4.20',
+            host=dict(os='Darwin', architecture='arm64', release='25.0', sdk='26.0'),
+            components={name: dict(hash='0' * 64, sizeBytes=1)
+                        for name in ('jdk', 'kotlinNative', 'llvm', 'libffi', 'sdk', 'xcodeToolchain')})
         linux = copy.deepcopy(darwin)
         linux['host'] = dict(os='Linux', architecture='x86_64', release='6.12', sdk='')
         linux['components']['system'] = linux['components'].pop('sdk')

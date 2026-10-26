@@ -65,7 +65,10 @@ class IosFrameworkSchemaTest(unittest.TestCase):
             self.assertFalse(validator('frameworkReady').is_valid(bad))
 
     def test_optional_sdk_pins_require_matching_roots_and_stay_darwin_only(self):
-        lock = json.loads((ROOT / 'bootstrap/toolchains.lock.json').read_bytes())
+        lock = dict(schemaVersion=1, kotlinVersion='2.4.20',
+            host=dict(os='Darwin', architecture='arm64', release='25.0', sdk='26.0'),
+            components={name: dict(DIGEST)
+                        for name in ('jdk', 'kotlinNative', 'llvm', 'libffi', 'sdk', 'xcodeToolchain')})
         for extras in [('iosSdk',), ('iosSimulatorSdk',), ('iosSdk', 'iosSimulatorSdk')]:
             selected = copy.deepcopy(lock)
             selected['components'].update({name: DIGEST for name in extras})
