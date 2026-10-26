@@ -18,13 +18,6 @@ import tempfile
 import threading
 import time
 
-import jsonschema
-from referencing import Registry, Resource
-
-import test_application_cli as base
-from test_foreground_applications import table, descendants
-from foreground_measurements import ProcessSampler, ControlTimings
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -92,6 +85,14 @@ def signal_application(ownership,expected):
 
 
 def main():
+    # The pure lifecycle guards also run without the acceptance environment.
+    # Schema validation and real process fixtures are needed only by this CLI.
+    import jsonschema
+    from referencing import Registry, Resource
+    import test_application_cli as base
+    from test_foreground_applications import table, descendants
+    from foreground_measurements import ProcessSampler, ControlTimings
+
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime',type=Path,required=True)
     parser.add_argument('--schema-directory',type=Path,default=ROOT/'schemas/v1')

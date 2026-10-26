@@ -45,6 +45,8 @@ jobs:
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_cached_startup.py'
       - name: Check foreground measurements
         run: python3 -m unittest discover -s tools -p 'test_foreground_measurements_unit.py'
+      - name: Check foreground application failure guards without third-party packages
+        run: python3 -S -m unittest discover -s tools -p 'test_foreground_applications_cli_unit.py'
       - name: Check agent-comparison accounting and failure gates
         run: python3 -m unittest discover -s tools -p 'test_agent_comparison_unit.py'
       - name: Prepare Linux tools
@@ -53,8 +55,7 @@ jobs:
         run: |
           docker run --rm --init --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/work/kvik" kvik-linux-host \
-            sh -ec 'python3 -m unittest discover -s tools -p test_foreground_applications_cli_unit.py
-                    python3 tools/linux/provision_system.py --system-root /usr
+            sh -ec 'python3 tools/linux/provision_system.py --system-root /usr
                     python3 tools/linux/verify.py --pin-tools --remote-cache-backend /usr/local/bin/bazel-remote'
       - name: Retain serial and default-parallel measurements
         if: always()
