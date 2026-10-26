@@ -12,6 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bootstrap.identity import canonical, file_digest
+from bootstrap.jvm_worker import worker_classpath
 
 
 def main():
@@ -21,7 +22,9 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--artifacts', type=Path, required=True)
     args = parser.parse_args()
-    bundle = args.runtime.resolve().parent / 'jvm'
+    runtime = args.runtime.resolve().parent
+    bundle = runtime / 'jvm'
+    worker = worker_classpath(runtime, json.loads((runtime / 'manifest.json').read_bytes())['jvmWorkerBundle'])
     manifest = bundle / 'compiler-manifest.json'
     version = json.loads(manifest.read_text())['version']
     assert version in ('2.4.10', '2.4.20', '2.4.21'), version
@@ -35,7 +38,7 @@ def main():
         sources=['NativeToken.kt'], classpath=['input/native-stdlib/shared'], pluginClasspath=[],
         options=['-module-name', 'fixture:shared', '-language-version', '2.4', '-api-version', '2.4', '-Xmulti-platform'],
         outputDirectory='metadata', metadataTargets=['iosArm64', 'iosSimulatorArm64'])
-    cp = os.pathsep.join(map(str, [bundle / 'classes', bundle / f'lib/kotlin-build-tools-api-{version}.jar',
+    cp = os.pathsep.join(map(str, [worker, bundle / f'lib/kotlin-build-tools-api-{version}.jar',
                                    bundle / f'lib/kotlin-stdlib-{version}.jar']))
     def invoke(label, value, expected):
         (case / (label + '.request.json')).write_bytes(canonical(value))

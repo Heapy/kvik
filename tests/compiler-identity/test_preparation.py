@@ -21,7 +21,9 @@ def distribution():
 
 def swapped(before):
     result = copy.deepcopy(before)
-    result['artifacts'][-2], result['artifacts'][-1] = result['artifacts'][-1], result['artifacts'][-2]
+    positions = [next(i for i, entry in enumerate(result['artifacts']) if entry['path'] == name) for name in gate.SWAPPED]
+    left, right = positions
+    result['artifacts'][left], result['artifacts'][right] = result['artifacts'][right], result['artifacts'][left]
     return result
 
 
@@ -29,7 +31,7 @@ class IdentityAuditTest(unittest.TestCase):
     def test_only_original_ordered_artifacts_change(self):
         before = distribution()
         gate.ordered_mutation(before, swapped(before))
-        self.assertEqual([a['path'] for a in before['artifacts'][-2:]], list(gate.SWAPPED))
+        self.assertTrue(set(gate.SWAPPED) <= {a['path'] for a in before['artifacts']})
 
     def test_wrong_bytes_version_plugin_or_order_rejected(self):
         before = distribution()

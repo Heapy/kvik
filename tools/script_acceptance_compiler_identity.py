@@ -7,8 +7,14 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import sys
 
-FIXTURES = Path(__file__).resolve().parents[1] / 'tests/compiler-identity'
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap.jvm_worker import verify_bundle
+from bootstrap.identity import canonical as bundle_canonical
+
+FIXTURES = ROOT / 'tests/compiler-identity'
 SWAPPED = ('kotlinx-coroutines-core-jvm-1.8.0.jar', 'annotations-13.0.jar')
 COMPILE = 'script:plain:jvm:compile'
 RUN = 'script:plain:jvm:run'
@@ -26,8 +32,7 @@ def ordered_mutation(before, after):
     expected = copy.deepcopy(before)
     entries = expected['artifacts']
     positions = [next(i for i, item in enumerate(entries) if item['path'] == name) for name in SWAPPED]
-    assert positions == [len(entries)-2, len(entries)-1]
-    assert len(entries) == 13 and len({a['path'] for a in entries}) == 13
+    assert len({a['path'] for a in entries}) == len(entries)
     entries[positions[0]], entries[positions[1]] = entries[positions[1]], entries[positions[0]]
     assert after == expected and after != before, 'Only the exact consumed compiler classpath transposition is allowed'
 
@@ -59,19 +64,11 @@ def _file(path):
 
 def _bundle(runtime):
     root = runtime.parent/'jvm'
-    bundle = json.loads((root/'manifest.json').read_bytes())
-    distribution = json.loads((root/'compiler-manifest.json').read_bytes())
-    assert _file(root/'manifest.json') == json.loads((runtime.parent/'manifest.json').read_bytes())['jvmWorkerBundle']
-    assert _file(root/'compiler-manifest.json') == bundle['compilerManifest']['digest']
-    assert digest(canonical(distribution)) == bundle['compilerManifest']['digest']
-    for role in ('api', 'stdlib', 'junit'):
-        assert _file(root/bundle[role]['path']) == bundle[role]['digest']
-    paths = {item['path'] for item in bundle['classes']['files']}
-    assert {p.relative_to(root/'classes').as_posix() for p in (root/'classes').rglob('*') if p.is_file()} == paths
-    for entry in bundle['classes']['files']:
-        path = root/'classes'/entry['path']
-        assert _file(path) == entry['digest']
-        assert bool(path.stat().st_mode & 0o111) == entry['executable']
+    expected = json.loads((runtime.parent/'manifest.json').read_bytes())['jvmWorkerBundle']
+    bundle = verify_bundle(runtime.parent, expected)
+    distribution_bytes = (root/'compiler-manifest.json').read_bytes()
+    distribution = json.loads(distribution_bytes)
+    assert bundle_canonical(distribution) == distribution_bytes
     return bundle, distribution
 
 
@@ -81,7 +78,9 @@ def _runtime_pair(gate, runtime_a, runtime_b):
     bundle_a, distribution_a = _bundle(runtime_a)
     bundle_b, distribution_b = _bundle(runtime_b)
     ordered_mutation(distribution_a, distribution_b)
-    assert bundle_a['classes'] == bundle_b['classes'], 'Worker bytecode must remain unchanged'
+    assert bundle_a['schemaVersion'] == bundle_b['schemaVersion'], 'Worker representation must remain unchanged'
+    implementation = 'classes' if bundle_a['schemaVersion'] == 1 else 'workerArchive'
+    assert bundle_a[implementation] == bundle_b[implementation], 'Worker bytecode must remain unchanged'
     for role in ('api', 'stdlib', 'junit', 'worker'):
         assert bundle_a[role] == bundle_b[role], role
     expected_bundle = copy.deepcopy(bundle_a)

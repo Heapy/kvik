@@ -25,7 +25,7 @@ verification query under its corresponding runtime.
 ## Alternate runtime source and trust
 
 Use a fresh copy/worktree of the exact approved A production commit. In its
-`bootstrap/jvm-artifacts.lock.json`, swap only the final two `compilerArtifacts`
+`bootstrap/jvm-artifacts.lock.json`, swap only the two named `compilerArtifacts`
 entries: `kotlinx-coroutines-core-jvm-1.8.0.jar` and `annotations-13.0.jar`. Preserve
 all coordinates, filenames, URLs, sizes and hashes. Rebuild through the ordinary
 bootstrap with verified original artifacts. Do not edit a compiled manifest,
@@ -38,7 +38,7 @@ module checks runtime-lock fields (only the exact library transposition and
 recipe digest may differ), but a recipe digest alone cannot prove its source
 inputs. This external receipt is a required part of the final evidence review.
 
-The module verifies both complete JVM worker class trees and requires identical
+The module verifies both complete JVM worker bundles (v1 class trees or v2 JARs) and requires identical
 worker bytes, API, stdlib, JUnit and worker identity. Compiler distributions must
 differ by precisely that ordered transposition; every original compiler JAR and
 the plugin are rehashed against their pins in the supplied artifact directory.

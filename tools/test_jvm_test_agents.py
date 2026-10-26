@@ -6,11 +6,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 from native_files_interop import files_interop_command, files_library_args
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap.jvm_worker import verify_bundle, worker_classpath
 
 
 def canonical(value):
@@ -41,7 +44,9 @@ def main():
         assert result.returncode == 0, (label, (case / (label + '.log')).read_text())
 
     worker = runtime / 'jvm'
-    manifest = json.loads((worker / 'manifest.json').read_text())
+    expected = json.loads((runtime / 'manifest.json').read_bytes())['jvmWorkerBundle']
+    manifest = verify_bundle(runtime, expected)
+    implementation = worker_classpath(runtime, expected)
     def library(name):
         entry = manifest[name]
         path = worker / entry['path']
@@ -84,7 +89,7 @@ def main():
         composition=digest(probe.read_bytes()), files=files, cases=cases, toolchains={
             'jdk': digest((jdk / 'bin/java').read_bytes()), 'jvm-worker': digest(canonical(manifest)),
             'jvm-compiler': digest(canonical(json.loads(compiler_manifest.read_text()))), 'junit': digest(junit.read_bytes())},
-        layout=dict(javaExecutable=str(jdk / 'bin/java'), workerClasses=str(worker / 'classes'), btaApiJar=str(api),
+        layout=dict(javaExecutable=str(jdk / 'bin/java'), workerClasses=str(implementation), btaApiJar=str(api),
             stdlibJar=str(stdlib), junitJar=str(junit), compilerArtifacts=tools['compilerArtifacts'], compilerManifest=str(compiler_manifest)))
     (case / 'runs').mkdir()
     request_path = case / 'request.json'
