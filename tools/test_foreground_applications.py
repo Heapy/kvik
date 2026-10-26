@@ -6,6 +6,7 @@ readiness verification is synthetic and identified as such in the retained summa
 """
 import argparse
 import atexit
+import errno
 import hashlib
 import json
 import os
@@ -51,7 +52,10 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--no-build', action='store_true')
-    parser.add_argument('--units-only', action='store_true')
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument('--units-only', action='store_true')
+    selection.add_argument('--scanner-setup-only', action='store_true',
+                           help='Run unit tests and the real guardian scanner exec-failure/recovery scenario')
     args = parser.parse_args()
     table()  # Fail before creating owned jobs when the sandbox denies process inventories.
     output = ROOT/'.kvik/tests/foreground-applications'; output.mkdir(parents=True, exist_ok=True)
@@ -180,6 +184,42 @@ def main():
                 assert time.monotonic()<deadline,remaining;time.sleep(.02)
             self.log.close();self.error.close()
             results.append(dict(name=self.root.name,exitCode=self.process.returncode,tracked=sorted(self.tracked),groups=sorted(self.groups),cleanupSeconds=time.monotonic()-start))
+
+    s=Session('scanner-setup');s.wait('application-started');first=s.effects()[0];s.capture()
+    runtime=s.cache/'executables'/s.key/'kvik.kexe'
+    saved=runtime.with_suffix('.saved');shutil.copy2(runtime,saved)
+    # Replace the next scanner's executable atomically. The running coordinator
+    # and application keep their original processes; the real guardian's exec
+    # fails before any fixture worker code can manufacture an exit status.
+    interpreter=s.root/'absent-interpreter';assert not interpreter.exists()
+    faulty=runtime.with_suffix('.fault');faulty.write_text('#!'+str(interpreter)+'\n');faulty.chmod(0o755)
+    try:
+        os.replace(faulty,runtime)
+        diagnostic=s.wait('diagnostic',lambda p:p['code']=='KVIK_SESSION_OBSERVATION')
+        s.wait('inputs-observed',lambda p:not p['available'])
+        assert 'setup=exec' in diagnostic['payload']['message']
+        assert f'errno={errno.ENOENT}' in diagnostic['payload']['message']
+        observations=[p for p in s.directory.glob('*/observation-result.json')]
+        assert len(observations)==1,observations
+        observation=observations[0];retained=json.loads(observation.read_text())
+        assert retained['exitCode']==127 and retained['setupFailure']==dict(stage='exec',errno=errno.ENOENT),retained
+        assert retained['cancelled'] is False and retained['timedOut'] is False,retained
+        s.capture();s.control('r');status=s.drain_status()
+        assert status['application']['active'] is not None and status['pendingIntents']==['application'],status
+        assert s.process.poll() is None and s.effects()==[first]
+        live={row[0] for row in table()};assert {first['pid'],first['child']}<=live
+    finally:
+        os.replace(saved,runtime)
+    s.wait('inputs-observed',lambda p:p['available']);s.wait('application-started')
+    assert len(s.effects())==2 and s.drain_status()['pendingIntents']==[]
+    s.finish()
+    results[-1]['scannerSetupFailure']=dict(observation=str(observation.relative_to(case)),
+        digest=sha(observation),result=retained,diagnosticSequence=diagnostic['sequence'],
+        recovered=True,applicationEffects=2)
+    if args.scanner_setup_only:
+        write(case/'summary.json',dict(passed=True,scope='Native controller and real guardian scanner exec failure with synthetic application workers',
+              receipt=sha(output/'receipt.json'),results=results,unitLog=sha(case/'unit.log')))
+        print(case);return
 
     s=Session('reload-and-tests');s.wait('application-started');first=s.effects()[0];s.capture()
     (s.root/'hold-prepare').touch();s.control('r');s.wait('application-preparing');s.control('t');s.control('r')

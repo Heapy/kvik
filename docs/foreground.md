@@ -85,3 +85,14 @@ the 2 s graceful-shutdown budget. Functional and budget outcomes are separate;
 `--strict-budgets` exits 3 on a budget miss. Partial summaries and raw streams stay
 under `.kvik/tests/foreground-keys/cli-*`, including on failure. The C inspector
 comes from the supplied source checkout; the runtime uses its bundled guardian.
+
+For the scanner's process-setup failure path, run
+`python3 tools/test_foreground_applications.py --konan-home PATH --java-home PATH --scanner-setup-only`.
+This focused macOS check runs the Native controller and real ownership guardian
+with synthetic application workers. It temporarily replaces the next scanner's
+executable with a script whose interpreter is absent, checks retained
+`setupFailure` (`exec`, `ENOENT`) and exit 127, then restores the executable.
+The current application must stay alive while observation is unavailable; queued
+reload must recover and session shutdown must clean up captured owned processes.
+This checks setup-error propagation, not the cause of earlier unexplained exit-125
+observations. The scenario also runs in the harness's default suite.
