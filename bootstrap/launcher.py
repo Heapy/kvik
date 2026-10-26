@@ -14,7 +14,7 @@ import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
 from bootstrap.pin_tools import host_identity, tool_roots, native_target, component_names
-from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier, tool_archives
+from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier, tool_archives, worker_cache
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -245,6 +245,8 @@ def cached(directory, key):
         if not isinstance(manifest, dict) or directory.is_symlink() or executable.is_symlink() or guardian.is_symlink():
             return False
         jvm_worker.verify_bundle(directory, manifest.get("jvmWorkerBundle"))
+        if "jvmWorkerCache" in manifest:
+            worker_cache.verify_receipt(directory, manifest["jvmWorkerCache"], manifest["jvmWorkerBundle"])
         runtime = read_json(directory / "runtime.lock.json")
         if not isinstance(runtime, dict):
             return False
@@ -489,8 +491,10 @@ def build(args, recipe, selected, lock, key, destination):
             libraries = [bridge / "process.klib"] + native_libraries.build(recipe["nativeLibraries"], source_root,
                 bridge, roots, environment, log, run_build) + extra_libraries
             guardian_digest = file_digest(guardian)
-            worker_digest = jvm_worker.build_bundle(temporary, source_root, recipe["jvmWorkerSources"], jvm_lock,
-                artifacts, roots["jdk"] / "bin/java", environment, log, run_build, source_files=worker_files)
+            worker_digest, worker_receipt = worker_cache.build_or_restore(temporary, source_root, recipe["jvmWorkerSources"], jvm_lock,
+                artifacts, roots["jdk"] / "bin/java", environment, log, run_build, source_files=worker_files,
+                cache=args.cache_dir / "jvm-worker-cache", jdk_identity=lock["toolchains"]["jdk"])
+            (temporary / "jvm-worker-cache.json").write_bytes(canonical(worker_receipt) + b"\n")
             registry.write_text("package kvik.cli\n" + f'const val runtimeComposition: String = "{key["hash"]}"\n' +
                 f'const val runtimeCompositionSize: Long = {key["sizeBytes"]}L\n' +
                 f'const val runtimeGuardianHash: String = "{guardian_digest["hash"]}"\n' +
@@ -504,7 +508,7 @@ def build(args, recipe, selected, lock, key, destination):
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
         manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
-            "jvmWorkerBundle": worker_digest}
+            "jvmWorkerBundle": worker_digest, "jvmWorkerCache": file_digest(temporary / "jvm-worker-cache.json")}
         if graph_mode:
             manifest["sourceAcquisition"] = file_digest(temporary / "source-acquisition.json")
             manifest["sourceInputs"] = file_digest(temporary / "source-inputs.json")

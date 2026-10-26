@@ -275,35 +275,53 @@ def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None
     return digest(canonical(identity))
 
 
+def bundle_sources(source_root, worker_sources, source_files=None):
+    sources = (sorted((source_root / "core/src").rglob("*.kt")) + sorted((source_root / worker_sources).rglob("*.kt"))) if source_files is None else list(source_files)
+    if not sources or len(sources) != len(set(sources)):
+        raise ValueError("JVM worker compilation requires unique explicit sources")
+    return sources
+
+
+def compile_command(java, lock, artifacts, classes, sources):
+    """Shared physical command and logical cache-key recipe; preserve argument order."""
+    compiler_jars = [artifacts[a["filename"]] for a in lock["compilerArtifacts"]]
+    junit = artifacts[lock["testPlatform"]["filename"]]
+    jacoco_cli = artifacts[lock["jacocoCli"]["filename"]]
+    return [java, "-cp", os.pathsep.join(map(str, compiler_jars)), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+        "-no-stdlib", "-no-reflect", "-jvm-target", "21", "-classpath", os.pathsep.join(map(str, [*compiler_jars, junit, jacoco_cli])),
+        "-d", classes, *sources]
+
+
+def compiler_distribution(lock):
+    return {"schemaVersion": 1, "version": lock["kotlinVersion"],
+        "artifacts": [{"path": a["filename"], "digest": artifact_digest(a)} for a in lock["compilerArtifacts"]],
+        "serializationPlugin": artifact_digest(lock["serializationPlugin"])}
+
+
+def bundle_libraries(lock):
+    return [("api", compiler_artifact(lock, "kotlin-build-tools-api")),
+            ("stdlib", compiler_artifact(lock, "kotlin-stdlib")), ("junit", lock["testPlatform"]),
+            ("jacocoAgent", lock["jacocoAgent"]), ("jacocoCli", lock["jacocoCli"])]
+
+
 def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned, *, source_files=None):
     bundle = directory / "jvm"
     classes = bundle / "classes"
     classes.mkdir(parents=True)
-    compiler_jars = [artifacts[a["filename"]] for a in lock["compilerArtifacts"]]
-    junit = artifacts[lock["testPlatform"]["filename"]]
-    jacoco_cli = artifacts[lock["jacocoCli"]["filename"]]
-    sources = (sorted((source_root / "core/src").rglob("*.kt")) + sorted((source_root / worker_sources).rglob("*.kt"))) if source_files is None else list(source_files)
-    if not sources or len(sources) != len(set(sources)):
-        raise ValueError("JVM worker compilation requires unique explicit sources")
-    run_owned([java, "-cp", os.pathsep.join(map(str, compiler_jars)), "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
-        "-no-stdlib", "-no-reflect", "-jvm-target", "21", "-classpath", os.pathsep.join(map(str, [*compiler_jars, junit, jacoco_cli])),
-        "-d", classes, *sources], environment, log)
+    sources = bundle_sources(source_root, worker_sources, source_files)
+    run_owned(compile_command(java, lock, artifacts, classes, sources), environment, log)
     # Detect changes to any compiler input before trusting or publishing generated classes.
     if any(not valid_artifact(artifacts[a["filename"]], a) for a in all_artifacts(lock)):
         raise ValueError("Pinned JVM artifact changed during worker compilation")
     manifest = {"schemaVersion": 1, "classes": tree_manifest(classes), "jacocoVersion": lock["jacocoVersion"]}
     (bundle / "lib").mkdir()
-    for role, item in [("api", compiler_artifact(lock, "kotlin-build-tools-api")),
-                       ("stdlib", compiler_artifact(lock, "kotlin-stdlib")), ("junit", lock["testPlatform"]),
-                       ("jacocoAgent", lock["jacocoAgent"]), ("jacocoCli", lock["jacocoCli"])]:
+    for role, item in bundle_libraries(lock):
         logical = "lib/" + item["filename"]
         shutil.copyfile(artifacts[item["filename"]], bundle / logical)
         if not valid_artifact(bundle / logical, item):
             raise ValueError("JVM artifact changed during bundle copy")
         manifest[role] = {"path": logical, "digest": artifact_digest(item), "executable": False}
-    distribution = {"schemaVersion": 1, "version": lock["kotlinVersion"],
-        "artifacts": [{"path": a["filename"], "digest": artifact_digest(a)} for a in lock["compilerArtifacts"]],
-        "serializationPlugin": artifact_digest(lock["serializationPlugin"])}
+    distribution = compiler_distribution(lock)
     (bundle / "compiler-manifest.json").write_bytes(canonical(distribution))
     manifest["compilerManifest"] = {"path": "compiler-manifest.json", "digest": digest(canonical(distribution)), "executable": False}
     if "documentationArtifacts" in lock:

@@ -249,11 +249,13 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
                             changed = copy.deepcopy(self.document); changed['compilerOptions'].append('-g')
                             self.lock.write_bytes(canonical(changed))
                         if mutation == 'compiler-failure': raise RuntimeError('injected compiler failure')
-                def worker(directory, source_root, worker_sources, lock, artifacts, java, env, log, run, *, source_files):
+                def worker(directory, source_root, worker_sources, lock, artifacts, java, env, log, run, *, source_files, cache, jdk_identity):
                     worker_inputs.extend(map(str, source_files))
                     self.assertTrue(all(Path(p).is_file() for p in worker_inputs))
                     run([java, *source_files], env, log)
-                    return digest(b'synthetic worker bundle')
+                    bundle = digest(b'synthetic worker bundle')
+                    return bundle, {'schemaVersion': 1, 'status': 'compiled', 'inputs': {},
+                                    'inputKey': digest(canonical({})), 'bundle': bundle}
                 def sync(directory):
                     real_sync(directory)
                     if mutation == 'source-during-sync': plugin.write_bytes(original + b'\n')
@@ -266,7 +268,7 @@ class SourceLauncherTest(test_launch_descriptor.LaunchDescriptorTest):
                         (launcher, 'validate_tools', lambda *a: roots),
                         (launcher, 'run_owned', compiler),
                         (launcher.jvm_worker, 'acquire', lambda *a: {}),
-                        (launcher.jvm_worker, 'build_bundle', worker),
+                        (launcher.worker_cache, 'build_or_restore', worker),
                         (launcher.jvm_worker, 'verify_bundle', lambda *a: None),
                         (launcher.jvm_worker, 'sync_tree', sync),
                         (launcher.native_libraries, 'build', lambda *a: []),
