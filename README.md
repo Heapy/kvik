@@ -1457,10 +1457,23 @@ command excludes 30.14 s of installed-tool verification, 10.42 s of interop
 preparation and other launcher work; these single samples establish feasibility,
 not an end-to-end budget result. The experiment uses private outputs and does not
 publish an ordinary runtime cache entry.
+The integrated macOS ARM64 cache subsequently takes 223.94 s for initial
+population and 45.80 s after a plugin-description edit, measured around
+`launcher.main` with provisioned tools; Python process startup is excluded.
+The warm final compiler command takes 17.39 s, reusing the core, object seed and
+JVM worker with zero rebuilt cache archives. Both executables pass runtime
+identity and project inspection. A separate 30-sample cached-startup check of
+this composition reports launcher help/runtime-info p95 of 126.20/138.11 ms
+and direct Native peak RSS of 7.03/10.16 MiB. These observations cover one Mac
+composition and do not establish a general recomposition budget or Linux benefit.
+Cancellation during the live final compiler leaves no published runtime and
+preserves shared cache contents. An ordinary retry succeeds in 47.62 s including
+Python process startup, reusing the core and object seed. The composed executable
+also passes fresh JVM/Native consumer tests and foreground test/quit cleanup.
 Native outputs remain local-only where relocation is unsafe, and the pinned
 Grogu Linux fixture cannot yet be fetched from its upstream repository.
 
-The next bounded work is to integrate and validate local Native core/object caching, reduce
+The next bounded work is to broaden Native core/object-cache measurements, reduce
 default agent output volume while preserving queryable detail, and make the
 pinned real-project fixture available to CI. K17 remains an experiment: its
 separate comparison did not demonstrate an economy or reliability advantage.
@@ -1692,6 +1705,26 @@ The source bootstrap gate checks cold worker compilation, offline Native rebuild
 with only a relocated worker cache, and worker reuse after a source-plugin helper
 changes. Tool verification and JVM artifact acquisition still run before worker
 lookup when a Native executable must be rebuilt.
+
+Non-optimized macOS ARM64 bootstrap builds also reuse the stable runtime core,
+Native interop/helper outputs and compiler object caches from
+`<cache-dir>/native-core-cache`. CLI code, the generated registry and source plugins
+remain in the final compilation. The local source architecture requires the core
+to remain independent of CLI/plugin declarations; compatible core edits rebuild
+its cache. Source-graph runtimes use this split only when their core matches the
+invoking launcher's core and has no separate runtime source dependencies. Other
+graphs, Linux and optimized builds retain monolithic compilation.
+
+Core keys bind ordered source/support bytes, extra libraries, tool identities,
+flags, recipes, controlled Native dependencies and conservative environment/path
+assumptions. These caches are local and location-bound. Published objects stay
+immutable; each final compilation receives private writable object-cache copies.
+New cache entries created there are recorded without replacing the shared seed,
+and every seeded byte is checked again. A core-key lock protects stable dependency
+paths through final linking and validation. `native-core-cache.json` records reuse,
+private additions or fallback and is bound by the executable manifest. Oversized
+core outputs use monolithic compilation; oversized object seeds retain the valid
+private build without publishing an unrepresentable cache entry.
 
 Select an explicit source composition with `--source-lock /absolute/source.lock.json` and optionally `--source-cache /absolute/source-cache` (default `.kvik/source-cache`). The [source graph contract](docs/decisions/k14-source-graph.md) covers pinned Git/archive packages, local source packages, source plugin dependencies and exact Native library closures. `--print-composition` validates declarations and observes local inputs without downloading or creating caches. An allowed build acquires verified inputs and compiles the composition; `--offline` requires cached remote inputs, and `--no-build` requires an already verified executable. Without `--source-lock`, the existing local composition remains the default. The [full HTTPS source composition fixture](docs/evidence/k14-source-bootstrap.md) passes cold build, relocated/offline reuse and rebuild, and rebuilding after a shared helper changes; its runtime also passes the existing JVM consumer tests.
 

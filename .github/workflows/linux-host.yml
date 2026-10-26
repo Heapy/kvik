@@ -37,6 +37,8 @@ jobs:
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_worker_archive.py'
       - name: Check JVM worker bundle cache
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_worker_cache.py'
+      - name: Check Native core cache isolation and fallback
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_native_core_cache.py'
       - name: Check source bootstrap worker reuse assertions
         run: python3 -m unittest discover -s tools -p 'test_source_worker_cache_unit.py'
       - name: Check source bootstrap archive policy and timeout records
