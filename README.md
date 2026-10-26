@@ -534,6 +534,12 @@ ordinary resources; `inspect-graph` exposes their producer and declared files in
 before execution. KLIB publication and Native frameworks retain their existing
 resource restrictions.
 
+Plain JVM main and test compilation can reuse cached classes after edits to their
+own resources; fresh tests, application runs and packaging consume the updated
+resource bytes. Resource generators still execute and validate their outputs
+before reuse. Compilations using compiler plugins retain resource bytes in their
+inputs, as do other targets.
+
 Both generator modes reject symlinks, executable files and input modification.
 Each file is limited to 8 MiB, with at most 10,000 files and 64 MiB total. Resource
 files may contain binary data. Missing or extra declared resource files fail the

@@ -8,11 +8,20 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from check_worktree_isolation import capture_ownership, cleanup_owner, current_owned, git_environment
+from check_worktree_isolation import capture_ownership, check_worktree_isolation, cleanup_owner, current_owned, git_environment
 from test_scripts_cli import live, process_table
 
 
 class WorktreeIsolationTests(unittest.TestCase):
+    def test_process_discovery_denial_precedes_fixture_creation_and_execution(self):
+        with patch('check_worktree_isolation.process_table', side_effect=PermissionError('ps denied')), \
+                patch('check_worktree_isolation.tempfile.mkdtemp') as temporary, \
+                patch('check_worktree_isolation.subprocess.Popen') as start:
+            with self.assertRaises(PermissionError):
+                check_worktree_isolation(Path('/runtime'), Path('/fixture'), Mock())
+            temporary.assert_not_called()
+            start.assert_not_called()
+
     def test_git_routing_is_not_inherited(self):
         original = dict(PATH='/usr/bin', GIT_DIR='/outside/.git', GIT_WORK_TREE='/outside',
                         GIT_INDEX_FILE='/outside/index', GIT_COMMON_DIR='/outside/common',

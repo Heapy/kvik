@@ -5,11 +5,36 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def export_checks(root):
+    """Publish only check results/logs; private container fixtures stay private."""
+    patterns = {
+        'foreground-jvm': ('foreground-jvm/case-*', ('summary.json', 'session.stdout.jsonl', 'session.stderr.log')),
+        'compiler-session-worker': ('compiler-session-worker/case-*', ('results.json',)),
+        'cache-invalidation': ('linux-jvm/run-*/cache-invalidation-*', ('results.json', '*.stdout.jsonl', '*.stderr.log')),
+    }
+    output = root / '.kvik/ci-artifacts'
+    output.mkdir(parents=True, exist_ok=True)
+    output.chmod(0o755)
+    for category, (cases, names) in patterns.items():
+        for case in (root / '.kvik/tests').glob(cases):
+            for pattern in names:
+                for source in case.glob(pattern):
+                    if not source.is_file() or source.is_symlink():
+                        continue
+                    destination = output / category / case.name / source.name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.parent.parent.chmod(0o755)
+                    destination.parent.chmod(0o755)
+                    shutil.copyfile(source, destination)
+                    destination.chmod(0o644)
 
 
 def main():
@@ -123,4 +148,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        export_checks(ROOT)

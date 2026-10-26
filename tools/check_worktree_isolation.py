@@ -136,6 +136,9 @@ def cleanup_owner(owner):
 
 
 def check_worktree_isolation(executable, fixture, validate):
+    # Cleanup needs process discovery; fail before spawning gated tests when a
+    # sandbox denies it, otherwise they would outlive the failed harness.
+    process_table()
     root = Path(tempfile.mkdtemp(prefix='worktree-isolation-', dir=fixture.parent)).resolve()
     print('Worktree isolation fixture:', root, flush=True)
     seed, store = root/'seed', root/'shared-cache'

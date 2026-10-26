@@ -21,6 +21,8 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_source_comparison_unit.py'
       - name: Check parallel measurement arithmetic
         run: python3 -m unittest discover -s tools -p 'test_parallel_measurement_unit.py'
+      - name: Check container result export
+        run: python3 -m unittest discover -s tools -p 'test_linux_export_unit.py'
       - name: Check agent-comparison accounting and failure gates
         run: python3 -m unittest discover -s tools -p 'test_agent_comparison_unit.py'
       - name: Prepare Linux tools
@@ -45,9 +47,15 @@ jobs:
         with:
           name: compiler-sessions-linux
           path: |
-            .kvik/tests/foreground-jvm/case-*/summary.json
-            .kvik/tests/foreground-jvm/case-*/session.stdout.jsonl
-            .kvik/tests/foreground-jvm/case-*/session.stderr.log
-            .kvik/tests/compiler-session-worker/case-*/results.json
+            .kvik/ci-artifacts/foreground-jvm
+            .kvik/ci-artifacts/compiler-session-worker
+          include-hidden-files: true
+          if-no-files-found: ignore
+      - name: Retain cache invalidation checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-invalidation-linux
+          path: .kvik/ci-artifacts/cache-invalidation
           include-hidden-files: true
           if-no-files-found: ignore
