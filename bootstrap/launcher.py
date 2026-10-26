@@ -5,16 +5,14 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular
 from bootstrap.pin_tools import host_identity, tool_roots, native_target, component_names
-from bootstrap import jvm_worker, native_libraries, source_graph, process_barrier, worker_cache
+from bootstrap import jvm_worker, native_libraries, process_barrier, worker_cache
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -132,6 +130,7 @@ def runtime_lock(pins, registry, arguments):
 
 def graph_composition(lock_path):
     """Desired identity only: no acquisition, cache access or local source writes."""
+    from bootstrap import source_graph
     graph = source_graph.parse_source_lock(read_regular(lock_path, source_graph.LOCK_LIMIT))
     if graph.document['target'] != native_target():
         raise ValueError("Source graph target differs from bootstrap host")
@@ -172,6 +171,7 @@ def validate_graph_outputs(args, observed):
 
 def validate_runtime_store(args, selected, lock):
     """Store paths are invocation policy, never source or composition identity."""
+    from bootstrap import source_graph
     from bootstrap.source_files import overlap
     store = args.runtime_store
     protected = [ROOT / "kvik", ROOT / "bootstrap", args.cache_dir, args.artifact_cache]
@@ -193,6 +193,7 @@ def validate_runtime_store(args, selected, lock):
 def validate_tool_outputs(args, selected, lock):
     """Validate acquisition policy before any cache directory is created."""
     from bootstrap import tool_archives
+    from bootstrap import source_graph
     from bootstrap.source_files import overlap
     tool_archives.read_lock(args.tool_archives, lock['toolchains'], lock['platform'])
     protected = [ROOT / 'kvik', ROOT / 'bootstrap', args.tool_archives, Path(args.konan_data)]
@@ -403,7 +404,9 @@ def run_owned(command, environment, log, timeout=300):
 
 
 def build(args, recipe, selected, lock, key, destination):
-    from bootstrap import tool_archives
+    import shutil
+    import tempfile
+    from bootstrap import source_graph, tool_archives
     timings = BuildTimings()
     roots = validate_tools(args, lock["toolchains"], timings)
     graph_mode = isinstance(selected, source_graph.ObservedGraph)
@@ -549,6 +552,7 @@ def publish_runtime(staged, destination):
 
 
 def restore_runtime(args, key, destination, store, record):
+    import tempfile
     from bootstrap.runtime_store import RuntimeStoreInvalidTree
     with tempfile.TemporaryDirectory(prefix=key["hash"] + "-restore-", dir=destination.parent) as temporary:
         staged = Path(temporary) / "runtime"

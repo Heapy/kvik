@@ -43,6 +43,8 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_source_bootstrap_resources.py'
       - name: Check bounded HTTPS redirects and transfer deadlines
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_source_http.py'
+      - name: Check ordinary cached launcher import boundaries
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_cached_imports.py'
       - name: Check cached startup and RSS measurements
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_cached_startup.py'
       - name: Check foreground measurements

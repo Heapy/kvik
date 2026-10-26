@@ -6,7 +6,6 @@ Cache directories and their ancestors must be trusted and stable during use.
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular, parse_json
@@ -308,6 +307,7 @@ def bundle_libraries(lock):
 
 
 def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned, *, source_files=None):
+    import shutil
     bundle = directory / "jvm"
     classes = bundle / "classes"
     classes.mkdir(parents=True)

@@ -124,15 +124,35 @@ class NoAcquisition:
     def find_spec(self, fullname, path=None, target=None):
         if fullname in ('urllib.request', 'ssl', 'tarfile', 'zipfile',
                         'bootstrap.jvm_acquisition', 'bootstrap.tool_archives',
-                        'bootstrap.source_store', 'bootstrap.runtime_store'):
+                        'bootstrap.source_store', 'bootstrap.runtime_store',
+                        'bootstrap.source_graph', 'bootstrap.source_files',
+                        'shutil', 'tempfile', 'ctypes'):
             raise AssertionError('Cached verification imported ' + fullname)
 sys.meta_path.insert(0, NoAcquisition())
 from pathlib import Path
 from bootstrap import launcher
-from bootstrap.identity import read_json
+from bootstrap.identity import canonical, read_json
 root = Path(sys.argv[1])
 key = read_json(root/'manifest.json')['composition']
 assert launcher.cached(root, key)
+# Exercise actual main routing with a synthetic, byte-verified runtime bundle
+# bound to this checkout's real composition; never execute fixture binaries.
+_, _, lock, key = launcher.composition()
+(root/'runtime.lock.json').write_bytes(canonical(lock))
+manifest = read_json(root/'manifest.json')
+manifest['composition'] = key
+(root/'manifest.json').write_bytes(canonical(manifest))
+cache = root.parent/'launcher-cache'
+destination = cache/'executables'/key['hash']
+destination.parent.mkdir(parents=True)
+root.rename(destination)
+root = destination
+# argparse uses shutil for terminal-width formatting independently of bootstrap.
+importer = sys.meta_path.pop(0)
+import shutil
+sys.meta_path.insert(0, importer)
+sys.argv = ['kvik', '--cache-dir', str(cache), '--offline', '--no-build', '--print-runtime']
+launcher.main()
 file = root/'jvm/worker.jar'
 before = file.read_bytes()
 file.write_bytes(bytes([before[0] ^ 1]) + before[1:])

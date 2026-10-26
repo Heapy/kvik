@@ -6,7 +6,6 @@ and private snapshots must remain trusted and stable, as with RuntimeStore.
 """
 import os
 from pathlib import Path
-import tempfile
 
 from bootstrap import jvm_worker
 from bootstrap.identity import canonical, digest, file_digest, parse_json, read_json
@@ -73,6 +72,7 @@ def record_bundle(record):
 
 def build_or_restore(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned,
                      *, cache, jdk_identity, source_files=None):
+    import tempfile
     from bootstrap.runtime_store import RuntimeStore
     sources = jvm_worker.bundle_sources(source_root, worker_sources, source_files)
     effective_environment = worker_environment(environment)

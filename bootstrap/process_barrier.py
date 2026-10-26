@@ -5,7 +5,6 @@ Only an explicitly inherited, identity-checked, nonblocking pipe writer is used.
 Guardians retain their upstream writer until their own group and downstream pipe
 are drained. Any byte poisons completion; empty EOF acknowledges cleanup.
 """
-import ctypes
 import errno
 import fcntl
 import os
@@ -182,11 +181,32 @@ class Completion:
                 setattr(self, name, None)
 
 
-class _ShortProcessInfo(ctypes.Structure):
-    # macOS SDK sys/proc_info.h: proc_bsdshortinfo, PROC_PIDT_SHORTBSDINFO=13.
-    _fields_ = [(name, ctypes.c_uint32) for name in ("pid", "ppid", "pgid", "status")]
-    _fields_ += [("comm", ctypes.c_char * 16)]
-    _fields_ += [(name, ctypes.c_uint32) for name in ("flags", "uid", "gid", "ruid", "rgid", "svuid", "svgid", "reserved")]
+def _darwin_inventory_types():
+    # Ordinary cached launch only forwards the completion capability. Load libproc
+    # types when an owned process group actually needs a Darwin inventory.
+    module = globals().get("ctypes")
+    if module is None:
+        import ctypes as module
+        globals()["ctypes"] = module
+    info_type = globals().get("_ShortProcessInfo")
+    if info_type is None:
+        class _ShortProcessInfo(module.Structure):
+            # macOS SDK sys/proc_info.h: proc_bsdshortinfo, PROC_PIDT_SHORTBSDINFO=13.
+            _fields_ = [(name, module.c_uint32) for name in ("pid", "ppid", "pgid", "status")]
+            _fields_ += [("comm", module.c_char * 16)]
+            _fields_ += [(name, module.c_uint32) for name in ("flags", "uid", "gid", "ruid", "rgid", "svuid", "svgid", "reserved")]
+        info_type = _ShortProcessInfo
+        globals()["_ShortProcessInfo"] = info_type
+    return module, info_type
+
+
+def __getattr__(name):
+    # Keep explicit access (including test patches) to the former module-level
+    # ctypes binding and ABI structure compatible without eager initialization.
+    if name in ("ctypes", "_ShortProcessInfo"):
+        _darwin_inventory_types()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _linux_group_alive(group, proc_root="/proc"):
@@ -223,6 +243,7 @@ def group_alive(group):
         return _linux_group_alive(group)
     if sys.platform != "darwin":
         raise OwnershipError("Unsupported bootstrap process inventory host")
+    ctypes, info_type = _darwin_inventory_types()
     library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
     listing = library.proc_listpids
     listing.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
@@ -246,7 +267,7 @@ def group_alive(group):
     for pid in values[:size // ctypes.sizeof(ctypes.c_int)]:
         if pid <= 0:
             continue
-        info = _ShortProcessInfo()
+        info = info_type()
         ctypes.set_errno(0)
         count = details(pid, 13, 0, ctypes.byref(info), ctypes.sizeof(info))
         if count == 0 and ctypes.get_errno() == errno.ESRCH:
