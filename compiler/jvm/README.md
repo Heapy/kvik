@@ -117,3 +117,11 @@ at classfile versions 65 and 69. KTC's JUnit console 6.1.3 and Kvik's console
 1.13.4 remain different tool distributions; consumer dependency classpaths and
 test identities are checked independently. This gate covers JVM behavior only.
 Results and failure logs remain under `.kvik/tests/grogu-cli/`.
+
+The Linux compiler-profile job runs this gate for 2.4.21 after its compiler cache,
+metadata and ABI checks. It fetches the exact fixture commit into a fresh bare
+repository and captures a new KTC reference with the provisioned JDK. The CI
+artifact includes complete bounded event journals, reference inputs and test
+results, comparisons, and diagnostic log tails. Oversized files are explicitly
+labelled or omitted; fixture sources, compiler outputs and artifact caches are
+not uploaded.
