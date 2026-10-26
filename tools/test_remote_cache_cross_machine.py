@@ -303,7 +303,7 @@ def performance_environment():
                 harnessPython=platform.python_version())
 
 
-def measure_run(runtime, output, elapsed_nanos, environment, token):
+def measure_run(runtime, output, elapsed_nanos, environment, token, allow_no_remote_operations=False):
     """Use the public query so statistics come from a validated, committed journal."""
     records = list((output / 'runs').glob('*/verification.json'))
     require(len(records) == 1, 'Performance measurement requires one verification run')
@@ -315,14 +315,23 @@ def measure_run(runtime, output, elapsed_nanos, environment, token):
     statistics = json.loads(result.stdout)
     require(statistics['runId'] == record['runId'] and statistics['status'] == record['status'] and
             statistics['testCounts'] == record['testCounts'], 'Statistics do not match the verified run')
-    require(statistics['timing']['coverage'] == 'complete' and
-            statistics['remoteCache']['coverage'] == 'complete', 'Run timing or transfer measurements are incomplete')
+    remote = statistics['remoteCache']
+    if allow_no_remote_operations:
+        # Local-only phases have no transfers to measure. This opt-in never
+        # relaxes writer/reader gates or hides missing measurements of real I/O.
+        require(remote.get('recordedOperations') == remote.get('measuredOperations') == 0,
+                'Local measurement requires zero recorded and measured remote operations')
+        remote_complete = remote['coverage'] in ('unavailable', 'complete')
+    else:
+        remote_complete = remote['coverage'] == 'complete'
+    require(statistics['timing']['coverage'] == 'complete' and remote_complete,
+            'Run timing or transfer measurements are incomplete')
     return dict(schemaVersion=1, invocationWallNanos=elapsed_nanos, environment=environment,
                 # Preparation, post-run validation and this query are outside the timed invocation.
                 scope='provisioned-test-invocation', sampleCount=1,
                 inputCapture=statistics['inputCapture'], actions=statistics['actions'],
                 scheduler=statistics['timing'], remoteCache=statistics['remoteCache'],
-                childProcesses=statistics['processUsage'],
+                childProcesses=statistics['processUsage'], toolVerification=statistics.get('toolVerification'),
                 actionTimings=statistics['slowestActions'], testCounts=statistics['testCounts'])
 
 

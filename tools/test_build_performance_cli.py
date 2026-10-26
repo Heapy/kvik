@@ -315,7 +315,7 @@ def main():
                 if phase == 'remote':
                     gate.require(not Path(reader_tools['compilerArtifacts']).exists(), 'Compiler became available in remote phase')
                     gate.inspect_cache_events(run/'events.jsonl', actions, 'remote_hit')
-                measurement = gate.measure_run(runtime, output, elapsed, host, token)
+                measurement = gate.measure_run(runtime, output, elapsed, host, token, allow_no_remote_operations=phase == 'local')
                 transfers = verify_capture_and_transfers(phase, events, measurement, len(server.requests)-prior_requests)
                 captured = gate.document(run/'inputs.json')
                 captured_bytes = sum(f['digest']['sizeBytes'] for f in captured['files'])

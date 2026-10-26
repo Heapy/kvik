@@ -119,6 +119,52 @@ class BuildPerformanceTests(unittest.TestCase):
                     raise RuntimeError('test failure')
             self.assertEqual(original, {name: os.environ[name] for name in original})
 
+    def measure_public_statistics(self, remote, allow_empty=False, tool_verification=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            run = output/'runs/retained'
+            run.mkdir(parents=True)
+            record = dict(runId='retained', status='passed', testCounts=dict(performance.COUNTS))
+            performance.write(run/'verification.json', record)
+            statistics = dict(**record, timing=dict(coverage='complete'), remoteCache=remote,
+                inputCapture=dict(kind='filesystem', durationNanos=30, hashing=dict(durationNanos=20, bytes=100, operations=2)),
+                actions={}, processUsage={}, slowestActions=[])
+            if tool_verification is not None:
+                statistics['toolVerification'] = tool_verification
+            response = performance.gate.subprocess.CompletedProcess([], 0, performance.gate.canonical(statistics), b'')
+            with patch.object(performance.gate, 'run', return_value=response) as query:
+                measured = performance.gate.measure_run(Path('/runtime'), output, 100, {}, None,
+                                                         allow_no_remote_operations=allow_empty)
+            query.assert_called_once_with(['/runtime', 'run-stats', '--run', str(run)], 30)
+            return measured
+
+    def test_local_public_measurement_accepts_unavailable_coverage_only_with_explicit_zero_operation_opt_in(self):
+        remote = dict(coverage='unavailable', recordedOperations=0, measuredOperations=0,
+                      measuredRequests=None, measuredUploadedBytes=None, measuredDownloadedBytes=None)
+        with self.assertRaisesRegex(GateError, 'transfer measurements are incomplete'):
+            self.measure_public_statistics(remote)
+        measured = self.measure_public_statistics(remote, allow_empty=True)
+        events = [dict(type='run-started', payload=dict(inputCapture=measured['inputCapture']))]
+        self.assertEqual([], performance.verify_capture_and_transfers('local', events, measured, 0))
+        with self.assertRaisesRegex(GateError, 'request count differs'):
+            performance.verify_capture_and_transfers('local', events, measured, 1)
+        self.assertEqual('unavailable', measured['remoteCache']['coverage'])
+
+    def test_zero_operation_opt_in_rejects_recorded_or_measured_io_and_missing_counters(self):
+        for remote in (dict(coverage='complete', recordedOperations=1, measuredOperations=1),
+                       dict(coverage='unavailable', recordedOperations=1, measuredOperations=0),
+                       dict(coverage='unavailable', recordedOperations=0, measuredOperations=1),
+                       dict(coverage='unavailable')):
+            with self.subTest(remote=remote), self.assertRaisesRegex(GateError, 'zero recorded and measured'):
+                self.measure_public_statistics(remote, allow_empty=True)
+
+    def test_public_tool_verification_statistics_are_retained_without_inventing_older_runtime_coverage(self):
+        remote = dict(coverage='complete', recordedOperations=3, measuredOperations=3)
+        tool_stats = dict(coverage='measured-actions-only', measuredActions=4, summedDurationNanos=123)
+        measured = self.measure_public_statistics(remote, tool_verification=tool_stats)
+        self.assertEqual(tool_stats, measured['toolVerification'])
+        self.assertIsNone(self.measure_public_statistics(remote)['toolVerification'])
+
     def transfer_case(self):
         capture = dict(kind='filesystem', durationNanos=30, hashing=dict(durationNanos=20, bytes=100, operations=2))
         events = [dict(type='run-started', payload=dict(inputCapture=capture))]
