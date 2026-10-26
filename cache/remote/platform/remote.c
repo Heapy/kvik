@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <zlib.h>
 
 static pthread_once_t initialized = PTHREAD_ONCE_INIT;
 static CURLcode initialization;
@@ -242,3 +243,70 @@ http_cleanup:
     return reply;
 }
 void kvik_rpc_free(kvik_rpc_reply *reply) { if (reply) { free(reply->data); free(reply); } }
+
+/* The gzip envelope is transport only; the enclosed archive authenticates full digests. */
+kvik_gzip_reply *kvik_gzip_codec(const unsigned char *input, size_t input_size,
+    size_t output_limit, int decompress, int (*cancelled)(void *), void *cancel_context) {
+    kvik_gzip_reply *reply = calloc(1, sizeof(*reply));
+    if (!reply) return NULL;
+    reply->error = KVIK_GZIP_INVALID;
+    const size_t maximum = 512U * 1024U * 1024U;
+    if ((input_size && !input) || (decompress != 0 && decompress != 1) || !output_limit) return reply;
+    if (input_size > maximum || output_limit > maximum) { reply->error = KVIK_GZIP_LIMIT; return reply; }
+    z_stream stream;
+    memset(&stream, 0, sizeof(stream));
+    int status = decompress ? inflateInit2(&stream, 15 + 16) :
+        deflateInit2(&stream, 6, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);
+    if (status != Z_OK) { reply->error = status == Z_MEM_ERROR ? KVIK_GZIP_MEMORY : KVIK_GZIP_INVALID; return reply; }
+    gz_header gzip_header;
+    memset(&gzip_header, 0, sizeof(gzip_header));
+    gzip_header.os = 255; /* No host identity, timestamp, filename, comment or extra fields. */
+    if (!decompress && deflateSetHeader(&stream, &gzip_header) != Z_OK) goto gzip_cleanup;
+    size_t input_offset = 0, capacity = 0;
+    unsigned char output[32768];
+    for (;;) {
+        if (cancelled && cancelled(cancel_context)) { reply->error = KVIK_GZIP_CANCELLED; break; }
+        if (!stream.avail_in && input_offset < input_size) {
+            size_t chunk = input_size - input_offset;
+            if (chunk > sizeof(output)) chunk = sizeof(output);
+            stream.next_in = (Bytef *)(input + input_offset);
+            stream.avail_in = (uInt)chunk;
+            input_offset += chunk;
+        }
+        uInt before = stream.avail_in;
+        stream.next_out = output;
+        stream.avail_out = sizeof(output);
+        status = decompress ? inflate(&stream, Z_NO_FLUSH) :
+            deflate(&stream, input_offset == input_size ? Z_FINISH : Z_NO_FLUSH);
+        size_t produced = sizeof(output) - stream.avail_out;
+        if (produced > output_limit - reply->size) { reply->error = KVIK_GZIP_LIMIT; break; }
+        if (produced) {
+            size_t needed = reply->size + produced;
+            if (needed > capacity) {
+                size_t next = capacity ? capacity : sizeof(output);
+                while (next < needed) next *= 2;
+                if (next > output_limit) next = output_limit;
+                unsigned char *data = realloc(reply->data, next);
+                if (!data) { reply->error = KVIK_GZIP_MEMORY; break; }
+                reply->data = data;
+                capacity = next;
+            }
+            memcpy(reply->data + reply->size, output, produced);
+            reply->size += produced;
+        }
+        if (status == Z_STREAM_END) {
+            /* gzip accepts concatenation in some APIs; this protocol permits exactly one member. */
+            if (stream.avail_in == 0 && input_offset == input_size) reply->error = KVIK_GZIP_OK;
+            break;
+        }
+        if (status != Z_OK || (before == stream.avail_in && !produced)) {
+            if (status == Z_MEM_ERROR) reply->error = KVIK_GZIP_MEMORY;
+            break;
+        }
+    }
+gzip_cleanup:
+    if (decompress) inflateEnd(&stream); else deflateEnd(&stream);
+    if (reply->error != KVIK_GZIP_OK) { free(reply->data); reply->data = NULL; reply->size = 0; }
+    return reply;
+}
+void kvik_gzip_free(kvik_gzip_reply *reply) { if (reply) { free(reply->data); free(reply); } }

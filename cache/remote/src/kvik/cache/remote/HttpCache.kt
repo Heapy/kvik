@@ -28,9 +28,10 @@ class HttpCacheEndpoint(
         require(password == null || (password.length in 1..8192 && password.all { it.code in 33..126 })) { "Invalid HTTP cache password" }
     }
     internal fun entryUrl(key: Digest): String {
-        // Domain separation survives servers that accept only hexadecimal cache keys.
-        val remoteKey = Sha256.digest(obj("format" to "kvik-http-v1".json(), "instance" to instance.json(), "action" to key.toJson()))
-        return "${url.trimEnd('/')}/${remoteKey.hash}"
+        // A 128-bit transport address fits Gradle HTTP servers. Full action/file SHA-256
+        // digests remain inside the verified Kvik archive; this is not a content identity.
+        val remoteKey = Sha256.digest(obj("format" to "kvik-http-v2".json(), "instance" to instance.json(), "action" to key.toJson()))
+        return "${url.trimEnd('/')}/${remoteKey.hash.take(32)}"
     }
     internal fun authorization(): String? = password?.let {
         "Authorization: Basic ${Base64.encode("$username:$it".encodeToByteArray())}"
@@ -41,13 +42,17 @@ class HttpCacheEndpoint(
 internal class HttpCacheSession(
     private val endpoint: HttpCacheEndpoint,
     private val limits: TransferLimits,
-    private val checkpoint: () -> Unit,
+    private val checkCancelled: () -> Unit,
 ) {
     private val started = TimeSource.Monotonic.markNow()
     private var requests = 0
     private var uploaded = 0L
     private var downloaded = 0L
     fun stats() = CacheTransferStats(requests, uploaded, downloaded, started.elapsedNow().inWholeNanoseconds)
+    fun checkpoint() {
+        checkCancelled()
+        demand(started.elapsedNow().inWholeMilliseconds < limits.operationMillis, "HTTP cache operation deadline exceeded")
+    }
     fun request(key: Digest, payload: ByteArray? = null): Pair<Int, ByteArray> {
         checkpoint()
         val remaining = limits.operationMillis - started.elapsedNow().inWholeMilliseconds
@@ -55,7 +60,7 @@ internal class HttpCacheSession(
         val body = payload ?: byteArrayOf()
         val maximum = limits.totalBytes - uploaded - downloaded - body.size
         demand(maximum > 0, "HTTP cache transfer budget exceeded")
-        val cancellation = StableRef.create(checkpoint)
+        val cancellation = StableRef.create(::checkpoint)
         val pinnedBody = if (body.isEmpty()) byteArrayOf(0) else body
         try {
             return pinnedBody.usePinned { pinned ->
@@ -73,6 +78,40 @@ internal class HttpCacheSession(
                     demand(reply.pointed.transport_error == 0, "HTTP cache transport failed (${reply.pointed.transport_error})")
                     reply.pointed.http_status.toInt() to (reply.pointed.data?.readBytes(reply.pointed.size.toInt()) ?: byteArrayOf())
                 } finally { kvik_rpc_free(reply) }
+            }
+        } finally { cancellation.dispose() }
+    }
+}
+
+private class GzipCheckpoint(val checkpoint: () -> Unit) {
+    var failure: Throwable? = null
+}
+
+/** One deterministic gzip member around the Kvik archive, with bounded expansion and work. */
+internal class HttpCacheGzip(private val outputLimit: Long) {
+    init { require(outputLimit in 1..(512L * 1024 * 1024)) }
+    fun encode(bytes: ByteArray, checkpoint: () -> Unit): ByteArray = convert(bytes, false, checkpoint)
+    fun decode(bytes: ByteArray, checkpoint: () -> Unit): ByteArray = convert(bytes, true, checkpoint)
+    private fun convert(bytes: ByteArray, decompress: Boolean, checkpoint: () -> Unit): ByteArray {
+        checkpoint()
+        demand(bytes.size.toLong() <= 512L * 1024 * 1024, "HTTP cache gzip input too large")
+        val cancellation = StableRef.create(GzipCheckpoint(checkpoint))
+        val input = if (bytes.isEmpty()) byteArrayOf(0) else bytes
+        try {
+            return input.usePinned { pinned ->
+                val reply = kvik_gzip_codec(pinned.addressOf(0).reinterpret(), bytes.size.convert(), outputLimit.convert(),
+                    if (decompress) 1 else 0, staticCFunction { context: COpaquePointer? ->
+                        val state = requireNotNull(context).asStableRef<GzipCheckpoint>().get()
+                        try { state.checkpoint(); 0 }
+                        catch (failure: Throwable) { state.failure = failure; 1 }
+                    }, cancellation.asCPointer()) ?: throw RemoteFailure("HTTP cache gzip allocation failed")
+                try {
+                    cancellation.get().failure?.let { throw it }
+                    checkpoint()
+                    demand(reply.pointed.error == 0, "HTTP cache gzip conversion failed (${reply.pointed.error})")
+                    demand(reply.pointed.size.toLong() <= outputLimit, "HTTP cache gzip output too large")
+                    reply.pointed.data?.readBytes(reply.pointed.size.toInt()) ?: byteArrayOf()
+                } finally { kvik_gzip_free(reply) }
             }
         } finally { cancellation.dispose() }
     }
@@ -166,7 +205,8 @@ class HttpActionCache(
             else if (status !in 200..299) RemoteLookup(null,
                 CacheDiagnostic("remote-cache-lookup-failed", "HTTP cache returned status $status"), session.stats())
             else {
-                val cached = HttpCacheArchive(limits).decode(action, payload, content, checkpoint)
+                val archive = HttpCacheGzip(limits.totalBytes).decode(payload, session::checkpoint)
+                val cached = HttpCacheArchive(limits).decode(action, archive, content, session::checkpoint)
                 RemoteLookup(cached, stats = session.stats())
             }
         } catch (_: Exception) {
@@ -181,7 +221,8 @@ class HttpActionCache(
         if (result.status != ActionStatus.EXECUTED || result.exitCode != 0 || result.key != action.key(Sha256))
             return RemotePublication(false, CacheDiagnostic("remote-publish-rejected", "Only matching executed results may publish"), session.stats())
         return try {
-            val payload = HttpCacheArchive(limits).encode(action, TreeManifest(result.outputs.files.toList()), content, checkpoint)
+            val archive = HttpCacheArchive(limits).encode(action, TreeManifest(result.outputs.files.toList()), content, session::checkpoint)
+            val payload = HttpCacheGzip(limits.totalBytes).encode(archive, session::checkpoint)
             val (status, _) = session.request(action.key(Sha256), payload)
             if (status == 413) RemotePublication(false, CacheDiagnostic("remote-publish-skipped", "HTTP cache rejected archive size"), session.stats())
             else if (status !in 200..299) RemotePublication(false,

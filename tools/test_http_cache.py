@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the native HTTP cache client against a bounded authenticated protocol fixture."""
 from pathlib import Path
+import gzip
 import subprocess
 import tempfile
 
@@ -31,7 +32,11 @@ def check_http_cache(executable, parent):
         assert not (restored / 'restored/single.txt').stat().st_mode & 0o111
         run('lookup', 'MISS null', 'changed-input')
         key, valid = next(iter(server.entries.items()))
-        for invalid in (valid[:-1], valid + b'junk', valid[:-1] + b'\0', b'x' * (33 * 1024 * 1024)):
+        assert len(key.rsplit('/', 1)[-1]) == 32
+        assert gzip.decompress(valid).startswith(b'KVIKHC1\n')
+        for invalid in (valid[:-1], valid + b'junk', valid + valid,
+                        valid[:-1] + bytes([valid[-1] ^ 0xff]), gzip.compress(b'not-a-kvik-archive', mtime=0),
+                        gzip.compress(b'x' * (33 * 1024 * 1024), mtime=0), b'x' * (33 * 1024 * 1024)):
             server.entries[key] = invalid
             run('lookup', 'MISS remote-cache-lookup-failed')
         server.entries[key] = valid
@@ -40,7 +45,7 @@ def check_http_cache(executable, parent):
         server.partial = False
         for status in (401, 403, 500, 307):
             server.status = status
-            server.redirect = server.url + '0' * 64
+            server.redirect = server.url + '0' * 32
             before = len(server.requests)
             run('lookup', 'MISS remote-cache-lookup-failed')
             assert len(server.requests) == before + 1, 'Credentials/request followed redirect'

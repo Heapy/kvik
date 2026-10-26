@@ -178,7 +178,10 @@ def inspect_cache_events(path, actions, expected_status):
         payload = event['payload']
         if event['type'] == 'diagnostic' and payload['code'] == 'KVIK_CACHE_NOTICE':
             code = payload['message'].split(':', 1)[0]
-            require(code not in REMOTE_FAILURES, f'Remote lookup/publication failed or was skipped ({code}); no gate baseline can be issued')
+            if code in REMOTE_FAILURES:
+                status = re.search(r'(?:returned|confirmation) status ([0-9]{3})\b', payload['message'])
+                notice = code + (':HTTP-' + status.group(1) if status else '')
+                raise GateError(f'Remote lookup/publication failed or was skipped ({notice}); no gate baseline can be issued')
         if event['type'] == 'action-cache-decision' and payload['actionId'] in COMPILES:
             name = payload['actionId']
             require(name not in decisions, 'Duplicate compilation cache decision')

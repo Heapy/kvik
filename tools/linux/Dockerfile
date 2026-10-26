@@ -2,7 +2,7 @@ FROM eclipse-temurin:25-jdk-noble@sha256:ba0f0e1a33864105e1d454e88105c617ab40f71
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-jsonschema clang libclang-rt-18-dev \
-      libcurl4-openssl-dev libxml2-dev libssl-dev \
+      libcurl4-openssl-dev libxml2-dev libssl-dev zlib1g-dev \
       curl ca-certificates xz-utils unzip git locales \
     && rm -rf /var/lib/apt/lists/*
 

@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import re
 import threading
 import time
+import zlib
 
 
 class HttpCacheFixture:
@@ -35,7 +36,7 @@ class HttpCacheFixture:
                     time.sleep(fixture.delay)
                 if self.headers.get('Authorization') != authorization:
                     status, data = 401, b'unauthorized'
-                elif not re.fullmatch(r'/cache/[0-9a-f]{64}', self.path):
+                elif not re.fullmatch(r'/cache/[0-9a-f]{32}', self.path):
                     status, data = 400, b'bad key'
                 elif fixture.status:
                     status, data = fixture.status, b''
@@ -46,9 +47,20 @@ class HttpCacheFixture:
                     else:
                         body = self.rfile.read(size)
                         if len(body) == size:
-                            if not fixture.discard_writes:
-                                fixture.entries[self.path] = body + b'trailing' if fixture.alter_writes else body
-                            status, data = 201, b''
+                            # BuildFetch accepts 128-bit keys and gzip payloads. Require
+                            # both here so opaque-byte fixtures cannot hide incompatibility.
+                            try:
+                                decoder = zlib.decompressobj(31)
+                                expanded = decoder.decompress(body, 128 * 1024 * 1024 + 1)
+                                valid = decoder.eof and not decoder.unused_data and not decoder.unconsumed_tail and len(expanded) <= 128 * 1024 * 1024
+                            except zlib.error:
+                                valid = False
+                            if valid:
+                                if not fixture.discard_writes:
+                                    fixture.entries[self.path] = body + b'trailing' if fixture.alter_writes else body
+                                status, data = 201, b''
+                            else:
+                                status, data = 400, b''
                         else:
                             status, data = 400, b''
                 else:

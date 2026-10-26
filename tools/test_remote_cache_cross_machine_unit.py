@@ -244,6 +244,17 @@ class CrossMachineGateTests(unittest.TestCase):
             with self.subTest(code=code), self.assertRaisesRegex(gate.GateError, 'failed or was skipped'):
                 gate.inspect_run(output, 'executed', self.composition)
 
+    def test_writer_publication_failure_exposes_http_status_without_raw_diagnostics(self):
+        output, run, _ = self.retained_run(status='executed')
+        journal = run / 'events.jsonl'
+        events = [json.loads(line) for line in journal.read_bytes().splitlines()]
+        events.insert(-1, dict(type='diagnostic', payload=dict(code='KVIK_CACHE_NOTICE', message=
+            'remote-publish-failed: HTTP cache did not retain the uploaded entry (confirmation status 404) secret-value')))
+        journal.write_bytes(b'\n'.join(gate.canonical(event) for event in events) + b'\n')
+        with self.assertRaisesRegex(gate.GateError, 'remote-publish-failed:HTTP-404') as caught:
+            gate.inspect_run(output, 'executed', self.composition)
+        self.assertNotIn('secret-value', str(caught.exception))
+
     def test_cache_decision_rejects_bypass_missing_key_drift_and_duplicates(self):
         output, run, _ = self.retained_run(status='executed')
         journal = run / 'events.jsonl'
