@@ -99,14 +99,15 @@ class CompilerVersionsCiTest(unittest.TestCase):
     def fake_source(self):
         files = {"kvik": "launcher", "bootstrap/jvm-artifacts.lock.json": '{"kotlinVersion":"2.4.20"}',
                  "bootstrap/toolchains.lock.json": '{"kotlinVersion":"2.4.20","host":"original"}',
-                 "bootstrap/profiles/jvm-2.4.10.lock.json": '{"kotlinVersion":"2.4.10"}'}
+                 "bootstrap/profiles/jvm-2.4.10.lock.json": '{"kotlinVersion":"2.4.10"}',
+                 "bootstrap/profiles/jvm-2.4.21.lock.json": '{"kotlinVersion":"2.4.21"}'}
         for name, value in files.items():
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(value)
         return files
 
-    def scenario(self, fail_gate=False):
+    def scenario(self, fail_gate=False, alternate_version="2.4.10"):
         files = self.fake_source()
         calls = []
         state = {}
@@ -130,7 +131,7 @@ class CompilerVersionsCiTest(unittest.TestCase):
                 state.update(runtime=str(runtime), fixture=str(fixture), tools=str(tools))
                 ci.write_json(Path(command[command.index("--prepare-only") + 1]), state)
             if label in ("build-alternate", "check-alternate-cache"):
-                self.assertEqual("2.4.10", ci.document(cwd / "bootstrap/jvm-artifacts.lock.json")["kotlinVersion"])
+                self.assertEqual(alternate_version, ci.document(cwd / "bootstrap/jvm-artifacts.lock.json")["kotlinVersion"])
                 self.assertEqual("linux-pinned", ci.document(cwd / "bootstrap/toolchains.lock.json")["host"])
                 self.assertEqual(str(Path(state["runtime"]).parents[2] / "tool-artifacts"), command[command.index("--artifact-cache") + 1])
                 runtime = cwd / ".kvik/runtime/b/kvik.kexe"
@@ -144,9 +145,9 @@ class CompilerVersionsCiTest(unittest.TestCase):
         with patch.object(ci, "source_paths", return_value=sorted(files)), patch.object(ci, "run_logged", side_effect=run):
             if fail_gate:
                 with self.assertRaisesRegex(RuntimeError, "gate failure"):
-                    ci.execute(self.root, Path("/jdk"), Path("/native"))
+                    ci.execute(self.root, Path("/jdk"), Path("/native"), alternate_version=alternate_version)
             else:
-                ci.execute(self.root, Path("/jdk"), Path("/native"))
+                ci.execute(self.root, Path("/jdk"), Path("/native"), alternate_version=alternate_version)
         for name in ("bootstrap/jvm-artifacts.lock.json", "bootstrap/toolchains.lock.json"):
             self.assertEqual(files[name], (self.root / name).read_text())
         output, = (self.root / ".kvik/ci-artifacts/compiler-versions").iterdir()
@@ -169,6 +170,14 @@ class CompilerVersionsCiTest(unittest.TestCase):
         self.assertEqual("RuntimeError", summary["failure"]["type"])
         self.assertNotEqual("passed", summary["status"])
         self.assertEqual("retained compiler-cache-gate", (output / "orchestration/compiler-cache-gate.stderr.log").read_text())
+
+    def test_new_profile_selects_its_own_lock_and_cache_gate(self):
+        calls, summary, _ = self.scenario(alternate_version="2.4.21")
+        self.assertEqual(["2.4.20", "2.4.21"], summary["compilerVersions"])
+        command = next(command for label, command, _ in calls if label == "compiler-cache-gate")
+        self.assertEqual("2.4.21", command[command.index("--alternate-version") + 1])
+        with self.assertRaisesRegex(ValueError, "Unsupported alternate"):
+            ci.execute(self.root, Path("/jdk"), Path("/native"), alternate_version="2.4.22")
 
     def test_timeout_retains_partial_stdout_and_stderr(self):
         logs = self.root / "logs"

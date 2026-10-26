@@ -62,7 +62,7 @@ The alternate source composition uses [bootstrap/profiles/jvm-2.4.10.lock.json](
 
 [bootstrap/profiles/jvm-2.4.21.lock.json](../../bootstrap/profiles/jvm-2.4.21.lock.json) provides the same source-composition option for JVM projects requiring Kotlin 2.4.21. In a separate checkout, copy that profile over `bootstrap/jvm-artifacts.lock.json` before building the runtime; do not edit a prepared runtime's manifest. Its compiler, BTA, scripting, metadata reader and serialization JARs are pinned from the published Maven artifacts. The upstream compiler dependencies retain reflect 1.6.10 and coroutines 1.8.0 with excluded transitives; the selected stdlib 2.4.21 also satisfies the daemon client's stdlib 2.2.21 dependency. The existing ABI reader support libraries retain their pins. Unlike the older compiler archives, the 2.4.21 compiler artifact is served directly by Maven and has no authorized release redirect.
 
-The 2.4.21 profile admits JVM compilation, scripts, matching compiler plugins and the existing JVM/KLIB ABI extraction contracts. The ABI snapshot's `compilerVersion` identifies the JVM tool distribution; Native compilation remains pinned independently to 2.4.20. Common metadata compilation and Native/JS/Wasm compiler plugins remain outside the 2.4.21 profile's scope. The existing two-profile workflow below exercises 2.4.20 and 2.4.10; it does not supply 2.4.21 acceptance evidence. The version-aware `tools/test_kotlin_script_host.py` and `tools/test_abi_cli.py` can check a prepared 2.4.21 source composition without changing their fixtures.
+The 2.4.21 profile admits JVM compilation, scripts, matching compiler plugins and the existing JVM/KLIB ABI extraction contracts. The ABI snapshot's `compilerVersion` identifies the JVM tool distribution; Native compilation remains pinned independently to 2.4.20. Common metadata compilation and Native/JS/Wasm compiler plugins remain outside the 2.4.21 profile's scope. The workflow below compares the default 2.4.20 profile with each alternate in separate matrix jobs. The version-aware `tools/test_kotlin_script_host.py` and `tools/test_abi_cli.py` can check a prepared 2.4.21 source composition without changing their fixtures.
 
 The [JVM compiler profiles workflow](../../.github/workflows/compiler-versions.yml) runs on Linux x86_64 using the existing digest-pinned Docker image definition and checksum-pinned Kotlin/Native 2.4.20 tool archive. Run the same acceptance locally with Docker:
 
@@ -75,7 +75,7 @@ docker run --rm --init --platform linux/amd64 \
 
 The runner copies current tracked and unignored source files into private checkouts, excluding reference submodules and caches. It prepares the default Linux runtime and locked fixture, then builds the alternate JVM profile with the same pinned Native tool lock, JDK, Native installation and artifact cache. It does not change the original checkout's locks. The public CLI gate executes A cold/warm, B cold/warm, then restored A: compilation keys must change between profiles, restored A must hit its original cache, and all five test invocations must execute freshly. A test records `KotlinVersion.CURRENT` and `kotlin.Unit`'s code source to prove that both profiles load the project's locked stdlib 2.4.20 from declared run inputs. A separate, explicitly non-executed calculation changes only the compiler identity in an otherwise fixed canonical action.
 
-The same job checks successful 2.4.20 metadata compilation, explicit 2.4.10 metadata refusal, and the alternate profile's JVM ABI snapshots/cache behavior. This does not extend 2.4.10 support to Native, JS, or common metadata compilation. Existing prepared runtimes can be checked directly with:
+The same job checks successful 2.4.20 metadata compilation, explicit metadata refusal for the selected alternate, and that alternate profile's JVM ABI snapshots/cache behavior. Select `--alternate-version 2.4.21` for the newer profile; the local runner defaults to 2.4.10. This does not extend either alternate's support to Native/JS compiler plugins or common metadata compilation. Existing prepared runtimes can be checked directly with:
 
 ```sh
 python3 tools/check_compiler_versions_cli.py \
@@ -83,5 +83,7 @@ python3 tools/check_compiler_versions_cli.py \
   --runtime-b /path/to/2.4.10/kvik.kexe \
   --fixture /path/to/prepared-jvm-fixture
 ```
+
+For a prepared 2.4.21 runtime, change `--runtime-b` and add `--alternate-version 2.4.21`.
 
 CI evidence is exported under `.kvik/ci-artifacts/compiler-versions/` with directories readable by the host uploader, including failure and timeout logs, action records, event journals, metadata results and ABI events. Private checkouts, CAS blobs and tool installations remain under `.kvik/tests/compiler-versions-ci/`.

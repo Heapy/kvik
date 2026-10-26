@@ -24,7 +24,7 @@ def main():
     bundle = args.runtime.resolve().parent / 'jvm'
     manifest = bundle / 'compiler-manifest.json'
     version = json.loads(manifest.read_text())['version']
-    assert version in ('2.4.10', '2.4.20'), version
+    assert version in ('2.4.10', '2.4.20', '2.4.21'), version
     directory = ROOT / '.kvik/tests/metadata-versions'
     directory.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix=version + '-', dir=directory)).resolve()
@@ -47,7 +47,7 @@ def main():
         result = json.loads((case / (label + '.result.json')).read_text())
         assert process.returncode == expected == result['exitCode'], result
         return result
-    if version == '2.4.10':
+    if version != '2.4.20':
         refused = invoke('unsupported-metadata', request, 1)
         assert any(d['code'] == 'KVIK_UNSUPPORTED_COMPILER' for d in refused['diagnostics']), refused
         assert not (case / 'metadata').exists()

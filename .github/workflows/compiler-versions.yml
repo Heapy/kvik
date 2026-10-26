@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   compiler-profiles:
+    strategy:
+      fail-fast: false
+      matrix:
+        alternate: ['2.4.10', '2.4.21']
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -25,12 +29,12 @@ jobs:
         run: |
           docker run --rm --init --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/work/kvik" kvik-compiler-profiles \
-            python3 tools/linux/compiler_versions.py
+            python3 tools/linux/compiler_versions.py --alternate-version '${{ matrix.alternate }}'
       - name: Retain compiler profile evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: compiler-profiles-linux
+          name: compiler-profiles-linux-${{ matrix.alternate }}
           path: .kvik/ci-artifacts/compiler-versions
           include-hidden-files: true
           retention-days: 7

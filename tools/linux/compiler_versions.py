@@ -141,14 +141,17 @@ def export_evidence(checkout, logs, output):
                         publish(source, relative / "runs" / run.name / "abi" / source.relative_to(run / "abi"))
 
 
-def execute(root, java, native, bootstrap_timeout=600):
+def execute(root, java, native, bootstrap_timeout=600, alternate_version="2.4.10"):
+    if alternate_version not in ("2.4.10", "2.4.21"):
+        raise ValueError("Unsupported alternate compiler profile")
     paths = source_paths(root)
     original_locks = {name: (root / "bootstrap" / name).read_bytes()
                       for name in ("jvm-artifacts.lock.json", "toolchains.lock.json")}
     if document(root / "bootstrap/jvm-artifacts.lock.json")["kotlinVersion"] != "2.4.20":
         raise ValueError("Default source checkout must retain the 2.4.20 JVM profile")
-    if document(root / "bootstrap/profiles/jvm-2.4.10.lock.json")["kotlinVersion"] != "2.4.10":
-        raise ValueError("Alternate source profile must select 2.4.10")
+    profile = f"bootstrap/profiles/jvm-{alternate_version}.lock.json"
+    if document(root / profile)["kotlinVersion"] != alternate_version:
+        raise ValueError("Alternate source profile version differs from selection")
     parent = root / ".kvik/tests/compiler-versions-ci"
     parent.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix="case-", dir=parent))
@@ -162,7 +165,7 @@ def execute(root, java, native, bootstrap_timeout=600):
         directory.chmod(0o755)
     summary = dict(schemaVersion=1, status="incomplete", source=str(root), sourceFiles=len(paths),
                    defaultCheckout=str(default), alternateCheckout=str(alternate), export=str(output),
-                   compilerVersions=["2.4.20", "2.4.10"], nativeVersion="2.4.20")
+                   compilerVersions=["2.4.20", alternate_version], nativeVersion="2.4.20")
     environment = dict(os.environ, JAVA_HOME=str(java), KONAN_HOME=str(native),
                        KONAN_DATA_DIR=str(native_data), PYTHONDONTWRITEBYTECODE="1")
     environment.pop("KVIK_BOOTSTRAP_OFFLINE", None)
@@ -185,7 +188,7 @@ def execute(root, java, native, bootstrap_timeout=600):
         if native_lock["kotlinVersion"] != "2.4.20":
             raise ValueError("Both source profiles require the same Kotlin/Native 2.4.20 tool lock")
         copy_sources(default, alternate, paths)
-        shutil.copyfile(alternate / "bootstrap/profiles/jvm-2.4.10.lock.json", alternate / "bootstrap/jvm-artifacts.lock.json")
+        shutil.copyfile(alternate / profile, alternate / "bootstrap/jvm-artifacts.lock.json")
         pinned_native = (default / "bootstrap/toolchains.lock.json").read_bytes()
         assert (alternate / "bootstrap/toolchains.lock.json").read_bytes() == pinned_native
         bootstrap = [alternate / "kvik", "--java-home", java, "--konan-home", native,
@@ -198,7 +201,8 @@ def execute(root, java, native, bootstrap_timeout=600):
                        nativeToolLock=file_identity(default / "bootstrap/toolchains.lock.json"),
                        compilerArtifacts=str(artifacts))
         run("compiler-cache-gate", [sys.executable, default / "tools/check_compiler_versions_cli.py",
-            "--runtime-a", runtime_a, "--runtime-b", runtime_b, "--fixture", prepared["fixture"]])
+            "--runtime-a", runtime_a, "--runtime-b", runtime_b, "--fixture", prepared["fixture"],
+            "--alternate-version", alternate_version])
         for name, runtime in (("default", runtime_a), ("alternate", runtime_b)):
             run("metadata-" + name, [sys.executable, default / "tools/test_metadata_versions_worker.py",
                 "--runtime", runtime, "--java-home", java, "--konan-home", native, "--artifacts", artifacts], timeout=300)
@@ -229,12 +233,14 @@ def main():
     parser.add_argument("--java-home", type=Path, default=os.environ.get("JAVA_HOME"), required="JAVA_HOME" not in os.environ)
     parser.add_argument("--konan-home", type=Path, default=os.environ.get("KONAN_HOME"), required="KONAN_HOME" not in os.environ)
     parser.add_argument("--bootstrap-command-timeout", type=int, default=600)
+    parser.add_argument("--alternate-version", choices=("2.4.10", "2.4.21"), default="2.4.10")
     args = parser.parse_args()
     if (platform.system(), platform.machine()) != ("Linux", "x86_64") or not Path("/.dockerenv").is_file():
         parser.error("Run inside the pinned tools/linux Docker image on Linux x86_64")
     if not 1 <= args.bootstrap_command_timeout <= 3600:
         parser.error("--bootstrap-command-timeout must be from 1 to 3600 seconds")
-    execute(ROOT, args.java_home.resolve(strict=True), args.konan_home.resolve(strict=True), args.bootstrap_command_timeout)
+    execute(ROOT, args.java_home.resolve(strict=True), args.konan_home.resolve(strict=True),
+            args.bootstrap_command_timeout, args.alternate_version)
 
 
 if __name__ == "__main__":

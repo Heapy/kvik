@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check real 2.4.20/2.4.10 JVM compiler cache isolation through the public CLI.
+"""Check default/alternate JVM compiler cache isolation through the public CLI.
 
 Requires two already-built runtime executables and a prepared test_build_cli.py
 fixture. This harness never builds a runtime or changes shared tool artifacts.
@@ -21,7 +21,9 @@ from bootstrap import jvm_worker
 from bootstrap.identity import canonical, digest, file_digest, read_json
 
 
-def check_compiler_versions(runtime_a, runtime_b, fixture, validate):
+def check_compiler_versions(runtime_a, runtime_b, fixture, validate, alternate_version="2.4.10"):
+    if alternate_version not in ("2.4.10", "2.4.21"):
+        raise ValueError("Unsupported alternate compiler profile")
     runtimes = {"a": Path(runtime_a).resolve(strict=True), "b": Path(runtime_b).resolve(strict=True)}
     fixture = Path(fixture).resolve(strict=True)
     parent = ROOT / ".kvik/tests/compiler-versions"
@@ -49,14 +51,14 @@ def check_compiler_versions(runtime_a, runtime_b, fixture, validate):
         (case / "results.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
 
     save()
-    for profile, version in (("a", "2.4.20"), ("b", "2.4.10")):
+    for profile, version in (("a", "2.4.20"), ("b", alternate_version)):
         runtime = runtimes[profile]
         assert runtime.is_file() and os.access(runtime, os.X_OK), runtime
         runtime_manifest = read_json(runtime.parent / "manifest.json")
         bundle = jvm_worker.verify_bundle(runtime.parent, runtime_manifest["jvmWorkerBundle"])
         manifest_path = runtime.parent / "jvm/compiler-manifest.json"
         manifest = read_json(manifest_path)
-        lock_path = ROOT / ("bootstrap/jvm-artifacts.lock.json" if profile == "a" else "bootstrap/profiles/jvm-2.4.10.lock.json")
+        lock_path = ROOT / ("bootstrap/jvm-artifacts.lock.json" if profile == "a" else f"bootstrap/profiles/jvm-{version}.lock.json")
         lock = read_json(lock_path)
         assert lock["kotlinVersion"] == version
         expected = dict(schemaVersion=1, version=version,
@@ -216,7 +218,8 @@ def check_compiler_versions(runtime_a, runtime_b, fixture, validate):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-a", type=Path, required=True, help="Already-built Kotlin/JVM 2.4.20 runtime")
-    parser.add_argument("--runtime-b", type=Path, required=True, help="Already-built Kotlin/JVM 2.4.10 runtime")
+    parser.add_argument("--runtime-b", type=Path, required=True, help="Already-built alternate Kotlin/JVM runtime")
+    parser.add_argument("--alternate-version", choices=("2.4.10", "2.4.21"), default="2.4.10")
     parser.add_argument("--fixture", type=Path, required=True, help="Prepared public multi-module JVM fixture")
     args = parser.parse_args()
     import jsonschema
@@ -225,7 +228,7 @@ def main():
     def validate(value, kind):
         jsonschema.Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/" + kind}).validate(value)
 
-    check_compiler_versions(args.runtime_a, args.runtime_b, args.fixture, validate)
+    check_compiler_versions(args.runtime_a, args.runtime_b, args.fixture, validate, args.alternate_version)
 
 
 if __name__ == "__main__":
