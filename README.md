@@ -1391,6 +1391,25 @@ For a known incorrect published dependency edge, project commands accept repeata
 
 Bootstrap compiler commands have a 300-second deadline by default. On slower hosts, pass `--bootstrap-command-timeout 1800` before `--` (integer seconds, 1–3600). Foreground recomposition preserves this setting and scales its total rebuild budget proportionally above the default 15 minutes. The setting does not change artifact identities or consumer-action deadlines.
 
+Successful builds retain the same `buildTimings` in `manifest.json` and the
+`runtime-built` event. Ordered, nonoverlapping nanosecond phases cover tool root
+resolution, optional tool archive provisioning, installed tool inventory verification,
+optional source graph acquisition, JVM artifact acquisition, and runtime construction.
+Acquisition includes verified cache reuse. Construction includes source staging,
+C helpers, interop libraries, the JVM worker, the Native executable and staged output
+digests; `compileMillis` (and the event's `milliseconds`) rounds that phase to milliseconds.
+The total ends before cleanup, publication verification/sync and runtime invocation,
+and excludes earlier preflight and runtime cache inspection. Timings do not enter
+composition or action identities; cache-hit events do not replay build measurements.
+
+`tools/test_source_bootstrap.py --host-name "HOST MODEL / MEMORY" ...` retains these
+phase boundaries alongside end-to-end invocation times, initial source/artifact cache
+state, compiler locks and exact recipe-selected sources. Its default uses installed
+JDK/Native/host tools, so it does not measure distribution downloads. An empty
+`--artifact-cache` exercises first-use JVM JAR acquisition. Each mode is one observation
+of the full source composition, not the K01 small-spike budget; process CPU/RSS are
+explicitly unavailable in this harness.
+
 The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes, three runtime libraries and the JaCoCo agent/reporter alongside the native executable. Their 17 compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked Maven URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
 
 Select an explicit source composition with `--source-lock /absolute/source.lock.json` and optionally `--source-cache /absolute/source-cache` (default `.kvik/source-cache`). The [source graph contract](docs/decisions/k14-source-graph.md) covers pinned Git/archive packages, local source packages, source plugin dependencies and exact Native library closures. `--print-composition` validates declarations and observes local inputs without downloading or creating caches. An allowed build acquires verified inputs and compiles the composition; `--offline` requires cached remote inputs, and `--no-build` requires an already verified executable. Without `--source-lock`, the existing local composition remains the default. The [full HTTPS source composition fixture](docs/evidence/k14-source-bootstrap.md) passes cold build, relocated/offline reuse and rebuild, and rebuilding after a shared helper changes; its runtime also passes the existing JVM consumer tests.

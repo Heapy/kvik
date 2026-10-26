@@ -261,20 +261,47 @@ def cached(directory, key):
         return False
 
 
-def validate_tools(args, expected):
+class BuildTimings:
+    """Contiguous elapsed phases of a successful build, excluding publication.
+
+    Acquisition includes verified cache reuse. These measurements describe the
+    build which produced an entry, never a later cached invocation or identity.
+    """
+    def __init__(self):
+        self.started = self.previous = time.monotonic_ns()
+        self.phases = []
+
+    def finish(self, name):
+        now = time.monotonic_ns()
+        self.phases.append({"name": name, "startNanos": self.previous - self.started,
+                            "durationNanos": now - self.previous})
+        self.previous = now
+
+    def document(self):
+        return {"schemaVersion": 1, "scope": "tool-resolution-through-staged-runtime",
+                "totalDurationNanos": self.previous - self.started, "phases": list(self.phases)}
+
+
+def validate_tools(args, expected, timings=None):
     archive_lock = getattr(args, 'tool_archives', None)
     if archive_lock is None and (not args.java_home or not args.konan_home):
         raise ValueError("Native rebuild requires --java-home and --konan-home (or JAVA_HOME and KONAN_HOME)")
     roots = tool_roots(args.java_home, args.konan_home, args.konan_data)
+    if timings is not None:
+        timings.finish("toolResolution")
     if archive_lock is not None:
         document = tool_archives.read_lock(archive_lock, expected, host_identity())
         roots.update(tool_archives.provision(document, args.tool_cache, offline=args.offline))
+        if timings is not None:
+            timings.finish("toolArchiveProvisioning")
     if set(roots) != component_names() or set(expected) != component_names():
         raise ValueError("Tool component set differs from bootstrap host")
     for name, path in roots.items():
         actual = digest(canonical(inventory(path, allow_internal_symlinks=True)))
         if actual != expected.get(name):
             raise ValueError(f"Provisioned tool differs from lock: {name}; update tools or explicitly repin, never silently reuse it")
+    if timings is not None:
+        timings.finish("installedToolVerification")
     return roots
 
 
@@ -372,7 +399,8 @@ def run_owned(command, environment, log, timeout=300):
 
 
 def build(args, recipe, selected, lock, key, destination):
-    roots = validate_tools(args, lock["toolchains"])
+    timings = BuildTimings()
+    roots = validate_tools(args, lock["toolchains"], timings)
     graph_mode = isinstance(selected, source_graph.ObservedGraph)
     verified = None
     if graph_mode:
@@ -386,10 +414,11 @@ def build(args, recipe, selected, lock, key, destination):
                 git_executable=Path("/usr/bin/git"))
         except OwnedProcessCancelled as failure:
             raise BootstrapInterrupted(str(failure)) from failure
+        timings.finish("sourceAcquisition")
     jvm_lock = jvm_worker.read_lock(ROOT)
     artifacts = jvm_worker.acquire(jvm_lock, args.artifact_cache, args.offline)
+    timings.finish("jvmArtifactAcquisition")
     temporary = Path(tempfile.mkdtemp(prefix=key["hash"] + "-", dir=destination.parent))
-    started = time.monotonic()
     try:
         worker_files = None
         extra_libraries = []
@@ -475,12 +504,14 @@ def build(args, recipe, selected, lock, key, destination):
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
         manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
-            "jvmWorkerBundle": worker_digest,
-            "compileMillis": round((time.monotonic() - started) * 1000)}
+            "jvmWorkerBundle": worker_digest}
         if graph_mode:
             manifest["sourceAcquisition"] = file_digest(temporary / "source-acquisition.json")
             manifest["sourceInputs"] = file_digest(temporary / "source-inputs.json")
             manifest["sourceCommands"] = file_digest(temporary / "source-commands.jsonl")
+        timings.finish("runtimeConstruction")
+        manifest["buildTimings"] = timings.document()
+        manifest["compileMillis"] = round(timings.phases[-1]["durationNanos"] / 1_000_000)
         (temporary / "manifest.json").write_bytes(canonical(manifest) + b"\n")
         shutil.rmtree(temporary / "sources")
         shutil.rmtree(bridge)
@@ -491,7 +522,8 @@ def build(args, recipe, selected, lock, key, destination):
         if desired_composition(args)[3] != key:
             raise ValueError("Runtime sources changed during compilation/publication; refusing stale composition, retry")
         publish_runtime(temporary, destination)
-        emit("runtime-built", composition=key["hash"], milliseconds=manifest["compileMillis"])
+        emit("runtime-built", composition=key["hash"], milliseconds=manifest["compileMillis"],
+             buildTimings=manifest["buildTimings"])
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)

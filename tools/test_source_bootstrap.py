@@ -9,6 +9,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT/'tests/source-bootstrap'))
 from fixture import HttpsFixture, archive, canonical, certificates, digest, inventory
 sys.path.insert(0, str(ROOT))
 from bootstrap.source_graph import parse_source_lock, observe_graph
+from bootstrap.native_libraries import RECIPES
 
 DEFAULT_REFERENCE = Path('/private/tmp/kvik-k14-source-store/.kvik/tests/source-store/case-rzkf8dpt/full-kvik/source.lock.json')
 
@@ -34,17 +36,97 @@ def read(path):
     return json.loads(path.read_bytes())
 
 
+def source_selection(source_root, document):
+    """Bind the remote fixture to every source root in the current local recipe."""
+    recipe_path = source_root/'bootstrap/composition.json'
+    recipe_bytes = recipe_path.read_bytes()
+    recipe = json.loads(recipe_bytes)
+    kotlin_roots = sorted(set(recipe['coreSources']) | {
+        plugin['directory']+'/'+directory
+        for plugin in recipe['plugins'] for directory in plugin['sourceDirectories']})
+    content_paths = sorted(set(kotlin_roots) | {recipe['jvmWorkerSources'], recipe['nativePlatform']} |
+                           {RECIPES[name][0] for name in recipe['nativeLibraries']})
+    selected = []
+    for relative in content_paths:
+        selected.extend({**entry, 'path': relative+'/'+entry['path']}
+                        for entry in inventory(source_root/relative)['files'])
+    assert len({entry['path'] for entry in selected}) == len(selected), 'Overlapping recipe source roots'
+    node = next(node for node in document['sources'] if node['id'] == 'kvik')
+    node.update(contentPaths=content_paths, kotlinRoots=kotlin_roots)
+    document['runtime'].update(nativePlatform=recipe['nativePlatform'], nativeLibraries=recipe['nativeLibraries'],
+                               jvmWorkerSources=recipe['jvmWorkerSources'])
+    document['compilerOptions'] = recipe['compilerOptions']
+    document['plugins'] = [dict(id=plugin['id'], source='kvik', implementation=plugin['implementation'])
+                           for plugin in recipe['plugins']] + [p for p in document['plugins'] if p['source'] != 'kvik']
+    return {'recipe': recipe, 'recipeDigest': digest(recipe_bytes),
+            'inventory': {'schemaVersion': 1, 'files': sorted(selected, key=lambda entry: Path(entry['path']))}}
+
+
+def records_inventory_matches_selection(case, selection):
+    document = read(case/'template.json')
+    recipe_bytes = (case/'source-recipe.json').read_bytes()
+    recipe = selection['recipe']
+    assert digest(recipe_bytes) == selection['recipeDigest'] and json.loads(recipe_bytes) == recipe, 'Prepared recipe changed'
+    node = next(node for node in document['sources'] if node['id'] == 'kvik')
+    expected_kotlin = sorted(set(recipe['coreSources']) | {
+        plugin['directory']+'/'+directory for plugin in recipe['plugins'] for directory in plugin['sourceDirectories']})
+    expected_content = sorted(set(expected_kotlin) | {recipe['jvmWorkerSources'], recipe['nativePlatform']} |
+                              {RECIPES[name][0] for name in recipe['nativeLibraries']})
+    return (document['runtime'] == dict(source='kvik', nativePlatform=recipe['nativePlatform'],
+                                      nativeLibraries=recipe['nativeLibraries'], jvmWorkerSources=recipe['jvmWorkerSources']) and
+            document['compilerOptions'] == recipe['compilerOptions'] and
+            [p for p in document['plugins'] if p['source'] == 'kvik'] ==
+                [dict(id=p['id'], source='kvik', implementation=p['implementation']) for p in recipe['plugins']] and
+            node['kotlinRoots'] == expected_kotlin and node['contentPaths'] == expected_content and
+            inventory(case/'packages/kvik') == selection['inventory'] ==
+            read(case/'archive-identities.json')['kvik']['inventory'])
+
+
+def cache_state(path):
+    if not path.exists():
+        return {'exists': False, 'fileCount': 0, 'sizeBytes': 0, 'inventoryDigest': None}
+    contents = inventory(path)
+    return {'exists': True, 'fileCount': len(contents['files']),
+            'sizeBytes': sum(entry['digest']['sizeBytes'] for entry in contents['files']),
+            'inventoryDigest': digest(canonical(contents))}
+
+
+def validate_build_timings(manifest, events):
+    built = [event for event in events if event.get('kind') == 'runtime-built']
+    assert len(built) == 1, 'Expected one successful build timing event'
+    timings = manifest['buildTimings']
+    assert built[0]['buildTimings'] == timings, 'Event/manifest timing mismatch'
+    assert built[0]['composition'] == manifest['composition']['hash']
+    assert timings['schemaVersion'] == 1 and timings['scope'] == 'tool-resolution-through-staged-runtime'
+    names = [phase['name'] for phase in timings['phases']]
+    expected = ['toolResolution', 'installedToolVerification', 'sourceAcquisition',
+                'jvmArtifactAcquisition', 'runtimeConstruction']
+    assert names == expected, ('Unexpected phase boundaries for preprovisioned tools', names)
+    end = 0
+    for phase in timings['phases']:
+        assert type(phase['startNanos']) is int and phase['startNanos'] == end, 'Overlapping/missing phase'
+        assert type(phase['durationNanos']) is int and phase['durationNanos'] >= 0, 'Invalid phase duration'
+        end += phase['durationNanos']
+    assert type(timings['totalDurationNanos']) is int and timings['totalDurationNanos'] == end
+    assert manifest['compileMillis'] == built[0]['milliseconds'] == round(timings['phases'][-1]['durationNanos']/1_000_000)
+    return timings
+
+
 def prepare(case, source_root, reference):
     document = read(source_root/'docs/decisions/examples/k14-source-graph.lock.json')
     reference_doc = read(reference)
     for field in ('nativeArtifacts', 'providedLibraries', 'nativeLibraryOrder'):
         assert document[field] == reference_doc[field], ('Reference Native closure changed', field)
+    selection = source_selection(source_root, document)
+    recipe_bytes = (source_root/'bootstrap/composition.json').read_bytes()
+    assert digest(recipe_bytes) == selection['recipeDigest'], 'Recipe changed during fixture preparation'
+    (case/'source-recipe.json').write_bytes(recipe_bytes)
     packages = case/'packages'; packages.mkdir()
     kvik = packages/'kvik'; kvik.mkdir()
     for relative in document['sources'][0]['contentPaths']:
         shutil.copytree(source_root/relative, kvik/relative, symlinks=True)
     source_inventory = inventory(kvik)
-    assert len(source_inventory['files']) == 85, ('Expected current selected Kvik85files', len(source_inventory['files']))
+    assert source_inventory == selection['inventory'], 'Fixture differs from the complete recipe-selected source inventory'
     for suffix in ('a', 'b'):
         path = packages/f'plugin-{suffix}/src/Plugin.kt'; path.parent.mkdir(parents=True)
         path.write_text(f'''package example.{suffix}
@@ -73,7 +155,7 @@ fun sharedValue(): String = Json.parseToJsonElement("""{"value":"source-vVERSION
         records[name] = archive(packages/name, prefix, archives/(name+'.tar.gz'))
     certificates(case/'tls')
     write(case/'archive-identities.json', records)
-    write(case/'source-selection.json', {'root': str(source_root), 'inventory': source_inventory,
+    write(case/'source-selection.json', {'root': str(source_root), **selection,
         'referenceLock': str(reference), 'referenceDigest': digest(reference.read_bytes()),
         'referenceClosure': {field: reference_doc[field] for field in ('nativeArtifacts', 'providedLibraries', 'nativeLibraryOrder')}})
     return document
@@ -101,8 +183,9 @@ def trusted_copy(source, destination):
     return result
 
 
-def audit_runtime(directory, expected_lock, key, records):
+def audit_runtime(directory, expected_lock, key, records, events):
     manifest = read(directory/'manifest.json')
+    validate_build_timings(manifest, events)
     assert manifest['composition'] == key
     runtime_lock = read(directory/'runtime.lock.json')
     assert digest(canonical(runtime_lock)) == key
@@ -143,7 +226,8 @@ def audit_runtime(directory, expected_lock, key, records):
                 roles.add('native-kotlin')
             if runtime and path.endswith('.kt') and covered(path, ['core/src', worker_root]):
                 roles.add('jvm-worker')
-            if runtime and covered(path, [expected_lock['runtime']['nativePlatform'], 'resolution/native', 'integration/toolchains/platform']):
+            if runtime and covered(path, [expected_lock['runtime']['nativePlatform']] +
+                                       [RECIPES[name][0] for name in expected_lock['runtime']['nativeLibraries']]):
                 roles.add('native-support')
             assert actual[logical]['roles'] == sorted(roles)
     assert {p for p in actual if p.startswith('packages/')} == set(expected_source)
@@ -187,9 +271,11 @@ def main():
     parser.add_argument('--java-home', type=Path, default=Path('/Users/yoda/.sdkman/candidates/java/25.0.4-librca'))
     parser.add_argument('--konan-home', type=Path, default=Path('/Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20'))
     parser.add_argument('--artifact-cache', type=Path, default=Path('/Users/yoda/dev/pet/kvik/.kvik/tool-artifacts'))
+    parser.add_argument('--host-name', default=platform.node(), help='Name/model of the measured host; defaults to hostname')
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--case', type=Path)
     args = parser.parse_args()
+    args.artifact_cache = args.artifact_cache.absolute()
     if args.case:
         case = args.case.resolve(strict=True)
         configuration = read(case/'fixture.json')
@@ -203,6 +289,8 @@ def main():
         port = 0
     attempt = Path(tempfile.mkdtemp(prefix='attempt-', dir=case))
     print(attempt, flush=True)
+    selection = read(case/'source-selection.json')
+    assert records_inventory_matches_selection(case, selection), 'Prepared source inventory changed'
     records = read(case/'archive-identities.json')
     for name, record in records.items():
         assert digest((case/'archives'/(name+'.tar.gz')).read_bytes()) == record['archiveDigest']
@@ -211,7 +299,19 @@ def main():
                        SSL_CERT_FILE=str(case/'tls/trust.pem'))
     receipt = {'schemaVersion': 1, 'commands': [], 'passed': False, 'compiledRuntime': False,
                'harness': digest(Path(__file__).read_bytes()), 'fixtureHelper': digest((ROOT/'tests/source-bootstrap/fixture.py').read_bytes()),
-               'environment': environment, 'phases': {}}
+               'environment': environment, 'phases': {},
+               'measurementScope': {
+                   'tools': 'JDK, Kotlin/Native and host tool components are already installed; archive provisioning is not exercised',
+                   'acquisition': 'Source and JVM artifact phases include verified cache reuse; they do not imply downloads',
+                   'construction': 'Snapshot/staging, C helpers, interop libraries, JVM worker, Native runtime and staged output digests',
+                   'excluded': 'Preflight/identity, runtime cache inspection, cleanup, publication verification/sync and runtime invocation'},
+               'artifactCacheInitial': cache_state(args.artifact_cache),
+               'sourceSelection': selection,
+               'host': {'name': args.host_name, 'os': platform.system(), 'osRelease': platform.release(),
+                        'architecture': platform.machine(), 'logicalCpuCount': os.cpu_count()},
+               'harnessPython': platform.python_version(),
+               'processResources': {'coverage': 'unavailable', 'cpuNanos': None, 'peakRssBytes': None},
+               'performanceScope': 'One observation per full source-composition phase; not the K01 small-spike budget'}
     sequence = 0
     def invoke(label, command, env=environment, expected=0, timeout=900):
         nonlocal sequence
@@ -252,6 +352,9 @@ def main():
             producer = args.producer_root.resolve(strict=True)
             trusted = attempt/'trusted-launcher'
             receipt['producer'] = {'root': str(producer), 'inventory': trusted_copy(producer, trusted)}
+            receipt['software'] = {name: {'digest': digest((trusted/'bootstrap'/name).read_bytes()),
+                                         'document': read(trusted/'bootstrap'/name)}
+                                   for name in ('toolchains.lock.json', 'jvm-artifacts.lock.json')}
             cache = case/'runtime-cache'; source_cache = case/'source-cache'
             def command(launcher=trusted, runtime_cache=cache, source_store=source_cache, source_lock=lock,
                         missing_tools=False, offline=False, no_build=False, query=None):
@@ -265,7 +368,7 @@ def main():
             desired_bytes, _ = invoke('desired-composition', command(query='--print-composition'), timeout=30)
             desired = json.loads(desired_bytes)['composition']
             assert not cache.exists() and not source_cache.exists(), 'Read-only desired composition created caches'
-            receipt['phases']['preflight'] = {'passed': True, 'desired': desired, 'selectedKvikFiles': 85,
+            receipt['phases']['preflight'] = {'passed': True, 'desired': desired, 'selectedKvikFiles': len(selection['inventory']['files']),
                 'privateCaRejected': True, 'privateCaTrusted': True, 'publicCaTrusted': True}
             if args.prepare_only:
                 receipt['passed'] = True
@@ -281,13 +384,19 @@ def main():
                     assert schemas['example.a']['description'] == schemas['example.b']['description'] == expected_value
                     events = [json.loads(line) for line in stderr.splitlines() if line.startswith(b'{')]
                     assert any(e.get('kind') == expected_event for e in events), (label, events)
+                    for event in events:
+                        if event.get('kind') == 'runtime-built':
+                            assert event['buildTimings']['totalDurationNanos'] <= receipt['commands'][-1]['seconds']*1_000_000_000, 'Build phases exceed complete invocation'
+                    if expected_event == 'runtime-cache-hit':
+                        assert not any(e.get('kind') == 'runtime-built' or 'buildTimings' in e for e in events), 'Cached invocation fabricated build timings'
                     receipt['phases'][label] = {'passed': True, 'runtimeInfo': info, 'bootstrapEvents': events}
                     return info
 
+                receipt['sourceCacheInitial'] = cache_state(source_cache)
                 requests = len(server.requests)
                 runtime('cold', command(), 'source-v1', desired, 'runtime-built')
                 receipt['compiledRuntime'] = True
-                receipt['phases']['cold']['audit'] = audit_runtime(cache/'executables'/desired['hash'], original_lock, desired, records)
+                receipt['phases']['cold']['audit'] = audit_runtime(cache/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['cold']['bootstrapEvents'])
                 requested = {entry['path'] for entry in server.requests[requests:]}
                 assert requested == {'/'+name+'.tar.gz' for name in ('kvik', 'plugin-a', 'plugin-b', 'shared-helper-v1')}
                 server.blocked = True
@@ -304,7 +413,7 @@ def main():
                 rebuilt = relocation/'offline-rebuilt-cache'
                 runtime('offline-rebuild', command(launcher=relocation/'launcher', runtime_cache=rebuilt,
                     source_store=relocation/'source-cache', source_lock=relocated_lock, offline=True), 'source-v1', desired, 'runtime-built')
-                receipt['phases']['offline-rebuild']['audit'] = audit_runtime(rebuilt/'executables'/desired['hash'], original_lock, desired, records)
+                receipt['phases']['offline-rebuild']['audit'] = audit_runtime(rebuilt/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['offline-rebuild']['bootstrapEvents'])
                 assert len(server.requests) == requests, 'Offline phase attempted source transport'
                 server.blocked = False
                 mutated = lock_document(document, records, server.port, version=2)
@@ -315,7 +424,7 @@ def main():
                 assert next_key != desired
                 requests = len(server.requests)
                 runtime('helper-mutation', command(), 'source-v2', next_key, 'runtime-built')
-                receipt['phases']['helper-mutation']['audit'] = audit_runtime(cache/'executables'/next_key['hash'], mutated, next_key, records)
+                receipt['phases']['helper-mutation']['audit'] = audit_runtime(cache/'executables'/next_key['hash'], mutated, next_key, records, receipt['phases']['helper-mutation']['bootstrapEvents'])
                 assert {entry['path'] for entry in server.requests[requests:]} == {'/shared-helper-v2.tar.gz'}
                 assert inventory(trusted) == receipt['producer']['inventory'], 'Trusted launcher changed during gate'
                 receipt['passed'] = True

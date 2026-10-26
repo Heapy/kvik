@@ -212,7 +212,13 @@ class ToolArchivesTest(unittest.TestCase):
                 patch.object(launcher, 'component_names', return_value=set(expected)), \
                 patch.object(launcher, 'tool_roots', return_value={'sdk': self.root, 'xcodeToolchain': self.root}), \
                 patch.object(tools, 'provision', side_effect=lambda doc, cache, offline: original(doc, cache, offline=offline, opener=opener)):
-            roots = launcher.validate_tools(self.policy(), expected)
+            with patch.object(launcher.time, 'monotonic_ns', side_effect=[100, 110, 140, 190]):
+                timings = launcher.BuildTimings()
+                roots = launcher.validate_tools(self.policy(), expected, timings)
+            self.assertEqual(['toolResolution', 'toolArchiveProvisioning', 'installedToolVerification'],
+                             [phase['name'] for phase in timings.phases])
+            self.assertEqual([10, 30, 50], [phase['durationNanos'] for phase in timings.phases])
+            self.assertEqual(90, timings.document()['totalDurationNanos'])
             self.assertEqual(set(expected), set(roots))
             self.assertEqual(1, len(opener.calls))
             (self.root / 'bin/tool').write_bytes(b'changed sdk')
