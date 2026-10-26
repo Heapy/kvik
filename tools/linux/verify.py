@@ -108,6 +108,10 @@ def main():
     fixtures = list(fixture_output.glob('case-*'))
     if len(fixtures) != 1:
         raise RuntimeError('Expected one JVM fixture for parallel test measurements')
+    run([sys.executable, ROOT/'tools/test_compiler_session_worker.py', '--java-home', java,
+         '--compiler-artifacts', ROOT/'.kvik/tool-artifacts', '--offline'])
+    run([sys.executable, ROOT/'tools/test_foreground_jvm.py', '--runtime', executable,
+         '--fixture', fixtures[0]])
     run([sys.executable, ROOT/'tools/test_test_resources_cli.py', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache',
          '--output-dir', ROOT/'.kvik/tests/test-resources',

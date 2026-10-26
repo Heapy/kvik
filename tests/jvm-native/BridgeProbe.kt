@@ -36,13 +36,17 @@ fun main(args: Array<String>) {
         }
     }
     NativeProcessHost(string("guardian")).use { host ->
-        val executor = JvmActionExecutor(run.runId, run.path, host, store, provider)
+        val pool = if (request["reuseCompiler"]?.booleanValue() == true) JvmCompilerSessionPool(host, run.path, run.path) else null
+        val executor = JvmActionExecutor(run.runId, run.path, host, store, provider, pool)
         val events = mutableListOf<RunEvent>()
+        try {
         NativeEventJournal("${run.path}/events.jsonl").use { journal ->
-            SchedulerRun(run.runId, nodes, executor, ResourceBudget(2, 4096), EventJournal { event -> journal.append(event); events += event }).use { scheduler ->
+            SchedulerRun(run.runId, nodes, executor, ResourceBudget(2, 4096), EventJournal { event -> journal.append(event); events += event },
+                admission = pool?.let { ActionAdmission(it::reserve) }).use { scheduler ->
                 while (!scheduler.tick()) usleep(10000u)
             }
         }
+        } finally { pool?.close() }
         val testNode = specifications.first { it["selection"] != null }
         val dependencies = testNode.getValue("dependencies").arrayValue().map(JsonValue::stringValue)
         val paths = testNode.getValue("inputPaths").arrayValue().map(JsonValue::stringValue).toSet()

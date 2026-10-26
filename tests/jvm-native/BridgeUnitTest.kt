@@ -89,7 +89,10 @@ class BridgeUnitTest {
             })).key(Sha256))
             assertFails { action(files = TreeManifest(inputs.files.filter { it.path.value != path })) }
         }
-        assertFails { compilation.copy(plugins = listOf(LogicalPath("plugin.jar"))) }
+        // Legacy serialization may coexist with a different plugin ID, but not another serialization registration.
+        assertEquals(listOf(LogicalPath("serialization.jar")), compilation.copy(plugins = listOf(LogicalPath("serialization.jar"))).plugins)
+        assertFails { compilation.copy(plugins = listOf(LogicalPath("serialization.jar")),
+            pluginApplications = listOf(plugin.copy(id = "org.jetbrains.kotlinx.serialization"))) }
         val overlapping = plugin.copy(outputs = listOf(LogicalPath("metadata/report")),
             pathOptions = listOf(PluginPathOption("report", PluginPathKind.OUTPUT_DIRECTORY, LogicalPath("metadata/report"))))
         assertFails { compilation.copy(pluginApplications = listOf(overlapping)) }

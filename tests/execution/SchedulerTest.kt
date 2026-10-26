@@ -21,11 +21,18 @@ private class ManualExecutor : ActionExecutor {
     inner class Handle(val id: String, val action: ActionSpec) : RunningAction {
         var status: ActionStatus? = null
         var closed = false
+        var failPoll = false
+        var failCancel = false
+        var failClose = false
         var usage = emptyList<ProcessUsage>()
-        override fun poll() = status?.let { ActionResult(id, action.key(Sha256), it, exitCode = if (it == ActionStatus.EXECUTED) 0 else 1,
-            processUsage = usage) }
-        override fun cancel() { status = ActionStatus.CANCELLED }
-        override fun close() { closed = true }
+        override fun poll(): ActionResult? {
+            check(!failPoll) { "poll $id" }
+            return status?.let { ActionResult(id, action.key(Sha256), it,
+                exitCode = if (it in setOf(ActionStatus.EXECUTED, ActionStatus.LOCAL_HIT, ActionStatus.REMOTE_HIT)) 0 else 1,
+                processUsage = usage) }
+        }
+        override fun cancel() { status = ActionStatus.CANCELLED; check(!failCancel) { "cancel $id" } }
+        override fun close() { closed = true; check(!failClose) { "close $id" } }
     }
     override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
         started += actionId
@@ -35,6 +42,197 @@ private class ManualExecutor : ActionExecutor {
 }
 
 class SchedulerTest {
+    @Test fun admissionLeaseSpansPendingWorkAndCacheHitsWithoutCreditingFollowers() {
+        val executor = ManualExecutor()
+        val reserved = mutableListOf<Pair<String, Long>>()
+        val held = mutableSetOf<String>()
+        val released = mutableListOf<String>()
+        val admission = ActionAdmission { id, _, spare ->
+            reserved += id to spare
+            assertTrue(held.add(id))
+            AutoCloseable {
+                assertTrue(executor.running.getValue(id).closed, "Handle must close before its lease")
+                assertTrue(held.remove(id), "Lease closed more than once")
+                released += id
+            }
+        }
+        val nodes = listOf(ActionNode("a", emptySet()) { spec() }, ActionNode("b-follower", emptySet()) { spec() },
+            ActionNode("c", emptySet()) { spec("independent") }, ActionNode("d", setOf("a")) { spec("dependent") })
+        SchedulerRun("leases", nodes, executor, ResourceBudget(2, 3), EventJournal {}, admission = admission).use { run ->
+            assertFalse(run.tick())
+            assertEquals(listOf("a" to 2L, "c" to 1L), reserved)
+            assertEquals(setOf("a", "c"), held)
+            run.tick() // Both handles may be waiting for asynchronous preparation or remote lookup.
+            assertEquals(setOf("a", "c"), held)
+            assertTrue(released.isEmpty())
+            executor.finish("a", ActionStatus.REMOTE_HIT)
+            run.tick()
+            assertEquals(ActionStatus.REMOTE_HIT, run.results.getValue("a").status)
+            assertEquals(ActionStatus.REMOTE_HIT, run.results.getValue("b-follower").status)
+            assertEquals(listOf("a"), released)
+            assertEquals(setOf("c", "d"), held)
+            assertEquals(listOf("a" to 2L, "c" to 1L, "d" to 1L), reserved)
+            run.cancel()
+            assertEquals(setOf("c", "d"), held, "Cancellation must retain leases until handles drain")
+            assertTrue(run.tick())
+            assertTrue(held.isEmpty())
+            assertEquals(listOf("a", "c", "d"), released)
+        }
+    }
+
+    @Test fun executorStartFailureReleasesAdmissionBeforeIndependentWork() {
+        val events = mutableListOf<String>()
+        val delegate = ManualExecutor()
+        val executor = object : ActionExecutor {
+            override fun resources(action: ActionSpec) = ResourceRequest(1)
+            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
+                events += "start $actionId"
+                check(actionId != "a") { "Cannot launch" }
+                return delegate.start(runId, actionId, action)
+            }
+        }
+        val admission = ActionAdmission { id, _, spare ->
+            assertEquals(1L, spare)
+            events += "reserve $id"
+            AutoCloseable { events += "release $id" }
+        }
+        val nodes = listOf("a", "b").map { id -> ActionNode(id, emptySet()) { spec(id) } }
+        SchedulerRun("start-failure", nodes, executor, ResourceBudget(2, 2), EventJournal {}, admission = admission).use { run ->
+            run.tick()
+            assertEquals(listOf("reserve a", "start a", "release a", "reserve b", "start b"), events)
+            assertEquals(ActionStatus.FAILED, run.results.getValue("a").status)
+            delegate.finish("b")
+            assertTrue(run.tick())
+        }
+        assertEquals("release b", events.last())
+    }
+
+    @Test fun admissionFailureDrainsActiveWorkAndPreventsFurtherAdmissions() {
+        val executor = ManualExecutor()
+        val reserved = mutableListOf<String>()
+        val released = mutableListOf<String>()
+        val admission = ActionAdmission { id, _, _ ->
+            reserved += id
+            check(id != "b") { "Cannot reserve" }
+            AutoCloseable { released += id }
+        }
+        val nodes = listOf("a", "b", "c").map { id -> ActionNode(id, emptySet()) { spec(id) } }
+        SchedulerRun("reserve-failure", nodes, executor, ResourceBudget(3, 3), EventJournal {}, admission = admission).use { run ->
+            assertEquals("Cannot reserve", assertFailsWith<IllegalStateException> { run.tick() }.message)
+            assertEquals(listOf("a"), executor.started)
+            assertEquals(listOf("a", "b"), reserved)
+            assertTrue(executor.running.getValue("a").closed)
+            assertEquals(ActionStatus.CANCELLED, executor.running.getValue("a").status)
+            assertTrue(run.isFinished)
+        }
+        assertEquals(listOf("a"), released)
+    }
+
+    @Test fun failedStartupLeaseCleanupStillDrainsAlreadyActiveWork() {
+        val delegate = ManualExecutor()
+        val released = mutableListOf<String>()
+        val executor = object : ActionExecutor {
+            override fun resources(action: ActionSpec) = ResourceRequest(1)
+            override fun start(runId: String, actionId: String, action: ActionSpec): RunningAction {
+                check(actionId != "b") { "launch b" }
+                return delegate.start(runId, actionId, action)
+            }
+        }
+        val admission = ActionAdmission { id, _, _ -> AutoCloseable {
+            released += id
+            check(id != "b") { "lease b" }
+        } }
+        val nodes = listOf("a", "b").map { id -> ActionNode(id, emptySet()) { spec(id) } }
+        val run = SchedulerRun("start-cleanup-failure", nodes, executor, ResourceBudget(2, 2),
+            EventJournal {}, admission = admission)
+        val failure = assertFailsWith<IllegalStateException> { run.tick() }
+        assertEquals("launch b", failure.message)
+        assertEquals("lease b", failure.suppressedExceptions.single().message)
+        assertTrue(delegate.running.getValue("a").closed)
+        assertEquals(ActionStatus.CANCELLED, delegate.running.getValue("a").status)
+        assertEquals(listOf("b", "a"), released)
+        run.close()
+        assertEquals(listOf("b", "a"), released)
+    }
+
+    @Test fun pollFailureClosesHandleBeforeReleasingAdmission() {
+        val executor = ManualExecutor()
+        val released = mutableListOf<String>()
+        val admission = ActionAdmission { id, _, _ -> AutoCloseable {
+            assertTrue(executor.running.getValue(id).closed)
+            released += id
+        } }
+        SchedulerRun("poll-failure", listOf(ActionNode("a", emptySet()) { spec() }), executor,
+            ResourceBudget(1, 1), EventJournal {}, admission = admission).use { run ->
+            run.tick()
+            executor.running.getValue("a").failPoll = true
+            assertTrue(run.tick())
+            assertEquals(ActionStatus.FAILED, run.results.getValue("a").status)
+            assertEquals(listOf("a"), released)
+        }
+    }
+
+    @Test fun journalFailureDrainsEveryHandleAndLeaseDespiteLeaseCleanupFailure() {
+        val executor = ManualExecutor()
+        val released = mutableListOf<String>()
+        val admission = ActionAdmission { id, _, _ -> AutoCloseable {
+            assertTrue(executor.running.getValue(id).closed)
+            released += id
+            check(id != "a") { "lease a" }
+        } }
+        val nodes = listOf("a", "b").map { id -> ActionNode(id, emptySet()) { spec(id) } }
+        val run = SchedulerRun("journal-failure", nodes, executor, ResourceBudget(2, 2), EventJournal {
+            if (it.type == "action-started" && it.payload.values["actionId"] == "b".json()) error("disk full")
+        }, admission = admission)
+        val failure = assertFailsWith<IllegalStateException> { run.tick() }
+        assertEquals("disk full", failure.message)
+        assertEquals("lease a", failure.suppressedExceptions.single().message)
+        assertTrue(executor.running.values.all { it.closed && it.status == ActionStatus.CANCELLED })
+        assertEquals(listOf("a", "b"), released)
+        run.close()
+        assertEquals(listOf("a", "b"), released)
+    }
+
+    @Test fun completionCleanupFailureStillReleasesAllAdmissionsAndStopsOtherWork() {
+        val executor = ManualExecutor()
+        val released = mutableListOf<String>()
+        val admission = ActionAdmission { id, _, _ -> AutoCloseable {
+            assertTrue(executor.running.getValue(id).closed)
+            released += id
+            check(id != "a") { "lease a" }
+        } }
+        val nodes = listOf("a", "b").map { id -> ActionNode(id, emptySet()) { spec(id) } }
+        val run = SchedulerRun("close-failure", nodes, executor, ResourceBudget(2, 2), EventJournal {}, admission = admission)
+        run.tick()
+        executor.running.getValue("a").failClose = true
+        executor.finish("a")
+        val failure = assertFailsWith<IllegalStateException> { run.tick() }
+        assertEquals("close a", failure.message)
+        assertEquals("lease a", failure.suppressedExceptions.single().message)
+        assertTrue(executor.running.values.all { it.closed })
+        assertEquals(ActionStatus.CANCELLED, executor.running.getValue("b").status)
+        assertEquals(listOf("a", "b"), released)
+        run.close()
+        assertEquals(listOf("a", "b"), released)
+    }
+
+    @Test fun cancellationFailureStillClosesEveryHandleAndAdmission() {
+        val executor = ManualExecutor()
+        val released = mutableListOf<String>()
+        val admission = ActionAdmission { id, _, _ -> AutoCloseable {
+            assertTrue(executor.running.getValue(id).closed)
+            released += id
+        } }
+        val nodes = listOf("a", "b").map { id -> ActionNode(id, emptySet()) { spec(id) } }
+        val run = SchedulerRun("cancel-failure", nodes, executor, ResourceBudget(2, 2), EventJournal {}, admission = admission)
+        run.tick()
+        executor.running.getValue("a").failCancel = true
+        assertFailsWith<IllegalStateException> { run.cancel() }
+        assertTrue(executor.running.values.all { it.closed })
+        assertEquals(listOf("a", "b"), released)
+        assertTrue(run.isFinished)
+    }
+
     @Test fun outputContractDriftFailsBeforeExecutorStartIncludingCopiedNodes() {
         val executor = ManualExecutor()
         val contract = ActionOutputContract(treeOutput("classes", "jvm-classes"))

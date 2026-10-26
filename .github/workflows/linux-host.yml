@@ -39,3 +39,15 @@ jobs:
           path: .kvik/ci-artifacts/parallel-comparison.json
           include-hidden-files: true
           if-no-files-found: ignore
+      - name: Retain foreground compiler session checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-sessions-linux
+          path: |
+            .kvik/tests/foreground-jvm/case-*/summary.json
+            .kvik/tests/foreground-jvm/case-*/session.stdout.jsonl
+            .kvik/tests/foreground-jvm/case-*/session.stderr.log
+            .kvik/tests/compiler-session-worker/case-*/results.json
+          include-hidden-files: true
+          if-no-files-found: ignore

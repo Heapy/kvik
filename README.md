@@ -1668,6 +1668,14 @@ terminal loss, output backpressure and normal shutdown retain their existing
 behavior. The directory has the same trusted-local-filesystem boundary as the
 artifact store; it is not a remote authorization protocol.
 
+Within an explicit `dev` session, plugin-free JVM compilations can reuse up to two
+owned compiler JVMs. Each action gets a fresh BTA build session, input/output
+directories and logs; tests and compiler plugins still run in fresh JVMs. Idle
+compilers count against memory admission and are stopped when other work needs
+their capacity. Cancellation, session exit and runtime replacement drain them;
+there is no background daemon. Compiler distribution verification remains per
+action. See the [compiler session contract](compiler/jvm/native/README.md#foreground-compiler-ownership).
+
 Check installed tools before a build:
 
 ```sh

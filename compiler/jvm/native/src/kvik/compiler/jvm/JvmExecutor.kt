@@ -58,13 +58,14 @@ data class JvmActionObservation(val result: ActionResult, val diagnostics: List<
         "tests" to (tests?.toJson() ?: JsonValue.Null), "directory" to directory.json(), "stdoutFile" to stdoutFile.json(), "stderrFile" to stderrFile.json())
 }
 
-/** One worker invocation per action. No JVM orchestrator, compiler daemon or test cache. */
+/** Fresh tests/plugins; optional foreground-owned reuse for plugin-free JVM compilation. */
 class JvmActionExecutor(
     private val runId: String,
     private val runDirectory: String,
     private val host: ProcessHost,
     private val content: ContentStore,
     private val toolchains: JvmToolchainProvider,
+    private val compilerSessions: JvmCompilerSessionPool? = null,
 ) : ActionExecutor {
     private val recorded = linkedMapOf<String, JvmActionObservation>()
     private val startedActions = mutableSetOf<String>()
@@ -150,8 +151,10 @@ class JvmActionExecutor(
             val arguments = listOf(layout.javaExecutable) + coverageArguments + selection?.agents.orEmpty().map { it.argument() } + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
                 if (compilerOutput != null) listOf(if (script != null) "kvik.jvm.KotlinScriptCompileWorker" else "kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
                 else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json")
-            val process = host.start(ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
-                "$directory/worker.stdout", "$directory/worker.stderr", expected.timeoutMillis))
+            val processRequest = ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
+                "$directory/worker.stdout", "$directory/worker.stderr", expected.timeoutMillis)
+            val reusable = compilation != null && compilation.plugins.isEmpty() && compilation.pluginApplications.isEmpty()
+            val process = (if (reusable) compilerSessions?.start(layout, processRequest, actionId) else null) ?: host.start(processRequest)
             return object : RunningAction {
                 private var result: ActionResult? = null
                 private var cancelled = false
@@ -162,7 +165,7 @@ class JvmActionExecutor(
                     result?.let { return it }
                     check(!closed) { "JVM action already closed" }
                     val exit = process.poll() ?: return null
-                    close() // The full owned process group is quiescent before results/outputs are read.
+                    close() // One-shot groups are drained; pooled compilers acknowledge a closed BTA session.
                     var diagnostics = emptyList<Diagnostic>()
                     var tests: JvmTestReport? = null
                     var finalTestResult = false

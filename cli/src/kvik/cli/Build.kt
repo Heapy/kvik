@@ -11,6 +11,7 @@ import kvik.cache.remote.*
 import kvik.compiler.jvm.JvmBenchmarkExecutor
 import kvik.compiler.jvm.JvmClasspathExecutor
 import kvik.compiler.jvm.JvmActionExecutor
+import kvik.compiler.jvm.JvmCompilerSessionPool
 import kvik.compiler.js.JsCompilerExecutor
 import kvik.compiler.jvm.JvmScriptExecutor
 import kvik.compiler.jvm.JvmScriptObservation
@@ -83,14 +84,15 @@ private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStat
     return executeBuild(args, mode).status
 }
 
-internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null): BuildOutcome {
+internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null,
+                          compilerSessions: JvmCompilerSessionPool? = null): BuildOutcome {
     val (source, remaining) = sourceProjectOptions(args)
-    if (source == null) return executeBuildOptions(buildOptions(remaining), mode, ownInterrupts, sessionCache = sessionCache)
+    if (source == null) return executeBuildOptions(buildOptions(remaining), mode, ownInterrupts, sessionCache = sessionCache, compilerSessions = compilerSessions)
     val options = buildOptions(remaining)
     if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install source build interruption handlers" }
     try {
         return withPreparedSourceProject(source, options) { prepared ->
-            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared, sessionCache = sessionCache)
+            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared, sessionCache = sessionCache, compilerSessions = compilerSessions)
         }
     } finally { if (ownInterrupts) kvik_interrupt_restore() }
 }
@@ -117,7 +119,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                                 scriptFile: ScriptFile? = null, scriptArguments: List<String> = emptyList(),
                                 sessionCache: BuildSessionCache? = null, sourceProject: PreparedSourceProject? = null,
                                 expectedSnapshot: Digest? = null, expectedTools: Map<String, Map<String, Digest>>? = null,
-                                selectionOverride: SnapshotSelection? = null): BuildOutcome {
+                                selectionOverride: SnapshotSelection? = null,
+                                compilerSessions: JvmCompilerSessionPool? = null): BuildOutcome {
     val test = mode == ProjectMode.TEST
     require(!options.coverage || test && scriptFile == null && options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
@@ -283,7 +286,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     composition, toolIdentities, Sha256.digest(tools.document), graphRequest, buildPlugins)
                 else composedProjectActionGraph(buildPlugins, ProjectBuildContext(effective, lock, snapshot.inputs, composition, toolIdentities), graphRequest)
                 runtimeProcessHost().use { host ->
-                    val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider())
+                    val jvm = JvmActionExecutor(run.runId, run.path, host, content, tools.jvmProvider(), compilerSessions)
                     val js = if (toolTargets.any { KotlinJsTarget.find(it) != null })
                         JsCompilerExecutor(run.runId, run.path, host, content, tools.jvmProvider(), tools.nodeProvider()) else null
                     val scripts = JvmScriptExecutor(run.runId, run.path, root, host, content, tools.jvmProvider())
@@ -455,7 +458,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                         }
                     }) }
                     SchedulerRun(run.runId, traced, cached, options.budget,
-                        EventJournal { journal.emit(it.type, it.payload) }).use { scheduler ->
+                        EventJournal { journal.emit(it.type, it.payload) },
+                        admission = compilerSessions?.let { pool -> ActionAdmission { id, action, spare -> pool.reserve(id, action, spare) } }).use { scheduler ->
                         while (!scheduler.isFinished) {
                             if (kvik_interrupt_requested() != 0) { cancelled = true; scheduler.cancel() }
                             scheduler.tick()

@@ -6,6 +6,16 @@ import kotlin.time.TimeSource
 /** append must durably persist before returning; listeners may observe only persisted events. */
 fun interface EventJournal { fun append(event: RunEvent) }
 
+/** Reserves resident resources for one admitted action, including asynchronous preparation/cache lookup.
+ * A returned lease is closed after the action handle, or if executor startup fails. A throwing reserve
+ * must clean up anything it acquired before returning. Reservation failures stop and drain the run;
+ * they may mean resident-worker cleanup could not be confirmed. The spare memory excludes all active
+ * actions and the new action's own reservation.
+ */
+fun interface ActionAdmission {
+    fun reserve(actionId: String, action: ActionSpec, spareMemoryMiB: Long): AutoCloseable
+}
+
 /** Single-thread-confined, cooperative run. Call tick regularly; no background scheduler exists.
  * Emits action events only. The run coordinator owns authoritative run boundaries and verification,
  * and assigns run-wide sequence numbers when combining this action stream with other event sources.
@@ -18,12 +28,26 @@ class SchedulerRun(
     private val journal: EventJournal,
     private val hasher: Hasher = Sha256,
     private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val admission: ActionAdmission? = null,
 ) : AutoCloseable {
     private val timeOrigin = timeSource.markNow()
     private val nodes = nodes.sortedBy { it.id }.associate { it.id to it.copy(dependencies = it.dependencies.toSet()) }
     private val completed = mutableMapOf<String, ActionResult>()
     private data class Resolved(val spec: ActionSpec, val key: Digest, val resources: ResourceRequest)
-    private data class Active(val resolved: Resolved, val handle: RunningAction, val startedAfterNanos: Long)
+    private class Active(val resolved: Resolved, val handle: RunningAction, val startedAfterNanos: Long,
+                         val admission: AutoCloseable?) {
+        var closed = false
+        fun close() {
+            if (closed) return
+            closed = true
+            var failure: Exception? = null
+            try { handle.close() } catch (error: Exception) { failure = error }
+            try { admission?.close() } catch (error: Exception) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
+            failure?.let { throw it }
+        }
+    }
     private val resolved = mutableMapOf<String, Resolved>()
     private val active = mutableMapOf<String, Active>()
     private val owners = mutableMapOf<Digest, String>()
@@ -67,7 +91,7 @@ class SchedulerRun(
                 val result = try { running.handle.poll() } catch (failure: Exception) {
                     ActionResult(id, running.resolved.key, ActionStatus.FAILED, diagnostic = "Executor poll: ${failure.message}")
                 } ?: continue
-                running.handle.close()
+                running.close()
                 active.remove(id)
                 val checked = if (result.actionId != id || result.key != running.resolved.key) {
                     ActionResult(id, running.resolved.key, ActionStatus.FAILED, diagnostic = "Executor returned a mismatched action identity")
@@ -124,14 +148,21 @@ class SchedulerRun(
                 if (active.size >= budget.maxParallel || action.resources.memoryMiB > budget.memoryMiB - memory ||
                     action.resources.cpuSlots > budget.maxParallel - cpuSlots ||
                     action.resources.exclusive.any { it in exclusive }) continue
+                val startedAfterNanos = timeOrigin.elapsedNow().inWholeNanoseconds
+                // Admission can drain resident workers. Failure must stop the run, not merely this action.
+                var lease: AutoCloseable? = admission?.reserve(id, action.spec, budget.memoryMiB - memory - action.resources.memoryMiB)
                 try {
-                    val startedAfterNanos = timeOrigin.elapsedNow().inWholeNanoseconds
                     val handle = executor.start(runId, id, action.spec)
-                    active[id] = Active(action, handle, startedAfterNanos)
+                    active[id] = Active(action, handle, startedAfterNanos, lease)
+                    lease = null // Ownership moved to Active before journal callbacks can fail.
                     if (action.spec.cachePolicy != CachePolicy.NEVER) owners[action.key] = id
                     emit("action-started", obj("actionId" to id.json(), "key" to action.key.toJson()))
                 } catch (failure: Exception) {
                     if (id in active) throw failure // Journal failure must stop every owned action.
+                    try { lease?.close() } catch (cleanup: Exception) {
+                        failure.addSuppressed(cleanup)
+                        throw failure // Unconfirmed admission cleanup must stop other active work too.
+                    }
                     complete(ActionResult(id, action.key, ActionStatus.FAILED, diagnostic = "Executor start: ${failure.message}"))
                 }
             }
@@ -140,7 +171,7 @@ class SchedulerRun(
             }
             return finished
         } catch (failure: Exception) {
-            close()
+            try { close() } catch (cleanup: Exception) { failure.addSuppressed(cleanup) }
             throw failure
         }
     }
@@ -150,9 +181,14 @@ class SchedulerRun(
         cancelled = true
         var failure: Exception? = null
         for (running in active.values) {
-            try { running.handle.cancel() } catch (error: Exception) { failure = error }
+            try { running.handle.cancel() } catch (error: Exception) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
         }
-        failure?.let { close(); throw it }
+        failure?.let {
+            try { close() } catch (cleanup: Exception) { it.addSuppressed(cleanup) }
+            throw it
+        }
     }
 
     /** Cleanup remains mandatory if the event journal or an adapter throws. */
@@ -161,10 +197,14 @@ class SchedulerRun(
         cancelled = true
         var failure: Exception? = null
         for (running in active.values) {
-            try { running.handle.cancel() } catch (error: Exception) { failure = error }
+            if (!running.closed) try { running.handle.cancel() } catch (error: Exception) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
         }
         for (running in active.values) {
-            try { running.handle.close() } catch (error: Exception) { failure = error }
+            try { running.close() } catch (error: Exception) {
+                if (failure == null) failure = error else failure.addSuppressed(error)
+            }
         }
         active.clear()
         finished = true

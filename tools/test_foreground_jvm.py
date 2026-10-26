@@ -108,8 +108,12 @@ def main():
             validate(value, 'verification')
             assert value['status'] == 'passed' and value['freshnessAtCompletion'] == 'current', value
             assert value['testCounts'] == dict(discovered=1, executed=1, failed=0, skipped=0, discoveryComplete=True), value['testCounts']
-            assert value['tests'] == [dict(id='[engine:junit-jupiter]/[class:fixture.PassingTests]/[method:dependencyAndResource()]',
-                                           message=None, module='consumer', status='passed', target='jvm')], value['tests']
+            expected_test = dict(id='[engine:junit-jupiter]/[class:fixture.PassingTests]/[method:dependencyAndResource()]',
+                                 message=None, module='consumer', status='passed', target='jvm')
+            assert len(value['tests']) == 1, value['tests']
+            actual_test = value['tests'][0]
+            assert {key: actual_test[key] for key in expected_test} == expected_test, actual_test
+            assert [attempt['status'] for attempt in actual_test['details']['attempts']] == ['passed'], actual_test
             lines = (run / 'events.jsonl').read_text()
             assert (child / 'stdout.jsonl').read_text() == lines
             run_events = [json.loads(line) for line in lines.splitlines()]
@@ -119,7 +123,12 @@ def main():
             assert run_events[-1]['type'] == 'run-finished' and run_events[-1]['payload'] == value
             effects = list(run.glob('kvik-run-*/effects.txt'))
             assert len(effects) == 1 and effects[0].read_text() == 'executed\n', effects
-            records.append(dict(run=str(run), effect=str(effects[0]), actions=value['actions'], testIds=[test['id'] for test in value['tests']]))
+            compiler_acks = []
+            for path in sorted(run.glob('kvik-run-*/compiler-session-result.json')):
+                ack = json.loads(path.read_text())
+                compiler_acks.append(dict(directory=str(path.parent), **ack))
+            records.append(dict(run=str(run), effect=str(effects[0]), actions=value['actions'],
+                                compilerAcks=compiler_acks, testIds=[test['id'] for test in value['tests']]))
             return value
         try:
             opened = wait('session-started', timeout=10)
@@ -137,6 +146,21 @@ def main():
             assert all(action['status'] == ('executed' if action['actionId'].endswith(':test') else 'local_hit') for action in warm['actions']), warm['actions']
             assert {a['actionId']: a['key'] for a in cold['actions']} == {a['actionId']: a['key'] for a in warm['actions']}
             assert records[0]['effect'] != records[1]['effect'] and records[0]['testIds'] == records[1]['testIds']
+            cold_acks = records[0]['compilerAcks']
+            assert len(cold_acks) == 3 and len({ack['pid'] for ack in cold_acks}) == 1, cold_acks
+            assert sorted(ack['sequence'] for ack in cold_acks) == [1, 2, 3], cold_acks
+            assert not records[1]['compilerAcks'], 'Cache hits must not submit compiler requests'
+            compiler_pid = cold_acks[0]['pid']
+            # Each source edit gets a new immutable action directory and a fresh BTA session
+            # inside the same owned JVM. Test code still executes afresh in separate JVMs.
+            for expression in ('greeting() + ""', 'greeting().toString()'):
+                (project / 'consumer/main/Consumer.kt').write_text('package fixture\nfun message() = ' + expression + '\n')
+                edited = record(wait('operation-finished'))
+                assert all(action['status'] == 'executed' for action in edited['actions']
+                           if action['actionId'].startswith('consumer:')), edited['actions']
+                assert records[-1]['compilerAcks'] and all(ack['pid'] == compiler_pid and ack['sequence'] > 3
+                                                         for ack in records[-1]['compilerAcks']), records[-1]
+                assert len({record['effect'] for record in records}) == len(records)
             # Let several observer rounds see generated outputs. No new operation should appear.
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
@@ -170,13 +194,15 @@ def main():
     result = json.loads(query.stdout)
     validate(result, 'verificationQuery')
     assert result['freshness'] == 'current'
-    assert identities(fixture) == identities(project) == original
+    assert identities(fixture) == original
+    final_identities = identities(project)
+    assert {name for name in original if original[name] != final_identities[name]} == {'consumer/main/Consumer.kt'}
     assert (project / 'kvik.lock.json').read_bytes() == lock
     summary = dict(runtime=str(runtime), runtimeSha256=hashlib.sha256(runtime.read_bytes()).hexdigest(),
-                   originalFixture=str(fixture), inputIdentities=original, session=str(session_directory),
+                   originalFixture=str(fixture), inputIdentities=original, finalInputIdentities=final_identities, session=str(session_directory),
                    statusSeconds=status_seconds, seconds=time.monotonic() - started, runs=records)
     (case / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-    print('PASS composed JVM foreground: cold compilation, three compile hits, fresh test effects, current evidence:', case, flush=True)
+    print('PASS composed JVM foreground: compiler JVM reuse across source edits, compile hits, fresh test effects, current evidence:', case, flush=True)
 
 
 if __name__ == '__main__':

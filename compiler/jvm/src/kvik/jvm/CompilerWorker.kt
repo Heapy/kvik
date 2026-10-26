@@ -98,7 +98,9 @@ private fun safeOptions(request: WorkerRequest, workspace: Workspace): List<Stri
     return result
 }
 
-private fun compile(workspace: Workspace, request: WorkerRequest, distribution: Distribution): WorkerResult {
+internal fun compile(workspace: Workspace, request: WorkerRequest, distribution: Distribution,
+    reusableToolchains: KotlinToolchains? = null): WorkerResult {
+    require(reusableToolchains == null || request.operation == "jvm-compile" && request.pluginClasspath.isEmpty() && request.pluginApplications.isEmpty())
     val metadata = request.operation == "metadata-compile"
     val options = safeOptions(request, workspace)
     val sources = request.sources.map { logical ->
@@ -133,7 +135,7 @@ private fun compile(workspace: Workspace, request: WorkerRequest, distribution: 
         // worker location is already part of the action's verified worker identity.
         val implementation = distribution.classpath + if (typedWorkspacePlugin)
             listOf(Path.of(PreparedWorkspacePlugin::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()) else emptyList()
-        val toolchains = KotlinToolchains.loadImplementation(implementation)
+        val toolchains = reusableToolchains ?: KotlinToolchains.loadImplementation(implementation)
         if (toolchains.getCompilerVersion() != "2.4.20") reject("KVIK_COMPILER_IDENTITY", "Loaded compiler version does not match manifest")
         val builder: BaseCompilationOperation.Builder = if (metadata) {
             val common = toolchains.getToolchain(KotlinMetadataPlatformToolchain::class.java)

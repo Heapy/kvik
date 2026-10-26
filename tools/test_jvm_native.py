@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 
 from test_jvm import acquire, acquire_jacoco_cli, acquire_compiler_distribution, canonical, digest
 
@@ -44,6 +45,7 @@ def main():
     parser.add_argument("--compiler-artifacts", type=Path, required=True)
     parser.add_argument("--jvm-artifacts", type=Path, help="Optional read-only seed for pinned plugin/serialization/JUnit jars")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--unit-only", action="store_true", help="Run Native bridge and compiler-pool unit tests without the real compiler/test graph")
     args = parser.parse_args()
     output = ROOT / ".kvik/tests/jvm-native"
     output.mkdir(parents=True, exist_ok=True)
@@ -88,8 +90,11 @@ def main():
     sources = [p for base in ("core/src", "execution/src", "cache/src", "compiler/jvm/native/src") for p in sorted((ROOT / base).rglob("*.kt"))]
     command(files_interop_command(ROOT, args.konan_home, output))
     base = [args.konan_home / "bin/konanc", *files_library_args(output), "-target", "macos_arm64", "-library", output / "process.klib", *sources]
-    command([*base, ROOT / "tests/jvm-native/BridgeUnitTest.kt", "-generate-test-runner", "-o", output / "unit.kexe"])
+    command([*base, ROOT / "tests/jvm-native/BridgeUnitTest.kt", ROOT / "tests/jvm-native/CompilerSessionPoolTest.kt",
+             "-generate-test-runner", "-o", output / "unit.kexe"])
     command([output / "unit.kexe"])
+    if args.unit_only:
+        return
     command([*base, ROOT / "tests/jvm-native/BridgeProbe.kt", "-entry", "kvik.compiler.jvm.probe.main", "-o", output / "probe.kexe"])
 
     files = {"src/" + p.name: p for p in sorted((ROOT / "tests/jvm/fixture").glob("*.kt"))}
@@ -131,7 +136,9 @@ def main():
         files={k: str(v) for k, v in files.items()}, inputs={"schemaVersion": 1, "files": [{"path": k, "digest": digest(v), "executable": os.access(v, os.X_OK)} for k, v in files.items()]}, nodes=nodes)
     request_file = output / "request.json"
     request_file.write_bytes(canonical(request))
+    started = time.monotonic()
     command([output / "probe.kexe", request_file])
+    one_shot_seconds = time.monotonic() - started
     result = json.loads(report.read_text())
     observations = result["observations"]
     for name in ["library", "consumer", "test-classes", "passing", "passing-again", "release21"]:
@@ -175,6 +182,43 @@ def main():
     assert {coordinate: digest(path) for coordinate, path in extras.items()} == extra_identities
     assert {"schemaVersion": 1, "files": [{"path": p.relative_to(worker).as_posix(), "digest": digest(p), "executable": os.access(p, os.X_OK)} for p in sorted(worker.rglob("*")) if p.is_file()]} == worker_tree
     print("PASS Native scheduler -> BTA common/JVM + serialization -> JUnit actual identities/effects; compilation failure, failed/skipped/zero/incomplete, malformed/missing result, real cancellation/timeout", flush=True)
+
+    pooled_report = output / "pooled-report.json"
+    pooled_request = json.loads(request_file.read_text())
+    pooled_request.update(reuseCompiler=True, report=str(pooled_report))
+    pooled_request_file = output / "pooled-request.json"
+    pooled_request_file.write_bytes(canonical(pooled_request))
+    pooled_report.unlink(missing_ok=True)
+    started = time.monotonic()
+    command([output / "probe.kexe", pooled_request_file])
+    pooled_seconds = time.monotonic() - started
+    pooled = json.loads(pooled_report.read_text())["observations"]
+    acknowledgements = []
+    for name, observed in pooled.items():
+        original = observations[name]
+        assert observed["result"]["status"] == original["result"]["status"], (name, observed)
+        directory = Path(observed["directory"])
+        ack_path = directory / "compiler-session-result.json"
+        if name in {"library", "consumer", "test-classes", "release21"}:
+            assert observed["result"]["outputs"] == original["result"]["outputs"], name
+        if ack_path.exists():
+            ack = json.loads(ack_path.read_text())
+            assert ack["result"] == digest(directory / "result.json"), name
+            assert ack["request"] == digest(directory / "compiler-session-request.json"), name
+            acknowledgements.append(dict(action=name, **ack))
+        if observed["tests"] is not None:
+            assert not ack_path.exists(), "Tests must use fresh JVMs"
+            assert observed["tests"]["status"] == original["tests"]["status"], name
+            assert observed["tests"]["counts"] == original["tests"]["counts"], name
+        if name == "consumer":
+            assert not ack_path.exists(), "Compiler plugins must use a fresh JVM"
+    assert any(ack["sequence"] > 1 for ack in acknowledgements), acknowledgements
+    for name in ("passing", "passing-again"):
+        assert (Path(pooled[name]["directory"]) / "effects.txt").read_text() == "ran\n"
+    (output / "compiler-session-comparison.json").write_bytes(canonical(dict(
+        oneShotSeconds=one_shot_seconds, pooledSeconds=pooled_seconds, acknowledgements=acknowledgements,
+        oneShotReport=str(report), pooledReport=str(pooled_report))))
+    print("PASS Native compiler pool: worker reuse, identical compiled outputs, fresh plugin/test JVMs and matching outcomes", flush=True)
 
 
 if __name__ == "__main__":
