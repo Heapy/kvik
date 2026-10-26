@@ -109,6 +109,28 @@ def inventory(root, allow_internal_symlinks=False):
     return {"schemaVersion": 1, "files": files}
 
 
+def _validate_json_value(value):
+    """Check the v1 value domain without constructing unused canonical bytes."""
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if not -(2 ** 63) <= value < 2 ** 63:
+            raise ValueError("Integer outside v1 range")
+    elif isinstance(value, str):
+        value.encode("utf-8", errors="strict")
+    elif isinstance(value, list):
+        for item in value:
+            _validate_json_value(item)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            # json.loads guarantees string keys. Validate their Unicode domain
+            # without sorting or escaping: those operations belong to canonical.
+            key.encode("utf-8", errors="strict")
+            _validate_json_value(item)
+    else:
+        raise TypeError(type(value))
+
+
 def parse_json(text):
     def pairs(entries):
         result = {}
@@ -120,7 +142,7 @@ def parse_json(text):
     def invalid(value):
         raise ValueError(f"Unsupported JSON number: {value}")
     result = json.loads(text, object_pairs_hook=pairs, parse_float=invalid, parse_constant=invalid)
-    canonical(result)
+    _validate_json_value(result)
     return result
 
 

@@ -8,9 +8,25 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from bootstrap.identity import canonical, digest, file_digest, inventory, read_json
+from bootstrap.identity import canonical, digest, file_digest, inventory, parse_json, read_json
 from bootstrap.launcher import cached, validate_options
 from bootstrap.pin_tools import native_target
+
+
+def parse_with_serializing_validation(text):
+    """Prior parser semantics, retained as a compatibility oracle."""
+    def pairs(entries):
+        result = {}
+        for key, value in entries:
+            if key in result:
+                raise ValueError(f"Duplicate JSON key: {key}")
+            result[key] = value
+        return result
+    def invalid(value):
+        raise ValueError(f"Unsupported JSON number: {value}")
+    result = json.loads(text, object_pairs_hook=pairs, parse_float=invalid, parse_constant=invalid)
+    canonical(result)
+    return result
 
 
 class IdentityTest(unittest.TestCase):
@@ -43,6 +59,61 @@ class IdentityTest(unittest.TestCase):
         for code in range(0xD800, 0xE000):
             with self.assertRaises(UnicodeEncodeError):
                 canonical('prefix' + chr(code) + 'suffix')
+
+    def test_parse_validation_matches_prior_domain_and_preserves_consumed_bytes(self):
+        values = [None, False, True, 0, -(2**63), 2**63-1, "", [], {},
+                  ''.join(map(chr, range(32))), r'\n\t\u0000"',
+                  "\u00a0\u2003\ufffd\uffff\U00010000\U0010ffff",
+                  {"\ue000": [0, False, {"😀": None}], "😀": "non-BMP key", "a": 2**63-1}]
+        nested = list(values)
+        for _ in range(12):
+            nested = {"later": [nested], "earlier": {"value": -1}}
+        values.append(nested)
+        for value in values:
+            for ascii_only in (False, True):
+                text = json.dumps(value, ensure_ascii=ascii_only, indent=2)
+                with self.subTest(value_type=type(value).__name__, ascii_only=ascii_only):
+                    expected = parse_with_serializing_validation(text)
+                    actual = parse_json(text)
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(canonical(actual), canonical(expected))
+                    self.assertEqual(digest(canonical(actual)), digest(canonical(expected)))
+        for encoding in ('utf-8', 'utf-16', 'utf-32'):
+            text = json.dumps({"text": "😀"}, ensure_ascii=False).encode(encoding)
+            self.assertEqual(parse_json(text), parse_with_serializing_validation(text))
+        self.assertEqual(parse_json('-0'), 0)
+
+    def test_parse_rejects_invalid_numbers_duplicates_and_utf8_like_prior_parser(self):
+        texts = ['1.0', '-0.0', '1e0', '1e999', 'NaN', 'Infinity', '-Infinity',
+                 str(2**63), str(-(2**63)-1),
+                 '{"nested":[9223372036854775808]}', '{"nested":[-9223372036854775809]}',
+                 '{"nested":[1.0]}', '{"nested":{"value":NaN}}',
+                 '{"a":1,"a":2}', r'{"a":1,"\u0061":2}',
+                 '{"nested":{"same":1,"same":2}}',
+                 '{"a":1} trailing', '"raw\ncontrol"', b'"\xff"']
+        for text in texts:
+            with self.subTest(text=text):
+                with self.assertRaises((ValueError, UnicodeError)) as prior:
+                    parse_with_serializing_validation(text)
+                with self.assertRaises(type(prior.exception)):
+                    parse_json(text)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'invalid-utf8.json'
+            path.write_bytes(b'"\xff"')
+            with self.assertRaises(UnicodeDecodeError): read_json(path)
+
+    def test_parse_checks_surrogates_in_keys_values_and_nested_values(self):
+        # Every lone surrogate must remain rejected even when JSON spelling is
+        # legal; a correctly escaped surrogate pair decodes to a valid scalar.
+        for code in range(0xD800, 0xE000):
+            escaped = '\\u%04x' % code
+            for text in ('"'+escaped+'"', '{"'+escaped+'":0}', '{"nested":["'+escaped+'"]}'):
+                with self.assertRaises(UnicodeEncodeError): parse_json(text)
+        for text in (r'"\ud800\udc00"', r'{"\ud83d\ude00":"\udbff\udfff"}'):
+            self.assertEqual(parse_json(text), parse_with_serializing_validation(text))
+        for text in ('"\ud800\udc00"', '{"key":"\udfff"}', '{"\ud800":"value"}'):
+            with self.assertRaises(UnicodeEncodeError): parse_with_serializing_validation(text)
+            with self.assertRaises(UnicodeEncodeError): parse_json(text)
 
     def test_content_and_permissions_not_timestamps(self):
         with tempfile.TemporaryDirectory() as directory:
