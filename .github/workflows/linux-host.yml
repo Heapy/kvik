@@ -59,3 +59,11 @@ jobs:
           path: .kvik/ci-artifacts/cache-invalidation
           include-hidden-files: true
           if-no-files-found: ignore
+      - name: Retain cold local remote and edited build measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-performance-linux
+          path: .kvik/ci-artifacts/build-performance
+          include-hidden-files: true
+          if-no-files-found: ignore
