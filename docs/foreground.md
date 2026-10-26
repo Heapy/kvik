@@ -54,6 +54,15 @@ replacement launch, with compilation actions required to be local cache hits.
 Graceful shutdown and owner-loss cleanup report their 2 s and 5 s budgets
 separately from functional success.
 
+The runner also kills each target's application process while its foreground
+session remains alive. It checks exit 137, retained failure events, descendant
+cleanup and responsive status, then explicitly reloads with unchanged preparation
+keys and local cache hits. Readiness requires the new application's complete,
+unique effect record bound to its owned PID and execution directory. Closing
+stdin after recovery must produce `end-of-input` in the session journal and leave
+no captured owned processes. These checks cover real JVM and macOS Native
+applications; they do not substitute for compiler-worker failure tests.
+
 Each session retains `process-samples.jsonl` and `measurements.json`. Process counts
 and RSS cover the live session owner and reachable descendants throughout builds,
 applications, tests and fixture witnesses. The maximum observed owner RSS is
