@@ -26,6 +26,23 @@ class IdentityTest(unittest.TestCase):
         with self.assertRaises(UnicodeEncodeError):
             canonical("\ud800")
 
+    def test_all_controls_and_literal_escape_sequences(self):
+        controls = ''.join(map(chr, range(32)))
+        escaped = ''.join('\\u%04x' % code for code in range(32))
+        self.assertEqual(('"' + escaped + '"').encode(), canonical(controls))
+        # Literal backslashes must never become control characters or receive
+        # a second escaping pass when adjacent to quotes and real controls.
+        value = '\\n\\t\\u0000"\n\t\0'
+        self.assertEqual(b'"\\\\n\\\\t\\\\u0000\\"\\u000a\\u0009\\u0000"', canonical(value))
+
+    def test_all_other_unicode_scalars_are_preserved(self):
+        value = ''.join(chr(code) for code in range(32, 0x110000)
+                        if code not in (34, 92) and not 0xD800 <= code <= 0xDFFF)
+        self.assertEqual(b'"' + value.encode('utf-8') + b'"', canonical(value))
+        for code in range(0xD800, 0xE000):
+            with self.assertRaises(UnicodeEncodeError):
+                canonical('prefix' + chr(code) + 'suffix')
+
     def test_content_and_permissions_not_timestamps(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

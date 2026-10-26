@@ -27,10 +27,16 @@ jobs:
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_build_timings.py'
       - name: Check complete tool inventory traversal
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_inventory.py'
+      - name: Check canonical bootstrap identity bytes
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_identity.py'
       - name: Check JVM worker bundle cache
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_worker_cache.py'
       - name: Check source bootstrap worker reuse assertions
         run: python3 -m unittest discover -s tools -p 'test_source_worker_cache_unit.py'
+      - name: Check cached startup and RSS measurements
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_cached_startup.py'
+      - name: Check foreground measurements
+        run: python3 -m unittest discover -s tools -p 'test_foreground_measurements_unit.py'
       - name: Check agent-comparison accounting and failure gates
         run: python3 -m unittest discover -s tools -p 'test_agent_comparison_unit.py'
       - name: Prepare Linux tools
@@ -73,5 +79,13 @@ jobs:
         with:
           name: build-performance-linux
           path: .kvik/ci-artifacts/build-performance
+          include-hidden-files: true
+          if-no-files-found: ignore
+      - name: Retain cached startup and Native RSS samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cached-startup-linux
+          path: .kvik/ci-artifacts/cached-startup
           include-hidden-files: true
           if-no-files-found: ignore

@@ -1410,6 +1410,27 @@ JDK/Native/host tools, so it does not measure distribution downloads. An empty
 of the full source composition, not the K01 small-spike budget; process CPU/RSS are
 explicitly unavailable in this harness.
 
+Measure a provisioned runtime with
+`python3 tests/bootstrap/test_launcher.py --quick --host-name "HOST MODEL / MEMORY"`.
+For a source composition, also supply `--launcher-root`, `--cache-dir`,
+`--source-lock` and `--source-cache` matching that runtime. The command runs offline
+with builds disabled and deliberately absent compiler/artifact locations. It retains
+30 interleaved samples per `help`/`runtime-info` operation through the launcher and
+direct Native executable, plus 30 separate direct Native child RSS samples per
+operation. `--samples` accepts 20–300; p95 uses nearest rank and discards no warmup.
+RSS is the per-child `wait4` high-water mark with explicit host units; resource
+polling is excluded from timing samples. The harness binds exact launcher, runtime,
+lock and Python identities and saves raw output and partial results in a fresh
+`.kvik/tests/bootstrap/cached-startup-*` directory.
+
+The budgets are launcher p95 below 150 ms and direct Native peak RSS below 64 MiB.
+Functional success and budget results are separate; `--strict-budgets` exits with
+code 3 on a budget miss. Linux CI retains these measurements without making shared
+runner timing variance a functional failure. These cached help/inspection samples
+do not measure provisioning, builds, reloads or the absence of short-lived processes.
+OS page/file caches are uncontrolled. See [foreground measurements](docs/foreground.md)
+for command acknowledgement, reload, cleanup and sampled process resources.
+
 The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes, three runtime libraries and the JaCoCo agent/reporter alongside the native executable. Compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
 
 Native recomposition reuses an unchanged JVM worker bundle from

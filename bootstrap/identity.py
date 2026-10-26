@@ -3,7 +3,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
+
+
+_STRING_ESCAPES = {chr(code): f'\\u{code:04x}' for code in range(32)}
+_STRING_ESCAPES.update({'"': '\\"', '\\': '\\\\'})
+_STRING_ESCAPE = re.compile(r'[\x00-\x1f"\\]')
 
 
 def canonical(value):
@@ -19,7 +25,9 @@ def canonical(value):
             return str(item)
         if isinstance(item, str):
             item.encode("utf-8", errors="strict")
-            return '"' + "".join('\\"' if c == '"' else '\\\\' if c == '\\' else f'\\u{ord(c):04x}' if ord(c) < 32 else c for c in item) + '"'
+            # Scan ordinary text in C; preserve the v1 all-controls-as-\uXXXX
+            # spelling rather than JSON's short escapes (\n, \t, ...).
+            return '"' + _STRING_ESCAPE.sub(lambda match: _STRING_ESCAPES[match[0]], item) + '"'
         if isinstance(item, list):
             return "[" + ",".join(encode(x) for x in item) + "]"
         if isinstance(item, dict):
