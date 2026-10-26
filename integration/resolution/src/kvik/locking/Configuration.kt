@@ -11,9 +11,9 @@ sealed interface ResolutionConsumer {
 
 /** Consumer conflict-resolution boundary, deliberately separate from producer variant attributes. */
 data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String, val compilation: String, val usage: String, val purpose: String = "dependencies",
-                            val pluginId: String? = null) {
-    constructor(module: String, target: String, compilation: String, usage: String, purpose: String = "dependencies", pluginId: String? = null) :
-        this(ResolutionConsumer.Module(module), target, compilation, usage, purpose, pluginId)
+                            val pluginId: String? = null, val sourceSet: String? = null) {
+    constructor(module: String, target: String, compilation: String, usage: String, purpose: String = "dependencies", pluginId: String? = null, sourceSet: String? = null) :
+        this(ResolutionConsumer.Module(module), target, compilation, usage, purpose, pluginId, sourceSet)
     /** Legacy module callers must not accidentally interpret a script as a workspace module. */
     val module: String get() = (consumer as? ResolutionConsumer.Module)?.name ?: error("Script domain is not a module")
     init {
@@ -21,11 +21,14 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
         require(pluginId == null || purpose == "compiler-plugin" && pluginId.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) {
             "Plugin resolution identity requires compiler-plugin purpose and a valid plugin ID"
         }
+        require(sourceSet == null || consumer is ResolutionConsumer.Module && target == "common" &&
+            sourceSet.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Source-set resolution requires a named common module domain" }
         if (consumer is ResolutionConsumer.Script) {
             require(consumer.name.length <= 128 && target == "jvm" && compilation == "script") { "Scripts require a named JVM script domain" }
             require(purpose in setOf("dependencies", "compiler-plugin")) { "Unsupported script resolution purpose" }
         } else if (target == "common") {
-            require(compilation == "main" && usage == "kotlin-metadata" && purpose == "dependencies") { "Common resolution requires main kotlin-metadata dependencies" }
+            require((compilation == "main" || compilation == "test" && sourceSet != null) &&
+                usage == "kotlin-metadata" && purpose == "dependencies") { "Common resolution requires metadata dependencies; tests require a source set" }
         } else require((target == "jvm" || NativeTarget.find(target) != null || KotlinJsTarget.find(target) != null) && compilation in setOf("main", "test")) { "Invalid resolution domain target/compilation" }
         require(purpose in setOf("dependencies", "compiler-plugin", "ksp-runtime", "symbol-processor", "sqldelight-compiler")) { "Invalid resolution domain purpose" }
         require(purpose !in setOf("ksp-runtime", "symbol-processor") || NativeTarget.find(target) != null && compilation == "test") { "KSP domains currently require supported Native tests" }
@@ -35,17 +38,18 @@ data class ResolutionDomain(val consumer: ResolutionConsumer, val target: String
     val isHostTool: Boolean get() = purpose != "dependencies"
     fun toJson(): JsonValue.Object = obj((if (consumer is ResolutionConsumer.Module) "module" else "script") to consumer.name.json(),
         "target" to target.json(), "compilation" to compilation.json(), "usage" to usage.json(), "purpose" to purpose.json()).let {
-            if (pluginId == null) it else JsonValue.Object(it.values + ("pluginId" to pluginId.json()))
+            JsonValue.Object(it.values + (pluginId?.let { id -> mapOf("pluginId" to id.json()) } ?: emptyMap()) +
+                (sourceSet?.let { name -> mapOf("sourceSet" to name.json()) } ?: emptyMap()))
         }
     companion object {
         fun script(name: String, usage: String, purpose: String = "dependencies", pluginId: String? = null) =
             ResolutionDomain(ResolutionConsumer.Script(name), "jvm", "script", usage, purpose, pluginId)
         fun fromJson(value: JsonValue): ResolutionDomain {
-            val fields = value.fields(setOf("target", "compilation", "usage", "purpose"), setOf("module", "script", "pluginId"))
+            val fields = value.fields(setOf("target", "compilation", "usage", "purpose"), setOf("module", "script", "pluginId", "sourceSet"))
             require(("module" in fields) != ("script" in fields)) { "Resolution domain requires exactly one module or script" }
             val consumer = fields["module"]?.let { ResolutionConsumer.Module(it.stringValue()) }
                 ?: ResolutionConsumer.Script(fields.getValue("script").stringValue())
-            return ResolutionDomain(consumer, fields.getValue("target").stringValue(), fields.getValue("compilation").stringValue(), fields.getValue("usage").stringValue(), fields.getValue("purpose").stringValue(), fields["pluginId"]?.stringValue())
+            return ResolutionDomain(consumer, fields.getValue("target").stringValue(), fields.getValue("compilation").stringValue(), fields.getValue("usage").stringValue(), fields.getValue("purpose").stringValue(), fields["pluginId"]?.stringValue(), fields["sourceSet"]?.stringValue())
         }
     }
 }
@@ -102,9 +106,11 @@ data class ResolverPolicy(val pins: List<Coordinate> = emptyList(), val maxCompo
         }
 }
 
-data class DependencyScope(val module: String, val target: String, val scope: String, val usage: String) {
-    internal fun toJson(): JsonValue = obj("module" to module.json(), "target" to target.json(), "scope" to scope.json(), "usage" to usage.json())
-    fun domain() = ResolutionDomain(module, target, scope, usage)
+data class DependencyScope(val module: String, val target: String, val scope: String, val usage: String, val sourceSet: String? = null) {
+    internal fun toJson(): JsonValue = obj("module" to module.json(), "target" to target.json(), "scope" to scope.json(), "usage" to usage.json()).let {
+        if (sourceSet == null) it else JsonValue.Object(it.values + ("sourceSet" to sourceSet.json()))
+    }
+    fun domain() = ResolutionDomain(module, target, scope, usage, sourceSet = sourceSet)
 }
 data class ScriptDependencyScope(val script: String, val usage: String) {
     init { ResolutionDomain.script(script, usage) }
@@ -188,6 +194,21 @@ private fun effectiveConfiguration(project: ProjectSpec, authoring: Pair<String,
     fun visit(domain: ResolutionDomain) {
         if (!domains.add(domain)) return
         val module = modules[domain.module] ?: error("Unknown dependency scope module: ${domain.module}")
+        if (domain.sourceSet != null) {
+            val source = commonMetadataSource(module, domain.sourceSet)
+            require(domain == source.domain()) { "Common metadata source-set compilation differs: ${module.id}:${domain.sourceSet}" }
+            val inputs = commonMetadataInputs(module, domain.sourceSet)
+            sqlDelightTools(module, inputs)
+            val closure = commonMetadataDependencyClosure(project, module.id, domain.sourceSet)
+            val variant = VariantRequest("common", "kotlin-metadata", emptyMap())
+            (closure.external + Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct().forEach {
+                requests += ResolutionRequest(it, variant, domain)
+            }
+            // Ancestors and test friends need independent editor classpaths as well.
+            inputs.filter { it.name != domain.sourceSet }.forEach { visit(commonMetadataSource(module, it.name).domain()) }
+            closure.sources.forEach { visit(it.domain()) }
+            return
+        }
         if (domain.target == "common") {
             require(module.publication != null || module.id in documentationModules) { "Common metadata scope requires publication or documentation: ${module.id}" }
             val publication = if (module.publication != null) commonPublicationDependencyClosure(project, module.id) else null

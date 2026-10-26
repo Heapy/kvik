@@ -251,6 +251,10 @@ class ScriptResolutionTest {
         val options = projectOptions(pins.flatMap { listOf("--scope-pin", it.argument()) }, lockOptions = true)
         assertEquals(pins, options.scopedPins)
         assertEquals("script:same:jvm:script:java-api:dependencies=example:lib:1", pins.first().argument())
+        val commonPin = ScopedPin(ResolutionDomain("same", "common", "test", "kotlin-metadata", sourceSet = "commonTest"), Coordinate.parse("example:lib:2"))
+        assertEquals("source-set:same:commonTest:common:test:kotlin-metadata:dependencies=example:lib:2", commonPin.argument())
+        assertEquals(listOf(commonPin), projectOptions(listOf("--scope-pin", commonPin.argument()), true).scopedPins)
+        assertFails { projectOptions(listOf("--scope-pin", "source-set:same:commonTest:jvm:test:java-api:dependencies=example:lib:2"), true) }
         assertFails { projectOptions(listOf("--scope-pin", "script:same:jvm:main:java-api:dependencies=example:lib:1"), true) }
         for (bad in listOf("same:jvm:main:java-runtime:dependencies:example.plugin", "same:jvm:main:java-runtime:compiler-plugin:",
             "same:jvm:main:java-runtime:compiler-plugin:bad/id", "script:same:jvm:script:java-api:compiler-plugin:example.plugin")) {

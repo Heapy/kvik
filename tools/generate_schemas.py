@@ -324,7 +324,11 @@ DEFS["resolutionDomain"]["allOf"] = [
       for target, usages in (("jvm", ("java-api", "java-runtime")), ("macosArm64", ("kotlin-api", "kotlin-runtime")), ("linuxX64", ("kotlin-api", "kotlin-runtime")), *((target, ("kotlin-api", "kotlin-runtime")) for target in (*IOS_TARGETS, *JS_TARGETS)), ("common", ("kotlin-metadata",)))],
 ]
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"target": {"const": "common"}}},
-    "then": {"properties": {"compilation": {"const": "main"}, "purpose": {"const": "dependencies"}, "usage": {"const": "kotlin-metadata"}}}})
+    "then": {"properties": {"purpose": {"const": "dependencies"}, "usage": {"const": "kotlin-metadata"}},
+             "anyOf": [{"properties": {"compilation": {"const": "main"}}}, {"required": ["sourceSet"]}]}})
+DEFS["resolutionDomain"]["properties"]["sourceSet"] = {**ID, "pattern": ID["pattern"] + r"(?![\s\S])"}
+DEFS["resolutionDomain"]["allOf"].append({"if": {"required": ["sourceSet"]},
+    "then": {"properties": {"target": {"const": "common"}, "purpose": {"const": "dependencies"}}}})
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"purpose": enum("ksp-runtime", "symbol-processor")}},
     "then": {"properties": {"target": enum("macosArm64", "linuxX64"), "compilation": {"const": "test"}}}})
 DEFS["resolutionDomain"]["allOf"].append({"if": {"properties": {"target": enum(*IOS_TARGETS)}},

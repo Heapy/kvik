@@ -31,6 +31,113 @@ private val commonDomain = ResolutionDomain("root", "common", "main", "kotlin-me
 private val commonScope = DependencyScope("root", "common", "main", "kotlin-metadata")
 
 class CommonPublicationTest {
+    @Test fun sourceSetMetadataUsesTargetIntersectionsAndExportedVisibilityWithoutPublication() {
+        val dependency = parseJson(commonModule("dependency", listOf(Dependency.Module("exported", exported = true),
+            Dependency.Module("private"), external("public", true), external("hidden")), published = false).canonical()
+            .replace("sharedBase", "foundation").replace("sharedMain", "production"))
+        val configuration = commonProject(commonModule("root", listOf(Dependency.Module("dependency"), external("own-private"), external("runtime", runtime = true)), false),
+            dependency, commonModule("exported", published = false), commonModule("private", published = false))
+        val root = configuration.project.modules.first()
+        assertEquals(listOf("sharedBase", "sharedMain", "tests"), commonMetadataSourceSets(root).map { it.sourceSet })
+        assertEquals(listOf("main", "main", "test"), commonMetadataSourceSets(root).map { it.compilation })
+        val closure = commonMetadataDependencyClosure(configuration.project, "root", "sharedMain")
+        assertEquals(listOf("dependency" to "foundation", "dependency" to "production", "exported" to "sharedBase", "exported" to "sharedMain"),
+            closure.sources.map { it.module to it.sourceSet })
+        assertEquals(setOf("own-private", "public"), closure.external.map { it.name }.toSet())
+        val scope = commonScope.copy(sourceSet = "sharedMain")
+        val effective = effectiveConfiguration(configuration, scopes = listOf(scope))
+        assertTrue(effective.requests.all { it.domain.sourceSet != null && it.variant.usage == "kotlin-metadata" })
+        assertEquals(setOf("own-private", "public", "kotlin-stdlib"), effective.requests.filter { it.domain == scope.domain() }.map { it.coordinate.name }.toSet())
+        assertTrue(effective.requests.any { it.domain.module == "private" }) // Needed by dependency's own editor classpath.
+        assertTrue(effective.requests.none { it.coordinate.group == "platform" || it.coordinate.name == "runtime" })
+        assertEquals(effective.digest, effectiveConfiguration(configuration, scopes = listOf(scope)).digest)
+        assertFails { effectiveConfiguration(configuration, scopes = listOf(scope, scope)) }
+    }
+
+    @Test fun intermediateSourceSetSelectsOnlyTheRelevantDependencyFragments() {
+        val base = commonProject(commonModule("root", listOf(Dependency.Module("dependency")), false), commonModule("dependency", published = false)).project
+        val project = base.copy(modules = base.modules.map { module -> module.copy(
+            sourceSets = module.sourceSets + SourceSet("linuxMain", emptyList(), emptyList(), listOf("sharedBase"), listOf(external("linux-only"))),
+            targets = module.targets + module.targets.last().copy(name = "linuxX64", main = "linuxMain", test = null)) })
+        val root = project.modules.first()
+        assertEquals(setOf("jvm", "macosArm64", "linuxX64"), commonMetadataSource(root, "sharedBase").targets)
+        assertEquals(setOf("jvm", "macosArm64"), commonMetadataSource(root, "sharedMain").targets)
+        assertEquals(listOf("sharedBase"), commonMetadataDependencyClosure(project, "root", "sharedBase").sources.map { it.sourceSet })
+        assertEquals(listOf("sharedBase", "sharedMain"), commonMetadataDependencyClosure(project, "root", "sharedMain").sources.map { it.sourceSet })
+        val missing = project.copy(modules = project.modules.map { if (it.id == "dependency") it.copy(targets = it.targets.filter { target -> target.name != "linuxX64" }) else it })
+        assertFails { commonMetadataDependencyClosure(missing, "root", "sharedBase") }
+        assertFails { commonMetadataSource(root, "jvmMain") }
+    }
+
+    @Test fun commonTestsInheritPrivateMainInputsWithoutAnExplicitRefinementEdge() {
+        val original = commonModule("root", listOf(external("production-private"), external("runtime", runtime = true)), false)
+        val fields = original.objectValue()
+        val sources = fields.getValue("sourceSets").arrayValue().map { value ->
+            val source = value.objectValue()
+            if (source.getValue("name").stringValue() != "tests") value else JsonValue.Object(source + ("dependsOn" to emptyList<JsonValue>().json()))
+        }
+        val configuration = commonProject(JsonValue.Object(fields + ("sourceSets" to sources.json())))
+        assertEquals(listOf("sharedBase", "sharedMain", "tests"), commonMetadataInputs(configuration.project.modules.single(), "tests").map { it.name })
+        val scope = commonScope.copy(scope = "test", sourceSet = "tests")
+        val effective = effectiveConfiguration(configuration, scopes = listOf(scope))
+        assertEquals(setOf("production-private", "test", "kotlin-stdlib"), effective.requests.filter { it.domain == scope.domain() }.map { it.coordinate.name }.toSet())
+        assertTrue(effective.requests.filter { it.domain.compilation == "main" }.none { it.coordinate.name == "test" })
+        assertFails { effectiveConfiguration(configuration, scopes = listOf(scope.copy(scope = "main"))) }
+        assertFails { effectiveConfiguration(configuration, scopes = listOf(scope.copy(sourceSet = "missing"))) }
+    }
+
+    @Test fun sourceSetDomainIsOptionalStrictAndDistinctFromLegacyAggregateMetadata() {
+        assertNull(commonDomain.toJson().values["sourceSet"])
+        assertEquals(commonDomain, ResolutionDomain.fromJson(commonDomain.toJson()))
+        val main = commonDomain.copy(sourceSet = "sharedMain")
+        val test = commonDomain.copy(compilation = "test", sourceSet = "tests")
+        for (domain in listOf(main, test)) assertEquals(domain, ResolutionDomain.fromJson(domain.toJson()))
+        assertEquals(3, setOf(commonDomain, main, test).size)
+        assertFalse(main.isHostTool)
+        for (invalid in listOf({ main.copy(target = "jvm", usage = "java-api") }, { main.copy(sourceSet = "") },
+            { main.copy(sourceSet = "sharedMain\n") }, { main.copy(sourceSet = "../sharedMain") },
+            { main.copy(consumer = ResolutionConsumer.Script("root")) }, { main.copy(purpose = "compiler-plugin") },
+            { test.copy(sourceSet = null) })) assertFails { invalid() }
+    }
+
+    @Test fun sourceSetScopedPinsAndLockReplayKeepMainAndTestSelectionsIndependent() {
+        val original = commonModule("root", listOf(external("dependency")), false)
+        val fields = original.objectValue()
+        val sources = fields.getValue("sourceSets").arrayValue().map { value ->
+            val source = value.objectValue()
+            if (source.getValue("name").stringValue() != "tests") value else JsonValue.Object(source + ("dependencies" to emptyList<JsonValue>().json()))
+        }
+        val configuration = commonProject(JsonValue.Object(fields + ("sourceSets" to sources.json())))
+        val scope = commonScope.copy(scope = "test", sourceSet = "tests")
+        val pin = ScopedPin(scope.domain(), Coordinate("example", "dependency", "2"))
+        val effective = effectiveConfiguration(configuration, ResolverPolicy(scopedPins = listOf(pin)), listOf(scope))
+        val store = object : ContentStore {
+            val blobs = mutableMapOf<Digest, ByteArray>()
+            override fun put(bytes: ByteArray): Digest = Sha256.digest(bytes).also { blobs[it] = bytes.copyOf() }
+            override fun get(digest: Digest): ByteArray? = blobs[digest]?.copyOf()
+        }
+        val entries = mutableMapOf<String, ByteArray>()
+        for (coordinate in listOf(Coordinate("example", "dependency", "1"), pin.coordinate, Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20"))) {
+            val path = "https://example.test/repository/${coordinate.group.replace('.', '/')}/${coordinate.name}/${coordinate.version}/${coordinate.name}-${coordinate.version}"
+            val artifact = coordinate.toString().encodeToByteArray(); val digest = Sha256.digest(artifact)
+            entries["$path.jar"] = artifact
+            entries["$path.module"] = obj("formatVersion" to "1.1".json(), "component" to obj("group" to coordinate.group.json(), "module" to coordinate.name.json(), "version" to coordinate.version.json()),
+                "variants" to listOf(obj("name" to "metadata".json(), "attributes" to obj("org.gradle.category" to "library".json(), "org.gradle.usage" to "kotlin-metadata".json(), "org.jetbrains.kotlin.platform.type" to "common".json()),
+                    "files" to listOf(obj("name" to path.substringAfterLast('/').plus(".jar").json(), "url" to path.substringAfterLast('/').plus(".jar").json(), "size" to digest.sizeBytes.json(), "sha256" to digest.hash.json())).json())).json()).canonical().encodeToByteArray()
+        }
+        val service = DependencyLocks(store, PomParser { error("Metadata resolution must not use POM") })
+        val lock = service.resolve(effective, object : ArtifactTransport { override fun fetch(url: String): ByteArray = entries[url] ?: throw MissingResource(url) })
+        assertEquals(lock, service.loadLocked(lock.bytes(), effective))
+        assertEquals(setOf("sharedBase", "sharedMain", "tests"), lock.selections.map { it.domain.sourceSet }.toSet())
+        for (selection in lock.selections.filter { it.requested.name == "dependency" })
+            assertEquals(if (selection.domain == scope.domain()) "2" else "1", selection.artifacts.single().coordinate.version)
+        assertFails { service.loadLocked(lock.bytes(), effectiveConfiguration(configuration, scopes = listOf(scope))) }
+        val tampered = lock.copy(selections = lock.selections.map { selection ->
+            if (selection.domain.sourceSet == "sharedBase") selection.copy(domain = selection.domain.copy(sourceSet = null)) else selection
+        })
+        assertFails { service.loadLocked(tampered.bytes(), effective) }
+    }
+
     @Test fun iosFrameworkDomainsKeepCompileAndRuntimeClosuresSeparate() {
         val original = commonProject(commonModule("root", listOf(external("api"), external("runtime", runtime = true))))
         for (target in listOf("iosArm64", "iosSimulatorArm64")) {

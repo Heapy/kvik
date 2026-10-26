@@ -20,7 +20,7 @@ defs={
  'metadata':obj(url=text,digest=ref('digest')),
  'artifact':obj(coordinate=coordinate,variant=text,repository=text,url=text,digest=ref('digest')),
  'variant':obj(platform=enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs','common'),usage=text,attributes={'type':'object','additionalProperties':text}),
- 'domain':obj(module=text,target=enum('jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor','sqldelight-compiler')),
+ 'domain':obj(module=text,target=enum('common','jvm','macosArm64','linuxX64','iosArm64','iosSimulatorArm64','js','wasmJs'),compilation=enum('main','test'),usage=enum('java-api','java-runtime','kotlin-api','kotlin-runtime','kotlin-metadata'),purpose=enum('dependencies','compiler-plugin','ksp-runtime','symbol-processor','sqldelight-compiler')),
  'diagnostic':obj(code=text,message=text,source=nullable(text)),
  'source':obj(repository=text,url=text,kind=enum('metadata','artifact'),digest=nullable(ref('digest')),observedAt=nullable(time),cache=enum('network','cache','locked','none'),status=enum('found','not-found','missing','corrupt','error'),freshness=freshness,latest=nullable(text),release=nullable(text),lastUpdated=nullable(text)),
  'requirement':obj(coordinate=coordinate,semantics=enum('requires','prefers','pom-effective','redirect','constraint','explicit-exclusion','metadata-exclusion')),
@@ -38,6 +38,14 @@ defs={
 }
 script_id={'type':'string','maxLength':128,'pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END}
 defs['domain']['allOf']=[{'if':{'properties':{'purpose':{'const':'sqldelight-compiler'}}},'then':{'properties':{'target':{'const':'jvm'},'compilation':{'const':'main'},'usage':{'const':'java-runtime'}}}}]
+defs['domain']['properties']['sourceSet']={'type':'string','pattern':r'^[A-Za-z][A-Za-z0-9_.-]*'+STRICT_END}
+defs['domain']['allOf'] += [
+    {'if':{'properties':{'target':{'const':'common'}}},
+     'then':{'properties':{'usage':{'const':'kotlin-metadata'},'purpose':{'const':'dependencies'}},
+             'anyOf':[{'properties':{'compilation':{'const':'main'}}},{'required':['sourceSet']}]}},
+    {'if':{'anyOf':[{'required':['sourceSet']},{'properties':{'usage':{'const':'kotlin-metadata'}}}]},
+     'then':{'properties':{'target':{'const':'common'},'purpose':{'const':'dependencies'}}}},
+]
 defs['moduleDomain']=defs['domain']
 defs['scriptDomain']=obj(script=script_id,target={'const':'jvm'},compilation={'const':'script'},usage=enum('java-api','java-runtime'),purpose=enum('dependencies','compiler-plugin'))
 defs['scriptDomain']['allOf']=[{'if':{'properties':{'purpose':{'const':'compiler-plugin'}}},'then':{'properties':{'usage':{'const':'java-runtime'}}}}]

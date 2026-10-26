@@ -18,6 +18,22 @@ def module():
 
 
 class LibraryPublicationSchemaTest(unittest.TestCase):
+    def test_common_source_set_domain_is_optional_and_preserves_the_aggregate_contract(self):
+        domain = dict(module='library', target='common', compilation='test', usage='kotlin-metadata',
+                      purpose='dependencies', sourceSet='commonTest')
+        packages = json.loads((ROOT / 'schemas/v1/packages.json').read_bytes())
+        for contract in (validator('resolutionDomain'), Draft202012Validator({'$defs': packages['$defs'], '$ref': '#/$defs/domain'})):
+            for compilation in ('main', 'test'):
+                contract.validate({**domain, 'compilation': compilation})
+            for changes in (dict(sourceSet=None), dict(sourceSet=''), dict(sourceSet='commonTest\n'),
+                            dict(sourceSet='../commonTest'), dict(target='jvm', usage='java-api'), dict(purpose='compiler-plugin')):
+                self.assertFalse(contract.is_valid({**domain, **changes}), changes)
+            aggregate = {key: value for key, value in domain.items() if key != 'sourceSet'}
+            self.assertFalse(contract.is_valid(aggregate))
+            contract.validate({**aggregate, 'compilation': 'main'})
+            script = dict(script='library', target='jvm', compilation='script', usage='java-api', purpose='dependencies', sourceSet='commonTest')
+            self.assertFalse(contract.is_valid(script))
+
     def test_common_metadata_domain_and_worker_remain_distinct(self):
         domain = dict(module='library', target='common', compilation='main', usage='kotlin-metadata', purpose='dependencies')
         validator('resolutionDomain').validate(domain)

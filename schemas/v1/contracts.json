@@ -3054,6 +3054,10 @@
             "sqldelight-compiler"
           ]
         },
+        "sourceSet": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
+        },
         "pluginId": {
           "type": "string",
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$(?![\\s\\S])"
@@ -3274,14 +3278,42 @@
           },
           "then": {
             "properties": {
-              "compilation": {
-                "const": "main"
-              },
               "purpose": {
                 "const": "dependencies"
               },
               "usage": {
                 "const": "kotlin-metadata"
+              }
+            },
+            "anyOf": [
+              {
+                "properties": {
+                  "compilation": {
+                    "const": "main"
+                  }
+                }
+              },
+              {
+                "required": [
+                  "sourceSet"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "sourceSet"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "const": "common"
+              },
+              "purpose": {
+                "const": "dependencies"
               }
             }
           }

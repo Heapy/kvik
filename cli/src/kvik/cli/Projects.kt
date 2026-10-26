@@ -87,7 +87,7 @@ internal fun ProjectOptions.resolverPolicy() = ResolverPolicy(pins, scopedPins =
 
 internal fun ScopedPin.argument(): String = with(domain) {
     val prefix = when (val owner = consumer) {
-        is ResolutionConsumer.Module -> owner.name
+        is ResolutionConsumer.Module -> sourceSet?.let { "source-set:${owner.name}:$it" } ?: owner.name
         is ResolutionConsumer.Script -> "script:${owner.name}"
     }
     "$prefix:$target:$compilation:$usage:$purpose${pluginId?.let { ":$it" }.orEmpty()}=$coordinate"
@@ -100,10 +100,12 @@ private fun scopedPin(value: String): ScopedPin {
     val domain = value.substringBefore('=').split(':')
     require(domain.all { it.isNotEmpty() }) { "Scoped pin has an empty domain component" }
     val selected = when {
+        domain.size == 7 && domain[0] == "source-set" ->
+            ResolutionDomain(domain[1], domain[3], domain[4], domain[5], domain[6], sourceSet = domain[2])
         domain.size in 6..7 && domain[0] == "script" && domain[2] == "jvm" ->
             ResolutionDomain(ResolutionConsumer.Script(domain[1]), domain[2], domain[3], domain[4], domain[5], domain.getOrNull(6))
         domain.size in 5..6 -> ResolutionDomain(domain[0], domain[1], domain[2], domain[3], domain[4], domain.getOrNull(5))
-        else -> error("Scoped pin requires MODULE:TARGET:COMPILATION:USAGE:PURPOSE[:PLUGIN_ID] or script:NAME:jvm:script:USAGE:PURPOSE[:PLUGIN_ID]")
+        else -> error("Scoped pin requires MODULE:TARGET:COMPILATION:USAGE:PURPOSE[:PLUGIN_ID], script:NAME:jvm:script:USAGE:PURPOSE[:PLUGIN_ID], or source-set:MODULE:SOURCE_SET:common:COMPILATION:kotlin-metadata:dependencies")
     }
     return ScopedPin(selected, Coordinate.parse(value.substringAfter('=')))
 }
