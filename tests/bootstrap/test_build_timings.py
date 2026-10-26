@@ -55,6 +55,7 @@ class BuildTimingTest(unittest.TestCase):
                 (launcher, 'tool_roots', lambda *_a: roots),
                 (launcher, 'component_names', lambda: set(roots)),
                 (launcher, 'native_target', lambda: 'macos_arm64'),
+                (launcher.native_libraries, 'native_target', lambda: 'macos_arm64'),
                 (launcher, 'run_owned', compiler),
                 (launcher, 'desired_composition', lambda *_a: (None, None, lock, key)),
                 (launcher.jvm_worker, 'read_lock', lambda *_a: {}),
