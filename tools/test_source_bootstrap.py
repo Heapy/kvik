@@ -184,7 +184,21 @@ def trusted_copy(source, destination):
     return result
 
 
-def audit_runtime(directory, expected_lock, key, records, events):
+def audit_worker_cache(directory, manifest, workers, expected_status):
+    """Bind reuse reporting to the retained inputs, bundle and actual commands."""
+    path = directory/'jvm-worker-cache.json'
+    assert manifest['jvmWorkerCache'] == digest(path.read_bytes()), 'Worker cache receipt changed'
+    receipt = read(path)
+    assert set(receipt) == {'schemaVersion', 'status', 'inputKey', 'inputs', 'bundle'}
+    assert type(receipt['schemaVersion']) is int and receipt['schemaVersion'] == 1
+    assert receipt['status'] == expected_status and expected_status in ('compiled', 'cache-hit')
+    assert receipt['inputKey'] == digest(canonical(receipt['inputs'])), 'Worker key does not bind its inputs'
+    assert receipt['bundle'] == manifest['jvmWorkerBundle'] == digest((directory/'jvm/manifest.json').read_bytes())
+    assert len(workers) == (1 if expected_status == 'compiled' else 0), 'Worker receipt disagrees with compiler commands'
+    return receipt
+
+
+def audit_runtime(directory, expected_lock, key, records, events, worker_status):
     manifest = read(directory/'manifest.json')
     validate_build_timings(manifest, events)
     assert manifest['composition'] == key
@@ -255,16 +269,27 @@ def audit_runtime(directory, expected_lock, key, records, events):
     expected_native = [str(build_root/'sources'/item['path']) for item in inputs if 'native-kotlin' in item['roles']]
     assert [arg for arg in native_argv if arg.endswith('.kt')] == expected_native + [str(build_root/'sources/Registry.kt')]
     workers = [c for c in commands if 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler' in c['command']]
-    assert len(workers) == 1
+    worker_receipt = audit_worker_cache(directory, manifest, workers, worker_status)
+    worker_prefix = 'packages/' + expected_lock['runtime']['source'] + '/'
+    expected_worker_inputs = []
+    for item in inputs:
+        if 'jvm-worker' in item['roles']:
+            assert item['path'].startswith(worker_prefix)
+            expected_worker_inputs.append({'path': item['path'][len(worker_prefix):], 'digest': item['digest']})
+    assert worker_receipt['inputs']['sources'] == expected_worker_inputs, 'Worker cache inputs differ from source graph'
+    assert worker_receipt['inputs']['jdk'] == runtime_lock['toolchains']['jdk'], 'Worker cache uses a different JDK'
     expected_worker = [str(build_root/'sources'/item['path']) for item in inputs if 'jvm-worker' in item['roles']]
-    assert [arg for arg in workers[0]['command'] if arg.endswith('.kt')] == expected_worker
+    if workers:
+        assert [arg for arg in workers[0]['command'] if arg.endswith('.kt')] == expected_worker
+        assert workers[0]['environment'] == worker_receipt['inputs']['environment'], 'Worker key omits its effective environment'
     libraries = [native_argv[index + 1] for index, arg in enumerate(native_argv) if arg == '-library']
     expected_external = [str(build_root/'sources/libraries'/(name+'.klib')) for name in expected_lock['nativeLibraryOrder']]
     assert libraries[-len(expected_external):] == expected_external
     assert libraries == [str(build_root/'bridge'/(name+'.klib')) for name in ['process', *expected_lock['runtime']['nativeLibraries']]] + expected_external
     return {'manifest': manifest, 'sourceInputCount': len(inputs), 'commands': len(commands),
+            'workerCache': worker_receipt,
             'receiptDigests': {name: digest((directory/name).read_bytes()) for name in
-                ('source-acquisition.json', 'source-inputs.json', 'source-commands.jsonl', 'runtime.lock.json')}}
+                ('source-acquisition.json', 'source-inputs.json', 'source-commands.jsonl', 'runtime.lock.json', 'jvm-worker-cache.json')}}
 
 
 def main():
@@ -400,7 +425,9 @@ def main():
                 requests = len(server.requests)
                 runtime('cold', command(), 'source-v1', desired, 'runtime-built')
                 receipt['compiledRuntime'] = True
-                receipt['phases']['cold']['audit'] = audit_runtime(cache/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['cold']['bootstrapEvents'])
+                receipt['phases']['cold']['audit'] = audit_runtime(cache/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['cold']['bootstrapEvents'], 'compiled')
+                cold_worker = receipt['phases']['cold']['audit']['workerCache']
+                assert cold_worker['inputs']['artifactLock'] == receipt['software']['jvm-artifacts.lock.json']['document']
                 requested = {entry['path'] for entry in server.requests[requests:]}
                 assert requested == {'/'+name+'.tar.gz' for name in ('kvik', 'plugin-a', 'plugin-b', 'shared-helper-v1')}
                 server.blocked = True
@@ -415,9 +442,15 @@ def main():
                     source_store=relocation/'source-cache', source_lock=relocated_lock, missing_tools=True, offline=True, no_build=True),
                     'source-v1', desired, 'runtime-cache-hit')
                 rebuilt = relocation/'offline-rebuilt-cache'
+                # Rebuild the Native runtime in a new directory using only the
+                # relocated worker cache, without a reusable runtime bundle.
+                shutil.copytree(relocation/'runtime-cache/jvm-worker-cache', rebuilt/'jvm-worker-cache')
+                assert not (rebuilt/'executables').exists()
                 runtime('offline-rebuild', command(launcher=relocation/'launcher', runtime_cache=rebuilt,
                     source_store=relocation/'source-cache', source_lock=relocated_lock, offline=True), 'source-v1', desired, 'runtime-built')
-                receipt['phases']['offline-rebuild']['audit'] = audit_runtime(rebuilt/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['offline-rebuild']['bootstrapEvents'])
+                receipt['phases']['offline-rebuild']['audit'] = audit_runtime(rebuilt/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['offline-rebuild']['bootstrapEvents'], 'cache-hit')
+                relocated_worker = receipt['phases']['offline-rebuild']['audit']['workerCache']
+                assert relocated_worker['inputKey'] == cold_worker['inputKey'] and relocated_worker['bundle'] == cold_worker['bundle']
                 assert len(server.requests) == requests, 'Offline phase attempted source transport'
                 server.blocked = False
                 mutated = lock_document(document, records, server.port, version=2)
@@ -428,7 +461,9 @@ def main():
                 assert next_key != desired
                 requests = len(server.requests)
                 runtime('helper-mutation', command(), 'source-v2', next_key, 'runtime-built')
-                receipt['phases']['helper-mutation']['audit'] = audit_runtime(cache/'executables'/next_key['hash'], mutated, next_key, records, receipt['phases']['helper-mutation']['bootstrapEvents'])
+                receipt['phases']['helper-mutation']['audit'] = audit_runtime(cache/'executables'/next_key['hash'], mutated, next_key, records, receipt['phases']['helper-mutation']['bootstrapEvents'], 'cache-hit')
+                mutated_worker = receipt['phases']['helper-mutation']['audit']['workerCache']
+                assert mutated_worker['inputKey'] == cold_worker['inputKey'] and mutated_worker['bundle'] == cold_worker['bundle']
                 assert {entry['path'] for entry in server.requests[requests:]} == {'/shared-helper-v2.tar.gz'}
                 assert inventory(trusted) == receipt['producer']['inventory'], 'Trusted launcher changed during gate'
                 receipt['passed'] = True

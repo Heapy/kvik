@@ -1410,7 +1410,26 @@ JDK/Native/host tools, so it does not measure distribution downloads. An empty
 of the full source composition, not the K01 small-spike budget; process CPU/RSS are
 explicitly unavailable in this harness.
 
-The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes, three runtime libraries and the JaCoCo agent/reporter alongside the native executable. Their 17 compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked Maven URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
+The bootstrap also compiles the JVM compiler/test workers from source and bundles their classes, three runtime libraries and the JaCoCo agent/reporter alongside the native executable. Compiler/library artifacts are checksum-pinned in `bootstrap/jvm-artifacts.lock.json`; missing jars are acquired from their locked URLs unless `--offline` is set. Use `--artifact-cache PATH` to select the artifact directory (default `.kvik/tool-artifacts`). Cached startup needs neither compiler installation nor the separate compiler-artifact directory. JVM workers are invoked only for tool operations; Kvik and its source build plugins run as Kotlin/Native.
+
+Native recomposition reuses an unchanged JVM worker bundle from
+`<cache-dir>/jvm-worker-cache`. Its key includes ordered worker source paths and
+bytes, the complete artifact lock, verified JDK identity, compiler arguments,
+bootstrap worker implementation and effective JVM environment. Native-only plugin
+sources and SDK/Native environment settings do not enter that key. Changes to the
+working directory, Java executable location or retained environment values
+conservatively invalidate it; private source snapshots, output directories and
+artifact-cache locations use logical paths. Bundle reuse verifies every cached
+class and library and checks the compiler/documentation manifests against the lock.
+Concurrent builders coordinate publication through the local K04 store.
+
+Each constructed runtime retains `jvm-worker-cache.json`, bound by its manifest,
+with the worker input key, inputs, bundle digest and `compiled` or `cache-hit`
+status. Source-composition command receipts record only commands actually run.
+The source bootstrap gate checks cold worker compilation, offline Native rebuilding
+with only a relocated worker cache, and worker reuse after a source-plugin helper
+changes. Tool verification and JVM artifact acquisition still run before worker
+lookup when a Native executable must be rebuilt.
 
 Select an explicit source composition with `--source-lock /absolute/source.lock.json` and optionally `--source-cache /absolute/source-cache` (default `.kvik/source-cache`). The [source graph contract](docs/decisions/k14-source-graph.md) covers pinned Git/archive packages, local source packages, source plugin dependencies and exact Native library closures. `--print-composition` validates declarations and observes local inputs without downloading or creating caches. An allowed build acquires verified inputs and compiles the composition; `--offline` requires cached remote inputs, and `--no-build` requires an already verified executable. Without `--source-lock`, the existing local composition remains the default. The [full HTTPS source composition fixture](docs/evidence/k14-source-bootstrap.md) passes cold build, relocated/offline reuse and rebuild, and rebuilding after a shared helper changes; its runtime also passes the existing JVM consumer tests.
 
