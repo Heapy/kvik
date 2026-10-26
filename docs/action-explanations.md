@@ -71,6 +71,23 @@ it describes scheduler activity, not CPU utilization or process count. These
 fields exclude bootstrap and other work outside the measured intervals. The ten
 slowest measured actions are listed in descending duration order.
 
+`toolVerification` attributes successful tool verification within instrumented
+action preparation. `measuredActions` counts `action-tool-verification` events;
+`summedDurationNanos` sums their elapsed times and is null when none were recorded.
+Its `coverage: measured-actions-only` does not assert that all tool work was
+measured. Durations may overlap and must not be added to action duration: they
+are already part of it. Each event identifies its action and adapter scope.
+
+The JVM compiler/test executor measures its verified layout and bundled inputs.
+The Native compiler executor includes JVM plugin-host verification when needed.
+Measurements publish after the owned preparation thread joins; failed or
+cancelled verification produces none. Successful verification remains recorded
+if staging or compilation subsequently fails. Cache hits and Native test actions
+produce no such event. Other executors, preflight verification, bootstrap and
+detached freshness queries remain outside this metric. Old journals without
+these events mean unknown verification cost, not zero. These observations do
+not affect action keys or cached results.
+
 `remoteCache` totals measured lookup/publication requests, body bytes and
 operation durations. Operation durations can overlap and are not wall time.
 Both timing and transfer sections label measurement coverage as complete,

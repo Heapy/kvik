@@ -95,7 +95,7 @@ The baseline and reader result also retain `performance` for the provisioned tes
 invocation; the reader includes `writerPerformance` when its baseline provides it.
 Measurements include wall time, host CPU/memory capacity and software version,
 input capture/hashing, action outcomes and timings, remote requests/bytes/operation
-time, and measured child CPU/peak RSS. They come from the public `run-stats` query
+time, measured adapter tool-verification time when available, and child CPU/peak RSS. They come from the public `run-stats` query
 after validating the committed journal. Provisioning, fixture copying and post-run
 validation are outside invocation wall time. Each phase is one sample on its own
 host: operation times can overlap, child peak RSS is not total concurrent memory,
@@ -107,6 +107,33 @@ default. For local harness development, `--allow-same-host` permits a same-host
 reader and explicitly records that the cross-machine gate did not pass. A local
 validation cannot establish cross-machine portability. A real cross-machine pass
 requires a shared HTTPS endpoint; loopback servers are only for local validation.
+
+## Compare four build phases
+
+Prepare the standard two-module JVM fixture with provisioned tools, then run the
+comparison using the same runtime:
+
+```sh
+python3 tools/test_build_cli.py --java-home /absolute/jdk \
+  --konan-home /absolute/kotlin-native --runtime /absolute/kvik.kexe --prepare-only
+python3 tools/test_build_performance_cli.py --runtime /absolute/kvik.kexe \
+  --fixture /absolute/printed/fixture --host-name 'my build host'
+```
+
+The harness measures a cold build, local compilation reuse, a separate checkout
+with an empty action cache and unavailable compilers, and a consumer source edit.
+All four execute the same test freshly. The first three must produce identical
+compilation manifests; the edit must change the consumer output while preserving
+the library's output and cache key. A strict HTTP fixture records actual requests,
+including the absence of network activity on local hits.
+
+One JSON result under `.kvik/tests/build-performance-cli/` retains host and tool
+identities, invocation wall time, input hashing, tool-verification measurements,
+action outcomes, transfer bytes and test results. Setup, dependency acquisition,
+edits and post-run queries are excluded from invocation time. This is one sample
+per phase on a same-host loopback service, without performance thresholds or a
+cross-machine speed claim. Linux host CI runs the same comparison and exports
+its summary and phase logs.
 
 ## GitHub Actions cross-machine check
 

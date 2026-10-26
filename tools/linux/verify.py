@@ -19,6 +19,7 @@ def export_checks(root):
         'foreground-jvm': ('foreground-jvm/case-*', ('summary.json', 'session.stdout.jsonl', 'session.stderr.log')),
         'compiler-session-worker': ('compiler-session-worker/case-*', ('results.json',)),
         'cache-invalidation': ('linux-jvm/run-*/cache-invalidation-*', ('results.json', '*.stdout.jsonl', '*.stderr.log')),
+        'build-performance': ('build-performance-cli/case-*', ('summary.json', 'phases/*/process.json', 'phases/*/stdout.jsonl', 'phases/*/stderr.log')),
     }
     output = root / '.kvik/ci-artifacts'
     output.mkdir(parents=True, exist_ok=True)
@@ -29,10 +30,14 @@ def export_checks(root):
                 for source in case.glob(pattern):
                     if not source.is_file() or source.is_symlink():
                         continue
-                    destination = output / category / case.name / source.name
+                    if any(parent.is_symlink() for parent in source.parents if parent != root and root in parent.parents):
+                        continue
+                    destination = output / category / case.name / source.relative_to(case)
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    destination.parent.parent.chmod(0o755)
-                    destination.parent.chmod(0o755)
+                    parent = destination.parent
+                    while parent != output:
+                        parent.chmod(0o755)
+                        parent = parent.parent
                     shutil.copyfile(source, destination)
                     destination.chmod(0o644)
 
@@ -141,6 +146,17 @@ def main():
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache',
          '--output-dir', ROOT/'.kvik/tests/test-resources',
          '--comparison-output', ROOT/'.kvik/ci-artifacts/parallel-comparison.json'])
+    # The main acceptance fixture intentionally ends with an added stale source.
+    # Prepare an independent unmodified fixture before the measured invocations.
+    performance_parent = Path(tempfile.mkdtemp(prefix='performance-', dir=fixture_parent))
+    run([sys.executable, ROOT/'tools/test_build_cli.py', '--java-home', java,
+         '--konan-home', native, '--konan-data', data, '--runtime', executable,
+         '--prepare-only', '--output-dir', performance_parent])
+    performance_fixtures = list(performance_parent.glob('case-*'))
+    if len(performance_fixtures) != 1:
+        raise RuntimeError('Expected one fresh JVM performance fixture')
+    run([sys.executable, ROOT/'tools/test_build_performance_cli.py', '--runtime', executable,
+         '--fixture', performance_fixtures[0], '--host-name', 'Linux x64 Docker ' + platform.node()])
     run([sys.executable, ROOT/'tools/test_native_build_cli.py', '--java-home', java,
          '--konan-home', native, '--konan-data', data, '--runtime', executable,
          *(['--link-timeout-ms', args.native_link_timeout_ms] if args.native_link_timeout_ms is not None else [])])

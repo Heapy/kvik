@@ -16,6 +16,7 @@ class ExportChecksTest(unittest.TestCase):
                 'foreground-jvm/case-a': ['summary.json', 'session.stderr.log'],
                 'compiler-session-worker/case-b': ['results.json'],
                 'linux-jvm/run-c/cache-invalidation-d': ['results.json', 'cold.stdout.jsonl', 'cold.stderr.log'],
+                'build-performance-cli/case-e': ['summary.json', 'phases/cold/process.json', 'phases/local/process.json'],
             }
             expected = {}
             for case_name, names in fixtures.items():
@@ -23,9 +24,12 @@ class ExportChecksTest(unittest.TestCase):
                 case.mkdir(parents=True, mode=0o700)
                 for name in names:
                     source = case / name
+                    source.parent.mkdir(parents=True, exist_ok=True)
                     source.write_text(name)
                     source.chmod(0o600)
                     category = 'cache-invalidation' if case_name.startswith('linux-jvm/') else case.parts[-2]
+                    if category == 'build-performance-cli':
+                        category = 'build-performance'
                     expected[f'{category}/{case.name}/{name}'] = name
                 (case / 'private-input').write_text('do not export')
                 (case / 'symlink.stdout.jsonl').symlink_to(case / 'private-input')
@@ -37,6 +41,18 @@ class ExportChecksTest(unittest.TestCase):
                 self.assertEqual(0o755 if path.is_dir() else 0o644, stat.S_IMODE(path.stat().st_mode))
             for case_name in fixtures:
                 self.assertEqual(0o700, stat.S_IMODE((root / '.kvik/tests' / case_name).stat().st_mode))
+
+    def test_linked_performance_phase_does_not_export_external_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outside = root / 'private'
+            outside.mkdir()
+            (outside / 'process.json').write_text('private')
+            phases = root / '.kvik/tests/build-performance-cli/case-a/phases'
+            phases.mkdir(parents=True)
+            (phases / 'cold').symlink_to(outside, target_is_directory=True)
+            export_checks(root)
+            self.assertFalse(any(p.is_file() for p in (root / '.kvik/ci-artifacts').rglob('*')))
 
 
 if __name__ == '__main__':
