@@ -234,11 +234,13 @@ def configuration():
     return dict(schemaVersion=1, name='groguCli',
         repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=[dict(
             id=MODULE, sourceSets=[
-                source('common', ['src'], dependencies=[dep('org.jetbrains.kotlin:kotlin-stdlib:'+VERSION),
+                # A JVM-only projection uses Kvik's explicit commonMain marker.
+                # The shared JVM/Android actuals remain platform compilation inputs.
+                source('commonMain', ['src'], dependencies=[dep('org.jetbrains.kotlin:kotlin-stdlib:'+VERSION),
                     dep('org.jetbrains.kotlinx:kotlinx-serialization-core:1.12.0', exported=True)]),
-                source('jvmAndAndroid', ['src@jvmAndAndroid'], ['common']),
+                source('jvmAndAndroid', ['src@jvmAndAndroid'], ['commonMain']),
                 source('jvm', ['src@jvm'], ['jvmAndAndroid']),
-                source('commonTest', ['test'], ['common'], [dep('org.jetbrains.kotlin:kotlin-test:'+VERSION),
+                source('commonTest', ['test'], ['commonMain'], [dep('org.jetbrains.kotlin:kotlin-test:'+VERSION),
                     dep('org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0')], ['testResources']),
                 source('jvmAndAndroidTest', parents=['commonTest', 'jvmAndAndroid']),
                 source('jvmTest', ['test@jvm'], ['jvmAndAndroidTest', 'jvm'], [
@@ -331,6 +333,8 @@ def compare_actions(run, record, reference, manifest, compiler_identity):
             # Graph snapshots prefix project source paths with src/.
             actual_sources = {p.removeprefix('src/'): inputs[p]['digest'] for p in parameters['sources']}
             assert actual_sources == expected_sources, ('Compiled source inventory differs', phase)
+            common_root = 'src' if phase == 'main' else 'test'
+            assert set(parameters['commonSources']) == {'src/'+name for name in expected_sources if Path(name).parts[0] == common_root}, ('Common source classification differs', phase)
     # Check bytes by the digest committed in the action result, rather than
     # accepting any stale *.class left in the project.
     class_bytes = {digest(path)['hash']: path for path in run.rglob('*.class')}
