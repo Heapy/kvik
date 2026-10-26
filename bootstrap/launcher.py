@@ -249,6 +249,9 @@ def cached(directory, key):
         jvm_worker.verify_bundle(directory, manifest.get("jvmWorkerBundle"))
         if "jvmWorkerCache" in manifest:
             worker_cache.verify_receipt(directory, manifest["jvmWorkerCache"], manifest["jvmWorkerBundle"])
+        if "nativeCoreCache" in manifest:
+            from bootstrap import native_core_cache
+            native_core_cache.verify_receipt(directory, manifest["nativeCoreCache"])
         runtime = read_json(directory / "runtime.lock.json")
         if not isinstance(runtime, dict):
             return False
@@ -403,10 +406,57 @@ def run_owned(command, environment, log, timeout=300):
                 signal.signal(number, handler)
 
 
+def build_native_support(source_root, recipe, roots, environment, log, run_build, output):
+    """Compile the same source-pinned helper/interop closure for either recipe."""
+    native = source_root / recipe["nativePlatform"]
+    bridge = output / "bridge"
+    bridge.mkdir()
+    clang, ar, host_flags = native_libraries.c_toolchain(roots)
+    guardian = output / "guardian"
+    c_options = ["-std=c11", "-Wall", "-Wextra", "-Werror", *host_flags]
+    commands = [
+        [clang, *c_options, native / "guardian.c", "-o", guardian],
+        [clang, *c_options, "-c", native / "process.c", "-o", bridge / "process.o"],
+        [ar, "rcs", bridge / "libkvik-process.a", bridge / "process.o"],
+        [roots["kotlinNative"] / "bin/cinterop", "-def", native / "process.def", "-compiler-option", f"-I{native}",
+            *native_libraries.interop_options(roots), "-libraryPath", bridge, "-target", native_target(),
+            "-Xoverride-konan-properties", native_libraries.compiler_properties(), "-o", bridge / "process"],
+    ]
+    for command in commands:
+        run_build(command, environment, log)
+    libraries = [bridge / "process.klib"] + native_libraries.build(recipe["nativeLibraries"], source_root,
+        bridge, roots, environment, log, run_build)
+    return guardian, libraries
+
+
+def native_core_partition(source_root, source_files, recipe, inputs=None):
+    from bootstrap import native_core_cache
+    # Graph runtime roles alone include CLI and arbitrary plugin files. The
+    # trusted launcher recipe additionally declares the stable runtime roots.
+    directories = read_json(ROOT / 'bootstrap/composition.json')['coreSources']
+    plugins = [] if inputs is not None else [plugin['directory'] + '/' + directory
+        for plugin in recipe['plugins'] for directory in plugin['sourceDirectories']]
+    return native_core_cache.partition(source_root, source_files, directories,
+        plugin_directories=plugins, graph_inputs=inputs)
+
+
+def graph_core_matches_launcher(source_root, core):
+    """Only the invoking launcher's curated module cut is known for remote code."""
+    expected = {}
+    for directory in read_json(ROOT / 'bootstrap/composition.json')['coreSources']:
+        if directory == 'cli/src':
+            continue
+        for item in inventory(ROOT / directory)['files']:
+            if item['path'].endswith('.kt'):
+                expected[directory + '/' + item['path']] = item['digest']
+    observed = {path.relative_to(source_root).as_posix(): file_digest(path) for path in core}
+    return bool(expected) and observed == expected
+
+
 def build(args, recipe, selected, lock, key, destination):
     import shutil
     import tempfile
-    from bootstrap import source_graph, tool_archives
+    from bootstrap import source_graph, tool_archives, native_core_cache
     timings = BuildTimings()
     roots = validate_tools(args, lock["toolchains"], timings)
     graph_mode = isinstance(selected, source_graph.ObservedGraph)
@@ -427,7 +477,9 @@ def build(args, recipe, selected, lock, key, destination):
     artifacts = jvm_worker.acquire(jvm_lock, args.artifact_cache, args.offline)
     timings.finish("jvmArtifactAcquisition")
     temporary = Path(tempfile.mkdtemp(prefix=key["hash"] + "-", dir=destination.parent))
+    native_session = None
     try:
+        inputs = None
         worker_files = None
         extra_libraries = []
         if graph_mode:
@@ -467,19 +519,6 @@ def build(args, recipe, selected, lock, key, destination):
             "LANG": "C", "LC_ALL": "C", "TZ": "UTC"})
         if native_target() == 'macos_arm64':
             environment.update({"DEVELOPER_DIR": str(roots["xcodeToolchain"].parents[1]), "SDKROOT": str(roots["sdk"])})
-        native = source_root / recipe["nativePlatform"]
-        bridge = temporary / "bridge"
-        bridge.mkdir()
-        clang, ar, host_flags = native_libraries.c_toolchain(roots)
-        guardian = temporary / "guardian"
-        c_options = ["-std=c11", "-Wall", "-Wextra", "-Werror", *host_flags]
-        commands = [
-            [clang, *c_options, native / "guardian.c", "-o", guardian],
-            [clang, *c_options, "-c", native / "process.c", "-o", bridge / "process.o"],
-            [ar, "rcs", bridge / "libkvik-process.a", bridge / "process.o"],
-            [roots["kotlinNative"] / "bin/cinterop", "-def", native / "process.def", "-compiler-option", f"-I{native}",
-                *native_libraries.interop_options(roots), "-libraryPath", bridge, "-target", native_target(), "-Xoverride-konan-properties", native_libraries.compiler_properties(), "-o", bridge / "process"],
-        ]
         log_path = args.cache_dir / "logs" / (key["hash"] + ".log")
         log_path.parent.mkdir(exist_ok=True)
         def run_build(command, environment, log, timeout=None):
@@ -492,10 +531,41 @@ def build(args, recipe, selected, lock, key, destination):
                         "environment": environment, "timeoutSeconds": timeout}) + b"\n")
             run_owned(command, environment, log, timeout)
         with log_path.open("w") as log:
-            for command in commands:
-                run_build(command, environment, log)
-            libraries = [bridge / "process.klib"] + native_libraries.build(recipe["nativeLibraries"], source_root,
-                bridge, roots, environment, log, run_build) + extra_libraries
+            core, final_sources = native_core_partition(source_root, source_files, recipe, inputs)
+            # A runtime source dependency may be imported by its core. This
+            # bounded split does not yet compile arbitrary dependency nodes into
+            # the core KLIB, so retain the original monolithic recipe for them.
+            runtime_dependencies = native_core_cache.runtime_dependencies(selected.observed_document if graph_mode else None)
+            graph_core_mismatch = graph_mode and not graph_core_matches_launcher(source_root, core)
+            if runtime_dependencies or graph_core_mismatch:
+                core, final_sources = [], source_files
+            capacity_fallback = False
+            if native_core_cache.supported(native_target(), recipe['compilerOptions']) and core:
+                support_directories = [recipe['nativePlatform'],
+                    *[native_libraries.RECIPES[name][0] for name in recipe['nativeLibraries']]]
+                support = [source_root / directory / item['path'] for directory in support_directories
+                    for item in inventory(source_root / directory)['files']]
+                try:
+                    native_session = native_core_cache.prepare(temporary, source_root, core, support, extra_libraries,
+                        recipe, roots, lock['toolchains'], environment, log, run_build,
+                        lambda output, controlled: build_native_support(source_root, recipe, roots, controlled, log, run_build, output),
+                        cache=args.cache_dir / 'native-core-cache',
+                        eligibility='graph-matching-curated-runtime' if graph_mode else 'local-curated-runtime')
+                except native_core_cache.CoreCacheCapacity:
+                    capacity_fallback = True
+            if native_session is not None:
+                guardian = temporary / 'guardian'
+                shutil.copyfile(native_session.guardian, guardian)
+                guardian.chmod(0o755)
+                if file_digest(guardian) != file_digest(native_session.guardian):
+                    raise ValueError('Native guardian changed during materialization')
+            else:
+                guardian, libraries = build_native_support(source_root, recipe, roots, environment, log, run_build, temporary)
+                libraries += extra_libraries
+                reason = ('unsupported-target-or-compiler-flags' if not native_core_cache.supported(native_target(), recipe['compilerOptions'])
+                          else 'core-cache-capacity' if capacity_fallback else 'runtime-source-dependencies' if runtime_dependencies else 'graph-core-differs-from-curated-launcher' if graph_core_mismatch
+                          else 'empty-core-or-final-partition')
+                native_receipt = native_core_cache.fallback(native_target(), reason)
             guardian_digest = file_digest(guardian)
             worker_digest, worker_receipt = worker_cache.build_or_restore(temporary, source_root, recipe["jvmWorkerSources"], jvm_lock,
                 artifacts, roots["jdk"] / "bin/java", environment, log, run_build, source_files=worker_files,
@@ -508,13 +578,19 @@ def build(args, recipe, selected, lock, key, destination):
                 f'const val runtimeJvmWorkerHash: String = "{worker_digest["hash"]}"\n' +
                 f'const val runtimeJvmWorkerSize: Long = {worker_digest["sizeBytes"]}L\n' +
                 f"val buildPlugins: List<kvik.core.BuildPlugin> = listOf({implementations})\n")
-            run_build([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], *native_libraries.linker_options(roots),
-                "-Xoverride-konan-properties=" + native_libraries.runtime_properties(roots),
-                *[part for library in libraries for part in ("-library", library)], "-o", executable, *source_files, registry], environment, log)
+            if native_session is not None:
+                native_session.compile(final_sources, registry, executable, environment, log, run_build)
+                native_receipt = native_session.receipt
+            else:
+                run_build([roots["kotlinNative"] / "bin/konanc", *recipe["compilerOptions"], *native_libraries.linker_options(roots),
+                    "-Xoverride-konan-properties=" + native_libraries.runtime_properties(roots),
+                    *[part for library in libraries for part in ("-library", library)], "-o", executable, *source_files, registry], environment, log)
+        (temporary / native_core_cache.RECEIPT).write_bytes(canonical(native_receipt) + b"\n")
         # Write/flush the complete publication before exposing its directory.
         (temporary / "runtime.lock.json").write_bytes(canonical(lock) + b"\n")
         manifest = {"schemaVersion": 1, "composition": key, "executable": file_digest(executable), "guardian": guardian_digest,
-            "jvmWorkerBundle": worker_digest, "jvmWorkerCache": file_digest(temporary / "jvm-worker-cache.json")}
+            "jvmWorkerBundle": worker_digest, "jvmWorkerCache": file_digest(temporary / "jvm-worker-cache.json"),
+            "nativeCoreCache": file_digest(temporary / native_core_cache.RECEIPT)}
         if graph_mode:
             manifest["sourceAcquisition"] = file_digest(temporary / "source-acquisition.json")
             manifest["sourceInputs"] = file_digest(temporary / "source-inputs.json")
@@ -524,7 +600,13 @@ def build(args, recipe, selected, lock, key, destination):
         manifest["compileMillis"] = round(timings.phases[-1]["durationNanos"] / 1_000_000)
         (temporary / "manifest.json").write_bytes(canonical(manifest) + b"\n")
         shutil.rmtree(temporary / "sources")
-        shutil.rmtree(bridge)
+        if native_session is not None:
+            native_session.close()
+            native_session = None
+        for name in ('bridge', 'native-home', 'native-objects'):
+            if (temporary / name).exists():
+                shutil.rmtree(temporary / name)
+        (temporary / 'native-built-caches.txt').unlink(missing_ok=True)
         if (temporary / 'konan-data').exists():
             shutil.rmtree(temporary / 'konan-data')
         jvm_worker.verify_bundle(temporary, worker_digest)
@@ -535,6 +617,8 @@ def build(args, recipe, selected, lock, key, destination):
         emit("runtime-built", composition=key["hash"], milliseconds=manifest["compileMillis"],
              buildTimings=manifest["buildTimings"])
     finally:
+        if native_session is not None:
+            native_session.close()
         if temporary.exists():
             shutil.rmtree(temporary)
 
