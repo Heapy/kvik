@@ -23,7 +23,9 @@ from fixture import HttpsFixture, archive, canonical, certificates, digest, inve
 sys.path.insert(0, str(ROOT))
 from bootstrap.source_graph import parse_source_lock, observe_graph
 from bootstrap.native_libraries import RECIPES
-from bootstrap.pin_tools import NATIVE_DEPENDENCIES
+from bootstrap.pin_tools import NATIVE_DEPENDENCIES, native_target
+from bootstrap import tool_archives
+from bootstrap.identity import inventory as tool_inventory, file_digest, read_regular
 
 DEFAULT_REFERENCE = Path('/private/tmp/kvik-k14-source-store/.kvik/tests/source-store/case-rzkf8dpt/full-kvik/source.lock.json')
 
@@ -92,7 +94,68 @@ def cache_state(path):
             'inventoryDigest': digest(canonical(contents))}
 
 
-def validate_build_timings(manifest, events):
+def empty_tool_cache_state(path):
+    """Read-only first-use precondition, including empty directories and dangling links."""
+    path = Path(path)
+    assert not path.is_symlink(), 'Initial tool cache must not be a symlink'
+    exists = path.exists()
+    assert not exists or path.is_dir(), 'Initial tool cache must be a directory'
+    entries = sorted(item.name for item in path.iterdir()) if exists else []
+    assert not entries, 'First-use tool cache must be empty'
+    return {'path': str(path), 'exists': exists, 'entries': entries}
+
+
+def audit_tool_cache(path, document):
+    """Hash immutable provisioned bytes, outside the measured launcher invocation."""
+    path = Path(path)
+    assert path.is_dir() and not path.is_symlink(), 'Missing provisioned tool cache'
+    assert {item.name for item in path.iterdir()} == {'blobs', 'trees', 'locks', 'staging', 'quarantine'}
+    for name in ('blobs', 'trees', 'locks', 'staging', 'quarantine'):
+        assert (path/name).is_dir() and not (path/name).is_symlink()
+    assert not list((path/'staging').iterdir()) and not list((path/'quarantine').iterdir())
+    components = {}
+    for name, descriptor in sorted(document['components'].items()):
+        key = digest(canonical(descriptor))['hash']
+        entry = path/'trees'/key
+        assert not entry.is_symlink() and not (entry/'data').is_symlink()
+        assert {item.name for item in entry.iterdir()} == {'data', 'manifest.json'}
+        actual = tool_inventory(entry/'data', allow_internal_symlinks=True)
+        assert digest(canonical(actual)) == descriptor['tree'], ('Provisioned tree differs', name)
+        assert read_regular(entry/'manifest.json', 128*1024**2) == canonical(actual)
+        blob_name = descriptor['digest']['hash']+'-'+str(descriptor['digest']['sizeBytes'])
+        blob = path/'blobs'/blob_name
+        assert file_digest(blob) == descriptor['digest'], ('Provisioned archive differs', name)
+        components[name] = {'treePath': 'trees/'+key+'/data', 'tree': descriptor['tree'],
+                            'blobPath': 'blobs/'+blob_name, 'archive': descriptor['digest']}
+    assert {item.name for item in (path/'trees').iterdir()} == {
+        value['treePath'].split('/')[1] for value in components.values()}
+    assert {item.name for item in (path/'blobs').iterdir()} == {
+        value['blobPath'].split('/')[1] for value in components.values()}
+    return {'path': str(path), 'exists': True, 'components': components,
+            'identity': digest(canonical(components)),
+            'identityScope': 'Fully hashed archive blobs and verified tree inventories; mutable lock files excluded'}
+
+
+def tool_arguments(args, archive_document, tool_cache, absent, missing_tools=False):
+    supplied = set(archive_document['components']) if archive_document else set()
+    paths = {'jdk': args.java_home, 'native': args.konan_home, 'konan-data': args.konan_data,
+             'artifacts': args.artifact_cache}
+    if missing_tools:
+        paths = {name: absent/name for name in paths}
+    else:
+        if 'jdk' in supplied: paths['jdk'] = absent/'jdk'
+        if 'kotlinNative' in supplied: paths['native'] = absent/'native'
+        if set(NATIVE_DEPENDENCIES[native_target()]) <= supplied:
+            paths['konan-data'] = absent/'konan-data'
+    result = ['--java-home', paths['jdk'], '--konan-home', paths['native'],
+              '--konan-data', paths['konan-data'], '--artifact-cache', paths['artifacts']]
+    if archive_document:
+        result += ['--tool-archives', args.tool_archives,
+                   '--tool-cache', absent/'tool-cache' if missing_tools else tool_cache]
+    return result
+
+
+def validate_build_timings(manifest, events, archive_policy=False):
     built = [event for event in events if event.get('kind') == 'runtime-built']
     assert len(built) == 1, 'Expected one successful build timing event'
     timings = manifest['buildTimings']
@@ -102,7 +165,8 @@ def validate_build_timings(manifest, events):
     names = [phase['name'] for phase in timings['phases']]
     expected = ['toolResolution', 'installedToolVerification', 'sourceAcquisition',
                 'jvmArtifactAcquisition', 'runtimeConstruction']
-    assert names == expected, ('Unexpected phase boundaries for preprovisioned tools', names)
+    if archive_policy: expected.insert(1, 'toolArchiveProvisioning')
+    assert names == expected, ('Unexpected phase boundaries for tool policy', names)
     end = 0
     for phase in timings['phases']:
         assert type(phase['startNanos']) is int and phase['startNanos'] == end, 'Overlapping/missing phase'
@@ -198,9 +262,9 @@ def audit_worker_cache(directory, manifest, workers, expected_status):
     return receipt
 
 
-def audit_runtime(directory, expected_lock, key, records, events, worker_status):
+def audit_runtime(directory, expected_lock, key, records, events, worker_status, archive_policy=False):
     manifest = read(directory/'manifest.json')
-    validate_build_timings(manifest, events)
+    validate_build_timings(manifest, events, archive_policy)
     assert manifest['composition'] == key
     runtime_lock = read(directory/'runtime.lock.json')
     assert digest(canonical(runtime_lock)) == key
@@ -292,6 +356,16 @@ def audit_runtime(directory, expected_lock, key, records, events, worker_status)
                 ('source-acquisition.json', 'source-inputs.json', 'source-commands.jsonl', 'runtime.lock.json', 'jvm-worker-cache.json')}}
 
 
+def invocation_timeout(value):
+    try:
+        seconds = int(value)
+    except ValueError as failure:
+        raise argparse.ArgumentTypeError('Invocation timeout must be an integer from 1 to 3600 seconds') from failure
+    if not 1 <= seconds <= 3600:
+        raise argparse.ArgumentTypeError('Invocation timeout must be from 1 to 3600 seconds')
+    return seconds
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--producer-root', type=Path, required=True)
@@ -299,12 +373,22 @@ def main():
     parser.add_argument('--reference-lock', type=Path, default=DEFAULT_REFERENCE)
     parser.add_argument('--java-home', type=Path, default=Path('/Users/yoda/.sdkman/candidates/java/25.0.4-librca'))
     parser.add_argument('--konan-home', type=Path, default=Path('/Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20'))
+    parser.add_argument('--konan-data', type=Path, default=Path.home()/'.konan')
+    parser.add_argument('--tool-archives', type=Path, help='Pinned distribution archive lock; opt into first-use tool provisioning')
+    parser.add_argument('--tool-cache', type=Path, help='Empty distribution cache; defaults to a fresh attempt directory')
     parser.add_argument('--artifact-cache', type=Path, default=Path('/Users/yoda/dev/pet/kvik/.kvik/tool-artifacts'))
     parser.add_argument('--host-name', default=platform.node(), help='Name/model of the measured host; defaults to hostname')
+    parser.add_argument('--invocation-timeout', type=invocation_timeout, default=900,
+                        help='Whole build invocation timeout in seconds (1–3600); compiler deadlines are unchanged')
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--case', type=Path)
     args = parser.parse_args()
-    args.artifact_cache = args.artifact_cache.absolute()
+    if args.tool_cache is not None and args.tool_archives is None:
+        parser.error('--tool-cache requires --tool-archives')
+    for name in ('java_home', 'konan_home', 'konan_data', 'artifact_cache'):
+        setattr(args, name, getattr(args, name).absolute())
+    if args.tool_archives is not None:
+        args.tool_archives = args.tool_archives.resolve(strict=True)
     if args.case:
         case = args.case.resolve(strict=True)
         configuration = read(case/'fixture.json')
@@ -318,6 +402,10 @@ def main():
         port = 0
     attempt = Path(tempfile.mkdtemp(prefix='attempt-', dir=case))
     print(attempt, flush=True)
+    tool_cache = (args.tool_cache.absolute() if args.tool_cache else attempt/'tool-cache') if args.tool_archives else None
+    initial_tools = empty_tool_cache_state(tool_cache) if tool_cache else None
+    absent = attempt/'absent-tools'
+    assert not absent.exists()
     selection = read(case/'source-selection.json')
     assert records_inventory_matches_selection(case, selection), 'Prepared source inventory changed'
     records = read(case/'archive-identities.json')
@@ -342,8 +430,9 @@ def main():
                'processResources': {'coverage': 'unavailable', 'cpuNanos': None, 'peakRssBytes': None},
                'performanceScope': 'One observation per full source-composition phase; not the K01 small-spike budget'}
     sequence = 0
-    def invoke(label, command, env=environment, expected=0, timeout=900):
+    def invoke(label, command, env=environment, expected=0, timeout=None):
         nonlocal sequence
+        timeout = args.invocation_timeout if timeout is None else timeout
         sequence += 1
         stdout = attempt/f'{sequence:02d}-{label}.stdout'
         stderr = attempt/f'{sequence:02d}-{label}.stderr'
@@ -352,7 +441,7 @@ def main():
         with stdout.open('wb') as out, stderr.open('wb') as err:
             result = subprocess.run(argv, env=env, cwd=case, stdout=out, stderr=err, timeout=timeout)
         entry = {'label': label, 'argv': argv, 'environment': env, 'exitCode': result.returncode,
-                 'seconds': time.monotonic()-started, 'stdout': stdout.name, 'stderr': stderr.name,
+                 'seconds': time.monotonic()-started, 'timeoutSeconds': timeout, 'stdout': stdout.name, 'stderr': stderr.name,
                  'stdoutDigest': digest(stdout.read_bytes()), 'stderrDigest': digest(stderr.read_bytes())}
         receipt['commands'].append(entry); write(attempt/'summary.json', receipt)
         assert result.returncode == expected, (label, result.returncode, stderr.read_text(errors='replace')[-4000:])
@@ -384,22 +473,38 @@ def main():
             receipt['software'] = {name: {'digest': digest((trusted/'bootstrap'/name).read_bytes()),
                                          'document': read(trusted/'bootstrap'/name)}
                                    for name in ('toolchains.lock.json', 'jvm-artifacts.lock.json')}
+            archive_document = None
+            if args.tool_archives:
+                pinned = receipt['software']['toolchains.lock.json']['document']
+                archive_document = tool_archives.read_lock(args.tool_archives, pinned['components'], pinned['host'])
+                receipt['toolArchives'] = {'path': str(args.tool_archives), 'digest': file_digest(args.tool_archives),
+                                           'document': archive_document}
+                receipt['toolCacheInitial'] = initial_tools
+                receipt['measurementScope']['tools'] = (
+                    'Selected pinned archives provisioned from an initially empty tool cache; remaining components, '
+                    'including host SDK/toolchain prerequisites, are already installed')
+                receipt['measurementScope']['toolArchiveProvisioning'] = (
+                    'Archive acquisition, extraction and verification, including later verified cache reuse; '
+                    'not a separate network-only timer or network-byte measurement')
             cache = case/'runtime-cache'; source_cache = case/'source-cache'
             def command(launcher=trusted, runtime_cache=cache, source_store=source_cache, source_lock=lock,
                         missing_tools=False, offline=False, no_build=False, query=None):
-                result = [python, launcher/'kvik', '--java-home', '/absent/jdk' if missing_tools else args.java_home,
-                    '--konan-home', '/absent/native' if missing_tools else args.konan_home,
-                    '--konan-data', Path.home()/'.konan', '--cache-dir', runtime_cache,
-                    '--artifact-cache', args.artifact_cache, '--source-lock', source_lock, '--source-cache', source_store]
+                result = [python, launcher/'kvik', *tool_arguments(args, archive_document, tool_cache, absent, missing_tools),
+                          '--cache-dir', runtime_cache, '--source-lock', source_lock, '--source-cache', source_store]
                 if offline: result += ['--offline']
                 if no_build: result += ['--no-build']
                 return result + ([query] if query else ['--', 'runtime-info'])
             desired_bytes, _ = invoke('desired-composition', command(query='--print-composition'), timeout=30)
             desired = json.loads(desired_bytes)['composition']
             assert not cache.exists() and not source_cache.exists(), 'Read-only desired composition created caches'
+            assert not absent.exists(), 'Read-only desired composition created absent tool paths'
+            assert cache_state(args.artifact_cache) == receipt['artifactCacheInitial'], 'Read-only preflight changed artifact cache'
+            if tool_cache:
+                assert empty_tool_cache_state(tool_cache) == initial_tools, 'Read-only preflight changed tool cache'
             receipt['phases']['preflight'] = {'passed': True, 'desired': desired, 'selectedKvikFiles': len(selection['inventory']['files']),
                 'privateCaRejected': True, 'privateCaTrusted': True, 'publicCaTrusted': True}
             if args.prepare_only:
+                if tool_cache: receipt['toolCacheFinal'] = empty_tool_cache_state(tool_cache)
                 receipt['passed'] = True
             else:
                 assert (trusted/'bootstrap/source_store.py').is_file(), 'Reviewed source-store must be integrated before full gate'
@@ -423,9 +528,14 @@ def main():
 
                 receipt['sourceCacheInitial'] = cache_state(source_cache)
                 requests = len(server.requests)
+                if tool_cache:
+                    assert empty_tool_cache_state(tool_cache) == initial_tools, 'Tool cache changed before cold build'
                 runtime('cold', command(), 'source-v1', desired, 'runtime-built')
                 receipt['compiledRuntime'] = True
-                receipt['phases']['cold']['audit'] = audit_runtime(cache/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['cold']['bootstrapEvents'], 'compiled')
+                assert not absent.exists(), 'Cold build created nonexistent installed-tool paths'
+                receipt['phases']['cold']['audit'] = audit_runtime(cache/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['cold']['bootstrapEvents'], 'compiled', archive_policy=archive_document is not None)
+                if tool_cache:
+                    receipt['toolCacheAfterCold'] = audit_tool_cache(tool_cache, archive_document)
                 cold_worker = receipt['phases']['cold']['audit']['workerCache']
                 assert cold_worker['inputs']['artifactLock'] == receipt['software']['jvm-artifacts.lock.json']['document']
                 requested = {entry['path'] for entry in server.requests[requests:]}
@@ -433,6 +543,8 @@ def main():
                 server.blocked = True
                 requests = len(server.requests)
                 runtime('warm-offline-no-build', command(missing_tools=True, offline=True, no_build=True), 'source-v1', desired, 'runtime-cache-hit')
+                assert not absent.exists(), 'Cached runtime created missing tool/artifact paths'
+                receipt['phases']['warm-offline-no-build']['absentToolsRemainAbsent'] = True
                 relocation = case/'relocated'; relocation.mkdir()
                 trusted_copy(trusted, relocation/'launcher')
                 shutil.copytree(cache, relocation/'runtime-cache')
@@ -441,6 +553,8 @@ def main():
                 runtime('relocated-offline-no-build', command(launcher=relocation/'launcher', runtime_cache=relocation/'runtime-cache',
                     source_store=relocation/'source-cache', source_lock=relocated_lock, missing_tools=True, offline=True, no_build=True),
                     'source-v1', desired, 'runtime-cache-hit')
+                assert not absent.exists(), 'Relocated cached runtime created tool/artifact caches'
+                receipt['phases']['relocated-offline-no-build']['absentToolsRemainAbsent'] = True
                 rebuilt = relocation/'offline-rebuilt-cache'
                 # Rebuild the Native runtime in a new directory using only the
                 # relocated worker cache, without a reusable runtime bundle.
@@ -448,7 +562,7 @@ def main():
                 assert not (rebuilt/'executables').exists()
                 runtime('offline-rebuild', command(launcher=relocation/'launcher', runtime_cache=rebuilt,
                     source_store=relocation/'source-cache', source_lock=relocated_lock, offline=True), 'source-v1', desired, 'runtime-built')
-                receipt['phases']['offline-rebuild']['audit'] = audit_runtime(rebuilt/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['offline-rebuild']['bootstrapEvents'], 'cache-hit')
+                receipt['phases']['offline-rebuild']['audit'] = audit_runtime(rebuilt/'executables'/desired['hash'], original_lock, desired, records, receipt['phases']['offline-rebuild']['bootstrapEvents'], 'cache-hit', archive_policy=archive_document is not None)
                 relocated_worker = receipt['phases']['offline-rebuild']['audit']['workerCache']
                 assert relocated_worker['inputKey'] == cold_worker['inputKey'] and relocated_worker['bundle'] == cold_worker['bundle']
                 assert len(server.requests) == requests, 'Offline phase attempted source transport'
@@ -461,16 +575,29 @@ def main():
                 assert next_key != desired
                 requests = len(server.requests)
                 runtime('helper-mutation', command(), 'source-v2', next_key, 'runtime-built')
-                receipt['phases']['helper-mutation']['audit'] = audit_runtime(cache/'executables'/next_key['hash'], mutated, next_key, records, receipt['phases']['helper-mutation']['bootstrapEvents'], 'cache-hit')
+                receipt['phases']['helper-mutation']['audit'] = audit_runtime(cache/'executables'/next_key['hash'], mutated, next_key, records, receipt['phases']['helper-mutation']['bootstrapEvents'], 'cache-hit', archive_policy=archive_document is not None)
                 mutated_worker = receipt['phases']['helper-mutation']['audit']['workerCache']
                 assert mutated_worker['inputKey'] == cold_worker['inputKey'] and mutated_worker['bundle'] == cold_worker['bundle']
                 assert {entry['path'] for entry in server.requests[requests:]} == {'/shared-helper-v2.tar.gz'}
                 assert inventory(trusted) == receipt['producer']['inventory'], 'Trusted launcher changed during gate'
+                assert not absent.exists(), 'Build reuse created nonexistent installed-tool paths'
+                if tool_cache:
+                    receipt['toolCacheFinal'] = audit_tool_cache(tool_cache, archive_document)
+                    assert receipt['toolCacheFinal'] == receipt['toolCacheAfterCold'], 'Tool cache changed during reuse'
                 receipt['passed'] = True
         finally:
             receipt['httpsRequests'] = server.requests
             receipt['listenerPort'] = server.port
+            if 'toolArchives' in receipt:
+                try:
+                    receipt['toolArchivesUnchanged'] = (file_digest(args.tool_archives) == receipt['toolArchives']['digest'] and
+                        read(args.tool_archives) == receipt['toolArchives']['document'])
+                except (OSError, ValueError) as failure:
+                    receipt['toolArchivesUnchanged'] = False
+                    receipt['toolArchivesError'] = str(failure)
+                if not receipt['toolArchivesUnchanged']: receipt['passed'] = False
             write(attempt/'summary.json', receipt)
+            assert receipt.get('toolArchivesUnchanged', True), 'Tool archive lock changed during gate'
     receipt['listenerClosed'] = True
     write(attempt/'summary.json', receipt)
 
