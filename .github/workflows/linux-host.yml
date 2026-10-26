@@ -33,6 +33,10 @@ jobs:
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_worker_cache.py'
       - name: Check source bootstrap worker reuse assertions
         run: python3 -m unittest discover -s tools -p 'test_source_worker_cache_unit.py'
+      - name: Check source bootstrap archive policy and timeout records
+        run: python3 -m unittest discover -s tools -p 'test_source_tool_archives_unit.py'
+      - name: Check bounded HTTPS redirects and transfer deadlines
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_source_http.py'
       - name: Check cached startup and RSS measurements
         run: python3 -m unittest discover -s tests/bootstrap -p 'test_cached_startup.py'
       - name: Check foreground measurements

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "host": {
+    "architecture": "arm64",
+    "os": "Darwin",
+    "release": "27.0.0",
+    "sdk": "27.0"
+  },
+  "components": {
+    "jdk": {
+      "digest": {
+        "hash": "6bf6d36e939c09800ef9346b6840266c8d138a031227a8e49bf913ac503e1e45",
+        "sizeBytes": 243511125
+      },
+      "directory": ".",
+      "format": "tar.gz",
+      "rootPrefix": "jdk-25.0.4.jdk",
+      "tree": {
+        "hash": "23e07341f1d60c828f81cfd7875fcdea37e93f8612b91653829158d067a282a6",
+        "sizeBytes": 56576
+      },
+      "url": "https://download.bell-sw.com/java/25.0.4+9/bellsoft-jdk25.0.4+9-macos-aarch64.tar.gz"
+    },
+    "kotlinNative": {
+      "digest": {
+        "hash": "b70d4fd2855fdb054fc9604beaa7de83c18d786454ae948de72a226e81f07dc8",
+        "sizeBytes": 290167116
+      },
+      "directory": ".",
+      "format": "tar.gz",
+      "rootPrefix": "kotlin-native-prebuilt-macos-aarch64-2.4.20",
+      "tree": {
+        "hash": "e2709fb7ce54c75da147b4b1abaa7916d5be7ea2996386eaa5bfa0cd16c888f9",
+        "sizeBytes": 10054833
+      },
+      "url": "https://github.com/JetBrains/kotlin/releases/download/v2.4.20/kotlin-native-prebuilt-macos-aarch64-2.4.20.tar.gz",
+      "redirectOrigins": [
+        "https://release-assets.githubusercontent.com"
+      ]
+    },
+    "llvm": {
+      "digest": {
+        "hash": "62fd78f090353aa7b2c6601ad6f95bd7a0b0558b18f86978043cc878321b408a",
+        "sizeBytes": 151150049
+      },
+      "directory": ".",
+      "format": "tar.gz",
+      "rootPrefix": "llvm-21-aarch64-macos-essentials-97",
+      "tree": {
+        "hash": "2f012bf605ce0f33651bb82a583b270b6aa9806411f158903ffcabc61efc9964",
+        "sizeBytes": 49331
+      },
+      "url": "https://download.jetbrains.com/kotlin/native/resources/llvm/21-aarch64-macos/llvm-21-aarch64-macos-essentials-97.tar.gz",
+      "redirectOrigins": [
+        "https://download-cdn.jetbrains.com"
+      ]
+    },
+    "libffi": {
+      "digest": {
+        "hash": "8ca0102ad5b626e8b1699f311ab098354a90154ea3e44951f28ebdd256862ba9",
+        "sizeBytes": 17037
+      },
+      "directory": ".",
+      "format": "tar.gz",
+      "rootPrefix": "libffi-3.3-1-macos-arm64",
+      "tree": {
+        "hash": "f5332f97319f96a39519f7b7fbecbdc5cb09cf283b4372c2194f9cca5cd9b80f",
+        "sizeBytes": 1411
+      },
+      "url": "https://download.jetbrains.com/kotlin/native/libffi-3.3-1-macos-arm64.tar.gz",
+      "redirectOrigins": [
+        "https://download-cdn.jetbrains.com"
+      ]
+    }
+  }
+}

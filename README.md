@@ -1387,6 +1387,15 @@ The [tool archive schema](schemas/v1/bootstrap-tool-archives.json) requires `sch
 
 Tool acquisition verifies both the archive digest and extracted installation before use, coordinates concurrent launchers, and repairs damaged extracted trees from cached archives. `--offline` permits this repair but forbids downloads; `--no-build` never acquires tools. `--print-composition` validates the archive lock without creating its cache, and a verified runtime cache hit needs no tool downloads or installed compilers. Native builds using archives get private mutable compiler state with links to the verified dependency trees.
 
+Archive URLs reject redirects by default. For upstream release services that redirect
+to a CDN, declare `redirectOrigins`, for example
+`["https://release-assets.githubusercontent.com"]`. Every hop must target an explicitly
+listed HTTPS origin, with at most three hops; credentials and ambient proxies are
+excluded. Keep the stable release URL in `url`, not its temporary signed destination.
+`transferTimeoutSeconds` optionally bounds the whole archive download (1–3600 seconds,
+default 900); source-package transfers keep their separate 120-second bound and
+reject redirects. Neither setting relaxes archive size or SHA-256 verification.
+
 For a known incorrect published dependency edge, project commands accept repeatable `--exclude-metadata-edge JSON`. Each rule identifies the exact consumer domain, parent coordinate, metadata digest, selected variant, declared dependency and reason. Rules are part of the configuration and lock identity: pass them consistently to `resolve`, `check-lock`, `inspect`, `build`, `test`, `dev` and `dependencies`. The project dependency query shows corrected edges and their reasons. Raw `packages dependencies` queries inspect published metadata and do not apply project rules. See [the metadata correction contract](docs/decisions/metadata-edge-corrections.md).
 
 Bootstrap compiler commands have a 300-second deadline by default. On slower hosts, pass `--bootstrap-command-timeout 1800` before `--` (integer seconds, 1–3600). Foreground recomposition preserves this setting and scales its total rebuild budget proportionally above the default 15 minutes. The setting does not change artifact identities or consumer-action deadlines.
@@ -1406,7 +1415,28 @@ composition or action identities; cache-hit events do not replay build measureme
 phase boundaries alongside end-to-end invocation times, initial source/artifact cache
 state, compiler locks and exact recipe-selected sources. Its default uses installed
 JDK/Native/host tools, so it does not measure distribution downloads. An empty
-`--artifact-cache` exercises first-use JVM JAR acquisition. Each mode is one observation
+`--artifact-cache` exercises first-use JVM JAR acquisition. Add `--tool-archives PATH`
+to measure distribution acquisition from an empty tool cache; the gate supplies
+absent installed paths for those components and verifies every cached archive and
+extracted tree after the cold build and subsequent reuse. `--tool-cache PATH` must
+be absent or empty; by default it is created inside the fresh attempt directory.
+Cached and relocated invocations use absent tool caches, while offline reconstruction
+and helper recomposition reuse the original populated cache and JVM worker bundle.
+Use `--invocation-timeout 1800` for slow downloads; this bounds the whole invocation
+without changing individual compiler deadlines. Partial results survive timeouts.
+
+The [macOS ARM64 archive fixture](tests/bootstrap/tool-archives.macos-arm64.json)
+pins upstream Liberica JDK 25.0.4+9, Kotlin/Native 2.4.20, LLVM and libffi archives
+(684,845,327 bytes in total). It requires the recorded host identity and installed
+Xcode/SDK. Run it with a disposable `--producer-root` whose toolchain lock explicitly
+uses the fixture's component `tree` pins, and a clean `--source-root`. The checked-in
+installed-tool lock has different JDK and Native trees: SDKMAN flattened JDK legal
+symlinks, and the installed Native distribution contains generated caches. These
+are distinct tool identities; changing acquisition URLs does not reconcile them.
+The gate validates both locks before downloading and never repins them implicitly.
+
+Archive provisioning includes download, extraction and verification; it does not
+isolate network time. Each mode is one observation
 of the full source composition, not the K01 small-spike budget; process CPU/RSS are
 explicitly unavailable in this harness.
 
