@@ -17,7 +17,8 @@ from bootstrap import jvm_worker
 class JvmLockProfilesTest(unittest.TestCase):
     def profiles(self):
         yield json.loads((ROOT / "bootstrap/jvm-artifacts.lock.json").read_text())
-        yield json.loads((ROOT / "bootstrap/profiles/jvm-2.4.10.lock.json").read_text())
+        for version in ("2.4.10", "2.4.21"):
+            yield json.loads((ROOT / f"bootstrap/profiles/jvm-{version}.lock.json").read_text())
 
     def validate(self, lock):
         with patch.object(jvm_worker, "read_json", return_value=lock):
@@ -25,21 +26,23 @@ class JvmLockProfilesTest(unittest.TestCase):
 
     def test_default_stays_current_and_profile_can_be_source_composed(self):
         self.assertEqual("2.4.20", jvm_worker.read_lock(ROOT)["kotlinVersion"])
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "bootstrap").mkdir()
-            shutil.copyfile(ROOT / "bootstrap/profiles/jvm-2.4.10.lock.json",
-                            root / "bootstrap/jvm-artifacts.lock.json")
-            lock = jvm_worker.read_lock(root)
-        self.assertEqual("2.4.10", lock["kotlinVersion"])
-        self.assertEqual(22, len(lock["compilerArtifacts"]))
-        self.assertEqual(31, len(jvm_worker.all_artifacts(lock)))
+        self.assertEqual("2.4.20", json.loads((ROOT / "bootstrap/toolchains.lock.json").read_text())["kotlinVersion"])
         default = jvm_worker.read_lock(ROOT)
-        for role in ("testPlatform", "jacocoVersion", "jacocoAgent", "jacocoCli", "documentationArtifacts"):
-            self.assertEqual(default[role], lock[role], role)
+        for version in ("2.4.10", "2.4.21"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "bootstrap").mkdir()
+                shutil.copyfile(ROOT / f"bootstrap/profiles/jvm-{version}.lock.json",
+                                root / "bootstrap/jvm-artifacts.lock.json")
+                lock = jvm_worker.read_lock(root)
+                self.assertEqual(version, lock["kotlinVersion"])
+                self.assertEqual(22, len(lock["compilerArtifacts"]))
+                self.assertEqual(31, len(jvm_worker.all_artifacts(lock)))
+                for role in ("testPlatform", "jacocoVersion", "jacocoAgent", "jacocoCli", "documentationArtifacts"):
+                    self.assertEqual(default[role], lock[role], role)
 
     def test_only_reviewed_compiler_versions_are_accepted(self):
-        for version in ("2.4.0", "2.4.30", "2.5.0", "2.4.20-RC", None, ["2.4.20"]):
+        for version in ("2.4.0", "2.4.22", "2.4.30", "2.5.0", "2.4.20-RC", "2.4.21-RC", None, ["2.4.20"]):
             lock = next(self.profiles())
             lock["kotlinVersion"] = version
             with self.subTest(version=version), self.assertRaisesRegex(ValueError, "Unsupported JVM artifact lock"):
@@ -51,6 +54,13 @@ class JvmLockProfilesTest(unittest.TestCase):
             item = jvm_worker.compiler_artifact(profile, "kotlin-compiler-embeddable")
             release = f"https://github.com/JetBrains/kotlin/releases/download/v{version}/{item['filename']}"
             with self.subTest(version=version):
+                if "releaseUrl" not in item:
+                    # 2.4.21 is served directly by Maven; no speculative redirect is authorized.
+                    self.assertEqual("2.4.21", version)
+                    with self.assertRaises(ValueError):
+                        jvm_worker.LockedRedirects(item["url"]).redirect_request(
+                            jvm_worker.urllib.request.Request(item["url"]), None, 302, "Found", {}, release)
+                    continue
                 self.assertEqual(release, item["releaseUrl"])
                 self.assertEqual([item["coordinate"]],
                     [a["coordinate"] for a in jvm_worker.all_artifacts(profile) if "releaseUrl" in a])
@@ -87,11 +97,14 @@ class JvmLockProfilesTest(unittest.TestCase):
 
     def test_serialization_plugin_must_match_selected_compiler(self):
         profiles = list(self.profiles())
-        for profile, other in (profiles, reversed(profiles)):
-            lock = copy.deepcopy(profile)
-            lock["serializationPlugin"] = other["serializationPlugin"]
-            with self.subTest(version=profile["kotlinVersion"]), self.assertRaisesRegex(ValueError, "serialization compiler plugin"):
-                self.validate(lock)
+        for profile in profiles:
+            for other in profiles:
+                if profile == other:
+                    continue
+                lock = copy.deepcopy(profile)
+                lock["serializationPlugin"] = other["serializationPlugin"]
+                with self.subTest(version=profile["kotlinVersion"], plugin=other["kotlinVersion"]), self.assertRaisesRegex(ValueError, "serialization compiler plugin"):
+                    self.validate(lock)
 
     def test_runtime_dependency_versions_cannot_drift(self):
         for profile in self.profiles():

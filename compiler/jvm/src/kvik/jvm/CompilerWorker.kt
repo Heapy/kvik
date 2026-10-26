@@ -21,7 +21,7 @@ internal fun distribution(root: Path, manifest: JsonValue, expected: Digest): Di
     val fields = manifest.fields(setOf("schemaVersion", "version", "artifacts", "serializationPlugin"))
     fields.requireVersion()
     val version = fields.getValue("version").stringValue()
-    if (!isSupportedJvmCompilerVersion(version)) reject("KVIK_UNSUPPORTED_COMPILER", "Only Kotlin 2.4.10 and 2.4.20 are supported")
+    if (!isSupportedJvmCompilerVersion(version)) reject("KVIK_UNSUPPORTED_COMPILER", "Only Kotlin 2.4.10, 2.4.20 and 2.4.21 are supported")
     val workspace = Workspace(root)
     val paths = fields.getValue("artifacts").arrayValue().map { item ->
         val entry = item.fields(setOf("path", "digest"))

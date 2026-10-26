@@ -4,7 +4,7 @@ These are invocation-owned tool workers for the Kotlin/Native orchestrator. Each
 
 ## Compilation
 
-Launch with a bootstrap classpath containing the compiled worker/core classes and the selected profile's `kotlin-build-tools-api` and `kotlin-stdlib`. The default JVM compiler is 2.4.20; the reviewed alternate JVM profile is 2.4.10:
+Launch with a bootstrap classpath containing the compiled worker/core classes and the selected profile's `kotlin-build-tools-api` and `kotlin-stdlib`. The default JVM compiler is 2.4.20; the alternate JVM profiles are 2.4.10 and 2.4.21:
 
 ```text
 java -cp <worker-bootstrap-classpath> kvik.jvm.CompilerWorkerKt \
@@ -14,7 +14,7 @@ java -cp <worker-bootstrap-classpath> kvik.jvm.CompilerWorkerKt \
 
 The request and result are the existing K02 `WorkerRequest` and `WorkerResult`. Every source, consumer classpath entry, plugin classpath entry and output path in the request is a logical path inside the action workspace. Existing symlink components, symlinks inside classpath directories, non-jar classpath files, duplicate classpath/source entries and pre-existing output directories are rejected. The orchestrator must stage immutable, verified inputs into that workspace. The worker does not resolve dependencies.
 
-`request.compiler` hashes the canonical `compilerDistribution` manifest in [protocol.schema.json](protocol.schema.json), including the ordered compiler implementation artifact paths/digests and the optional serialization plugin digest. This manifest identifies the complete BTA/compiler distribution, not just `kotlin-compiler-embeddable.jar`. The worker verifies every artifact's size and SHA-256 before loading BTA and verifies that the loaded compiler version matches the manifest's supported version, 2.4.10 or 2.4.20. The launcher separately verifies the worker bootstrap and JDK identities as part of the native action/runtime composition. Common metadata compilation requires 2.4.20; the 2.4.10 profile rejects that operation with `KVIK_UNSUPPORTED_COMPILER` before producing outputs. Kotlin/Native remains pinned to 2.4.20 for both JVM profiles.
+`request.compiler` hashes the canonical `compilerDistribution` manifest in [protocol.schema.json](protocol.schema.json), including the ordered compiler implementation artifact paths/digests and the optional serialization plugin digest. This manifest identifies the complete BTA/compiler distribution, not just `kotlin-compiler-embeddable.jar`. The worker verifies every artifact's size and SHA-256 before loading BTA and verifies that the loaded compiler version matches the manifest's supported version, 2.4.10, 2.4.20 or 2.4.21. The launcher separately verifies the worker bootstrap and JDK identities as part of the native action/runtime composition. Common metadata compilation requires 2.4.20; the alternate profiles reject that operation with `KVIK_UNSUPPORTED_COMPILER` before producing outputs. Kotlin/Native remains pinned to 2.4.20 for every JVM profile.
 
 Compilation calls `createInProcessExecutionPolicy()` explicitly and never selects a daemon policy or fallback. No incremental compiler state is enabled. Compiler classes are loaded from the verified implementation classpath; they are not exposed in the consumer classpath. The worker disables implicit stdlib/reflection discovery: dependencies must be supplied explicitly.
 
@@ -58,7 +58,11 @@ Exit codes: 0 for complete passing execution with at least one executed test; 1 
 
 ## Compiler profile acceptance
 
-The alternate source composition uses [bootstrap/profiles/jvm-2.4.10.lock.json](../../bootstrap/profiles/jvm-2.4.10.lock.json) as `bootstrap/jvm-artifacts.lock.json` in a separate checkout, then builds a complete runtime there. Changing a manifest version on an existing runtime is unsupported. Both locks pin the full compatible compiler, BTA, scripting, metadata reader and serialization plugin distributions. The default source lock stays at 2.4.20.
+The alternate source composition uses [bootstrap/profiles/jvm-2.4.10.lock.json](../../bootstrap/profiles/jvm-2.4.10.lock.json) as `bootstrap/jvm-artifacts.lock.json` in a separate checkout, then builds a complete runtime there. Changing a manifest version on an existing runtime is unsupported. The locks pin the full compatible compiler, BTA, scripting, metadata reader and serialization plugin distributions. The default source lock stays at 2.4.20.
+
+[bootstrap/profiles/jvm-2.4.21.lock.json](../../bootstrap/profiles/jvm-2.4.21.lock.json) provides the same source-composition option for JVM projects requiring Kotlin 2.4.21. In a separate checkout, copy that profile over `bootstrap/jvm-artifacts.lock.json` before building the runtime; do not edit a prepared runtime's manifest. Its compiler, BTA, scripting, metadata reader and serialization JARs are pinned from the published Maven artifacts. The upstream compiler dependencies retain reflect 1.6.10 and coroutines 1.8.0 with excluded transitives; the selected stdlib 2.4.21 also satisfies the daemon client's stdlib 2.2.21 dependency. The existing ABI reader support libraries retain their pins. Unlike the older compiler archives, the 2.4.21 compiler artifact is served directly by Maven and has no authorized release redirect.
+
+The 2.4.21 profile admits JVM compilation, scripts, matching compiler plugins and JVM ABI extraction. Common metadata, Native/JS/Wasm compiler plugins, and non-JVM ABI extraction remain outside that profile's scope. The existing two-profile workflow below exercises 2.4.20 and 2.4.10; it does not supply 2.4.21 acceptance evidence. The version-aware `tools/test_kotlin_script_host.py` and `tools/test_abi_cli.py --jvm-only` can check a prepared 2.4.21 source composition without changing their fixtures.
 
 The [JVM compiler profiles workflow](../../.github/workflows/compiler-versions.yml) runs on Linux x86_64 using the existing digest-pinned Docker image definition and checksum-pinned Kotlin/Native 2.4.20 tool archive. Run the same acceptance locally with Docker:
 

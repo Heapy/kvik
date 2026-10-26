@@ -1,7 +1,7 @@
 package kvik.core
 
 /** Versions admitted by the source-built JVM worker; exact bytes are pinned separately. */
-fun isSupportedJvmCompilerVersion(version: String): Boolean = version == "2.4.10" || version == "2.4.20"
+fun isSupportedJvmCompilerVersion(version: String): Boolean = version == "2.4.10" || version == "2.4.20" || version == "2.4.21"
 
 enum class PluginPathKind(val wire: String) { INPUT_FILE("input-file"), OUTPUT_DIRECTORY("output-directory") }
 

@@ -24,8 +24,10 @@ class CompilerPluginsTest {
     }
 
     @Test fun incompatibleOrUnboundPluginsAreRejected() {
-        val previous = plugin.copy(compilerVersion = "2.4.10")
-        assertEquals(previous, JvmPluginApplication.fromJson(previous.toJson()))
+        for (version in listOf("2.4.10", "2.4.21")) {
+            val selected = plugin.copy(compilerVersion = version)
+            assertEquals(selected, JvmPluginApplication.fromJson(selected.toJson()))
+        }
         assertFails { plugin.copy(compilerVersion = "2.3.0") }
         assertFails { plugin.copy(classpath = emptyList()) }
         assertFails { plugin.copy(inputs = emptyList()) }
@@ -43,9 +45,12 @@ class CompilerPluginsTest {
         val legacy = CompilerPluginSpec(null, Coordinate.parse("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20"), setOf("jvm"), setOf("main"), emptyList(), emptyList())
         assertNull(legacy.id)
         val workspace = CompilerPluginSpec("producer", null, setOf("jvm"), setOf("main", "test"), emptyList(), emptyList(), "example.plugin", "2.4.20")
-        assertEquals("2.4.10", workspace.copy(compilerVersion = "2.4.10").compilerVersion)
-        for (target in listOf("macosArm64", "js", "wasmJs")) {
-            assertFails { workspace.copy(compilerVersion = "2.4.10", targets = setOf(target)) }
+        for (version in listOf("2.4.10", "2.4.21")) {
+            assertEquals(version, workspace.copy(compilerVersion = version).compilerVersion)
+            assertEquals(version, workspace.copy(compilerVersion = version, scopes = setOf("script")).compilerVersion)
+            for (target in listOf("macosArm64", "js", "wasmJs")) {
+                assertFails { workspace.copy(compilerVersion = version, targets = setOf(target)) }
+            }
         }
         assertFails { workspace.copy(id = null) }
         assertEquals(setOf("macosArm64"), workspace.copy(targets = setOf("macosArm64")).targets)

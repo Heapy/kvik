@@ -16,6 +16,10 @@ class AbiTest {
                 assertFails { AbiSnapshot.fromJson(JsonValue.Object(snapshot.toJson().values + (field to value.json()))) }
             }
         }
+        val latest = AbiSnapshot("library", "jvm", digest, "public class Sample\n", compilerVersion = "2.4.21")
+        assertEquals(latest, AbiSnapshot.fromJson(latest.toJson()))
+        for (target in listOf("macosArm64", "js", "wasmJs"))
+            assertFails { latest.copy(target = target) }
         assertFails { AbiSnapshot("library", "unknown", digest, "") }
         assertFails { AbiSnapshot("library", "jvm", digest, "public class Sample\r\n") }
         assertFails { AbiSnapshot("library", "jvm", digest, "unterminated") }

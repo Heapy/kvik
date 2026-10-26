@@ -28,4 +28,21 @@ assert not result_validator.is_valid(invalid_result)
 coordinate_validator = Draft202012Validator(schema["$defs"]["artifact"]["properties"]["coordinate"])
 for coordinate in ["a..b:x:1", "a:..:1", "a:x:..", "a:x:LATEST", "a:x:1-SNAPSHOT"]:
     assert not coordinate_validator.is_valid(coordinate), coordinate
+for name in ("jvmPluginApplication", "compilerPlugin", "scriptCompilerPlugin", "abiSnapshot"):
+    versions = Draft202012Validator(schema["$defs"][name]["properties"]["compilerVersion"])
+    for version in ("2.4.10", "2.4.20", "2.4.21"):
+        assert versions.is_valid(version), (name, version)
+    for version in ("2.4.22", "2.4.21-RC", "2.5.0"):
+        assert not versions.is_valid(version), (name, version)
+snapshot_validator = Draft202012Validator({**schema, "$ref": "#/$defs/abiSnapshot"})
+snapshot = dict(schemaVersion=1, module="library", target="jvm", format="bcv-jvm-v1", compilerVersion="2.4.21",
+    readerVersion="0.18.1", inputs={"hash": "0" * 64, "sizeBytes": 0}, api="public class Sample\n")
+snapshot_validator.validate(snapshot)
+for target in ("macosArm64", "js", "wasmJs"):
+    assert not snapshot_validator.is_valid({**snapshot, "target": target, "format": "bcv-klib-v1"})
+plugin_validator = Draft202012Validator({**schema, "$ref": "#/$defs/compilerPlugin"})
+plugin = dict(module="producer", id="example.plugin", compilerVersion="2.4.21", targets=["jvm"], scopes=["main"], options=[], inputs=[])
+plugin_validator.validate(plugin)
+for target in ("macosArm64", "js", "wasmJs"):
+    assert not plugin_validator.is_valid({**plugin, "targets": [target]})
 print(f"PASS {count} schema examples, canonical identity vectors and path rejection cases")

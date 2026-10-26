@@ -1285,7 +1285,8 @@
         "compilerVersion": {
           "enum": [
             "2.4.10",
-            "2.4.20"
+            "2.4.20",
+            "2.4.21"
           ]
         },
         "classpath": {
@@ -1402,7 +1403,8 @@
         "compilerVersion": {
           "enum": [
             "2.4.10",
-            "2.4.20"
+            "2.4.20",
+            "2.4.21"
           ]
         },
         "pathOptions": {
@@ -1528,6 +1530,32 @@
             },
             "outputs": {
               "maxItems": 0
+            }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "compilerVersion"
+            ],
+            "properties": {
+              "compilerVersion": {
+                "const": "2.4.21"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "type": "array",
+                "items": {
+                  "const": "jvm"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
             }
           }
         }
@@ -2050,7 +2078,8 @@
         "compilerVersion": {
           "enum": [
             "2.4.10",
-            "2.4.20"
+            "2.4.20",
+            "2.4.21"
           ]
         },
         "pathOptions": {
@@ -2175,6 +2204,32 @@
             },
             "outputs": {
               "maxItems": 0
+            }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "compilerVersion"
+            ],
+            "properties": {
+              "compilerVersion": {
+                "const": "2.4.21"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targets": {
+                "type": "array",
+                "items": {
+                  "const": "jvm"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
             }
           }
         }
@@ -10110,7 +10165,8 @@
         "compilerVersion": {
           "enum": [
             "2.4.10",
-            "2.4.20"
+            "2.4.20",
+            "2.4.21"
           ]
         },
         "api": {
@@ -10150,6 +10206,22 @@
             "properties": {
               "format": {
                 "const": "bcv-klib-v1"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "compilerVersion": {
+                "const": "2.4.21"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "const": "jvm"
               }
             }
           }

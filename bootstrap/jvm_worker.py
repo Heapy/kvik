@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular, parse_json
 
 
-SUPPORTED_KOTLIN_VERSIONS = ("2.4.10", "2.4.20")
+SUPPORTED_KOTLIN_VERSIONS = ("2.4.10", "2.4.20", "2.4.21")
 COMPILER_COMPONENTS = (
     "kotlin-compiler-embeddable", "kotlin-build-tools-api", "kotlin-build-tools-impl",
     "kotlin-build-tools-cri-impl", "kotlin-tooling-core", "kotlin-compiler-runner",
@@ -28,7 +28,7 @@ COMPILER_COMPONENTS = (
     "kotlin-scripting-jvm-host", "kotlin-scripting-compiler-embeddable",
     "kotlin-scripting-compiler-impl-embeddable",
 )
-# Both upstream compiler POMs require reflect 1.6.10 and coroutines 1.8.0,
+# The supported compiler POMs require reflect 1.6.10 and coroutines 1.8.0,
 # excluding their transitive dependencies. The selected stdlib supplies the
 # newer version also required by the compiler and scripting implementation.
 COMPILER_DEPENDENCIES = {
