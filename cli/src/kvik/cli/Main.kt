@@ -55,6 +55,7 @@ private fun command(args: Array<String>) {
             Revision view: view with source flags and --role production|tests|all [--tag TAG] [--exclude-tag TAG]; emits a pinned view for kode --view FILE
             Role policy: view also accepts --policy-name NAME [--edit-tag TAG] [--edit-any-tag TAG] [--exclude-edit-tag TAG] [--allow-all-edits] [--allow CAPABILITY]; emits a pinned policy for kode --policy FILE
             Build: --module ID --target jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs (repeatable) --tools PATH
+            Direct build/test output: --output events|summary (default events); summary retains diagnostics and committed evidence paths
             IDE classpath: jvm-classpath --compilation main|test plus JVM build options; prepares prerequisite outputs without compiling the requested source set
             Test compilation: compile-tests uses build options and compiles/links tests without running them
             JS/Wasm: build/test use explicit stdlib/test KLIB dependencies; test execution requires node.root and pinned node.identity; browser and WASI runtimes are not yet supported

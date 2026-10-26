@@ -1199,6 +1199,24 @@ DEFS["jvmTestAgent"] = object_({"id": {"type": "string", "pattern": r"^[a-z][a-z
     "outputs": array({"allOf": [PATH, {"pattern": "^instrumentation/[a-z][a-z0-9-]{0,63}/"}]}, maxItems=256, uniqueItems=True)})
 
 
+# Compact direct build/test output is a projection, not a sequence-bearing RunEvent.
+DEFS["buildSummary"] = versioned({
+    "kind": {"const": "build-summary"}, "command": enum("build", "test"),
+    "runId": NONEMPTY, "runDirectory": NONEMPTY, "inputSnapshot": ref("digest"), "composition": ref("digest"),
+    "status": enum("passed", "failed", "incomplete", "cancelled"),
+    "freshnessAtCompletion": enum("current", "stale", "indeterminate"),
+    "requestedChecks": array(ref("requestedCheck"), minItems=1, uniqueItems=True),
+    "completedChecks": array(ref("requestedCheck"), uniqueItems=True),
+    "testCounts": ref("testCounts"), "testScopes": mapping(ref("testScopeSummary")),
+    "actionCounts": object_({name: INT for name in ("executed", "local_hit", "remote_hit", "failed", "cancelled", "blocked")}),
+    "details": object_({name: object_({"path": NONEMPTY, "digest": ref("digest")})
+        for name in ("verification", "journal", "completion")}),
+    "source": ref("sourceReference"),
+    "claimCounts": object_({name: INT for name in ("confirmed", "refuted", "unchecked")}),
+}, optional=("source", "claimCounts"))
+DEFS["buildSummary"]["dependentRequired"] = {"claimCounts": ["source"]}
+
+
 def main():
     directory = ROOT / "schemas/v1"
     directory.mkdir(parents=True, exist_ok=True)

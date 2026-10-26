@@ -16098,6 +16098,234 @@
         "durationNanos"
       ],
       "additionalProperties": false
+    },
+    "buildSummary": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "build-summary"
+        },
+        "command": {
+          "enum": [
+            "build",
+            "test"
+          ]
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "runDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "composition": {
+          "$ref": "#/$defs/digest"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "freshnessAtCompletion": {
+          "enum": [
+            "current",
+            "stale",
+            "indeterminate"
+          ]
+        },
+        "requestedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "completedChecks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requestedCheck"
+          },
+          "uniqueItems": true
+        },
+        "testCounts": {
+          "$ref": "#/$defs/testCounts"
+        },
+        "testScopes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/testScopeSummary"
+          }
+        },
+        "actionCounts": {
+          "type": "object",
+          "properties": {
+            "executed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "local_hit": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "remote_hit": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "cancelled": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "blocked": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "required": [
+            "executed",
+            "local_hit",
+            "remote_hit",
+            "failed",
+            "cancelled",
+            "blocked"
+          ],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "verification": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "digest": {
+                  "$ref": "#/$defs/digest"
+                }
+              },
+              "required": [
+                "path",
+                "digest"
+              ],
+              "additionalProperties": false
+            },
+            "journal": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "digest": {
+                  "$ref": "#/$defs/digest"
+                }
+              },
+              "required": [
+                "path",
+                "digest"
+              ],
+              "additionalProperties": false
+            },
+            "completion": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "digest": {
+                  "$ref": "#/$defs/digest"
+                }
+              },
+              "required": [
+                "path",
+                "digest"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "verification",
+            "journal",
+            "completion"
+          ],
+          "additionalProperties": false
+        },
+        "source": {
+          "$ref": "#/$defs/sourceReference"
+        },
+        "claimCounts": {
+          "type": "object",
+          "properties": {
+            "confirmed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "refuted": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "unchecked": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "required": [
+            "confirmed",
+            "refuted",
+            "unchecked"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "command",
+        "runId",
+        "runDirectory",
+        "inputSnapshot",
+        "composition",
+        "status",
+        "freshnessAtCompletion",
+        "requestedChecks",
+        "completedChecks",
+        "testCounts",
+        "testScopes",
+        "actionCounts",
+        "details"
+      ],
+      "additionalProperties": false,
+      "dependentRequired": {
+        "claimCounts": [
+          "source"
+        ]
+      }
     }
   }
 }

@@ -34,14 +34,14 @@ import platform.posix.usleep
 import kotlin.time.TimeSource
 
 private class RunJournal(private val runId: String, directory: String, private val projectPaths: Set<String>,
-                         private val source: SourceReference? = null) : AutoCloseable {
+                         private val source: SourceReference? = null, private val output: BuildOutput = BuildOutput.EVENTS) : AutoCloseable {
     private val disk = NativeEventJournal("$directory/events.jsonl")
     private var sequence = 0L
     init { NativeFiles.syncDirectory(directory) }
     fun emit(type: String, payload: JsonValue.Object, publishStdout: Boolean = true): RunEvent {
         val event = RunEvent(runId, ++sequence, type, payload)
         disk.append(event)
-        if (publishStdout) println(event.toJson().canonical())
+        if (publishStdout && output.publishes(type)) println(event.toJson().canonical())
         return event
     }
     fun diagnostic(value: Diagnostic) {
@@ -57,8 +57,10 @@ private class RunJournal(private val runId: String, directory: String, private v
 internal data class PreparedRun(val directory: String, val descriptor: Digest)
 internal data class BuildOutcome(val status: ExitStatus, val preparation: PreparedRun? = null, val exitCode: Int = status.code, val directory: String? = null)
 
-internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus =
-    projectBuildCommand(args, if (test) ProjectMode.TEST else ProjectMode.BUILD)
+internal fun buildCommand(args: List<String>, test: Boolean): ExitStatus {
+    val (output, remaining) = buildOutputArguments(args)
+    return executeBuild(remaining, if (test) ProjectMode.TEST else ProjectMode.BUILD, output = output).status
+}
 
 internal fun compileTestsCommand(args: List<String>): ExitStatus = projectBuildCommand(args, ProjectMode.COMPILE_TESTS)
 
@@ -85,14 +87,14 @@ private fun projectBuildCommand(args: List<String>, mode: ProjectMode): ExitStat
 }
 
 internal fun executeBuild(args: List<String>, mode: ProjectMode, ownInterrupts: Boolean = true, sessionCache: BuildSessionCache? = null,
-                          compilerSessions: JvmCompilerSessionPool? = null): BuildOutcome {
+                          compilerSessions: JvmCompilerSessionPool? = null, output: BuildOutput = BuildOutput.EVENTS): BuildOutcome {
     val (source, remaining) = sourceProjectOptions(args)
-    if (source == null) return executeBuildOptions(buildOptions(remaining), mode, ownInterrupts, sessionCache = sessionCache, compilerSessions = compilerSessions)
+    if (source == null) return executeBuildOptions(buildOptions(remaining), mode, ownInterrupts, sessionCache = sessionCache, compilerSessions = compilerSessions, output = output)
     val options = buildOptions(remaining)
     if (ownInterrupts) check(kvik_interrupt_install() == 0) { "Cannot install source build interruption handlers" }
     try {
         return withPreparedSourceProject(source, options) { prepared ->
-            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared, sessionCache = sessionCache, compilerSessions = compilerSessions)
+            executeBuildOptions(options, mode, ownInterrupts = false, sourceProject = prepared, sessionCache = sessionCache, compilerSessions = compilerSessions, output = output)
         }
     } finally { if (ownInterrupts) kvik_interrupt_restore() }
 }
@@ -120,7 +122,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                                 sessionCache: BuildSessionCache? = null, sourceProject: PreparedSourceProject? = null,
                                 expectedSnapshot: Digest? = null, expectedTools: Map<String, Map<String, Digest>>? = null,
                                 selectionOverride: SnapshotSelection? = null,
-                                compilerSessions: JvmCompilerSessionPool? = null): BuildOutcome {
+                                compilerSessions: JvmCompilerSessionPool? = null, output: BuildOutput = BuildOutput.EVENTS): BuildOutcome {
+    require(output == BuildOutput.EVENTS || mode in setOf(ProjectMode.BUILD, ProjectMode.TEST) && scriptFile == null) { "Summary output requires direct build or test" }
     val test = mode == ProjectMode.TEST
     require(!options.coverage || test && scriptFile == null && options.targets == setOf("jvm")) { "--coverage requires JVM-only test execution" }
     if (mode == ProjectMode.APPLICATION) require(options.modules.size == 1 && options.targets.size == 1) {
@@ -251,7 +254,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
     NativeFiles.ensureDirectory("${run.path}/actions")
     NativeFiles.ensureDirectory("${run.path}/observations")
     NativeFiles.syncDirectory(run.path)
-    val journal = RunJournal(run.runId, run.path, snapshot.inputs.files.map { it.path.value }.toSet(), sourceProject?.reference)
+    val journal = RunJournal(run.runId, run.path, snapshot.inputs.files.map { it.path.value }.toSet(), sourceProject?.reference, output)
     var graph: ProjectActionGraph? = null
     var toolIdentities = emptyMap<String, Map<String, Digest>>()
     var results = emptyList<ActionResult>()
@@ -680,11 +683,12 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
         NativeFiles.writeNew("${run.path}/verification.json", record.toJson().canonical().encodeToByteArray())
         NativeFiles.syncDirectory(run.path)
         val finished = journal.emit("run-finished", record.toJson() as JsonValue.Object, publishStdout = false)
-        NativeFiles.writeNew("${run.path}/completion.json", obj("schemaVersion" to CONTRACT_VERSION.json(),
+        val completion = obj("schemaVersion" to CONTRACT_VERSION.json(),
             "verification" to Sha256.digest(record.toJson()).toJson(), "event" to Sha256.digest(finished.toJson()).toJson(),
-            "journal" to Sha256.digest(NativeFiles.read("${run.path}/events.jsonl", 16 * 1024 * 1024)).toJson()).canonical().encodeToByteArray())
+            "journal" to Sha256.digest(NativeFiles.read("${run.path}/events.jsonl", 16 * 1024 * 1024)).toJson())
+        NativeFiles.writeNew("${run.path}/completion.json", completion.canonical().encodeToByteArray())
         NativeFiles.syncDirectory(run.path)
-        println(finished.toJson().canonical())
+        println((if (output == BuildOutput.SUMMARY) buildSummary(command, run.path, record, completion) else finished.toJson()).canonical())
         val status = buildCompletion(evidence.record.status,
             if (failedSetup) failureExit else if (record.status == VerificationStatus.INCOMPLETE) ExitStatus.INCOMPLETE else null,
             cancelled || record.status == VerificationStatus.CANCELLED).exitStatus
