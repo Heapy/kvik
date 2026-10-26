@@ -87,3 +87,33 @@ python3 tools/check_compiler_versions_cli.py \
 For a prepared 2.4.21 runtime, change `--runtime-b` and add `--alternate-version 2.4.21`.
 
 CI evidence is exported under `.kvik/ci-artifacts/compiler-versions/` with directories readable by the host uploader, including failure and timeout logs, action records, event journals, metadata results and ABI events. Private checkouts, CAS blobs and tool installations remain under `.kvik/tests/compiler-versions-ci/`.
+
+### Grogu JVM library acceptance
+
+The [Grogu harness](../../tools/test_grogu_cli.py) exports the pinned `grogu-time`
+commit from [fixtures.lock.json](../../experiments/k01/fixtures.lock.json) into
+a private directory. It preserves the library's sources, resources and original
+KTC configuration. Use a runtime composed with the 2.4.21 profile and tools
+pointing to the same JDK 25 installation as the reference:
+
+```sh
+python3 tools/test_grogu_cli.py --repository ../grogu-time \
+  --capture-reference --java-home /absolute/jdk25 \
+  --runtime /absolute/2.4.21/kvik.kexe --tools /absolute/tools.json
+```
+
+The command first runs the original KTC 0.13.0 JVM build, then Kvik with an empty
+action cache and again with cached compilation. All 742 test identities must
+match and execute successfully on both Kvik runs. It compares the source and
+resource inventory, three dependency scopes and artifact digests, serialization
+plugin, warning settings, friend paths, and JVM releases 21 for production and
+25 for tests. Common production sources use `commonMain`; JVM and JVM/Android
+actual declarations remain platform sources. The reference binds JDK release
+and executable bytes before and after execution, and Kvik must use matching
+bytes.
+
+The local macOS ARM64 check passes with 297 production and 507 test class files
+at classfile versions 65 and 69. KTC's JUnit console 6.1.3 and Kvik's console
+1.13.4 remain different tool distributions; consumer dependency classpaths and
+test identities are checked independently. This gate covers JVM behavior only.
+Results and failure logs remain under `.kvik/tests/grogu-cli/`.
