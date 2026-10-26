@@ -95,4 +95,3 @@ def acquire(lock, directory, offline):
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)
     return {a["filename"]: directory / a["filename"] for a in all_artifacts(lock)}
-
