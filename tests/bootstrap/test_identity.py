@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json
 from bootstrap.launcher import cached, validate_options
+from bootstrap.pin_tools import native_target
 
 
 class IdentityTest(unittest.TestCase):
@@ -88,7 +89,7 @@ class IdentityTest(unittest.TestCase):
                 self.assertFalse(cached(root, digest(b"key")), value)
 
     def test_unmodeled_compiler_inputs_rejected(self):
-        base = ["-target", "macos_arm64", "-entry", "kvik.cli.main"]
+        base = ["-target", native_target(), "-entry", "kvik.cli.main"]
         validate_options(base)
         validate_options(base + ["-opt"])
         for options in [base + ["-library", "/external.klib"], base + ["-Xplugin=/external.jar"],
