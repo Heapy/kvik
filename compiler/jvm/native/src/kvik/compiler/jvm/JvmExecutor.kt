@@ -142,7 +142,7 @@ class JvmActionExecutor(
                 "discoveryRoots" to staged(selection.discoveryRoots).map { it.json() }.json()).let { JsonValue.Object(it.values + selection.tags.toJson().values) }
             writeJvmFile("$directory/request.json", request.canonical().encodeToByteArray())
             val classpath = if (compilerOutput != null) listOf(layout.workerClasses, layout.btaApiJar, layout.stdlibJar)
-                else listOf(layout.workerClasses, layout.junitJar, layout.stdlibJar) + selection!!.classpath.map { "$directory/input/${it.value}" }
+                else listOf(layout.workerClasses, layout.junitJar) + selection!!.classpath.map { "$directory/input/${it.value}" } + layout.stdlibJar
             val coverageArguments = selection?.coverage?.let { coverage ->
                 listOf("-javaagent:${layout.jacocoAgent}=destfile=output/coverage.exec,append=false,dumponexit=true,output=file,jmx=false," +
                     "includes=" + coverageClassNames(coverage, expected.inputs).joinToString(":") +
@@ -150,7 +150,7 @@ class JvmActionExecutor(
             } ?: emptyList()
             val arguments = listOf(layout.javaExecutable) + coverageArguments + selection?.agents.orEmpty().map { it.argument() } + listOf("-Djava.io.tmpdir=$directory/tmp", "-Duser.home=$directory/home", "-cp", classpath.joinToString(":")) +
                 if (compilerOutput != null) listOf(if (script != null) "kvik.jvm.KotlinScriptCompileWorker" else "kvik.jvm.CompilerWorkerKt", directory, "request.json", "result.json", layout.compilerArtifacts, layout.compilerManifest)
-                else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json")
+                else listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json", layout.stdlibJar)
             val processRequest = ProcessRequest(arguments, directory, expected.environment + mapOf("HOME" to "$directory/home", "TMPDIR" to "$directory/tmp"),
                 "$directory/worker.stdout", "$directory/worker.stderr", expected.timeoutMillis)
             val reusable = compilation != null && compilation.plugins.isEmpty() && compilation.pluginApplications.isEmpty()

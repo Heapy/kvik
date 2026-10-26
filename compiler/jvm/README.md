@@ -4,7 +4,7 @@ These are invocation-owned tool workers for the Kotlin/Native orchestrator. Each
 
 ## Compilation
 
-Launch with a bootstrap classpath containing the compiled worker/core classes, `kotlin-build-tools-api:2.4.20`, and `kotlin-stdlib:2.4.20`:
+Launch with a bootstrap classpath containing the compiled worker/core classes and the selected profile's `kotlin-build-tools-api` and `kotlin-stdlib`. The default JVM compiler is 2.4.20; the reviewed alternate JVM profile is 2.4.10:
 
 ```text
 java -cp <worker-bootstrap-classpath> kvik.jvm.CompilerWorkerKt \
@@ -14,7 +14,7 @@ java -cp <worker-bootstrap-classpath> kvik.jvm.CompilerWorkerKt \
 
 The request and result are the existing K02 `WorkerRequest` and `WorkerResult`. Every source, consumer classpath entry, plugin classpath entry and output path in the request is a logical path inside the action workspace. Existing symlink components, symlinks inside classpath directories, non-jar classpath files, duplicate classpath/source entries and pre-existing output directories are rejected. The orchestrator must stage immutable, verified inputs into that workspace. The worker does not resolve dependencies.
 
-`request.compiler` hashes the canonical `compilerDistribution` manifest in [protocol.schema.json](protocol.schema.json), including the ordered compiler implementation artifact paths/digests and the optional serialization plugin digest. This manifest identifies the complete BTA/compiler distribution, not just `kotlin-compiler-embeddable.jar`. The worker verifies every artifact's size and SHA-256 before loading BTA and verifies the loaded compiler version is exactly 2.4.20. The launcher separately verifies the worker bootstrap and JDK identities as part of the native action/runtime composition.
+`request.compiler` hashes the canonical `compilerDistribution` manifest in [protocol.schema.json](protocol.schema.json), including the ordered compiler implementation artifact paths/digests and the optional serialization plugin digest. This manifest identifies the complete BTA/compiler distribution, not just `kotlin-compiler-embeddable.jar`. The worker verifies every artifact's size and SHA-256 before loading BTA and verifies that the loaded compiler version matches the manifest's supported version, 2.4.10 or 2.4.20. The launcher separately verifies the worker bootstrap and JDK identities as part of the native action/runtime composition. Common metadata compilation requires 2.4.20; the 2.4.10 profile rejects that operation with `KVIK_UNSUPPORTED_COMPILER` before producing outputs. Kotlin/Native remains pinned to 2.4.20 for both JVM profiles.
 
 Compilation calls `createInProcessExecutionPolicy()` explicitly and never selects a daemon policy or fallback. No incremental compiler state is enabled. Compiler classes are loaded from the verified implementation classpath; they are not exposed in the consumer classpath. The worker disables implicit stdlib/reflection discovery: dependencies must be supplied explicitly.
 
@@ -35,14 +35,14 @@ The native caller must require a complete result file, matching request ID, cons
 
 ## JVM tests
 
-Launch a fresh JVM with the compiled worker/core classes, JUnit Platform 1.13.4, Kotlin stdlib and **every declared test runtime classpath entry** on its process classpath:
+Launch a fresh JVM with the compiled worker/core classes, JUnit Platform 1.13.4, **every declared test runtime classpath entry** in order, then the verified worker stdlib as a fallback:
 
 ```text
 java -cp <worker-and-declared-test-runtime-classpath> kvik.jvm.TestWorker \
-  <absolute-workspace> <request-relative> <result-relative>
+  <absolute-workspace> <request-relative> <result-relative> <verified-fallback-stdlib>
 ```
 
-Keeping stdlib and reflection in the same JVM classloader is required for Kotest. The worker requires its process classpath to equal exactly three bootstrap entries (worker/core classes, the pinned JUnit Platform standalone bundle, Kotlin stdlib), followed by the ordered declared test classpath. It anchors those bootstrap entries to the loaded worker, launcher and stdlib code sources; the native composition must verify their identities. Additional, reordered and duplicated process entries are rejected. The request classpath itself must be unique; a declared stdlib may also occur in the bootstrap prefix. A fresh process provides request isolation; no classloader or test-engine session is reused between requests.
+Keeping stdlib and reflection in the same JVM classloader is required for Kotest. The worker requires its process classpath to equal the worker/core and pinned JUnit Platform entries, followed by the ordered declared test classpath and the explicitly supplied fallback stdlib. It anchors the first two entries to the loaded worker and launcher code sources; the native composition verifies the fallback artifact. The project's declared stdlib therefore loads before the worker's fallback, including when the compiler profile and project dependency versions differ. The request classpath itself must be unique, and additional or reordered process entries are rejected. Legacy direct clients using three arguments retain the old worker/JUnit/stdlib bootstrap prefix. A fresh process provides request isolation; no classloader or test-engine session is reused between requests.
 
 The adapter-local `testRequest`/`testResult` definitions live in [protocol.schema.json](protocol.schema.json), which references existing core `TestResult`, `TestCounts`, `Diagnostic` and `Digest` definitions. Register the local core schema with a validator; its HTTPS `$id` is an identifier, not a service to fetch.
 
@@ -55,3 +55,29 @@ Exit codes: 0 for complete passing execution with at least one executed test; 1 
 ## Scope
 
 `tools/test_jvm.py` builds these workers directly with the pinned compiler artifacts. It exercises a two-module common/JVM fixture and can compile/run the unchanged pinned kotaml modules. It does not invoke Gradle, Kotlin Toolchain, KSP or nested builds. The kotaml artifact lock preserves a concrete reference dependency closure and verifies downloaded bytes; it is not a general dependency resolver. Native CLI action construction, cache integration, test-result integration into full verification records and general generator/compiler-plugin support remain separate integration work.
+
+## Compiler profile acceptance
+
+The alternate source composition uses [bootstrap/profiles/jvm-2.4.10.lock.json](../../bootstrap/profiles/jvm-2.4.10.lock.json) as `bootstrap/jvm-artifacts.lock.json` in a separate checkout, then builds a complete runtime there. Changing a manifest version on an existing runtime is unsupported. Both locks pin the full compatible compiler, BTA, scripting, metadata reader and serialization plugin distributions. The default source lock stays at 2.4.20.
+
+The [JVM compiler profiles workflow](../../.github/workflows/compiler-versions.yml) runs on Linux x86_64 using the existing digest-pinned Docker image definition and checksum-pinned Kotlin/Native 2.4.20 tool archive. Run the same acceptance locally with Docker:
+
+```sh
+docker build --platform linux/amd64 --tag kvik-compiler-profiles tools/linux
+docker run --rm --init --platform linux/amd64 \
+  --volume "$PWD:/work/kvik" kvik-compiler-profiles \
+  python3 tools/linux/compiler_versions.py
+```
+
+The runner copies current tracked and unignored source files into private checkouts, excluding reference submodules and caches. It prepares the default Linux runtime and locked fixture, then builds the alternate JVM profile with the same pinned Native tool lock, JDK, Native installation and artifact cache. It does not change the original checkout's locks. The public CLI gate executes A cold/warm, B cold/warm, then restored A: compilation keys must change between profiles, restored A must hit its original cache, and all five test invocations must execute freshly. A test records `KotlinVersion.CURRENT` and `kotlin.Unit`'s code source to prove that both profiles load the project's locked stdlib 2.4.20 from declared run inputs. A separate, explicitly non-executed calculation changes only the compiler identity in an otherwise fixed canonical action.
+
+The same job checks successful 2.4.20 metadata compilation, explicit 2.4.10 metadata refusal, and the alternate profile's JVM ABI snapshots/cache behavior. This does not extend 2.4.10 support to Native, JS, or common metadata compilation. Existing prepared runtimes can be checked directly with:
+
+```sh
+python3 tools/check_compiler_versions_cli.py \
+  --runtime-a /path/to/2.4.20/kvik.kexe \
+  --runtime-b /path/to/2.4.10/kvik.kexe \
+  --fixture /path/to/prepared-jvm-fixture
+```
+
+CI evidence is exported under `.kvik/ci-artifacts/compiler-versions/` with directories readable by the host uploader, including failure and timeout logs, action records, event journals, metadata results and ABI events. Private checkouts, CAS blobs and tool installations remain under `.kvik/tests/compiler-versions-ci/`.

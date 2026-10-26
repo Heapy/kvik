@@ -90,7 +90,7 @@ def main():
     manifest_file.write_bytes(canonical(manifest))
     identity = digest(manifest_file)
     compiler_cp = os.pathsep.join(map(str, [worker_classes, api, stdlib]))
-    runner_cp = os.pathsep.join(map(str, [worker_classes, junit, stdlib]))
+    runner_cp = os.pathsep.join(map(str, [worker_classes, junit]))
     work = output / "fixture"
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir()
@@ -160,6 +160,15 @@ def main():
     ]:
         result = compile_request(name, ["src/Platform.kt"], [std], expected=1, **overrides)
         assert result["diagnostics"][0]["code"] == code, result
+    original_manifest = manifest_file.read_bytes()
+    try:
+        for version, code in [("2.4.10", "KVIK_COMPILER_IDENTITY"), ("2.3.20", "KVIK_UNSUPPORTED_COMPILER")]:
+            manifest_file.write_bytes(canonical({**manifest, "version": version}))
+            result = compile_request("manifest-version-" + version, ["src/Platform.kt"], [std], expected=1,
+                                     compiler=digest(manifest_file))
+            assert result["diagnostics"][0]["code"] == code, result
+    finally:
+        manifest_file.write_bytes(original_manifest)
     compiler_input = jar("kotlin-script-runtime")
     original_bytes = compiler_input.read_bytes()
     try:
@@ -180,8 +189,8 @@ def main():
         request = {"schemaVersion": 1, "requestId": name, "module": module, "target": "jvm", "classpath": classpath,
                    "testClasses": classes, "engines": list(engines)}
         (workspace / (name + ".request.json")).write_text(json.dumps(request))
-        process_cp = runner_cp + os.pathsep + os.pathsep.join(str(workspace / path) for path in (classpath if process_classpath is None else process_classpath))
-        proc = subprocess.run([java, "-cp", process_cp, "kvik.jvm.TestWorker", workspace, name + ".request.json", name + ".result.json"],
+        process_cp = runner_cp + os.pathsep + os.pathsep.join(str(workspace / path) for path in (classpath if process_classpath is None else process_classpath)) + os.pathsep + str(stdlib)
+        proc = subprocess.run([java, "-cp", process_cp, "kvik.jvm.TestWorker", workspace, name + ".request.json", name + ".result.json", stdlib],
                                cwd=workspace, capture_output=True, text=True, timeout=180)
         (workspace / (name + ".log")).write_text(proc.stdout + proc.stderr)
         result = json.loads((workspace / (name + ".result.json")).read_text())

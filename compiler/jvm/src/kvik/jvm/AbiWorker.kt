@@ -39,10 +39,10 @@ object AbiWorker {
                 val api = URLClassLoader((pinned.classpath + listOf(worker)).map { it.toUri().toURL() }.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { loader ->
                     val reader = loader.loadClass("kvik.jvm.AbiReader")
                     require(reader.classLoader === loader) { "ABI reader escaped its isolated distribution" }
-                    reader.getMethod("read", String::class.java, String::class.java)
-                        .invoke(null, artifact.toString(), request.extraction.target) as String
+                    reader.getMethod("read", String::class.java, String::class.java, String::class.java)
+                        .invoke(null, artifact.toString(), request.extraction.target, pinned.version) as String
                 }
-                val snapshot = AbiSnapshot(request.extraction.module, request.extraction.target, Sha256.digest(request.inputs.toJson()), api)
+                val snapshot = AbiSnapshot(request.extraction.module, request.extraction.target, Sha256.digest(request.inputs.toJson()), api, compilerVersion = pinned.version)
                 val output = workspace.path("output", false)
                 require(!Files.exists(output, NOFOLLOW_LINKS)) { "ABI output already exists" }
                 val staged = Files.createDirectory(scratch.resolve("output"))

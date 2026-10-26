@@ -19,6 +19,27 @@ from urllib.parse import urlsplit
 from bootstrap.identity import canonical, digest, file_digest, inventory, read_json, read_regular, parse_json
 
 
+SUPPORTED_KOTLIN_VERSIONS = ("2.4.10", "2.4.20")
+COMPILER_COMPONENTS = (
+    "kotlin-compiler-embeddable", "kotlin-build-tools-api", "kotlin-build-tools-impl",
+    "kotlin-build-tools-cri-impl", "kotlin-tooling-core", "kotlin-compiler-runner",
+    "kotlin-daemon-client", "kotlin-daemon-embeddable", "kotlin-stdlib", "kotlin-script-runtime",
+    "kotlin-metadata-jvm", "kotlin-scripting-common", "kotlin-scripting-jvm",
+    "kotlin-scripting-jvm-host", "kotlin-scripting-compiler-embeddable",
+    "kotlin-scripting-compiler-impl-embeddable",
+)
+# Both upstream compiler POMs require reflect 1.6.10 and coroutines 1.8.0,
+# excluding their transitive dependencies. The selected stdlib supplies the
+# newer version also required by the compiler and scripting implementation.
+COMPILER_DEPENDENCIES = {
+    "org.jetbrains.kotlin:kotlin-reflect:1.6.10",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0",
+    "org.jetbrains:annotations:13.0",
+    "org.jetbrains.kotlinx:binary-compatibility-validator:0.18.1",
+    "org.ow2.asm:asm:9.10.1", "org.ow2.asm:asm-tree:9.10.1",
+}
+
+
 def artifact_digest(artifact):
     return {"hash": artifact["sha256"], "sizeBytes": artifact["size"]}
 
@@ -26,12 +47,12 @@ def artifact_digest(artifact):
 def read_lock(root):
     lock = read_json(root / "bootstrap/jvm-artifacts.lock.json")
     if (not isinstance(lock, dict) or set(lock) - {"documentationArtifacts"} != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
-            or type(lock["schemaVersion"]) is not int or lock["schemaVersion"] != 1 or lock["kotlinVersion"] != "2.4.20"
+            or type(lock["schemaVersion"]) is not int or lock["schemaVersion"] != 1 or lock["kotlinVersion"] not in SUPPORTED_KOTLIN_VERSIONS
             or lock["jacocoVersion"] != "0.8.14"
             or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 22):
         raise ValueError("Unsupported JVM artifact lock")
     required_reader = {"org.jetbrains.kotlinx:binary-compatibility-validator:0.18.1",
-        "org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.20", "org.ow2.asm:asm:9.10.1", "org.ow2.asm:asm-tree:9.10.1"}
+        f"org.jetbrains.kotlin:kotlin-metadata-jvm:{lock['kotlinVersion']}", "org.ow2.asm:asm:9.10.1", "org.ow2.asm:asm-tree:9.10.1"}
     if not required_reader.issubset({a.get("coordinate") for a in lock["compilerArtifacts"] if isinstance(a, dict)}):
         raise ValueError("Missing pinned ABI reader component")
     if "documentationArtifacts" in lock:
@@ -63,13 +84,14 @@ def read_lock(root):
             raise ValueError("JVM artifact release URL differs from its pinned Kotlin coordinate")
     if len({a["filename"] for a in artifacts}) != len(artifacts) or len({a["coordinate"] for a in artifacts}) != len(artifacts):
         raise ValueError("Duplicate JVM artifact")
-    for name in ("kotlin-build-tools-api", "kotlin-stdlib", "kotlin-compiler-embeddable", "kotlin-script-runtime",
-                 "kotlin-scripting-common", "kotlin-scripting-jvm", "kotlin-scripting-jvm-host",
-                 "kotlin-scripting-compiler-embeddable", "kotlin-scripting-compiler-impl-embeddable"):
+    for name in COMPILER_COMPONENTS:
         compiler_artifact(lock, name)
+    expected_compiler = {f"org.jetbrains.kotlin:{name}:{lock['kotlinVersion']}" for name in COMPILER_COMPONENTS} | COMPILER_DEPENDENCIES
+    if {a["coordinate"] for a in lock["compilerArtifacts"]} != expected_compiler:
+        raise ValueError("Unsupported pinned compiler dependency closure")
     if lock["testPlatform"]["coordinate"] != "org.junit.platform:junit-platform-console-standalone:1.13.4":
         raise ValueError("Unsupported JVM test platform")
-    if lock["serializationPlugin"]["coordinate"] != "org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.20":
+    if lock["serializationPlugin"]["coordinate"] != f"org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:{lock['kotlinVersion']}":
         raise ValueError("Unsupported serialization compiler plugin")
     for role, name, classifier in (("jacocoAgent", "org.jacoco.agent", "runtime"), ("jacocoCli", "org.jacoco.cli", "nodeps")):
         if lock[role]["coordinate"] != f"org.jacoco:{name}:{lock['jacocoVersion']}" or lock[role]["classifier"] != classifier:

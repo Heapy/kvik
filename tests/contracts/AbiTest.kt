@@ -9,6 +9,9 @@ class AbiTest {
         for (target in listOf("jvm", "macosArm64", "linuxX64", "iosArm64", "iosSimulatorArm64", "js", "wasmJs")) {
             val snapshot = AbiSnapshot("library", target, digest, "public class Sample\n")
             assertEquals(snapshot, AbiSnapshot.fromJson(snapshot.toJson()))
+            val previousReader = snapshot.copy(compilerVersion = "2.4.10")
+            assertEquals(previousReader, AbiSnapshot.fromJson(previousReader.toJson()))
+            assertNotEquals(snapshot.toJson(), previousReader.toJson())
             for ((field, value) in listOf("readerVersion" to "0.18.0", "compilerVersion" to "2.3.0", "format" to "unknown")) {
                 assertFails { AbiSnapshot.fromJson(JsonValue.Object(snapshot.toJson().values + (field to value.json()))) }
             }

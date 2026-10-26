@@ -56,24 +56,25 @@ data class AbiWorkerRequest(val requestId: String, val compiler: Digest, val ext
 }
 
 /** Exact public API snapshot, not a claim of source or behavioral compatibility. */
-data class AbiSnapshot(val module: String, val target: String, val inputs: Digest, val api: String) {
+data class AbiSnapshot(val module: String, val target: String, val inputs: Digest, val api: String,
+                       val compilerVersion: String = ABI_COMPILER_VERSION) {
     val format: String get() = if (target == "jvm") "bcv-jvm-v1" else "bcv-klib-v1"
     init {
         requireAbiScope(module, target)
+        require(isSupportedJvmCompilerVersion(compilerVersion)) { "Unsupported ABI compiler version" }
         require(api.length <= ABI_MAX_BYTES && api.encodeToByteArray(throwOnInvalidSequence = true).size <= ABI_MAX_BYTES)
         require('\r' !in api && '\u0000' !in api && (api.isEmpty() || api.endsWith('\n'))) { "ABI text must use LF with a final newline" }
     }
     fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "module" to module.json(),
         "target" to target.json(), "inputs" to inputs.toJson(), "format" to format.json(),
-        "readerVersion" to ABI_READER_VERSION.json(), "compilerVersion" to ABI_COMPILER_VERSION.json(), "api" to api.json())
+        "readerVersion" to ABI_READER_VERSION.json(), "compilerVersion" to compilerVersion.json(), "api" to api.json())
     companion object {
         fun fromJson(value: JsonValue): AbiSnapshot {
             val fields = value.fields(setOf("schemaVersion", "module", "target", "inputs", "format", "readerVersion", "compilerVersion", "api"))
             fields.requireVersion()
-            require(fields.getValue("readerVersion").stringValue() == ABI_READER_VERSION &&
-                fields.getValue("compilerVersion").stringValue() == ABI_COMPILER_VERSION) { "Unsupported ABI reader/compiler version" }
+            require(fields.getValue("readerVersion").stringValue() == ABI_READER_VERSION) { "Unsupported ABI reader version" }
             return AbiSnapshot(fields.getValue("module").stringValue(), fields.getValue("target").stringValue(),
-                Digest.fromJson(fields.getValue("inputs")), fields.getValue("api").stringValue()).also {
+                Digest.fromJson(fields.getValue("inputs")), fields.getValue("api").stringValue(), fields.getValue("compilerVersion").stringValue()).also {
                 require(fields.getValue("format").stringValue() == it.format) { "ABI format does not match target" }
             }
         }

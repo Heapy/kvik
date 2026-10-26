@@ -11,18 +11,17 @@ import kotlin.system.exitProcess
 import org.jetbrains.kotlin.buildtools.api.*
 import org.jetbrains.kotlin.buildtools.api.arguments.*
 import org.jetbrains.kotlin.buildtools.api.jvm.JvmPlatformToolchain
-import org.jetbrains.kotlin.buildtools.api.metadata.KotlinMetadataPlatformToolchain
-import org.jetbrains.kotlin.buildtools.api.arguments.enums.MetadataTargetPlatform
 
 private const val SERIALIZATION_ID = "org.jetbrains.kotlinx.serialization"
 
-internal data class Distribution(val classpath: List<Path>, val serialization: Digest?)
+internal data class Distribution(val version: String, val classpath: List<Path>, val serialization: Digest?)
 
 internal fun distribution(root: Path, manifest: JsonValue, expected: Digest): Distribution {
     if (Sha256.digest(manifest) != expected) reject("KVIK_COMPILER_IDENTITY", "Compiler distribution identity does not match the request")
     val fields = manifest.fields(setOf("schemaVersion", "version", "artifacts", "serializationPlugin"))
     fields.requireVersion()
-    if (fields.getValue("version").stringValue() != "2.4.20") reject("KVIK_UNSUPPORTED_COMPILER", "Only Kotlin 2.4.20 is supported")
+    val version = fields.getValue("version").stringValue()
+    if (!isSupportedJvmCompilerVersion(version)) reject("KVIK_UNSUPPORTED_COMPILER", "Only Kotlin 2.4.10 and 2.4.20 are supported")
     val workspace = Workspace(root)
     val paths = fields.getValue("artifacts").arrayValue().map { item ->
         val entry = item.fields(setOf("path", "digest"))
@@ -33,7 +32,7 @@ internal fun distribution(root: Path, manifest: JsonValue, expected: Digest): Di
     }
     if (paths.isEmpty() || paths.distinct().size != paths.size) reject("KVIK_COMPILER_IDENTITY", "Compiler classpath must be nonempty and unique")
     val plugin = fields.getValue("serializationPlugin").let { if (it == JsonValue.Null) null else Digest.fromJson(it) }
-    return Distribution(paths, plugin)
+    return Distribution(version, paths, plugin)
 }
 
 /** Deliberately small option surface. Never forward arbitrary output/classpath/daemon/plugin flags. */
@@ -102,6 +101,8 @@ internal fun compile(workspace: Workspace, request: WorkerRequest, distribution:
     reusableToolchains: KotlinToolchains? = null): WorkerResult {
     require(reusableToolchains == null || request.operation == "jvm-compile" && request.pluginClasspath.isEmpty() && request.pluginApplications.isEmpty())
     val metadata = request.operation == "metadata-compile"
+    if (metadata && distribution.version != "2.4.20")
+        reject("KVIK_UNSUPPORTED_COMPILER", "Metadata compilation requires Kotlin 2.4.20")
     val options = safeOptions(request, workspace)
     val sources = request.sources.map { logical ->
         val path = workspace.path(logical)
@@ -111,8 +112,7 @@ internal fun compile(workspace: Workspace, request: WorkerRequest, distribution:
     if (sources.distinct().size != sources.size) reject("KVIK_INVALID_REQUEST", "Duplicate source input")
     if (request.classpath.distinct().size != request.classpath.size) reject("KVIK_INVALID_REQUEST", "Duplicate classpath input")
     val plugins = request.pluginClasspath.map(workspace::path)
-    if (plugins.isNotEmpty() && (plugins.size != 1 || distribution.serialization == null || fileDigest(plugins.single()) != distribution.serialization))
-        reject("KVIK_UNSUPPORTED_PLUGIN", "Only the manifest-pinned Kotlin serialization plugin is supported")
+    validateSerializationPlugin(plugins, distribution)
     if (request.pluginClasspath.any { it in request.classpath }) reject("KVIK_UNSUPPORTED_PLUGIN", "Compiler plugins must be separate from the consumer classpath")
     val destination = workspace.path(request.outputDirectory, false)
     if (Files.exists(destination)) reject("KVIK_OUTPUT_EXISTS", "Output directory must be new")
@@ -136,32 +136,22 @@ internal fun compile(workspace: Workspace, request: WorkerRequest, distribution:
         val implementation = distribution.classpath + if (typedWorkspacePlugin)
             listOf(Path.of(PreparedWorkspacePlugin::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()) else emptyList()
         val toolchains = reusableToolchains ?: KotlinToolchains.loadImplementation(implementation)
-        if (toolchains.getCompilerVersion() != "2.4.20") reject("KVIK_COMPILER_IDENTITY", "Loaded compiler version does not match manifest")
-        val builder: BaseCompilationOperation.Builder = if (metadata) {
-            val common = toolchains.getToolchain(KotlinMetadataPlatformToolchain::class.java)
-            common.metadataKlibCompilationOperationBuilder(sources, staging).also {
-                it.compilerArguments.applyArgumentStrings(options)
-                it.compilerArguments[MetadataArguments.CLASSPATH] = classpath
-                it.compilerArguments[MetadataArguments.X_TARGET_PLATFORM] = buildList {
-                    if ("jvm" in request.metadataTargets) add(MetadataTargetPlatform.JVM)
-                    if ("js" in request.metadataTargets) add(MetadataTargetPlatform.JS)
-                    if ("wasmJs" in request.metadataTargets) add(MetadataTargetPlatform.WASM_JS)
-                    if (request.metadataTargets.any { NativeTarget.find(it) != null }) add(MetadataTargetPlatform.NATIVE)
-                }
-            }
+        if (toolchains.getCompilerVersion() != distribution.version) reject("KVIK_COMPILER_IDENTITY", "Loaded compiler version does not match manifest")
+        val builder = if (metadata) {
+            metadataCompilationBuilder(toolchains, sources, staging, options, classpath, request.metadataTargets)
         } else {
             val jvm = toolchains.getToolchain(JvmPlatformToolchain::class.java)
-            jvm.jvmCompilationOperationBuilder(sources, staging).also {
-                it.compilerArguments.applyArgumentStrings(options)
-                it.compilerArguments[JvmCompilerArguments.NO_REFLECT] = true
-                it.compilerArguments[JvmCompilerArguments.NO_STDLIB] = true
-                it.compilerArguments[JvmCompilerArguments.CLASSPATH] = classpath
-            }
+            val operation = jvm.jvmCompilationOperationBuilder(sources, staging)
+            operation.compilerArguments.applyArgumentStrings(options)
+            operation.compilerArguments[JvmCompilerArguments.NO_REFLECT] = true
+            operation.compilerArguments[JvmCompilerArguments.NO_STDLIB] = true
+            operation.compilerArguments[JvmCompilerArguments.CLASSPATH] = classpath
+            CompilerOperationBuilder(operation, operation.compilerArguments) { operation.build() }
         }
         val publishedPlugins = if (plugins.isEmpty()) emptyList() else
             listOf(CompilerPlugin(SERIALIZATION_ID, plugins, emptyList(), emptySet()))
         if (publishedPlugins.isNotEmpty()) builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] = publishedPlugins
-        builder[BaseCompilationOperation.COMPILER_MESSAGE_RENDERER] = object : CompilerMessageRenderer {
+        builder.configuration[BaseCompilationOperation.COMPILER_MESSAGE_RENDERER] = object : CompilerMessageRenderer {
             override fun render(severity: CompilerMessageRenderer.Severity, message: String, location: CompilerMessageRenderer.SourceLocation?): String {
                 if (severity == CompilerMessageRenderer.Severity.ERROR || severity == CompilerMessageRenderer.Severity.WARNING) {
                     val path = location?.path?.let { Path.of(it).toAbsolutePath().normalize() }
@@ -188,7 +178,7 @@ internal fun compile(workspace: Workspace, request: WorkerRequest, distribution:
             val plugins = validatedWorkspacePlugins(request.pluginApplications,
                 // Keep original archive paths in alias checks after metadata extraction.
                 classpath + request.classpath.map(workspace::path), workspace, outputRoots,
-                toolchains.javaClass.classLoader, distribution.classpath)
+                toolchains.javaClass.classLoader, distribution.classpath, distribution.version)
             withTypedWorkspacePlugins(plugins, toolchains.javaClass.classLoader, workspace) { service ->
                 builder.compilerArguments[CommonCompilerArguments.COMPILER_PLUGINS] =
                     publishedPlugins + CompilerPlugin(workspacePluginBridgeId(plugins), listOf(service), emptyList(), emptySet())

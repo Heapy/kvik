@@ -30,8 +30,8 @@ private fun scriptWorker(args: Array<String>, operation: String) {
         val pinned = distribution(Path.of(args[3]), manifest, Digest.fromJson(fields.getValue("compiler")))
         val worker = Path.of(KotlinScriptCompileWorker::class.java.protectionDomain.codeSource.location.toURI()).toRealPath()
         val artifacts = if (operation == "compile") pinned.classpath else {
-            val names = setOf("kotlin-stdlib-2.4.20.jar", "kotlin-script-runtime-2.4.20.jar",
-                "kotlin-scripting-common-2.4.20.jar", "kotlin-scripting-jvm-2.4.20.jar")
+            val names = setOf("kotlin-stdlib-${pinned.version}.jar", "kotlin-script-runtime-${pinned.version}.jar",
+                "kotlin-scripting-common-${pinned.version}.jar", "kotlin-scripting-jvm-${pinned.version}.jar")
             pinned.classpath.filter { it.fileName.toString() in names }.also {
                 require(it.map { path -> path.fileName.toString() }.toSet() == names) { "Missing pinned scripting runtime" }
             }
@@ -41,6 +41,10 @@ private fun scriptWorker(args: Array<String>, operation: String) {
             val previous = thread.contextClassLoader
             try {
                 thread.contextClassLoader = loader
+                if (operation == "compile") {
+                    val version = loader.loadClass("org.jetbrains.kotlin.config.KotlinCompilerVersion").getField("VERSION").get(null)
+                    if (version != pinned.version) reject("KVIK_COMPILER_IDENTITY", "Loaded script compiler version does not match manifest")
+                }
                 val session = loader.loadClass("kvik.jvm.KotlinScriptWorkerSession")
                 val text = session.getMethod("execute", String::class.java, String::class.java, String::class.java,
                     String::class.java, String::class.java).invoke(null, operation, workspace.root.toString(), request.canonical(),
@@ -80,7 +84,7 @@ object KotlinScriptWorkerSession {
         val fields = request.objectValue()
         val requestId = fields.getValue("requestId").stringValue()
         val pinned = distribution(Path.of(artifactRoot), parseJson(manifestJson), Digest.fromJson(fields.getValue("compiler")))
-        fun runtimeArtifact(name: String) = pinned.classpath.single { it.fileName.toString() == "$name-2.4.20.jar" }
+        fun runtimeArtifact(name: String) = pinned.classpath.single { it.fileName.toString() == "$name-${pinned.version}.jar" }
         val runtime = listOf(runtimeArtifact("kotlin-stdlib"), runtimeArtifact("kotlin-script-runtime"))
         fun strings(name: String) = fields.getValue(name).arrayValue().map(JsonValue::stringValue)
         val classpath = strings("classpath").map { logical ->
@@ -113,9 +117,7 @@ object KotlinScriptWorkerSession {
             }
             validateJvmPluginApplications(applications)
             require(pluginPaths.isEmpty() || applications.none { it.id == "org.jetbrains.kotlinx.serialization" }) { "Duplicate serialization plugin ID" }
-            if (pluginPaths.isNotEmpty()) require(pluginPaths.size == 1 && pinned.serialization != null && fileDigest(pluginPaths.single()) == pinned.serialization) {
-                "Only the pinned serialization plugin is supported without a typed plugin application"
-            }
+            validateSerializationPlugin(pluginPaths, pinned)
             require(pluginPaths.none { plugin -> classpath.any { Files.isSameFile(plugin, it) } }) { "Compiler plugin leaks into consumer classpath" }
             val destination = fields.getValue("outputDirectory").stringValue()
             require(destination.startsWith("output/")) { "Script output must belong to output/" }
@@ -131,7 +133,7 @@ object KotlinScriptWorkerSession {
                     declaredRepositories = strings("declaredRepositories").toSet(), output = staging.resolve("classes"))
                 val compiled = if (applications.isEmpty()) scriptBlocking { KotlinScriptHost.compile(base) } else {
                     val loader = KotlinScriptWorkerSession::class.java.classLoader
-                    val plugins = validatedWorkspacePlugins(applications, classpath, workspace, outputRoots, loader, pinned.classpath)
+                    val plugins = validatedWorkspacePlugins(applications, classpath, workspace, outputRoots, loader, pinned.classpath, pinned.version)
                     withTypedWorkspacePlugins(plugins, loader, workspace) { service ->
                         scriptBlocking { KotlinScriptHost.compile(base.copy(pluginClasspath = pluginPaths + listOf(service))) }
                     }

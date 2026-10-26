@@ -21,6 +21,7 @@ object JsPluginWorker {
             requestId = fields.getValue("requestId").stringValue()
             val target = KotlinJsTarget.require(fields.getValue("target").stringValue())
             val pinned = distribution(Path.of(args[3]), parseJson(Files.readString(Path.of(args[4]))), Digest.fromJson(fields.getValue("compiler")))
+            if (pinned.version != "2.4.20") reject("KVIK_UNSUPPORTED_COMPILER", "JS/Wasm workspace plugins require Kotlin 2.4.20")
             val applications = fields.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
             require(applications.isNotEmpty()) { "Workspace plugin applications are required" }
             validateJvmPluginApplications(applications)
@@ -37,9 +38,9 @@ object JsPluginWorker {
             }
             URLClassLoader((pinned.classpath + listOf(bootstrap.first())).map { it.toUri().toURL() }.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { loader ->
                 val version = loader.loadClass("org.jetbrains.kotlin.config.KotlinCompilerVersion").getField("VERSION").get(null)
-                require(version == "2.4.20") { "Unsupported JS/Wasm compiler version: $version" }
+                if (version != pinned.version) reject("KVIK_COMPILER_IDENTITY", "Loaded JS/Wasm compiler version does not match manifest")
                 val outputs = prepareOutputRoots(workspace.root.resolve("output"), applications.flatMap { it.outputs })
-                val plugins = validatedWorkspacePlugins(applications, libraries.map { workspace.path(it) }, workspace, outputs, loader, pinned.classpath)
+                val plugins = validatedWorkspacePlugins(applications, libraries.map { workspace.path(it) }, workspace, outputs, loader, pinned.classpath, pinned.version)
                 compile(requestId, target, arguments, plugins, published, loader, workspace)
             }
         } catch (failure: Exception) {

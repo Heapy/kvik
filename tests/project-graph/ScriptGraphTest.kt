@@ -251,7 +251,7 @@ class ScriptGraphTest {
         val incompatible = coordinate.copy(version = "2.3.20")
         for ((invalid, diagnostic) in listOf(
             plugin.copy(coordinate = other) to "Unsupported published script compiler plugin $other; supported coordinate: $coordinate",
-            plugin.copy(coordinate = incompatible) to "Script compiler plugin $incompatible is incompatible with pinned Kotlin 2.4.20; use $coordinate",
+            plugin.copy(coordinate = incompatible) to "Script compiler plugin $incompatible requires a supported Kotlin JVM compiler version",
             plugin.copy(options = listOf("generateSchema=true")) to "Published script compiler plugin $coordinate does not support options; remove options or use a workspace compiler plugin",
             plugin.copy(inputs = listOf(LogicalPath("plugin-input.txt"))) to "Published script compiler plugin $coordinate does not support file inputs; remove inputs or use a workspace compiler plugin",
         )) {

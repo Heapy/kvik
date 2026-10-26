@@ -1,0 +1,37 @@
+name: JVM compiler profiles
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  compiler-profiles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check isolated profile orchestration and exports
+        run: python3 -m unittest discover -s tools -p 'test_compiler_versions_ci_unit.py'
+      - name: Check JVM artifact profiles
+        run: python3 -m unittest discover -s tests/bootstrap -p 'test_jvm_lock_profiles.py'
+      - name: Build pinned Linux tool image
+        run: docker build --platform linux/amd64 --tag kvik-compiler-profiles tools/linux
+      - name: Build both profiles and run cache, metadata and ABI acceptance
+        run: |
+          docker run --rm --init --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/work/kvik" kvik-compiler-profiles \
+            python3 tools/linux/compiler_versions.py
+      - name: Retain compiler profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-profiles-linux
+          path: .kvik/ci-artifacts/compiler-versions
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error

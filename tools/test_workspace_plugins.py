@@ -151,7 +151,8 @@ def main():
     rejected('wrong-id', wrong_id, 'KVIK_PLUGIN_ID')
     rejected('missing-input', lambda r, d: r['pluginApplications'][0]['inputs'].append('input/missing-file'), 'KVIK_MISSING_INPUT')
     rejected('mixed-protocol', lambda r, d: r.update(pluginClasspath=['input/extra.jar']), 'KVIK_WORKER_INFRASTRUCTURE')
-    rejected('wrong-version', lambda r, d: r['pluginApplications'][0].update(compilerVersion='2.4.10'), 'KVIK_WORKER_INFRASTRUCTURE')
+    rejected('wrong-version', lambda r, d: r['pluginApplications'][0].update(compilerVersion='2.4.10'), 'KVIK_PLUGIN_INCOMPATIBLE')
+    rejected('unsupported-version', lambda r, d: r['pluginApplications'][0].update(compilerVersion='2.3.20'), 'KVIK_WORKER_INFRASTRUCTURE')
     def no_registrar(request, directory):
         for path in (directory / 'input').rglob('org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar'):
             path.unlink()

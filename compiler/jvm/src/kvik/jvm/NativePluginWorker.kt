@@ -20,6 +20,7 @@ object NativePluginWorker {
             fields.requireVersion()
             requestId = fields.getValue("requestId").stringValue()
             val pinned = distribution(Path.of(args[3]), parseJson(Files.readString(Path.of(args[4]))), Digest.fromJson(fields.getValue("compiler")))
+            if (pinned.version != "2.4.20") reject("KVIK_UNSUPPORTED_COMPILER", "Native workspace plugins require the Kotlin 2.4.20 compiler API")
             val applications = fields.getValue("pluginApplications").arrayValue().map(JvmPluginApplication::fromJson)
             require(applications.isNotEmpty()) { "Workspace plugin applications are required" }
             validateJvmPluginApplications(applications)
@@ -40,7 +41,7 @@ object NativePluginWorker {
                 val version = loader.loadClass("org.jetbrains.kotlin.config.KotlinCompilerVersion").getField("VERSION").get(null)
                 require(version == "2.4.20") { "Unsupported Native compiler version: $version" }
                 val outputs = prepareOutputRoots(workspace.root.resolve("output"), applications.flatMap { it.outputs })
-                val plugins = validatedWorkspacePlugins(applications, libraries, workspace, outputs, loader, pinned.classpath, nativeJar)
+                val plugins = validatedWorkspacePlugins(applications, libraries, workspace, outputs, loader, pinned.classpath, "2.4.20", nativeJar)
                 compile(requestId, arguments, plugins, published, loader, workspace)
             }
         } catch (failure: Exception) {

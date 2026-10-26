@@ -43,7 +43,8 @@ class InstalledJvmToolchainProvider(
             require(Sha256.digest(manifest) == bundle.compiler) { "Compiler manifest is not the pinned canonical document" }
             val fields = manifest.fields(setOf("schemaVersion", "version", "artifacts", "serializationPlugin"))
             fields.requireVersion()
-            require(fields.getValue("version").stringValue() == "2.4.20") { "Unsupported JVM compiler distribution version" }
+            val version = fields.getValue("version").stringValue()
+            require(isSupportedJvmCompilerVersion(version)) { "Unsupported JVM compiler distribution version" }
             val artifacts = fields.getValue("artifacts").arrayValue()
             require(artifacts.size in 1..128) { "Compiler distribution requires 1..128 jars" }
             val names = mutableSetOf<String>()
@@ -62,7 +63,7 @@ class InstalledJvmToolchainProvider(
             }
             // Existing distribution schema pins this supported plugin by digest, without a path field.
             val plugin = fields.getValue("serializationPlugin")
-            if (plugin != JsonValue.Null) verifyJar("kotlin-serialization-compiler-plugin-embeddable-2.4.20.jar", Digest.fromJson(plugin))
+            if (plugin != JsonValue.Null) verifyJar("kotlin-serialization-compiler-plugin-embeddable-$version.jar", Digest.fromJson(plugin))
         }
         val jdk = InstalledToolchainVerifier().verifyJdk(trustedToolLock, toolRoots.getValue(ToolComponent.JDK), checkpoint)
         require(requested.getValue("jdk") == jdk.digest) { "Requested JDK identity differs from verified installation" }

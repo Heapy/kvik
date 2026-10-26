@@ -533,7 +533,10 @@ private class Builder(
         val roots = selected.map { it.coordinate!! }.distinct()
         require(roots.size <= 1) { "Multiple compiler plugins are unsupported" }
         return roots.flatMap { coordinate ->
-            require(coordinate == Coordinate("org.jetbrains.kotlin", "kotlin-serialization-compiler-plugin-embeddable", "2.4.20")) { "Published compiler plugins require an id and compilerVersion=2.4.20; only pinned serialization supports the shorthand" }
+            require(coordinate.group == "org.jetbrains.kotlin" && coordinate.name == "kotlin-serialization-compiler-plugin-embeddable" &&
+                (if (target == "jvm") isSupportedJvmCompilerVersion(coordinate.version) else coordinate.version == "2.4.20")) {
+                "Published compiler plugins require an id and compilerVersion; only pinned serialization supports the shorthand"
+            }
             val artifacts = locked(coordinate, ResolutionDomain(module, target, scope, "java-runtime", "compiler-plugin")).artifacts
             require(artifacts.size == 1 && artifacts.single().coordinate == coordinate) { "Unsupported serialization plugin closure/pin" }
             artifactEntries(artifacts, "jvm", true)

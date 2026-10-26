@@ -29,6 +29,18 @@ internal fun prepareOutputRoots(staging: Path, logical: List<LogicalPath>): Map<
 
 internal data class PreparedWorkspacePlugin(val id: String, val classpath: List<Path>, val options: List<String>)
 
+/** A digest binds the plugin bytes; the embedded version must also match the compiler API. */
+internal fun validateSerializationPlugin(paths: List<Path>, pinned: Distribution) {
+    if (paths.isEmpty()) return
+    if (paths.size != 1 || !Files.isRegularFile(paths.single()) || pinned.serialization == null || fileDigest(paths.single()) != pinned.serialization)
+        reject("KVIK_UNSUPPORTED_PLUGIN", "Only the manifest-pinned Kotlin serialization plugin is supported")
+    val version = java.util.jar.JarFile(paths.single().toFile()).use { jar ->
+        jar.manifest?.mainAttributes?.getValue("Implementation-Version")
+    }
+    if (version?.substringBefore("-release-") != pinned.version)
+        reject("KVIK_PLUGIN_INCOMPATIBLE", "Serialization plugin version $version does not match Kotlin ${pinned.version}")
+}
+
 /** Native/JS recipes carry published plugins in CLI flags; validate them before typed installation. */
 internal fun validatedPublishedPluginPaths(arguments: List<String>, applications: List<JvmPluginApplication>,
     workspace: Workspace, pinned: Distribution): List<Path> {
@@ -40,16 +52,17 @@ internal fun validatedPublishedPluginPaths(arguments: List<String>, applications
     if (!logical.startsWith("input/") || !logical.endsWith(".jar"))
         reject("KVIK_UNSUPPORTED_PLUGIN", "Published compiler plugin must be a declared input JAR")
     val path = workspace.path(logical)
-    if (!Files.isRegularFile(path) || pinned.serialization == null || fileDigest(path) != pinned.serialization)
-        reject("KVIK_UNSUPPORTED_PLUGIN", "Only the manifest-pinned Kotlin serialization plugin is supported")
+    validateSerializationPlugin(listOf(path), pinned)
     return listOf(path)
 }
 
 /** Native hosts authorize the pinned JVM API dependency while loading their own verified parent API. */
 internal fun validatedWorkspacePlugins(applications: List<JvmPluginApplication>, consumerClasspath: List<Path>, workspace: Workspace,
-    outputs: Map<LogicalPath, Path>, compilerLoader: ClassLoader, compilerArtifacts: List<Path>,
+    outputs: Map<LogicalPath, Path>, compilerLoader: ClassLoader, compilerArtifacts: List<Path>, compilerVersion: String,
     nativeParentApi: Path? = null): List<PreparedWorkspacePlugin> {
     if (applications.isEmpty()) return emptyList()
+    for (application in applications) if (application.compilerVersion != compilerVersion)
+        reject("KVIK_PLUGIN_INCOMPATIBLE", "Compiler plugin ${application.id} requires Kotlin ${application.compilerVersion}, loaded compiler is $compilerVersion")
     val registrar = "org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar"
     val processor = "org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor"
     fun resource(path: Path, name: String): ByteArray? = if (Files.isDirectory(path)) {

@@ -11,10 +11,12 @@ import java.util.jar.JarFile
 
 /** Loaded only inside the verified compiler distribution, never with consumer classes. */
 object AbiReader {
-    @JvmStatic fun read(artifact: String, target: String): String {
+    @JvmStatic fun read(artifact: String, target: String, compilerVersion: String): String {
         val version = Class.forName("org.jetbrains.kotlin.config.KotlinCompilerVersion")
             .getField("VERSION").get(null)
-        require(version == "2.4.20") { "ABI reader requires Kotlin 2.4.20, found $version" }
+        require(kvik.core.isSupportedJvmCompilerVersion(compilerVersion) && version == compilerVersion) {
+            "ABI reader compiler version does not match manifest: expected $compilerVersion, found $version"
+        }
         val output = BoundedText()
         if (target == "jvm") {
             JarFile(artifact).use { it.loadApiFromJvmClasses() }.filterOutNonPublic().dump(output)

@@ -225,6 +225,9 @@ class BridgeUnitTest {
                     launches++
                     assertEquals(listOf("-javaagent:${root.path}/agent.jar=destfile=output/coverage.exec,append=false,dumponexit=true,output=file,jmx=false,includes=example.A"), request.arguments.filter { it.startsWith("-javaagent:") })
                     val directory = request.workingDirectory
+                    assertEquals(listOf("/tool/classes", "/tool/junit.jar", "$directory/input/tests", "$directory/input/main", "/tool/std.jar"),
+                        request.arguments[request.arguments.indexOf("-cp") + 1].split(':'))
+                    assertEquals(listOf("kvik.jvm.TestWorker", directory, "request.json", "result.json", "/tool/std.jar"), request.arguments.takeLast(5))
                     val requestId = parseJson(readJvmFile("$directory/request.json").decodeToString()).objectValue().getValue("requestId").stringValue()
                     val result = TestResult("concrete-id", "m", "jvm", if (failed) TestStatus.FAILED else TestStatus.PASSED)
                     val report = obj("schemaVersion" to 1.json(), "requestId" to requestId.json(), "exitCode" to (if (failed) 1 else 0).json(),

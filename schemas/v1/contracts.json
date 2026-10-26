@@ -1283,7 +1283,10 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
         },
         "compilerVersion": {
-          "const": "2.4.20"
+          "enum": [
+            "2.4.10",
+            "2.4.20"
+          ]
         },
         "classpath": {
           "type": "array",
@@ -1397,7 +1400,10 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
         },
         "compilerVersion": {
-          "const": "2.4.20"
+          "enum": [
+            "2.4.10",
+            "2.4.20"
+          ]
         },
         "pathOptions": {
           "type": "array",
@@ -2042,7 +2048,10 @@
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
         },
         "compilerVersion": {
-          "const": "2.4.20"
+          "enum": [
+            "2.4.10",
+            "2.4.20"
+          ]
         },
         "pathOptions": {
           "type": "array",
@@ -10099,7 +10108,10 @@
           "const": "0.18.1"
         },
         "compilerVersion": {
-          "const": "2.4.20"
+          "enum": [
+            "2.4.10",
+            "2.4.20"
+          ]
         },
         "api": {
           "type": "string",

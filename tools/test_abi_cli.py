@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--native-target', choices=['macosArm64', 'linuxX64'], default='macosArm64')
+    parser.add_argument('--jvm-only', action='store_true', help='Exercise JVM ABI checks for a selected compiler profile')
     args = parser.parse_args()
     runtime = args.runtime.resolve(strict=True)
     tools = json.loads(args.tools.read_bytes())
@@ -24,7 +25,8 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     project = Path(tempfile.mkdtemp(prefix='case-', dir=parent)).resolve()
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_bytes())
-    targets = ['jvm', args.native_target]
+    targets = ['jvm'] if args.jvm_only else ['jvm', args.native_target]
+    compiler_version = json.loads((runtime.parent / 'jvm/compiler-manifest.json').read_bytes())['version']
 
     def write(name, value):
         path = project / name
@@ -73,6 +75,7 @@ def main():
                 snapshot = json.loads(Path(item['snapshot']).read_bytes())
                 validate('abiSnapshot', snapshot)
                 assert snapshot['target'] == target and snapshot['module'] == 'library'
+                assert snapshot['compilerVersion'] == compiler_version, snapshot
                 assert Path(item['api']).read_bytes() == snapshot['api'].encode()
         print('PASS', label, flush=True)
         return record, ready

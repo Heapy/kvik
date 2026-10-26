@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""Build isolated Linux compiler profiles and retain their public acceptance evidence."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def document(path):
+    return json.loads(path.read_bytes())
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
+def file_identity(path):
+    data = path.read_bytes()
+    return dict(hash=hashlib.sha256(data).hexdigest(), sizeBytes=len(data))
+
+
+def source_paths(root):
+    """Copy current bytes, including local changes, without Git history or ignored caches."""
+    git = ["git", "-c", f"safe.directory={root}"]
+    result = subprocess.run([*git, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                            cwd=root, check=True, stdout=subprocess.PIPE)
+    index = subprocess.run([*git, "ls-files", "--stage", "-z"], cwd=root, check=True, stdout=subprocess.PIPE)
+    # Reference repositories are gitlinks, not runtime sources. Never recursively
+    # import their working trees into either compiler profile checkout.
+    gitlinks = {os.fsdecode(entry.split(b"\t", 1)[1]) for entry in index.stdout.split(b"\0")
+                if entry.startswith(b"160000 ")}
+    paths = sorted(set(os.fsdecode(value) for value in result.stdout.split(b"\0") if value))
+    selected = []
+    for name in paths:
+        relative = PurePosixPath(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"Unsafe source path: {name}")
+        if set(relative.parts) & {".git", ".kvik", "__pycache__"}:
+            continue
+        if name in gitlinks:
+            continue
+        source = root / name
+        if source.is_symlink():
+            raise ValueError(f"Source snapshot requires regular files: {name}")
+        if not source.exists():  # Honor deletions in the current working tree.
+            continue
+        if not source.is_file():
+            raise ValueError(f"Source snapshot cannot copy a directory/submodule: {name}")
+        selected.append(name)
+    if not selected:
+        raise ValueError("No current source files found")
+    return selected
+
+
+def copy_sources(source, destination, paths):
+    destination.mkdir(parents=True, exist_ok=False)
+    for name in paths:
+        original = source / name
+        if original.is_symlink() or not original.is_file():
+            raise ValueError(f"Source changed during snapshot: {name}")
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original, target)
+
+
+def run_logged(label, command, cwd, environment, logs, timeout=1800):
+    command = list(map(str, command))
+    write_json(logs / (label + ".command.json"), dict(command=command, cwd=str(cwd), timeoutSeconds=timeout))
+    started = time.monotonic()
+    print("START", label, flush=True)
+    outcome = dict(status="incomplete")
+    try:
+        with (logs / (label + ".stdout.log")).open("wb") as stdout, (logs / (label + ".stderr.log")).open("wb") as stderr:
+            result = subprocess.run(command, cwd=cwd, env=environment, stdout=stdout, stderr=stderr, timeout=timeout)
+        outcome.update(status="passed" if result.returncode == 0 else "failed", exitCode=result.returncode)
+        if result.returncode:
+            raise RuntimeError(f"{label} exited {result.returncode}; retained logs: {logs}")
+    except subprocess.TimeoutExpired:
+        outcome["status"] = "timeout"
+        raise
+    finally:
+        outcome["seconds"] = time.monotonic() - started
+        write_json(logs / (label + ".process.json"), outcome)
+    print("PASS", label, flush=True)
+    return (logs / (label + ".stdout.log")).read_bytes()
+
+
+def export_evidence(checkout, logs, output):
+    """Only named evidence is exported; fixtures, CAS blobs and tool binaries stay private."""
+    def publish(source, relative):
+        if not source.is_file() or source.is_symlink():
+            return
+        # Reject symlink ancestors too; globbing a linked run must not export its target.
+        boundary = logs if source.is_relative_to(logs) else checkout
+        if any(parent.is_symlink() for parent in source.parents if parent.is_relative_to(boundary)):
+            return
+        target = output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        current = target.parent
+        while current != output:
+            current.chmod(0o755)
+            current = current.parent
+        shutil.copyfile(source, target)
+        target.chmod(0o644)
+
+    output.mkdir(parents=True, exist_ok=True)
+    output.chmod(0o755)
+    for source in logs.glob("*"):
+        if source.suffix in (".json", ".log"):
+            publish(source, Path("orchestration") / source.name)
+    groups = {
+        "compiler-versions": ("case-*", ("*.json", "*.stdout.jsonl", "*.stderr.log")),
+        "metadata-versions": ("*", ("*.json", "*.log")),
+        "abi-cli": ("case-*", ("*.jsonl", "*.stderr")),
+    }
+    for category, (case_pattern, patterns) in groups.items():
+        for case in (checkout / ".kvik/tests" / category).glob(case_pattern):
+            if not case.is_dir() or case.is_symlink():
+                continue
+            relative = Path(category) / case.name
+            for pattern in patterns:
+                for source in case.glob(pattern):
+                    publish(source, relative / source.name)
+            for run in (case / ".kvik/runs").glob("*"):
+                for name in ("verification.json", "completion.json", "events.jsonl"):
+                    publish(run / name, relative / "runs" / run.name / name)
+                for source in (run / "actions").glob("*.json"):
+                    publish(source, relative / "runs" / run.name / "actions" / source.name)
+                for pattern in ("*/*/abi.json", "*/*/api.txt"):
+                    for source in (run / "abi").glob(pattern):
+                        publish(source, relative / "runs" / run.name / "abi" / source.relative_to(run / "abi"))
+
+
+def execute(root, java, native, bootstrap_timeout=600):
+    paths = source_paths(root)
+    original_locks = {name: (root / "bootstrap" / name).read_bytes()
+                      for name in ("jvm-artifacts.lock.json", "toolchains.lock.json")}
+    if document(root / "bootstrap/jvm-artifacts.lock.json")["kotlinVersion"] != "2.4.20":
+        raise ValueError("Default source checkout must retain the 2.4.20 JVM profile")
+    if document(root / "bootstrap/profiles/jvm-2.4.10.lock.json")["kotlinVersion"] != "2.4.10":
+        raise ValueError("Alternate source profile must select 2.4.10")
+    parent = root / ".kvik/tests/compiler-versions-ci"
+    parent.mkdir(parents=True, exist_ok=True)
+    case = Path(tempfile.mkdtemp(prefix="case-", dir=parent))
+    default, alternate = case / "default", case / "alternate"
+    logs, native_data = case / "logs", case / "native-data"
+    logs.mkdir()
+    output = root / ".kvik/ci-artifacts/compiler-versions" / case.name
+    # The container creates the exported path, but the host uploader must traverse it.
+    for directory in (root / ".kvik", root / ".kvik/ci-artifacts", output.parent):
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o755)
+    summary = dict(schemaVersion=1, status="incomplete", source=str(root), sourceFiles=len(paths),
+                   defaultCheckout=str(default), alternateCheckout=str(alternate), export=str(output),
+                   compilerVersions=["2.4.20", "2.4.10"], nativeVersion="2.4.20")
+    environment = dict(os.environ, JAVA_HOME=str(java), KONAN_HOME=str(native),
+                       KONAN_DATA_DIR=str(native_data), PYTHONDONTWRITEBYTECODE="1")
+    environment.pop("KVIK_BOOTSTRAP_OFFLINE", None)
+
+    def run(label, command, cwd=default, timeout=1800):
+        return run_logged(label, command, cwd, environment, logs, timeout)
+
+    try:
+        copy_sources(root, default, paths)
+        run("provision-system", [sys.executable, default / "tools/linux/provision_system.py", "--system-root", "/usr"])
+        state_path = logs / "prepared.json"
+        run("prepare-default", [sys.executable, default / "tools/linux/verify.py", "--pin-tools",
+            "--java-home", java, "--konan-home", native, "--konan-data", native_data,
+            "--bootstrap-command-timeout", bootstrap_timeout, "--prepare-only", state_path])
+        prepared = document(state_path)
+        runtime_a = Path(prepared["runtime"]).resolve(strict=True)
+        installation = document(Path(prepared["tools"]))
+        artifacts = Path(installation["compilerArtifacts"]).resolve(strict=True)
+        native_lock = document(default / "bootstrap/toolchains.lock.json")
+        if native_lock["kotlinVersion"] != "2.4.20":
+            raise ValueError("Both source profiles require the same Kotlin/Native 2.4.20 tool lock")
+        copy_sources(default, alternate, paths)
+        shutil.copyfile(alternate / "bootstrap/profiles/jvm-2.4.10.lock.json", alternate / "bootstrap/jvm-artifacts.lock.json")
+        pinned_native = (default / "bootstrap/toolchains.lock.json").read_bytes()
+        assert (alternate / "bootstrap/toolchains.lock.json").read_bytes() == pinned_native
+        bootstrap = [alternate / "kvik", "--java-home", java, "--konan-home", native,
+                     "--konan-data", native_data, "--artifact-cache", artifacts,
+                     "--bootstrap-command-timeout", bootstrap_timeout]
+        runtime_b = Path(run("build-alternate", [*bootstrap, "--print-runtime"], cwd=alternate).decode().strip()).resolve(strict=True)
+        restored = Path(run("check-alternate-cache", [*bootstrap, "--offline", "--no-build", "--print-runtime"], cwd=alternate).decode().strip()).resolve(strict=True)
+        assert restored == runtime_b and runtime_a != runtime_b
+        summary.update(runtimeA=str(runtime_a), runtimeB=str(runtime_b),
+                       nativeToolLock=file_identity(default / "bootstrap/toolchains.lock.json"),
+                       compilerArtifacts=str(artifacts))
+        run("compiler-cache-gate", [sys.executable, default / "tools/check_compiler_versions_cli.py",
+            "--runtime-a", runtime_a, "--runtime-b", runtime_b, "--fixture", prepared["fixture"]])
+        for name, runtime in (("default", runtime_a), ("alternate", runtime_b)):
+            run("metadata-" + name, [sys.executable, default / "tools/test_metadata_versions_worker.py",
+                "--runtime", runtime, "--java-home", java, "--konan-home", native, "--artifacts", artifacts], timeout=300)
+        run("abi-alternate", [sys.executable, default / "tools/test_abi_cli.py", "--runtime", runtime_b,
+            "--tools", prepared["tools"], "--jvm-only"])
+        assert (default / "bootstrap/jvm-artifacts.lock.json").read_bytes() == original_locks["jvm-artifacts.lock.json"]
+        assert (alternate / "bootstrap/toolchains.lock.json").read_bytes() == pinned_native
+        assert (default / "bootstrap/toolchains.lock.json").read_bytes() == pinned_native
+        summary["status"] = "passed"
+    except Exception as failure:
+        summary["failure"] = dict(type=type(failure).__name__, message=str(failure))
+        raise
+    finally:
+        unchanged = all((root / "bootstrap" / name).read_bytes() == data for name, data in original_locks.items())
+        summary["originalLocksUnchanged"] = unchanged
+        if not unchanged:
+            summary["status"] = "failed"
+        write_json(logs / "summary.json", summary)
+        export_evidence(default, logs, output)
+        if not unchanged:
+            raise RuntimeError("Original checkout locks changed during isolated acceptance")
+    print("PASS isolated compiler profile CI; exported evidence:", output, flush=True)
+    return output
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--java-home", type=Path, default=os.environ.get("JAVA_HOME"), required="JAVA_HOME" not in os.environ)
+    parser.add_argument("--konan-home", type=Path, default=os.environ.get("KONAN_HOME"), required="KONAN_HOME" not in os.environ)
+    parser.add_argument("--bootstrap-command-timeout", type=int, default=600)
+    args = parser.parse_args()
+    if (platform.system(), platform.machine()) != ("Linux", "x86_64") or not Path("/.dockerenv").is_file():
+        parser.error("Run inside the pinned tools/linux Docker image on Linux x86_64")
+    if not 1 <= args.bootstrap_command_timeout <= 3600:
+        parser.error("--bootstrap-command-timeout must be from 1 to 3600 seconds")
+    execute(ROOT, args.java_home.resolve(strict=True), args.konan_home.resolve(strict=True), args.bootstrap_command_timeout)
+
+
+if __name__ == "__main__":
+    main()

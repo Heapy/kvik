@@ -21,7 +21,7 @@ import org.junit.platform.launcher.core.LauncherFactory
 /** One fresh test process per request. Test execution is never restored from a cache. */
 object TestWorker {
     @JvmStatic fun main(args: Array<String>) {
-        require(args.size == 3) { "TestWorker <workspace> <request-relative> <result-relative>" }
+        require(args.size in 3..4) { "TestWorker <workspace> <request-relative> <result-relative> [fallback-stdlib]" }
         val workspace = Workspace(Path.of(args[0]))
         var requestId = "invalid-request"
         val tests = linkedMapOf<String, TestResult>()
@@ -65,11 +65,13 @@ object TestWorker {
             // A test worker is a fresh JVM. Kotlin stdlib and kotlin-reflect must share its loader;
             // loading reflect only in a child loader breaks stdlib's ReflectionFactory discovery.
             fun codeSource(type: Class<*>): Path = Path.of(type.protectionDomain.codeSource.location.toURI()).toRealPath()
-            // The native composition verifies these three bootstrap artifacts. No other entries
-            // are permitted before, among or after the ordered consumer classpath.
-            val bootstrap = listOf(codeSource(TestWorker::class.java), codeSource(LauncherFactory::class.java), codeSource(kotlin.Unit::class.java))
+            // Native verifies tool artifacts and passes its stdlib only as a fallback.
+            // Consumer dependencies retain their declared order, including their own stdlib.
+            val bootstrap = listOf(codeSource(TestWorker::class.java), codeSource(LauncherFactory::class.java))
             val processClasspath = System.getProperty("java.class.path").split(java.io.File.pathSeparator).map { Path.of(it).toRealPath() }
-            if (processClasspath != bootstrap + classpath) reject("KVIK_TEST_CLASSPATH", "JVM classpath must be exactly worker, JUnit Platform bundle, stdlib, then the ordered declared test classpath")
+            val expectedClasspath = if (args.size == 4) bootstrap + classpath + listOf(Path.of(args[3]).toRealPath())
+                else bootstrap + listOf(codeSource(kotlin.Unit::class.java)) + classpath // Legacy direct worker clients.
+            if (processClasspath != expectedClasspath) reject("KVIK_TEST_CLASSPATH", "JVM classpath differs from the ordered declared test classpath and verified bootstrap artifacts")
             val journal = TestProgress(workspace.path(args[2] + ".progress.jsonl", false), requestId, module)
             progress = journal
             check(journal.failure == null) { journal.failure!! }

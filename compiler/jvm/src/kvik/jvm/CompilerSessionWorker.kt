@@ -102,7 +102,7 @@ object CompilerSessionWorker {
                             val verified = distribution(artifacts, manifest, request.compiler)
                             require(compilerIdentity == null || compilerIdentity == request.compiler) { "Compiler changed during session" }
                             val implementation = toolchains ?: KotlinToolchains.loadImplementation(verified.classpath).also {
-                                require(it.getCompilerVersion() == "2.4.20") { "Loaded compiler version mismatch" }
+                                require(it.getCompilerVersion() == verified.version) { "Loaded compiler version mismatch" }
                                 toolchains = it
                                 compilerIdentity = request.compiler
                             }

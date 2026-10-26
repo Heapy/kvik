@@ -122,8 +122,8 @@ private class ScriptGraphBuilder(
             require(coordinate.group == supported.group && coordinate.name == supported.name) {
                 "Unsupported published script compiler plugin $coordinate; supported coordinate: $supported"
             }
-            require(coordinate.version == supported.version) {
-                "Script compiler plugin $coordinate is incompatible with pinned Kotlin ${supported.version}; use $supported"
+            require(isSupportedJvmCompilerVersion(coordinate.version)) {
+                "Script compiler plugin $coordinate requires a supported Kotlin JVM compiler version"
             }
             require(plugin.options.isEmpty()) {
                 "Published script compiler plugin $coordinate does not support options; remove options or use a workspace compiler plugin"

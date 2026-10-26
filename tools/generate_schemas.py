@@ -176,12 +176,12 @@ DEFS["target"]["allOf"].extend([
      "not": {"required": ["application"]}}},
 ])
 DEFS["pluginPathOption"] = object_({"name": ID, "kind": enum("input-file", "output-directory"), "path": PATH})
-DEFS["jvmPluginApplication"] = object_({"id": ID, "compilerVersion": {"const": "2.4.20"}, "classpath": array(PATH, minItems=1, uniqueItems=True),
+DEFS["jvmPluginApplication"] = object_({"id": ID, "compilerVersion": enum("2.4.10", "2.4.20"), "classpath": array(PATH, minItems=1, uniqueItems=True),
     "options": array({"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*="}), "inputs": array(PATH, uniqueItems=True),
     "pathOptions": array(ref("pluginPathOption"), uniqueItems=True), "outputs": array(PATH, uniqueItems=True)})
 DEFS["compilerPlugin"] = object_({"module": ID, "coordinate": COORDINATE, "targets": array(enum(*PROJECT_TARGETS), minItems=1, uniqueItems=True),
     "scopes": array(enum("main", "test", "script"), minItems=1, uniqueItems=True), "options": array(STRING), "inputs": array(PATH, uniqueItems=True),
-    "id": ID, "compilerVersion": {"const": "2.4.20"}, "pathOptions": array(ref("pluginPathOption"), uniqueItems=True), "outputs": array(PATH, uniqueItems=True)},
+    "id": ID, "compilerVersion": enum("2.4.10", "2.4.20"), "pathOptions": array(ref("pluginPathOption"), uniqueItems=True), "outputs": array(PATH, uniqueItems=True)},
     optional=("module", "coordinate", "id", "compilerVersion", "pathOptions", "outputs"))
 DEFS["compilerPlugin"]["oneOf"] = [
     {"required": ["module", "id", "compilerVersion"], "not": {"required": ["coordinate"]}, "properties": {
@@ -816,7 +816,7 @@ DEFS["abiWorkerRequest"] = versioned({"requestId": {**NONEMPTY, "maxLength": 256
         "minItems": 1, "maxItems": 100000, "items": {"properties": {"executable": {"const": False}}}}}}]}})
 DEFS["abiWorkerRequest"]["description"] = "Input paths must belong to the selected JVM directory, or contain exactly the selected packed KLIB; semantic validation binds these paths."
 DEFS["abiSnapshot"] = versioned({**ABI_SCOPE, "inputs": ref("digest"), "format": enum("bcv-jvm-v1", "bcv-klib-v1"),
-    "readerVersion": {"const": "0.18.1"}, "compilerVersion": {"const": "2.4.20"},
+    "readerVersion": {"const": "0.18.1"}, "compilerVersion": enum("2.4.10", "2.4.20"),
     "api": {"type": "string", "maxLength": 8388608, "pattern": r"^(?:[^\r\u0000]*\n)?$(?![\s\S])"}})
 DEFS["abiSnapshot"]["allOf"] = [{"if": {"properties": {"target": {"const": "jvm"}}},
     "then": {"properties": {"format": {"const": "bcv-jvm-v1"}}},

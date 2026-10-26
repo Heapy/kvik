@@ -1,5 +1,8 @@
 package kvik.core
 
+/** Versions admitted by the source-built JVM worker; exact bytes are pinned separately. */
+fun isSupportedJvmCompilerVersion(version: String): Boolean = version == "2.4.10" || version == "2.4.20"
+
 enum class PluginPathKind(val wire: String) { INPUT_FILE("input-file"), OUTPUT_DIRECTORY("output-directory") }
 
 data class PluginPathOption(val name: String, val kind: PluginPathKind, val path: LogicalPath) {
@@ -26,7 +29,7 @@ data class JvmPluginApplication(
 ) {
     init {
         require(id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*"))) { "Invalid compiler plugin id" }
-        require(compilerVersion == "2.4.20") { "Workspace compiler plugins require Kotlin 2.4.20" }
+        require(isSupportedJvmCompilerVersion(compilerVersion)) { "Unsupported JVM compiler plugin version: $compilerVersion" }
         require(classpath.isNotEmpty() && classpath.distinct().size == classpath.size) { "Plugin classpath must be nonempty and unique" }
         validatePluginOptions(options, inputs, pathOptions, outputs)
         require(classpath.none { cp -> outputs.any { pathsOverlap(cp, it) } } && inputs.none { input -> outputs.any { pathsOverlap(input, it) } }) { "Plugin input/output paths overlap" }

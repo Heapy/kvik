@@ -26,17 +26,24 @@ def main():
     cache = args.artifact_cache.resolve()
     case = Path(tempfile.mkdtemp(prefix='kvik-kotlin-script-host-')).resolve()
     print('Fixture:', case, flush=True)
-    names = ['kotlin-compiler-embeddable-2.4.20.jar', 'kotlin-stdlib-2.4.20.jar',
-             'kotlin-script-runtime-2.4.20.jar', 'kotlin-reflect-1.6.10.jar', 'annotations-13.0.jar',
-             'kotlinx-coroutines-core-jvm-1.8.0.jar', 'kotlin-scripting-common-2.4.20.jar',
-             'kotlin-scripting-jvm-2.4.20.jar', 'kotlin-scripting-jvm-host-2.4.20.jar',
-             'kotlin-scripting-compiler-embeddable-2.4.20.jar', 'kotlin-scripting-compiler-impl-embeddable-2.4.20.jar']
-    jars = [(cache / name).resolve(strict=True) for name in names]
-    compiler_cp = ':'.join(map(str, jars))
-    runtime_names = ['kotlin-stdlib-2.4.20.jar', 'kotlin-script-runtime-2.4.20.jar',
-                     'kotlin-scripting-common-2.4.20.jar', 'kotlin-scripting-jvm-2.4.20.jar']
+    lock = jvm_worker.read_lock(ROOT)
+    kotlin_version = lock['kotlinVersion']
+    other_version = '2.4.10' if kotlin_version == '2.4.20' else '2.4.20'
+    artifacts = jvm_worker.acquire(lock, cache, True)
+
+    def compiler_jar(name):
+        matches = [item for item in lock['compilerArtifacts'] if item['coordinate'].split(':')[1] == name]
+        assert len(matches) == 1, name
+        return (cache / matches[0]['filename']).resolve(strict=True)
+
+    compiler_components = ['kotlin-compiler-embeddable', 'kotlin-stdlib', 'kotlin-script-runtime',
+        'kotlin-reflect', 'annotations', 'kotlinx-coroutines-core-jvm', 'kotlin-scripting-common',
+        'kotlin-scripting-jvm', 'kotlin-scripting-jvm-host', 'kotlin-scripting-compiler-embeddable',
+        'kotlin-scripting-compiler-impl-embeddable']
+    compiler_cp = ':'.join(str(compiler_jar(name)) for name in compiler_components)
+    runtime_components = ['kotlin-stdlib', 'kotlin-script-runtime', 'kotlin-scripting-common', 'kotlin-scripting-jvm']
     host = case / 'jvm/classes'
-    runtime_cp = ':'.join(map(str, [host, *[cache / name for name in runtime_names]]))
+    runtime_cp = ':'.join(map(str, [host, *[compiler_jar(name) for name in runtime_components]]))
 
     def process(label, arguments, expected=0):
         result = subprocess.run([str(java), *map(str, arguments)], cwd=case, capture_output=True, timeout=120)
@@ -45,13 +52,11 @@ def main():
         assert result.returncode == expected, (label, result.returncode, result.stdout.decode(errors='replace'), result.stderr.decode(errors='replace'))
         return result
 
-    lock = jvm_worker.read_lock(ROOT)
-    artifacts = jvm_worker.acquire(lock, cache, True)
     jvm_worker.build_bundle(case, ROOT, 'compiler/jvm/src', lock, artifacts, java, dict(__import__('os').environ), None,
         lambda command, environment, log: process('compile-host', command[1:]),
         source_files=[*sorted((ROOT / 'core/src').rglob('*.kt')), *sorted((ROOT / 'compiler/jvm/src').rglob('*.kt')),
                       ROOT / 'tests/jvm-kts/Driver.kt'])
-    cp = [str(cache / 'kotlin-stdlib-2.4.20.jar'), str(cache / 'kotlin-script-runtime-2.4.20.jar')]
+    cp = [str(compiler_jar('kotlin-stdlib')), str(compiler_jar('kotlin-script-runtime'))]
 
     def request(label, operation, **fields):
         data = dict(operation=operation, **fields)
@@ -158,14 +163,14 @@ println("EFFECT literal declarations")
     print('PASS declared compiler plugin and options applied to genuine script bytecode', flush=True)
 
     # Use the same bootstrap classes and verified isolated implementation loaders as Native actions.
-    bootstrap_cp = ':'.join(map(str, [host, cache / 'kotlin-build-tools-api-2.4.20.jar', cache / 'kotlin-stdlib-2.4.20.jar']))
+    bootstrap_cp = ':'.join(map(str, [host, compiler_jar('kotlin-build-tools-api'), compiler_jar('kotlin-stdlib')]))
     manifest = case / 'jvm/compiler-manifest.json'
     workspace = case / 'worker-compile'
     (workspace / 'input').mkdir(parents=True)
     (workspace / 'input/Main.kts').write_text('@file:Import("Helper.kts")\nprintln(sourceMarker("PLUGIN_MARKER"))')
     (workspace / 'input/Helper.kts').write_text('fun sourceMarker(value: String) = value')
     shutil.copy2(plugin, workspace / 'input/plugin.jar')
-    application = dict(id='kvik.fixture.kts', compilerVersion='2.4.20', classpath=['input/plugin.jar'], options=['text=worker-transformed'],
+    application = dict(id='kvik.fixture.kts', compilerVersion=kotlin_version, classpath=['input/plugin.jar'], options=['text=worker-transformed'],
                        inputs=[], outputs=[], pathOptions=[])
     worker_request = dict(schemaVersion=1, requestId='compile-script', compiler=file_digest(manifest), primary='input/Main.kts',
         sources=['input/Helper.kts', 'input/Main.kts'], classpath=[], pluginClasspath=[],
@@ -186,6 +191,21 @@ println("EFFECT literal declarations")
     assert json.loads((evaluated / 'result.json').read_text())['status'] == 'success'
     print('PASS verified isolated compiler/evaluator workers and typed workspace compiler plugin', flush=True)
 
+    for label, version, code in [('plugin-version', other_version, 'KVIK_PLUGIN_INCOMPATIBLE'),
+                                  ('unsupported-plugin-version', '2.3.20', 'KVIK_SCRIPT_WORKER')]:
+        rejected = case / ('worker-reject-' + label)
+        shutil.copytree(workspace / 'input', rejected / 'input')
+        (rejected / 'request.json').write_text(json.dumps({**worker_request,
+            'pluginApplications': [{**application, 'compilerVersion': version}]}))
+        process('worker-reject-' + label, ['-cp', bootstrap_cp, 'kvik.jvm.KotlinScriptCompileWorker',
+            rejected, 'request.json', 'result.json', cache, manifest], expected=1)
+        failure = json.loads((rejected / 'result.json').read_text())
+        assert failure['diagnostics'][0]['code'] == code, failure
+        if label == 'unsupported-plugin-version':
+            assert 'Unsupported JVM compiler plugin version' in failure['diagnostics'][0]['message'], failure
+        assert not (rejected / 'output/classes').exists()
+    print('PASS typed script plugin version must be supported and match the loaded compiler', flush=True)
+
     for annotation, text in [('DependsOn', '@file:DependsOn("g:undeclared:1")'),
                              ('Repository', '@file:Repository("https://example.invalid/maven")')]:
         rejected = case / ('worker-reject-' + annotation)
@@ -205,7 +225,7 @@ println("EFFECT literal declarations")
     (ordinary / 'output').mkdir()
     (ordinary / 'input/Main.kt').write_text('fun main() { println("PLUGIN_MARKER") }')
     shutil.copy2(plugin, ordinary / 'input/plugin.jar')
-    shutil.copy2(cache / 'kotlin-stdlib-2.4.20.jar', ordinary / 'input/stdlib.jar')
+    shutil.copy2(compiler_jar('kotlin-stdlib'), ordinary / 'input/stdlib.jar')
     ordinary_request = {key: value for key, value in worker_request.items()
                         if key not in ('primary', 'declaredDependencies', 'declaredRepositories')}
     ordinary_request.update(operation='jvm-compile', sources=['input/Main.kt'], classpath=['input/stdlib.jar'])
@@ -247,7 +267,8 @@ println("EFFECT literal declarations")
 
     serialization = json.loads((ROOT / 'compiler/jvm/test-artifacts.lock.json').read_text())
     serialization['artifacts'] = [item for item in serialization['artifacts'] if item['coordinate'].split(':')[1] in {
-        'kotlin-serialization-compiler-plugin-embeddable', 'kotlinx-serialization-core-jvm', 'kotlinx-serialization-json-jvm'}]
+        'kotlinx-serialization-core-jvm', 'kotlinx-serialization-json-jvm'}]
+    serialization['artifacts'].append(lock['serializationPlugin'])
     seed = case / 'serialization-seed'
     seed.mkdir()
     for item in serialization['artifacts']:
@@ -263,8 +284,8 @@ println("EFFECT literal declarations")
         (mixed / 'output').mkdir()
         shutil.copy2(plugin, mixed / 'input/plugin.jar')
         shutil.copy2(second_plugin, mixed / 'input/second-plugin.jar')
-        shutil.copy2(cache / 'kotlin-compiler-embeddable-2.4.20.jar', mixed / 'input/compiler-api.jar')
-        shutil.copy2(cache / 'kotlin-stdlib-2.4.20.jar', mixed / 'input/stdlib.jar')
+        shutil.copy2(compiler_jar('kotlin-compiler-embeddable'), mixed / 'input/compiler-api.jar')
+        shutil.copy2(compiler_jar('kotlin-stdlib'), mixed / 'input/stdlib.jar')
         runtime_paths = ['input/stdlib.jar']
         for coordinate, jar in serial_jars.items():
             if 'compiler-plugin' in coordinate:
@@ -272,7 +293,7 @@ println("EFFECT literal declarations")
             else:
                 shutil.copy2(jar, mixed / 'input' / jar.name)
                 runtime_paths.append('input/' + jar.name)
-        # K2 scripting 2.4.20 needs an explicit companion for serializer() lookup.
+        # K2 scripting needs an explicit companion for serializer() lookup.
         # The plugin must still generate the serializer method and implementation.
         companion = ' { companion object }' if extension == 'kts' else ''
         declarations = 'import kotlinx.serialization.*\nimport kotlinx.serialization.json.Json\n@Serializable data class Payload(val value: String)' + companion + '\n'

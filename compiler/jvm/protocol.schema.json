@@ -9,7 +9,7 @@
           "const": 1
         },
         "version": {
-          "const": "2.4.20"
+          "enum": ["2.4.10", "2.4.20"]
         },
         "artifacts": {
           "type": "array",

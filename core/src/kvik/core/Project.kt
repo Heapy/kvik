@@ -131,13 +131,15 @@ data class CompilerPluginSpec(val module: String?, val coordinate: Coordinate?, 
         require((module == null) != (coordinate == null)) { "Compiler plugin needs exactly one module or coordinate" }
         require(targets.isNotEmpty() && scopes.isNotEmpty() && scopes.all { it in setOf("main", "test", "script") })
         if (module != null || id != null) {
-            require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) && compilerVersion == "2.4.20") { "Compiler plugin requires an id and compilerVersion=2.4.20" }
+            require(id != null && id.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) &&
+                compilerVersion != null && isSupportedJvmCompilerVersion(compilerVersion)) { "Compiler plugin requires an id and a supported compilerVersion" }
+            require(targets.all { it == "jvm" } || compilerVersion == "2.4.20") { "Native/JS/Wasm compiler plugins require Kotlin 2.4.20" }
             require(if ("script" in scopes) targets == setOf("jvm") && scopes == setOf("script")
                 else targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null }) {
                 "Compiler plugins require JVM/Native/JS/Wasm main/test or a separate JVM script declaration"
             }
             validatePluginOptions(options, inputs, pathOptions, outputs)
-        } else require(compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions require an id and compilerVersion=2.4.20" }
+        } else require(compilerVersion == null && pathOptions.isEmpty() && outputs.isEmpty()) { "Published plugin extensions require an id and compilerVersion" }
     }
 
     /** JS/Wasm tests recompile production sources, so their main plugins must also apply. */

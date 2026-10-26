@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "kotlinVersion": "2.4.10",
+  "compilerArtifacts": [
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-embeddable/2.4.10/kotlin-compiler-embeddable-2.4.10.jar",
+      "filename": "kotlin-compiler-embeddable-2.4.10.jar",
+      "sha256": "9309638a2ee03e6bde9ef4b7444055a94b84ab906563675d71ff9aecb64da913",
+      "size": 60352373
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-build-tools-api:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-api/2.4.10/kotlin-build-tools-api-2.4.10.jar",
+      "filename": "kotlin-build-tools-api-2.4.10.jar",
+      "sha256": "3953d283e7710c990672e403a87df393d9726a9bf3e172194ebb5c33e062fcb0",
+      "size": 310932
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-build-tools-impl:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-impl/2.4.10/kotlin-build-tools-impl-2.4.10.jar",
+      "filename": "kotlin-build-tools-impl-2.4.10.jar",
+      "sha256": "4a32f63522ef4726afbdee1783f05698499abc7a5ecade3a6cafa3e4074562ee",
+      "size": 3157700
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-build-tools-cri-impl:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-cri-impl/2.4.10/kotlin-build-tools-cri-impl-2.4.10.jar",
+      "filename": "kotlin-build-tools-cri-impl-2.4.10.jar",
+      "sha256": "781c95a28f053ded2d183b818bdae98db3d6d15ebc0555cecf64800fea003b3b",
+      "size": 569003
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-tooling-core:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-tooling-core/2.4.10/kotlin-tooling-core-2.4.10.jar",
+      "filename": "kotlin-tooling-core-2.4.10.jar",
+      "sha256": "59ea305372e3a2b7417764dcfecf645066a0d9b1792ab40afd15c1cc8535b58a",
+      "size": 89051
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-compiler-runner:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-runner/2.4.10/kotlin-compiler-runner-2.4.10.jar",
+      "filename": "kotlin-compiler-runner-2.4.10.jar",
+      "sha256": "9e869d66504572852f421bcb1625c0d564c2b3c8cecbf6cd5fef7e7f33e0013e",
+      "size": 20377
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-daemon-client:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-daemon-client/2.4.10/kotlin-daemon-client-2.4.10.jar",
+      "filename": "kotlin-daemon-client-2.4.10.jar",
+      "sha256": "a3d1a5854fd92766de1ca37ff003a822d3da2039902008384dd1f7375f3d5cf9",
+      "size": 251407
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-daemon-embeddable:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-daemon-embeddable/2.4.10/kotlin-daemon-embeddable-2.4.10.jar",
+      "filename": "kotlin-daemon-embeddable-2.4.10.jar",
+      "sha256": "547d969a2eab602fe0bdfd9fcb1b563a5c6d30099d3351394d6427eba8288467",
+      "size": 381839
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.10/kotlin-stdlib-2.4.10.jar",
+      "filename": "kotlin-stdlib-2.4.10.jar",
+      "sha256": "4ec0293bc3751423b203f1d8493251c57c42e73eb6377a6b8560d0974ff0a6df",
+      "size": 1841933
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-script-runtime:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-script-runtime/2.4.10/kotlin-script-runtime-2.4.10.jar",
+      "filename": "kotlin-script-runtime-2.4.10.jar",
+      "sha256": "f4a5b30c2fdfbe386b097101b7989dbeea3743c06396136664784e08e15c6899",
+      "size": 46565
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:1.6.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/1.6.10/kotlin-reflect-1.6.10.jar",
+      "filename": "kotlin-reflect-1.6.10.jar",
+      "sha256": "3277ac102ae17aad10a55abec75ff5696c8d109790396434b496e75087854203",
+      "size": 3038560
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.8.0/kotlinx-coroutines-core-jvm-1.8.0.jar",
+      "filename": "kotlinx-coroutines-core-jvm-1.8.0.jar",
+      "sha256": "9860906a1937490bf5f3b06d2f0e10ef451e65b95b269f22daf68a3d1f5065c5",
+      "size": 1548360
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:13.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.jar",
+      "filename": "annotations-13.0.jar",
+      "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+      "size": 17536
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:binary-compatibility-validator:0.18.1",
+      "filename": "binary-compatibility-validator-0.18.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/binary-compatibility-validator/0.18.1/binary-compatibility-validator-0.18.1.jar",
+      "sha256": "7d58cc1a5d6cc846d144640b3a549ab333ff9b8d91cf0f615805011cbff872fd",
+      "size": 411533
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.10",
+      "filename": "kotlin-metadata-jvm-2.4.10.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-metadata-jvm/2.4.10/kotlin-metadata-jvm-2.4.10.jar",
+      "sha256": "233aaa84ca268e26d6d3a99ce30401e6dc111a7ae10e0a0b4794ce6351d7adc4",
+      "size": 910795
+    },
+    {
+      "coordinate": "org.ow2.asm:asm:9.10.1",
+      "filename": "asm-9.10.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar",
+      "sha256": "ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb",
+      "size": 126151
+    },
+    {
+      "coordinate": "org.ow2.asm:asm-tree:9.10.1",
+      "filename": "asm-tree-9.10.1.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar",
+      "sha256": "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b",
+      "size": 51958
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-common:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-common/2.4.10/kotlin-scripting-common-2.4.10.jar",
+      "filename": "kotlin-scripting-common-2.4.10.jar",
+      "sha256": "d5399982cdbf5994f7f3a731afacfbc5c21b797d97ffd7328b62cea670103076",
+      "size": 203069
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-jvm:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-jvm/2.4.10/kotlin-scripting-jvm-2.4.10.jar",
+      "filename": "kotlin-scripting-jvm-2.4.10.jar",
+      "sha256": "0b7518219da69b427e0b3f840f13e280db9e61a839c7d3ff094de4630ddbc9f5",
+      "size": 136266
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-jvm-host:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-jvm-host/2.4.10/kotlin-scripting-jvm-host-2.4.10.jar",
+      "filename": "kotlin-scripting-jvm-host-2.4.10.jar",
+      "sha256": "0a69931e502f547e68e9e53d0508dd3ead3b9f8aaae1238a4808ba0c065f03f2",
+      "size": 88103
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-compiler-embeddable/2.4.10/kotlin-scripting-compiler-embeddable-2.4.10.jar",
+      "filename": "kotlin-scripting-compiler-embeddable-2.4.10.jar",
+      "sha256": "156c68ff816251c9d297c90d77e7e8e513eaad594277cee50a36faeddbe88935",
+      "size": 711204
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.4.10",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-scripting-compiler-impl-embeddable/2.4.10/kotlin-scripting-compiler-impl-embeddable-2.4.10.jar",
+      "filename": "kotlin-scripting-compiler-impl-embeddable-2.4.10.jar",
+      "sha256": "1dcfc5495d8c74966fcbbd39240a9c0f8ab36bb4faad2ea5ffc000c5d7785171",
+      "size": 197774
+    }
+  ],
+  "testPlatform": {
+    "coordinate": "org.junit.platform:junit-platform-console-standalone:1.13.4",
+    "filename": "junit-platform-console-standalone-1.13.4.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-console-standalone/1.13.4/junit-platform-console-standalone-1.13.4.jar",
+    "sha256": "3fdfc37e29744a9a67dd5365e81467e26fbde0b7aa204e6f8bbe79eeaa7ae892",
+    "size": 3159930
+  },
+  "serializationPlugin": {
+    "coordinate": "org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:2.4.10",
+    "filename": "kotlin-serialization-compiler-plugin-embeddable-2.4.10.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-serialization-compiler-plugin-embeddable/2.4.10/kotlin-serialization-compiler-plugin-embeddable-2.4.10.jar",
+    "sha256": "b1467b515c7dd8b24a79bd402a41ac7d2c208c6be96b5b53d21f8147d6566f5e",
+    "size": 570248
+  },
+  "jacocoVersion": "0.8.14",
+  "jacocoAgent": {
+    "coordinate": "org.jacoco:org.jacoco.agent:0.8.14",
+    "classifier": "runtime",
+    "filename": "org.jacoco.agent-0.8.14-runtime.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/jacoco/org.jacoco.agent/0.8.14/org.jacoco.agent-0.8.14-runtime.jar",
+    "sha256": "3fb76eea65f81bd9415202bab34b6571728841dff1ab8e6bbe81adc2e299face",
+    "size": 306809
+  },
+  "jacocoCli": {
+    "coordinate": "org.jacoco:org.jacoco.cli:0.8.14",
+    "classifier": "nodeps",
+    "filename": "org.jacoco.cli-0.8.14-nodeps.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/jacoco/org.jacoco.cli/0.8.14/org.jacoco.cli-0.8.14-nodeps.jar",
+    "sha256": "811c7f8c6b358c5d68a8973cfa867f6892be7a671b697a4b13c4b447e6daf75c",
+    "size": 607951
+  },
+  "documentationArtifacts": [
+    {
+      "coordinate": "org.jetbrains.dokka:dokka-cli:2.2.0",
+      "filename": "dokka-cli-2.2.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/dokka/dokka-cli/2.2.0/dokka-cli-2.2.0.jar",
+      "sha256": "b8c8aba823c0ac0e173af52abf2808aa692809a40b79f63828798bb77518324a",
+      "size": 11688849
+    },
+    {
+      "coordinate": "org.jetbrains.dokka:dokka-base:2.2.0",
+      "filename": "dokka-base-2.2.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/dokka/dokka-base/2.2.0/dokka-base-2.2.0.jar",
+      "sha256": "721c5a1647dc49d1680d884350b438a039b2426aec65b696baee8e5aeb6442f5",
+      "size": 1860621
+    },
+    {
+      "coordinate": "org.jetbrains.dokka:analysis-kotlin-symbols:2.2.0",
+      "filename": "analysis-kotlin-symbols-2.2.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/dokka/analysis-kotlin-symbols/2.2.0/analysis-kotlin-symbols-2.2.0.jar",
+      "sha256": "31b4eabf7436083ae33200da6be7203675fb1fcdcd34d2f394f55e822dac8f0f",
+      "size": 91928601
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-html-jvm:0.8.0",
+      "filename": "kotlinx-html-jvm-0.8.0.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-html-jvm/0.8.0/kotlinx-html-jvm-0.8.0.jar",
+      "sha256": "712184b0733445f05d2bea8051330c73de3abd9b393be0af304b77b7cee12f14",
+      "size": 796175
+    },
+    {
+      "coordinate": "org.freemarker:freemarker:2.3.31",
+      "filename": "freemarker-2.3.31.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/freemarker/freemarker/2.3.31/freemarker-2.3.31.jar",
+      "sha256": "68ecb4c5aa4934b7b50c38b0e495d7589e52dfb9d28b964ac2008b72090bfaae",
+      "size": 1715750
+    }
+  ]
+}
