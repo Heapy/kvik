@@ -93,6 +93,30 @@ class CoverageAggregateSchemaTest(unittest.TestCase):
         validator('coverageAggregate').validate(value)
         self.assertFalse(validator('coverageAggregate').is_valid({**value, 'status': 'failed'}))
 
+    def test_optional_target_union_keeps_default_and_missing_target_semantics(self):
+        value = aggregate()
+        validator('coverageAggregate').validate(value)
+        target = value['targets'][0]
+        union = dict(semantics='covered-on-at-least-one-selected-target', metric='line', inputSnapshot=DIGEST,
+                     requestedTargets=['jvm'], actualTargets=['jvm'], incompleteTargets=[], unsupportedTargets=[],
+                     instrumentation=dict(producer='jacoco', version='0.8.14', lineMapping='jacoco-source-lines-v1',
+                                          instrumentation=dict(agent=DIGEST, reporter=DIGEST), exclusions=[]),
+                     **{key: copy.deepcopy(target[key]) for key in ('sources', 'covered', 'executable', 'unknown', 'complete', 'status')})
+        value['targetUnion'] = union
+        validator('coverageAggregate').validate(value)
+        for changes in (dict(semantics='covered-on-every-target'), dict(requestedTargets=[]),
+                        dict(requestedTargets=['jvm', 'jvm']), dict(unknown=1), dict(instrumentation=None), dict(extra=True)):
+            self.assertFalse(validator('coverageTargetUnion').is_valid({**union, **changes}), changes)
+        union.update(requestedTargets=['jvm', 'macosArm64'], incompleteTargets=['macosArm64'],
+                     unsupportedTargets=['macosArm64'], complete=False, status='incomplete',
+                     covered=None, executable=None, unknown=None)
+        value.update(complete=False, status='incomplete')
+        value['targets'].append(missing_target('macosArm64'))
+        value['scope']['expectedChecks'].append('library:macosArm64:test')
+        validator('coverageAggregate').validate(value)
+        for changes in (dict(covered=0), dict(executable=2), dict(unknown=0), dict(status='passed')):
+            self.assertFalse(validator('coverageTargetUnion').is_valid({**union, **changes}), changes)
+
     def test_export_and_action_graph(self):
         response = dict(schemaVersion=1, outputDirectory='/tmp/new-aggregate', aggregate=DIGEST,
                         status='passed', complete=True, artifacts=dict(schemaVersion=1, files=[]))

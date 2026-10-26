@@ -11,13 +11,14 @@ import kvik.runevidence.*
 /** Explicit run inputs and an expected matrix keep absent CI jobs visible. */
 internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
     fun arguments(message: String): Nothing = throw CliFailure("KVIK_COVERAGE_AGGREGATE_ARGUMENTS", DiagnosticCategory.CONFIGURATION,
-        "$message. Use coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] --output NEW_DIRECTORY [--store PATH]",
+        "$message. Use coverage-aggregate --run PATH ... [--report PATH ...] [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--union-target ID ...] --output NEW_DIRECTORY [--store PATH]",
         ExitStatus.INVALID_CONFIGURATION)
     val runs = linkedSetOf<String>()
     val reports = mutableListOf<String>()
     val expected = linkedSetOf<String>()
     val modules = linkedSetOf<String>()
     val targets = linkedSetOf<String>()
+    val unionTargets = linkedSetOf<String>()
     var outputArgument: String? = null
     var storeArgument: String? = null
     var index = 0
@@ -31,6 +32,7 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
             "--expect" -> if (!expected.add(value)) arguments("Repeated expected check")
             "--module" -> if (!modules.add(value)) arguments("Repeated module")
             "--target" -> if (!targets.add(value)) arguments("Repeated target")
+            "--union-target" -> if (!unionTargets.add(value)) arguments("Repeated union target")
             "--store" -> { if (storeArgument != null) arguments("Repeated store"); storeArgument = value }
             "--output" -> { if (outputArgument != null) arguments("Repeated output"); outputArgument = value }
             else -> arguments("Unknown option $flag")
@@ -100,6 +102,7 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
         val selected = matrix.filter { (modules.isEmpty() || it.substringBefore(':') in modules) && (targets.isEmpty() || it.split(':')[1] in targets) }.toSet()
         if (selected.isEmpty()) arguments("Selected coverage matrix is empty")
         val scope = declared.copy(expectedChecks = selected)
+        if (unionTargets.any { target -> selected.none { it.split(':')[1] == target } }) arguments("Union target is absent from selected expected matrix")
         val seenReports = mutableSetOf<Digest>()
         val contributions = reports.mapNotNull { path ->
             checkpoint()
@@ -126,6 +129,9 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
             }
             CoverageContribution(digest, report)
         }
+        val parameters = if (unionTargets.isEmpty()) scope.toJson() else JsonValue.Object(scope.toJson().values +
+            ("unionTargets" to unionTargets.sorted().map { it.json() }.json()))
+        if (unionTargets.isNotEmpty()) retain("union-policy.json", obj("requestedTargets" to unionTargets.sorted().map { it.json() }.json()).canonical().encodeToByteArray())
         val scopeBytes = scope.toJson().canonical().encodeToByteArray()
         retain("scope.json", scopeBytes)
         val inputs = TreeManifest(artifacts.map { (path, bytes) -> FileEntry(LogicalPath(path), Sha256.digest(bytes)) })
@@ -133,7 +139,7 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
         val recipes = linkedMapOf<String, ActionSpec>()
         fun recipe(id: String, input: TreeManifest, name: String) = ActionSpec("kvik-$id-v1", composition, ActionKind.GENERATE,
             mapOf("os" to "portable", "arch" to "any"), "reports", mapOf("kvik" to composition), input,
-            listOf(LogicalPath(name)), emptyList(), emptyMap(), scope.toJson(), cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
+            listOf(LogicalPath(name)), emptyList(), emptyMap(), parameters, cachePolicy = CachePolicy.LOCAL).also { recipes[id] = it }
         val nodes = listOf(
             ActionNode("coverage-aggregate", emptySet()) { recipe("coverage-aggregate", inputs, "aggregate.json") },
             ActionNode("coverage-aggregate-export", setOf("coverage-aggregate")) { predecessors ->
@@ -145,7 +151,7 @@ internal fun coverageAggregateCommand(args: List<String>): ExitStatus {
             { type, payload -> events.add(RunEvent(runId, events.size + 1L, type, payload)) }) { actionId, action ->
             checkpoint()
             val bytes = if (actionId == "coverage-aggregate") {
-                aggregateCoverage(scope, contributions).toJson().canonical().encodeToByteArray()
+                aggregateCoverage(scope, contributions, unionTargets).toJson().canonical().encodeToByteArray()
             } else artifacts.getValue("aggregate.json").also {
                 require(Sha256.digest(it) == action.inputs.files.single().digest) { "Aggregate export input differs" }
             }

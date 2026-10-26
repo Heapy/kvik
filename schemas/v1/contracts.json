@@ -179,6 +179,12 @@
       ],
       "additionalProperties": false
     },
+    "jvmTestTag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f,()&|!]+(?![\\s\\S])"
+    },
     "jvmTestSettings": {
       "type": "object",
       "properties": {
@@ -9053,6 +9059,258 @@
         }
       ]
     },
+    "coverageLineSemantics": {
+      "type": "object",
+      "properties": {
+        "producer": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 128
+        },
+        "lineMapping": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 128
+        },
+        "instrumentation": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 100,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/digest"
+          }
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z0-9_.$*?/]+(?![\\s\\S])"
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "producer",
+        "version",
+        "lineMapping",
+        "instrumentation",
+        "exclusions"
+      ],
+      "additionalProperties": false
+    },
+    "coverageTargetUnion": {
+      "type": "object",
+      "properties": {
+        "semantics": {
+          "const": "covered-on-at-least-one-selected-target"
+        },
+        "metric": {
+          "const": "line"
+        },
+        "inputSnapshot": {
+          "$ref": "#/$defs/digest"
+        },
+        "requestedTargets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "actualTargets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "incompleteTargets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "unsupportedTargets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*(?![\\s\\S])"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "instrumentation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/coverageLineSemantics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverageMergedSource"
+          },
+          "uniqueItems": true
+        },
+        "covered": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unknown": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "semantics",
+        "metric",
+        "inputSnapshot",
+        "requestedTargets",
+        "actualTargets",
+        "incompleteTargets",
+        "unsupportedTargets",
+        "instrumentation",
+        "sources",
+        "covered",
+        "executable",
+        "unknown",
+        "complete",
+        "status"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "actualTargets": {
+                "minItems": 1
+              },
+              "incompleteTargets": {
+                "maxItems": 0
+              },
+              "unsupportedTargets": {
+                "maxItems": 0
+              },
+              "instrumentation": {
+                "$ref": "#/$defs/coverageLineSemantics"
+              },
+              "sources": {
+                "minItems": 1,
+                "items": {
+                  "properties": {
+                    "complete": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              "covered": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "executable": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "unknown": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "covered": {
+                "type": "null"
+              },
+              "executable": {
+                "type": "null"
+              },
+              "unknown": {
+                "type": "null"
+              },
+              "status": {
+                "not": {
+                  "const": "passed"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "$comment": "Pure target-projection union; does not enable a new capture producer. Runtime reconstruction verifies requested versus actual targets, source inventories, executable maps, instrumentation/exclusions, snapshot identity and counters. Missing contributors make all union counters unknown, while source absence from a complete target inventory means that target does not own that source."
+    },
     "coverageAggregate": {
       "type": "object",
       "properties": {
@@ -9106,6 +9364,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "targetUnion": {
+          "$ref": "#/$defs/coverageTargetUnion"
         }
       },
       "required": [
@@ -10555,6 +10816,32 @@
       "required": [
         "actionId",
         "startedAfterNanos",
+        "durationNanos"
+      ],
+      "additionalProperties": false
+    },
+    "actionToolVerification": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "scope": {
+          "enum": [
+            "jvm",
+            "native"
+          ]
+        },
+        "durationNanos": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "actionId",
+        "scope",
         "durationNanos"
       ],
       "additionalProperties": false
@@ -13671,6 +13958,76 @@
       ],
       "additionalProperties": false
     },
+    "scriptCompilation": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "action": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "entryScript": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "uniqueItems": true
+        },
+        "sourceRoots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "inputPath": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              }
+            },
+            "required": [
+              "path",
+              "inputPath"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "script",
+        "target",
+        "action",
+        "entryScript",
+        "dependencies",
+        "sourceRoots"
+      ],
+      "additionalProperties": false
+    },
     "scriptInspection": {
       "type": "object",
       "properties": {
@@ -15966,15 +16323,13 @@
         },
         "options": {
           "type": "array",
-          "maxItems": 256,
           "items": {
             "$ref": "#/$defs/jvmAgentOption"
-          }
+          },
+          "maxItems": 256
         },
         "outputs": {
           "type": "array",
-          "maxItems": 256,
-          "uniqueItems": true,
           "items": {
             "allOf": [
               {
@@ -15986,7 +16341,9 @@
                 "pattern": "^instrumentation/[a-z][a-z0-9-]{0,63}/"
               }
             ]
-          }
+          },
+          "maxItems": 256,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -15994,108 +16351,6 @@
         "jar",
         "options",
         "outputs"
-      ],
-      "additionalProperties": false
-    },
-    "scriptCompilation": {
-      "type": "object",
-      "properties": {
-        "script": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "target": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "action": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "entryScript": {
-          "anyOf": [
-            {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "dependencies": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "\\S"
-          },
-          "uniqueItems": true
-        },
-        "sourceRoots": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
-              },
-              "inputPath": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
-              }
-            },
-            "required": [
-              "path",
-              "inputPath"
-            ],
-            "additionalProperties": false
-          },
-          "uniqueItems": true
-        }
-      },
-      "required": [
-        "script",
-        "target",
-        "action",
-        "entryScript",
-        "dependencies",
-        "sourceRoots"
-      ],
-      "additionalProperties": false
-    },
-    "jvmTestTag": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f,()&|!]+(?![\\s\\S])"
-    },
-    "actionToolVerification": {
-      "type": "object",
-      "properties": {
-        "actionId": {
-          "type": "string",
-          "pattern": "\\S"
-        },
-        "scope": {
-          "enum": [
-            "jvm",
-            "native"
-          ]
-        },
-        "durationNanos": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9223372036854775807
-        }
-      },
-      "required": [
-        "actionId",
-        "scope",
-        "durationNanos"
       ],
       "additionalProperties": false
     },

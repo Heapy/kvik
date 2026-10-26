@@ -731,11 +731,32 @@ DEFS["coverageAggregateTarget"]["allOf"] = [
      "else": {"properties": {"actualChecks": {"maxItems": 0}, "missingChecks": {"minItems": 1},
         "unsupportedChecks": {"minItems": 1}, "sources": {"maxItems": 0}, "complete": {"const": False}, "status": {"const": "incomplete"}}}},
 ]
+DEFS["coverageLineSemantics"] = object_({
+    **{name: {"type": "string", "pattern": r"\S", "maxLength": 128} for name in ("producer", "version", "lineMapping")},
+    "instrumentation": {"type": "object", "minProperties": 1, "maxProperties": 100,
+                        "propertyNames": ID, "additionalProperties": ref("digest")},
+    "exclusions": deepcopy(DEFS["jvmCoverageSpec"]["properties"]["excludes"])})
+DEFS["coverageTargetUnion"] = object_({"semantics": {"const": "covered-on-at-least-one-selected-target"},
+    "metric": {"const": "line"}, "inputSnapshot": ref("digest"),
+    "requestedTargets": array(COVERAGE_ID, minItems=1, maxItems=1000, uniqueItems=True),
+    **{name: array(COVERAGE_ID, maxItems=1000, uniqueItems=True) for name in ("actualTargets", "incompleteTargets", "unsupportedTargets")},
+    "instrumentation": nullable(ref("coverageLineSemantics")), "sources": array(ref("coverageMergedSource"), uniqueItems=True),
+    **{name: nullable(INT) for name in ("covered", "executable", "unknown")}, "complete": BOOL, "status": REPORT_STATUS})
+DEFS["coverageTargetUnion"]["allOf"] = [
+    {"if": {"properties": {"complete": {"const": True}}}, "then": {"properties": {
+        "actualTargets": {"minItems": 1}, "incompleteTargets": {"maxItems": 0}, "unsupportedTargets": {"maxItems": 0},
+        "instrumentation": ref("coverageLineSemantics"), "sources": {"minItems": 1, "items": {"properties": {"complete": {"const": True}}}},
+        "covered": INT, "executable": INT, "unknown": {"const": 0}}}, "else": {"properties": {
+        **{name: {"type": "null"} for name in ("covered", "executable", "unknown")}, "status": {"not": {"const": "passed"}}}}}]
+DEFS["coverageTargetUnion"]["$comment"] = ("Pure target-projection union; does not enable a new capture producer. Runtime reconstruction verifies "
+    "requested versus actual targets, source inventories, executable maps, instrumentation/exclusions, snapshot identity and counters. "
+    "Missing contributors make all union counters unknown, while source absence from a complete target inventory means that target does not own that source.")
 DEFS["coverageAggregate"] = versioned({"kind": {"const": "coverage-aggregate"}, "scope": ref("coverageAggregationScope"),
     "contributors": array(ref("coverageContribution"), maxItems=1000, uniqueItems=True),
     "semantics": {"const": "covered-in-any-contributor-per-target"}, "capabilities": {"const": ["line"]},
     "targets": array(ref("coverageAggregateTarget"), minItems=1, maxItems=1000, uniqueItems=True),
-    "complete": BOOL, "status": REPORT_STATUS, "diagnostics": array(STRING)})
+    "complete": BOOL, "status": REPORT_STATUS, "diagnostics": array(STRING),
+    "targetUnion": ref("coverageTargetUnion")}, optional=("targetUnion",))
 DEFS["coverageAggregate"]["$comment"] = ("Kotlin CoverageAggregate.fromJson reconstructs the aggregate from scope and canonical "
     "contributions, verifies report digests and compatibility, and rejects any contradictory derived fields. "
     "JSON Schema cannot verify digest bindings, expected-check partitions, source ownership or line-union arithmetic.")

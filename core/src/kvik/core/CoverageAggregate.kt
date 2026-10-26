@@ -55,19 +55,23 @@ class CoverageAggregateTarget internal constructor(
 
 class CoverageAggregate internal constructor(
     val scope: CoverageAggregationScope, val contributions: List<CoverageContribution>, val targets: List<CoverageAggregateTarget>,
-    val complete: Boolean, val status: VerificationStatus, val diagnostics: List<String>,
+    val complete: Boolean, val status: VerificationStatus, val diagnostics: List<String>, val targetUnion: CoverageTargetUnion? = null,
 ) {
     fun toJson(): JsonValue.Object = obj("schemaVersion" to CONTRACT_VERSION.json(), "kind" to "coverage-aggregate".json(),
         "scope" to scope.toJson(), "contributors" to contributions.map { it.toJson() }.json(),
         "semantics" to "covered-in-any-contributor-per-target".json(), "capabilities" to listOf("line".json()).json(),
         "targets" to targets.map { it.toJson() }.json(), "complete" to complete.json(), "status" to status.name.lowercase().json(),
-        "diagnostics" to diagnostics.map { it.json() }.json())
+        "diagnostics" to diagnostics.map { it.json() }.json()).let { value ->
+            targetUnion?.let { JsonValue.Object(value.values + ("targetUnion" to it.toJson())) } ?: value
+        }
     companion object {
         fun fromJson(value: JsonValue): CoverageAggregate {
-            val fields = value.fields(setOf("schemaVersion", "kind", "scope", "contributors", "semantics", "capabilities", "targets", "complete", "status", "diagnostics"))
+            val fields = value.fields(setOf("schemaVersion", "kind", "scope", "contributors", "semantics", "capabilities", "targets", "complete", "status", "diagnostics"), setOf("targetUnion"))
             fields.requireVersion()
+            val unionTargets = fields["targetUnion"]?.objectValue()?.getValue("requestedTargets")?.arrayValue()?.map(JsonValue::stringValue).orEmpty()
+            require(unionTargets.distinct().size == unionTargets.size && ("targetUnion" !in fields || unionTargets.isNotEmpty())) { "Invalid coverage union target selection" }
             val aggregate = aggregateCoverage(CoverageAggregationScope.fromJson(fields.getValue("scope")),
-                fields.getValue("contributors").arrayValue().map(CoverageContribution::fromJson))
+                fields.getValue("contributors").arrayValue().map(CoverageContribution::fromJson), unionTargets.toSet())
             require(aggregate.toJson() == value) { "Coverage aggregate contains contradictory or unsupported derived fields" }
             return aggregate
         }
@@ -75,7 +79,8 @@ class CoverageAggregate internal constructor(
 }
 
 /** Union observed hits only within one target; unknown evidence cannot be repaired by another hit. */
-fun aggregateCoverage(scope: CoverageAggregationScope, contributions: List<CoverageContribution>): CoverageAggregate {
+fun aggregateCoverage(scope: CoverageAggregationScope, contributions: List<CoverageContribution>, unionTargets: Set<String> = emptySet()): CoverageAggregate {
+    require(scope.expectedChecks.map { it.split(':')[1] }.toSet().containsAll(unionTargets)) { "Coverage union target is outside the expected matrix" }
     require(contributions.size <= scope.expectedChecks.size)
     require(contributions.map { it.digest }.distinct().size == contributions.size) { "Duplicate coverage contribution digest" }
     require(contributions.map { it.report.check }.distinct().size == contributions.size) { "Duplicate coverage check, including repeated runs" }
@@ -153,8 +158,14 @@ fun aggregateCoverage(scope: CoverageAggregationScope, contributions: List<Cover
             if (complete) 0L else null, complete,
             aggregateStatus(reports.map { it.status } + if (complete) emptyList() else listOf(VerificationStatus.INCOMPLETE)))
     }
-    return CoverageAggregate(scope.copy(expectedChecks = scope.expectedChecks.toSet()), ordered, targets, targets.all { it.complete },
-        aggregateStatus(targets.map { it.status }), diagnostics)
+    val union = unionTargets.takeIf { it.isNotEmpty() }?.let { requested ->
+        unionCoverageTargets(scope.inputSnapshot, requested, targets.filter { it.target in requested }.map { target ->
+            CoverageTargetProjection(scope.inputSnapshot, target,
+                ordered.firstOrNull { it.report.check.split(':')[1] == target.target }?.report?.specification?.lineSemantics())
+        })
+    }
+    return CoverageAggregate(scope.copy(expectedChecks = scope.expectedChecks.toSet()), ordered, targets, targets.all { it.complete } && union?.complete != false,
+        aggregateStatus(targets.map { it.status } + listOfNotNull(union?.status)), diagnostics, union)
 }
 
 private fun aggregateStatus(statuses: List<VerificationStatus>): VerificationStatus = when {

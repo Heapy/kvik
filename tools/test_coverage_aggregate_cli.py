@@ -22,11 +22,13 @@ def immutable_files(paths):
     return {str(path): dict(digest=digest(path), modified=path.stat().st_mtime_ns) for path in sorted(paths)}
 
 
-def invoke(runtime, case, label, arguments, expected=0):
+def invoke(runtime, case, label, arguments, expected=0, transform_only=False):
     command = [str(runtime), *map(str, arguments)]
     (case/(label+'.command.json')).write_text(json.dumps(command))
     environment = dict(os.environ)
     environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
+    if transform_only:
+        environment.update(PATH='/nonexistent', JAVA_HOME='/nonexistent', KONAN_HOME='/nonexistent')
     with (case/(label+'.stdout.jsonl')).open('wb') as out, (case/(label+'.stderr.log')).open('wb') as err:
         result = subprocess.run(command, cwd=case, env=environment, stdout=out, stderr=err, timeout=600)
     stdout = (case/(label+'.stdout.jsonl')).read_text()
@@ -106,6 +108,10 @@ def capture(args):
 def aggregate(args):
     case = args.case.resolve(strict=True)
     saved = json.loads((case/'capture.json').read_text())
+    if args.union_only:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        case = Path(tempfile.mkdtemp(prefix='union-', dir=args.output_dir.resolve()))
+        print('Union acceptance: '+str(case), flush=True)
     captures = saved['captures']
     reports = [json.loads(Path(item['report']).read_text()) for item in captures]
     expected_checks = [item['module']+':jvm:test' for item in captures]
@@ -133,7 +139,7 @@ def aggregate(args):
         for path in paths: command += ['--report', path]
         for check in matrix: command += ['--expect', check]
         command += [*filters, '--output', output]
-        values = invoke(args.runtime, case, 'aggregate-'+label, command, code)
+        values = invoke(args.runtime, case, 'aggregate-'+label, command, code, transform_only=args.union_only)
         if diagnostic:
             assert not output.exists()
             assert any(diagnostic in value.get('diagnostic', {}).get('message', '') for value in values), values
@@ -190,6 +196,54 @@ def aggregate(args):
     raw_executable = sum(line['state'] in ('covered', 'uncovered') for report in reports for source in report['sources'] for line in source['lines'])
     assert executable < raw_executable, 'Shared library lines must not be counted once per CI job'
 
+    if args.union_only:
+        assert 'targetUnion' not in combined
+        selected = call('union-jvm', filters=['--union-target', 'jvm'])
+        union = selected['targetUnion']
+        assert selected['targets'] == combined['targets']
+        assert union['semantics'] == 'covered-on-at-least-one-selected-target'
+        assert union['requestedTargets'] == union['actualTargets'] == ['jvm']
+        assert union['complete'] and union['covered'] == covered and union['executable'] == executable
+        assert union['sources'] == target['sources']
+        replay = call('union-jvm-replay', filters=['--union-target', 'jvm'])
+        assert replay == selected
+        graphs = {label: json.loads((outputs/label/'graph.json').read_text()) for label in ('combined', 'union-jvm', 'union-jvm-replay')}
+        assert all(result['status'] == 'local_hit' for result in graphs['union-jvm-replay']['results'])
+        assert graphs['combined']['results'][0]['key'] != graphs['union-jvm']['results'][0]['key']
+        action = graphs['union-jvm']['actions'][0]['action']
+        assert action['parameters']['unionTargets'] == ['jvm']
+        assert any(entry['path'] == 'union-policy.json' for entry in action['inputs']['files'])
+        native_matrix = expected_checks+['native:macosArm64:test']
+        native = call('union-native', expected_matrix=native_matrix, filters=['--union-target', 'macosArm64', '--union-target', 'jvm'], code=3)
+        missing = native['targetUnion']
+        assert missing['requestedTargets'] == ['jvm', 'macosArm64'] and missing['actualTargets'] == ['jvm']
+        assert missing['incompleteTargets'] == missing['unsupportedTargets'] == ['macosArm64']
+        assert not missing['complete'] and all(missing[name] is None for name in ('covered', 'executable', 'unknown'))
+        reverse = call('union-native-reordered', expected_matrix=native_matrix, filters=['--union-target', 'jvm', '--union-target', 'macosArm64'], code=3)
+        assert reverse == native
+        graph = json.loads((outputs/'union-native-reordered/graph.json').read_text())
+        assert all(result['status'] == 'local_hit' for result in graph['results'])
+        subset = call('union-available-subset', expected_matrix=native_matrix, filters=['--union-target', 'jvm'], code=3)
+        assert subset['targetUnion']['complete'] and not subset['complete'] and subset['status'] == 'incomplete'
+        partial = call('union-missing-report', selected_reports=[captures[0]['report']], filters=['--union-target', 'jvm'], code=3)
+        assert partial['targetUnion']['incompleteTargets'] == ['jvm'] and partial['targetUnion']['covered'] is None
+        for label, filters in [('absent', ['--union-target', 'absent']),
+                               ('filtered', ['--target', 'jvm', '--union-target', 'macosArm64'])]:
+            call('union-'+label, expected_matrix=native_matrix, filters=filters, code=2, diagnostic='Union target is absent')
+        call('union-repeated', filters=['--union-target', 'jvm', '--union-target', 'jvm'], code=2, diagnostic='Repeated union target')
+        for label, expected in [('union-jvm', 0), ('union-native', 3), ('union-available-subset', 3)]:
+            response, = invoke(args.runtime, case, 'check-'+label, ['coverage-check', '--report', outputs/label/'aggregate.json',
+                '--metric', 'line', '--minimum', '0', '--all-modules', '--target', 'jvm', '--output', case/('check-'+label)], expected, transform_only=True)
+            validate(response, 'coverageThresholdExport')
+            assert response['result']['status'] == ('passed' if expected == 0 else 'incomplete')
+        invoke(args.runtime, case, 'export-union-jvm', ['coverage-export', '--report', outputs/'union-jvm/aggregate.json',
+            '--format', 'sonar-generic', '--all-modules', '--target', 'jvm', '--output', case/'export-union-jvm'], transform_only=True)
+        from test_coverage_export_cli import check_xml, expected_lines as export_lines
+        check_xml(case/'export-union-jvm/report/coverage.xml', export_lines(target['sources']))
+        assert immutable_files(original_paths) == saved['retained'], 'Union changed retained capture evidence'
+        print('PASS optional union: JVM values, immutable inputs, action policy/cache, missing scope, thresholds and per-target export; no capture rerun', flush=True)
+        return
+
     single = call('single', selected_runs=[captures[0]['run']], selected_reports=[captures[0]['report']], expected_matrix=[])
     assert single['scope']['expectedChecks'] == [expected_checks[0]] and single['status'] == 'passed'
     missing = call('missing', selected_reports=[captures[0]['report']], code=3)
@@ -244,9 +298,12 @@ def main():
     parser.add_argument('--fixture', type=Path, default=Path('/Users/yoda/dev/pet/kvik/.kvik/tests/build-cli/case-kcswfrtl'))
     parser.add_argument('--output-dir', type=Path, default=ROOT/'.kvik/tests/coverage-aggregate-cli')
     parser.add_argument('--case', type=Path, help='Use completed captures; invoke only aggregation commands')
+    parser.add_argument('--union-only', action='store_true', help='Use --case captures read-only; write only union acceptance into a fresh output case')
     parser.add_argument('--schema-root', type=Path, help='Validate aggregation artifacts against this composed source schema')
     args = parser.parse_args()
     args.runtime = args.runtime.resolve(strict=True)
+    if args.union_only and args.case is None:
+        parser.error('--union-only requires --case; no capture is performed')
     if args.case is None:
         capture(args)
     else:
