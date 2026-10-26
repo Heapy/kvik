@@ -18,6 +18,7 @@ class ExportChecksTest(unittest.TestCase):
                 'linux-jvm/run-c/cache-invalidation-d': ['results.json', 'cold.stdout.jsonl', 'cold.stderr.log'],
                 'build-performance-cli/case-e': ['summary.json', 'phases/cold/process.json', 'phases/local/process.json'],
                 'bootstrap/cached-startup-f': ['summary.json', '000-composition.stdout', '000-composition.stderr', 'launcher.prof', 'launcher-profile.json'],
+                'bootstrap-consumer-reuse/case-h': ['summary.json', 'configuration-edit.stdout', 'configuration-edit.stderr'],
                 'unavailable-target-cli/case-g': ['summary.json', 'mixed.stdout.jsonl', 'foreign-only.stderr.log'],
             }
             expected = {}

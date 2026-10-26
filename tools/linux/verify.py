@@ -21,6 +21,7 @@ def export_checks(root):
         'cache-invalidation': ('linux-jvm/run-*/cache-invalidation-*', ('results.json', '*.stdout.jsonl', '*.stderr.log')),
         'build-performance': ('build-performance-cli/case-*', ('summary.json', 'phases/*/process.json', 'phases/*/stdout.jsonl', 'phases/*/stderr.log')),
         'cached-startup': ('bootstrap/cached-startup-*', ('summary.json', '*.stdout', '*.stderr', 'launcher.prof', 'launcher-profile.json')),
+        'bootstrap-consumer-reuse': ('bootstrap-consumer-reuse/case-*', ('summary.json', '*.stdout', '*.stderr')),
         'unavailable-target': ('unavailable-target-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log')),
     }
     output = root / '.kvik/ci-artifacts'
@@ -117,6 +118,7 @@ def main():
     if args.prepare_only is None:
         run([sys.executable, ROOT/'tests/bootstrap/test_launcher.py', '--quick', '--profile-launcher',
              '--host-name', 'Linux x64 Docker ' + platform.node()])
+        run([sys.executable, ROOT/'tests/bootstrap/consumer_reuse.py'])
     fixture_parent = ROOT/'.kvik/tests/linux-jvm'
     fixture_parent.mkdir(parents=True, exist_ok=True)
     fixture_output = Path(tempfile.mkdtemp(prefix='run-', dir=fixture_parent))

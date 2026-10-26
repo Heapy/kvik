@@ -1405,13 +1405,20 @@ owned foreground lifecycle, fresh tests after compilation reuse and two-runner
 JVM remote caching have working acceptance paths. The measured source bootstrap
 takes 591.215 s on the named Mac, including 445.447 s of archive provisioning;
 offline reconstruction and helper recomposition still take 97.352/107.663 s.
-This is a substantial plugin-development cost despite cached Mac startup meeting
-150 ms. Linux help/inspection p95 remains 161.94/210.38 ms, above that budget.
+This is a substantial plugin-development cost. After deterministic worker
+packaging and deferred bootstrap imports, separate 30-sample cached-launch checks
+report help/inspection p95 of 84.26/89.84 ms on the Mac and 79.75/87.94 ms in
+[Linux CI](https://github.com/Heapy/kvik/actions/runs/40291770574), meeting the
+150 ms budget on both measured hosts. These are not controlled speedup comparisons;
+the Mac sample retains one 263.70 ms inspection outlier. A later isolated plugin
+edit takes 142.24 s, of which 101.15 s is the final Native compiler command despite
+verified JVM worker reuse. Reusing compiled core artifacts is the next candidate
+to investigate, with no savings established yet.
 Native outputs remain local-only where relocation is unsafe, and the pinned
 Grogu Linux fixture cannot yet be fetched from its upstream repository.
 
-The next bounded work is to close the remaining lifecycle and verification gate
-audit, reduce cached Linux launch cost without skipping content checks, reduce
+The next bounded work is to finish the requirement audit, reduce Native plugin
+recomposition cost without skipping content checks, reduce
 default agent output volume while preserving queryable detail, and make the
 pinned real-project fixture available to CI. K17 remains an experiment: its
 separate comparison did not demonstrate an economy or reliability advantage.
@@ -1420,6 +1427,13 @@ compatibility. Total maintenance cost versus extending KTC has not been measured
 structured inspection and freshness contracts remain candidates for reuse there.
 The full requirement audit and final K11 decision remain open in
 [implementation status](docs/STATUS.md).
+
+The runtime/foreground functional audit now covers all eight mandatory cases.
+The final added check runs the real cached launcher offline with absent compiler
+paths, edits consumer source and configuration separately, and verifies the same
+runtime is reused while inspection observes the changed compiler setting and its
+origin. Run `python3 tests/bootstrap/consumer_reuse.py --launcher-root CHECKOUT
+--cache-dir CACHE` against a provisioned runtime; Linux CI includes this check.
 
 Compiler plugins can be built from another module in the same project. Declare
 its module, plugin ID, compiler version and selected targets/scopes on the consumer;

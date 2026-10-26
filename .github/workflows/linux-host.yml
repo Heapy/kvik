@@ -100,7 +100,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cached-startup-linux
-          path: .kvik/ci-artifacts/cached-startup
+          path: |
+            .kvik/ci-artifacts/cached-startup
+            .kvik/ci-artifacts/bootstrap-consumer-reuse
           include-hidden-files: true
           if-no-files-found: ignore
       - name: Retain unavailable-target verification checks
