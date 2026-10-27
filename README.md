@@ -1615,12 +1615,13 @@ construction takes 18.298/18.031 s and installed-tool verification takes
 Cached original-composition launches take 0.107 s before the edits and 0.117 s
 afterward. These are single observations using loopback HTTPS, not a tool-download
 benchmark or a controlled comparison with the earlier compositions.
-Native outputs remain local-only where relocation is unsafe, and the pinned
-Grogu Linux fixture cannot yet be fetched from its upstream repository.
+Native outputs remain local-only where relocation is unsafe. The pinned Grogu
+fixture is now available through the separate `kvik-fixture-4a10a089` tag; its
+[Linux compiler-profile gate](https://github.com/Heapy/kvik/actions/runs/40455635720)
+passes repository acquisition and JVM acceptance against a fresh KTC reference.
 
-The next bounded work is to broaden Native core/object-cache measurements, evaluate
-compact output in larger agent workflows, and make the pinned real-project
-fixture available to CI. K17 remains an experiment: its
+The next bounded work is to broaden Native core/object-cache measurements and
+evaluate compact output in larger agent workflows. K17 remains an experiment: its
 separate comparison did not demonstrate an economy or reliability advantage.
 These results do not justify replacing KTC generally or claiming broad KMP
 compatibility. Total maintenance cost versus extending KTC has not been measured;
