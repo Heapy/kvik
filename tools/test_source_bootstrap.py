@@ -28,7 +28,7 @@ from bootstrap import tool_archives
 from bootstrap.identity import inventory as tool_inventory, file_digest, read_regular
 from source_bootstrap_resources import measured_invocation, validate_resources
 
-DEFAULT_REFERENCE = Path('/private/tmp/kvik-k14-source-store/.kvik/tests/source-store/case-rzkf8dpt/full-kvik/source.lock.json')
+DEFAULT_REFERENCE = ROOT/'docs/decisions/examples/k14-source-graph.lock.json'
 
 
 def write(path, value):
@@ -460,7 +460,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--producer-root', type=Path, required=True)
     parser.add_argument('--source-root', type=Path, default=ROOT)
-    parser.add_argument('--reference-lock', type=Path, default=DEFAULT_REFERENCE)
+    parser.add_argument('--reference-lock', type=Path, default=DEFAULT_REFERENCE,
+                        help='Reference Native dependency closure; defaults to the repository source-graph example')
     parser.add_argument('--java-home', type=Path, default=Path('/Users/yoda/.sdkman/candidates/java/25.0.4-librca'))
     parser.add_argument('--konan-home', type=Path, default=Path('/Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20'))
     parser.add_argument('--konan-data', type=Path, default=Path.home()/'.konan')

@@ -1885,6 +1885,34 @@ private build without publishing an unrepresentable cache entry.
 
 Select an explicit source composition with `--source-lock /absolute/source.lock.json` and optionally `--source-cache /absolute/source-cache` (default `.kvik/source-cache`). The [source graph contract](docs/decisions/k14-source-graph.md) covers pinned Git/archive packages, local source packages, source plugin dependencies and exact Native library closures. `--print-composition` validates declarations and observes local inputs without downloading or creating caches. An allowed build acquires verified inputs and compiles the composition; `--offline` requires cached remote inputs, and `--no-build` requires an already verified executable. Without `--source-lock`, the existing local composition remains the default. The [full HTTPS source composition fixture](docs/evidence/k14-source-bootstrap.md) passes cold build, relocated/offline reuse and rebuild, and rebuilding after a shared helper changes; its runtime also passes the existing JVM consumer tests.
 
+The source-composition development loop can be measured with
+`python3 tools/test_source_bootstrap.py --producer-root . --source-root . --edit-loop`;
+set `--java-home`, `--konan-home`, `--konan-data` and `--artifact-cache` for the host.
+The reference Native dependency closure defaults to the repository's source-graph
+example; `--reference-lock` accepts a separately retained baseline. This scenario
+acquires Kvik, two source plugins and their shared helper over owned local HTTPS,
+then independently edits one plugin and the shared helper. It checks changed plugin
+behavior, unchanged core/object/worker identities and offline return to the original
+executable with compiler locations unavailable.
+
+One 2026-10-27 run on Apple M4 Max (36 GiB), using committed runtime/launcher sources
+from `963d149` and provisioned Kotlin/Native 2.4.20/JDK 25.0.4 tools, passed:
+
+| Source-composition invocation | Wall time | Installed-tool verification | Runtime construction | New object-cache archives |
+| --- | ---: | ---: | ---: | ---: |
+| Cold runtime and source caches | 179.679 s | 22.998 s | 154.637 s | 676 |
+| One plugin edit | 38.754 s | 19.372 s | 18.306 s | 0 |
+| Shared helper edit | 35.637 s | 16.363 s | 17.999 s | 0 |
+
+Both edits reused the byte-verified Native core, object seed and JVM worker.
+Cached offline startup and return to the original composition took 0.102/0.126 s.
+Sampled owner-plus-descendant RSS maxima were 1.753/1.043/0.971 GiB for cold/plugin/helper,
+with at most 8/7/6 observed live processes. Sampling may miss short-lived processes
+and peaks, and summed RSS may count shared pages repeatedly. These are individual
+instrumented observations with uncontrolled OS caches, not startup percentiles or
+a general speedup claim; tool installation was excluded. The retained receipt is
+`.kvik/tests/source-bootstrap/case-p7e_lroh/attempt-ijhpg4m7/summary.json`.
+
 Use `--runtime-store /absolute/shared-store` to share complete verified native runtime bundles between checkouts or distinct `--cache-dir` directories on the same compatible host. The local K04 store includes the executable, guardian, JVM workers and runtime manifests. Concurrent launchers coordinate one build; `--offline --no-build` can restore an existing shared bundle into an empty local runtime cache without compiler or source/artifact caches. Local source declarations still need to be observable. The store must be separate from sources, other bootstrap caches and tool installations. See the [shared runtime contract](docs/decisions/k14-shared-runtime-store.md) and [actual build/restore evidence](docs/evidence/k14-shared-runtime-launcher.md).
 
 `abi-dump` and `abi-check` accept the same module, target, project and tools selectors as `build`. They read main compilation outputs on JVM, Native, JS and WasmJS targets; publication coordinates are optional. Add `"abi": {"baseline": "api/library.jvm.api"}` to each target you want to check, using a separate baseline per target. Tests are neither compiled nor run. See [public API baselines](docs/abi.md) for the JS/Wasm workflow.
