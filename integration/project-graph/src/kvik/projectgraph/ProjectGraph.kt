@@ -704,6 +704,20 @@ private class Builder(
         require(domain in authorized) { "IDE source set requires a locked metadata domain: $domain; run resolve" }
         val native = source.targets.all { NativeTarget.find(it) != null }
         require(!native || sdk != null && platform in source.targets) { "Native IDE metadata requires a supporting SDK" }
+        val commonizer = if (!native) null else {
+            val commonizerId = "native:common:ide-commonize-${source.targets.sorted().joinToString("-")}"
+            if (commonizerId !in nodes) {
+                val spec = NativeCommonization(source.targets.map(NativeTarget::require).toSet(), NativeTarget.require(platform))
+                val nativeTools = tools.getValue(platform)
+                val jvmTools = tools.getValue("jvm")
+                require(nativeTools.getValue("jdk") == jvmTools.getValue("jdk")) { "Native commonizer and JVM metadata require the same JDK" }
+                nodes[commonizerId] = ActionNode(commonizerId, emptySet(), ActionOutputContract(treeOutput("commonized", "native-commonized-libraries"))) { results ->
+                    validateResults(results, emptySet())
+                    nativeCommonizationAction(spec, composition, nativeTools + jvmTools)
+                }
+            }
+            commonizerId
+        }
         val stdlib = Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")
         val roots = (commonMetadataDependencyClosure(project, source.module, source.sourceSet).external +
             if (native) emptyList() else listOf(stdlib)).distinct().filter { !native || it != stdlib }
@@ -712,7 +726,7 @@ private class Builder(
                 ?: error("Missing locked IDE metadata: $coordinate:$domain")
         }.filter { !native || it.coordinate.group != stdlib.group || it.coordinate.name != stdlib.name }
             .map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
-        val edges = if (native) setOf(checkNotNull(sdk)) else emptySet()
+        val edges = if (native) setOf(checkNotNull(sdk), checkNotNull(commonizer)) else emptySet()
         nodes[id] = ActionNode(id, edges, ActionOutputContract(treeOutput("metadata", "kotlin-metadata"))) { results ->
             validateResults(results, edges)
             val nativeStdlib = if (!native) emptyList() else {
@@ -723,10 +737,18 @@ private class Builder(
                     it.copy(path = LogicalPath("native-stdlib/shared/" + it.path.value.removePrefix(prefix)))
                 }
             }
+            val commonized = commonizer?.let { producer ->
+                results.getValue(producer).outputs.files.also { entries ->
+                    require(entries.isNotEmpty() && entries.all { !it.executable && it.path.value.startsWith("commonized/") }) { "Invalid commonizer outputs" }
+                }.map { it.copy(path = LogicalPath("native-commonized/" + it.path.value.removePrefix("commonized/"))) }
+            }.orEmpty()
+            val commonizedRoots = commonized.filter { it.path.value.endsWith("/default/manifest") }
+                .map { LogicalPath(it.path.value.removeSuffix("/default/manifest")) }.sortedBy { it.value }
+            require(commonizer == null || commonizedRoots.isNotEmpty() && commonized.all { file -> commonizedRoots.any { file.path.value.startsWith(it.value + "/") } }) { "Missing commonized library manifest" }
             jvmMetadataPrepareAction(JvmMetadataPreparation(source.module,
-                artifacts.map { it.path } + if (native) listOf(LogicalPath("native-stdlib/shared")) else emptyList(),
+                artifacts.map { it.path } + (if (native) listOf(LogicalPath("native-stdlib/shared")) else emptyList()) + commonizedRoots,
                 LogicalPath("metadata"), source.targets),
-                merge(artifacts, nativeStdlib), composition, tools.getValue("jvm"))
+                merge(artifacts, nativeStdlib, commonized), composition, tools.getValue("jvm"))
         }
         return id
     }

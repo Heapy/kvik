@@ -205,7 +205,7 @@ assert not launcher.cached(root, key)
 
     def test_complete_artifact_lock_and_compiler_arguments_are_keyed_in_order(self):
         initial = digest(canonical(self.inputs()))
-        for section in ('compilerArtifacts', 'testPlatform', 'serializationPlugin', 'jacocoAgent', 'jacocoCli', 'documentationArtifacts'):
+        for section in ('compilerArtifacts', 'testPlatform', 'serializationPlugin', 'jacocoAgent', 'jacocoCli', 'documentationArtifacts', 'commonizer'):
             lock = copy.deepcopy(self.lock)
             item = lock[section][0] if isinstance(lock[section], list) else lock[section]
             item['sha256'] = 'a'*64

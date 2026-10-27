@@ -123,9 +123,14 @@ private fun requireCommonManifest(bytes: ByteArray, targets: Set<String>, allowN
     if (allowNativeStdlib && properties.getProperty("builtins_platform") == "NATIVE" && properties.getProperty("unique_name") == "stdlib" &&
         targets.isNotEmpty() && targets.all { NativeTarget.find(it) != null }) {
         // Shared Native metadata needs genuine Native builtins. The graph supplies a verified,
-        // digest-bound stdlib capture; no other platform KLIB is admitted as shared metadata.
+        // digest-bound stdlib capture; other Native KLIBs require a matching commonizer manifest below.
         val supported = properties.getProperty("native_targets")?.split(Regex("\\s+"))?.toSet().orEmpty()
         require(targets.all { NativeTarget.require(it).compilerName in supported }) { "Native stdlib does not support the complete metadata target set" }
+    } else if (properties.getProperty("builtins_platform") == "NATIVE" && targets.all { NativeTarget.find(it) != null }) {
+        val names = targets.map { NativeTarget.require(it).compilerName }.sorted()
+        require(properties.getProperty("commonizer_target") == names.joinToString(", ", "(", ")") &&
+            properties.getProperty("commonizer_native_targets")?.split(Regex("\\s+")) == names &&
+            properties.getProperty("native_targets")?.split(Regex("\\s+")) == names) { "Commonized KLIB target intersection differs from the source set" }
     } else require(properties.getProperty("builtins_platform") in setOf(null, "COMMON") && properties.getProperty("native_targets") == null) {
         "Platform KLIB is not common metadata"
     }

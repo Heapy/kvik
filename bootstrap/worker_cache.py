@@ -55,6 +55,8 @@ def verify_bundle(directory, lock, expected):
         raise ValueError('Cached worker compiler manifest differs from input lock')
     if ('documentationArtifacts' in lock) != ('documentationManifest' in manifest):
         raise ValueError('Cached worker documentation closure differs from input lock')
+    if ('commonizer' in lock) != ('commonizer' in manifest):
+        raise ValueError('Cached worker commonizer differs from input lock')
     if 'documentationArtifacts' in lock:
         if read_json(directory/'jvm/documentation-manifest.json') != jvm_worker.documentation_distribution(lock):
             raise ValueError('Cached worker documentation manifest differs from input lock')

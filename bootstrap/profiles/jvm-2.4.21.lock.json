@@ -224,5 +224,12 @@
       "sha256": "68ecb4c5aa4934b7b50c38b0e495d7589e52dfb9d28b964ac2008b72090bfaae",
       "size": 1715750
     }
-  ]
+  ],
+  "commonizer": {
+    "coordinate": "org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:2.4.21",
+    "filename": "kotlin-klib-commonizer-embeddable-2.4.21.jar",
+    "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-klib-commonizer-embeddable/2.4.21/kotlin-klib-commonizer-embeddable-2.4.21.jar",
+    "sha256": "2f8df89c7567b6f732b83e7184af7bb9c039ecd6290c0805fe015d9743bb5cf7",
+    "size": 3844111
+  }
 }

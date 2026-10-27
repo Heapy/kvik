@@ -115,7 +115,7 @@ fun main(args: Array<String>) {
     native_source = None
     native_common_source = None
     if args.native_target:
-        native_common_source = write('native-shared/SharedNative.kt', 'package app\nimport kotlinx.cinterop.COpaquePointer\n@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)\nfun nativePointer(value: COpaquePointer?): Boolean = value == null\n')
+        native_common_source = write('native-shared/SharedNative.kt', 'package app\nimport kotlinx.cinterop.COpaquePointer\n@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)\nfun nativePointer(value: COpaquePointer?): Boolean = value == null\n@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)\nfun sharedNativePid(): Int = platform.posix.getpid()\n')
         native_source = write('native/Platform.kt', 'package app\nactual fun platformName(): String = "native"\n@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)\nfun nativeApi(): Int = platform.posix.getpid()\ninternal fun webSecret(): String = ""\n')
         write('native-tests/WebTests.kt', 'package app\n@kotlin.test.Test fun nativePlatformCheck() { kotlin.test.assertEquals("", webSecret()) }\n')
     common = ['--project', project, '--store', store]
@@ -152,6 +152,8 @@ fun main(args: Array<String>) {
         if args.native_target:
             sdk = [a for a in actions if a['actionId'].endswith(':ide-sdk')]
             assert len(sdk) == 1 and sdk[0]['status'] in (('executed', 'local_hit') if previous is None else ('local_hit',)), sdk
+            commonizers = [a for a in actions if ':common:ide-commonize-' in a['actionId']]
+            assert len(commonizers) == 1 and commonizers[0]['status'] in (('executed', 'local_hit') if previous is None else ('local_hit',)), commonizers
         by_name = {}
         for model in models:
             for c in model['compilations']:

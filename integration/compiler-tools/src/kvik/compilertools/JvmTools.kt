@@ -75,6 +75,7 @@ class InstalledJvmToolchainProvider(
         return JvmToolchainLayout(requested, java, bundle.classes, bundle.api, bundle.stdlib, bundle.junit,
             compilerArtifactsRoot, bundle.compilerManifest, jacocoAgent = bundle.jacocoAgent, jacocoCli = bundle.jacocoCli,
             jacocoAgentIdentity = bundle.jacocoAgentIdentity, jacocoCliIdentity = bundle.jacocoCliIdentity,
-            documentationManifest = bundle.documentationManifest, documentationIdentity = bundle.documentationIdentity)
+            documentationManifest = bundle.documentationManifest, documentationIdentity = bundle.documentationIdentity,
+            commonizerJar = bundle.commonizerJar)
     }
 }

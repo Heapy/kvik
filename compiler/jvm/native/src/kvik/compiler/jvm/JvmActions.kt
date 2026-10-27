@@ -6,26 +6,28 @@ internal val jvmIdentities = setOf("jdk", "jvm-compiler", "jvm-worker", "junit")
 /** Bundle identity shared with K14; workerTree is SHA-256 of canonical core TreeManifest JSON. */
 fun jvmWorkerIdentity(workerTree: Digest, api: Digest, stdlib: Digest, junit: Digest,
     jacocoAgent: Digest? = null, jacocoCli: Digest? = null, jacocoVersion: String? = null,
-    documentationManifest: Digest? = null): Digest {
+    documentationManifest: Digest? = null, commonizer: Digest? = null): Digest {
     require(listOf(jacocoAgent, jacocoCli, jacocoVersion).all { it == null } ||
         jacocoAgent != null && jacocoCli != null && jacocoVersion == "0.8.14") { "JaCoCo identity requires the pinned version and both artifacts" }
     val identity = obj("schemaVersion" to CONTRACT_VERSION.json(), "implementation" to "kvik-jvm-worker-bundle-v1".json(),
         "workerTree" to workerTree.toJson(), "api" to api.toJson(), "stdlib" to stdlib.toJson(), "junit" to junit.toJson())
     val measured = if (jacocoAgent == null) identity else JsonValue.Object(identity.values + mapOf(
         "jacocoAgent" to jacocoAgent.toJson(), "jacocoCli" to jacocoCli!!.toJson(), "jacocoVersion" to jacocoVersion!!.json()))
-    return Sha256.digest(if (documentationManifest == null) measured else JsonValue.Object(measured.values +
-        ("documentationManifest" to documentationManifest.toJson())))
+    return Sha256.digest(JsonValue.Object(measured.values +
+        (documentationManifest?.let { mapOf("documentationManifest" to it.toJson()) } ?: emptyMap()) +
+        (commonizer?.let { mapOf("commonizer" to it.toJson()) } ?: emptyMap())))
 }
 
 /** V2 pins every byte of a deterministic worker JAR; v1 tree identity remains unchanged. */
 fun jvmWorkerArchiveIdentity(workerArchive: Digest, api: Digest, stdlib: Digest, junit: Digest,
-    jacocoAgent: Digest, jacocoCli: Digest, jacocoVersion: String, documentationManifest: Digest? = null): Digest {
+    jacocoAgent: Digest, jacocoCli: Digest, jacocoVersion: String, documentationManifest: Digest? = null, commonizer: Digest? = null): Digest {
     require(jacocoVersion == "0.8.14") { "Unsupported JaCoCo bundle version" }
     val identity = obj("schemaVersion" to 2.json(), "implementation" to "kvik-jvm-worker-bundle-v2".json(),
         "workerArchive" to workerArchive.toJson(), "api" to api.toJson(), "stdlib" to stdlib.toJson(), "junit" to junit.toJson(),
         "jacocoAgent" to jacocoAgent.toJson(), "jacocoCli" to jacocoCli.toJson(), "jacocoVersion" to jacocoVersion.json())
-    return Sha256.digest(if (documentationManifest == null) identity else JsonValue.Object(identity.values +
-        ("documentationManifest" to documentationManifest.toJson())))
+    return Sha256.digest(JsonValue.Object(identity.values +
+        (documentationManifest?.let { mapOf("documentationManifest" to it.toJson()) } ?: emptyMap()) +
+        (commonizer?.let { mapOf("commonizer" to it.toJson()) } ?: emptyMap())))
 }
 @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
 fun jvmHostPlatform(): Map<String, String> = when (kotlin.native.Platform.osFamily to kotlin.native.Platform.cpuArchitecture) {

@@ -18,6 +18,7 @@ import kvik.compiler.jvm.JvmScriptObservation
 import kvik.compiler.jvm.JvmScriptPhase
 import kvik.compiler.jvm.portableJvmCompilation
 import kvik.compiler.native.NativeIdeLibrariesExecutor
+import kvik.compiler.native.NativeCommonizerExecutor
 import kvik.compiler.native.NativeCompilerExecutor
 import kvik.compiler.native.KotestNativeExecutor
 import kvik.compiler.ksp.KspNativeExecutor
@@ -311,6 +312,8 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                     val classpath = JvmClasspathExecutor(content)
                     val ideInputs = IdeInputsExecutor(content)
                     val nativeIdeLibraries = nativeTargets.associateWith { NativeIdeLibrariesExecutor(content, tools.nativeProvider(it)) }
+                    val commonizer = NativeCommonizerExecutor(run.runId, run.path, host, content, tools.jvmProvider(),
+                        nativeTargets.associateWith { tools.nativeProvider(it) })
                     val application = ApplicationBundleExecutor(content)
                     val library = LibraryPackageExecutor(content)
                     val kmpLibrary = KmpLibraryPackageExecutor(content)
@@ -328,6 +331,7 @@ private fun executeBuildOptions(options: BuildOptions, mode: ProjectMode, ownInt
                             "kvik-jvm-classpath-v1" -> classpath
                             "kvik-ide-inputs-v1" -> ideInputs
                             "kvik-native-ide-libraries-v1" -> nativeIdeLibraries.getValue(NativeTarget.require(action.target))
+                            "kvik-native-commonizer-v1" -> commonizer
                             "kvik-jvm-benchmark-harness-v1", "kvik-jvm-benchmark-v1" -> benchmarks
                             "kvik-application-bundle-v1" -> application
                             "kvik-library-package-v1" -> library

@@ -86,6 +86,7 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     "kvik-native-ide-libraries-v1" -> listOf("stdlib", "org.jetbrains.kotlin.native.platform.posix").map {
         FileEntry(LogicalPath("native-sdk/${action.target}/$it.klib/default/manifest"), digest("$salt:$it"))
     }
+    "kvik-native-commonizer-v1" -> listOf(FileEntry(LogicalPath("commonized/org.jetbrains.kotlin.native.platform.posix.klib/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-prepare-v1" -> listOf("metadata/0.klib", "metadata/classpath.json").map { FileEntry(LogicalPath(it), digest("$salt:$it")) }
     "kvik-jvm-benchmark-harness-v1" -> listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "kvik-metadata.json", "generated/Harness.class").map { FileEntry(LogicalPath("benchmark-harness/$it"), digest("$salt:$it")) }
@@ -2071,8 +2072,9 @@ class IdeInputGraphTest {
         val prepared = JvmMetadataPreparation.fromJson(action.parameters)
         assertEquals(setOf("macosArm64", "iosArm64"), prepared.targets)
         assertContains(prepared.classpath, LogicalPath("native-stdlib/shared"))
+        assertContains(prepared.classpath, LogicalPath("native-commonized/org.jetbrains.kotlin.native.platform.posix.klib"))
         assertContains(action.inputs.files.map { it.path }, LogicalPath("native-stdlib/shared/default/manifest"))
-        assertTrue(action.inputs.files.none { it.path.value.startsWith("native-sdk/") || "/org.jetbrains.kotlin.native.platform." in it.path.value })
+        assertTrue(action.inputs.files.none { it.path.value.startsWith("native-sdk/") })
         val ordinaryStdlib = artifact("org.jetbrains.kotlin:kotlin-stdlib:2.4.20", "common", "kotlin-metadata").digest
         assertTrue(action.inputs.files.none { it.digest == ordinaryStdlib })
         assertTrue(actions.getValue("app:common:ide-metadata-commonMain").inputs.files.any { it.digest == ordinaryStdlib })
@@ -2080,6 +2082,11 @@ class IdeInputGraphTest {
         assertNotEquals(action.key(Sha256), changed.getValue(id).key(Sha256))
         assertEquals(actions.getValue("app:common:ide-metadata-commonMain").key(Sha256), changed.getValue("app:common:ide-metadata-commonMain").key(Sha256))
         assertTrue(plan.compilations.isEmpty())
+        val commonizerId = "native:common:ide-commonize-iosArm64-macosArm64"
+        val commonizer = actions.getValue(commonizerId)
+        assertEquals(setOf(NativeTarget.IOS_ARM64, NativeTarget.MACOS_ARM64), NativeCommonization.fromJson(commonizer.parameters).targets)
+        assertEquals(1, plan.nodes.count { it.id == commonizerId })
+        assertNotEquals(action.key(Sha256), resolved(plan, commonizerId).getValue(id).key(Sha256))
     }
 
     @Test fun nativeEditorPreparationCapturesSdkWithoutCompilingConsumers() {

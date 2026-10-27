@@ -46,7 +46,7 @@ def artifact_digest(artifact):
 
 def read_lock(root):
     lock = read_json(root / "bootstrap/jvm-artifacts.lock.json")
-    if (not isinstance(lock, dict) or set(lock) - {"documentationArtifacts"} != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
+    if (not isinstance(lock, dict) or set(lock) - {"documentationArtifacts", "commonizer"} != {"schemaVersion", "kotlinVersion", "compilerArtifacts", "testPlatform", "serializationPlugin", "jacocoVersion", "jacocoAgent", "jacocoCli"}
             or type(lock["schemaVersion"]) is not int or lock["schemaVersion"] != 1 or lock["kotlinVersion"] not in SUPPORTED_KOTLIN_VERSIONS
             or lock["jacocoVersion"] != "0.8.14"
             or not isinstance(lock["compilerArtifacts"], list) or len(lock["compilerArtifacts"]) != 22):
@@ -93,6 +93,8 @@ def read_lock(root):
         raise ValueError("Unsupported JVM test platform")
     if lock["serializationPlugin"]["coordinate"] != f"org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:{lock['kotlinVersion']}":
         raise ValueError("Unsupported serialization compiler plugin")
+    if "commonizer" in lock and lock["commonizer"]["coordinate"] != f"org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:{lock['kotlinVersion']}":
+        raise ValueError("Commonizer version must match its compiler runtime")
     for role, name, classifier in (("jacocoAgent", "org.jacoco.agent", "runtime"), ("jacocoCli", "org.jacoco.cli", "nodeps")):
         if lock[role]["coordinate"] != f"org.jacoco:{name}:{lock['jacocoVersion']}" or lock[role]["classifier"] != classifier:
             raise ValueError("Unsupported JaCoCo artifact")
@@ -102,7 +104,7 @@ def read_lock(root):
 
 
 def all_artifacts(lock):
-    return [*lock["compilerArtifacts"], lock["testPlatform"], lock["serializationPlugin"], lock["jacocoAgent"], lock["jacocoCli"], *lock.get("documentationArtifacts", [])]
+    return [*lock["compilerArtifacts"], lock["testPlatform"], lock["serializationPlugin"], lock["jacocoAgent"], lock["jacocoCli"], *lock.get("documentationArtifacts", []), *([lock["commonizer"]] if "commonizer" in lock else [])]
 
 
 def documentation_distribution(lock):
@@ -184,7 +186,7 @@ def tree_manifest(directory):
     return tree
 
 
-def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None, jacoco_version=None, documentation_manifest=None):
+def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None, jacoco_version=None, documentation_manifest=None, commonizer=None):
     identity = {"schemaVersion": 1, "implementation": "kvik-jvm-worker-bundle-v1",
         "workerTree": digest(canonical(tree)), "api": api, "stdlib": stdlib, "junit": junit}
     if any(value is not None for value in (jacoco_agent, jacoco_cli, jacoco_version)):
@@ -193,10 +195,12 @@ def worker_identity(tree, api, stdlib, junit, jacoco_agent=None, jacoco_cli=None
         identity.update(jacocoAgent=jacoco_agent, jacocoCli=jacoco_cli, jacocoVersion=jacoco_version)
     if documentation_manifest is not None:
         identity["documentationManifest"] = documentation_manifest
+    if commonizer is not None:
+        identity["commonizer"] = commonizer
     return digest(canonical(identity))
 
 
-def worker_archive_identity(archive, api, stdlib, junit, jacoco_agent, jacoco_cli, jacoco_version, documentation_manifest=None):
+def worker_archive_identity(archive, api, stdlib, junit, jacoco_agent, jacoco_cli, jacoco_version, documentation_manifest=None, commonizer=None):
     if jacoco_version != "0.8.14":
         raise ValueError("Unsupported JaCoCo worker identity")
     identity = {"schemaVersion": 2, "implementation": "kvik-jvm-worker-bundle-v2", "workerArchive": archive,
@@ -204,6 +208,8 @@ def worker_archive_identity(archive, api, stdlib, junit, jacoco_agent, jacoco_cl
         "jacocoVersion": jacoco_version}
     if documentation_manifest is not None:
         identity["documentationManifest"] = documentation_manifest
+    if commonizer is not None:
+        identity["commonizer"] = commonizer
     return digest(canonical(identity))
 
 
@@ -303,7 +309,7 @@ def compiler_distribution(lock):
 def bundle_libraries(lock):
     return [("api", compiler_artifact(lock, "kotlin-build-tools-api")),
             ("stdlib", compiler_artifact(lock, "kotlin-stdlib")), ("junit", lock["testPlatform"]),
-            ("jacocoAgent", lock["jacocoAgent"]), ("jacocoCli", lock["jacocoCli"])]
+            ("jacocoAgent", lock["jacocoAgent"]), ("jacocoCli", lock["jacocoCli"])] + ([("commonizer", lock["commonizer"])] if "commonizer" in lock else [])
 
 
 def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, environment, log, run_owned, *, source_files=None):
@@ -340,7 +346,7 @@ def build_bundle(directory, source_root, worker_sources, lock, artifacts, java, 
     identity = worker_identity if archive is None else worker_archive_identity
     manifest["worker"] = identity(tree if archive is None else archive['digest'], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
         manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"],
-        manifest.get("documentationManifest", {}).get("digest"))
+        manifest.get("documentationManifest", {}).get("digest"), manifest.get("commonizer", {}).get("digest"))
     (bundle / "manifest.json").write_bytes(canonical(manifest))
     return digest(canonical(manifest))
 
@@ -355,13 +361,13 @@ def verify_bundle(directory, expected):
     manifest = parse_json(data.decode("utf-8", errors="strict"))
     version = manifest.get("schemaVersion") if isinstance(manifest, dict) else None
     worker_role = "classes" if version == 1 else "workerArchive"
-    if (not isinstance(manifest, dict) or set(manifest) - {"documentationManifest"} != {"schemaVersion", worker_role, "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"}
+    if (not isinstance(manifest, dict) or set(manifest) - {"documentationManifest", "commonizer"} != {"schemaVersion", worker_role, "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"}
             or type(version) is not int or version not in (1, 2) or manifest["jacocoVersion"] != "0.8.14"):
         raise ValueError("Unsupported JVM worker bundle")
     if version == 1 and tree_manifest(bundle / "classes") != manifest["classes"]:
         raise ValueError("JVM worker classes differ from runtime")
     files = set()
-    roles = ["api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli"] + (["documentationManifest"] if "documentationManifest" in manifest else []) + (["workerArchive"] if version == 2 else [])
+    roles = ["api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli"] + (["documentationManifest"] if "documentationManifest" in manifest else []) + (["commonizer"] if "commonizer" in manifest else []) + (["workerArchive"] if version == 2 else [])
     for role in roles:
         entry = manifest[role]
         if (not isinstance(entry, dict) or set(entry) != {"path", "digest", "executable"} or entry["executable"] is not False
@@ -382,7 +388,7 @@ def verify_bundle(directory, expected):
     identity = worker_identity if version == 1 else worker_archive_identity
     if manifest["worker"] != identity(manifest["classes"] if version == 1 else manifest["workerArchive"]["digest"], manifest["api"]["digest"], manifest["stdlib"]["digest"], manifest["junit"]["digest"],
         manifest["jacocoAgent"]["digest"], manifest["jacocoCli"]["digest"], manifest["jacocoVersion"],
-        manifest.get("documentationManifest", {}).get("digest")):
+        manifest.get("documentationManifest", {}).get("digest"), manifest.get("commonizer", {}).get("digest")):
         raise ValueError("Worker identity differs from bundle")
     if "documentationManifest" in manifest:
         data = read_regular(bundle / "documentation-manifest.json", 1024 * 1024)

@@ -125,6 +125,23 @@ def main():
     def prepare(name, classpath=('stdlib-all.jar', 'serialization-core.jar'), **changes):
         return compile(name, sources=(), classpath=classpath, operation='metadata-prepare', options=[], **changes)
 
+    # Native platform metadata is valid only for the commonizer's exact intersection.
+    native_manifest = dict(unique_name='org.jetbrains.kotlin.native.platform.posix', builtins_platform='NATIVE',
+                           metadata_version='2.4.0', commonizer_target='(ios_arm64, macos_arm64)',
+                           commonizer_native_targets='ios_arm64 macos_arm64', native_targets='ios_arm64 macos_arm64')
+    native_dir = work / 'native-commonized/posix.klib/default'
+    native_dir.mkdir(parents=True)
+    def native_case(name, properties, targets=('iosArm64', 'macosArm64'), code=1):
+        (native_dir / 'manifest').write_text(''.join(f'{key}={value}\n' for key, value in properties.items()))
+        prepare(name, classpath=('native-commonized/posix.klib',), metadataTargets=list(targets), code=code)
+    native_case('editor-commonized-native', native_manifest, code=0)
+    native_case('editor-commonized-wrong-target', native_manifest, targets=('linuxX64', 'macosArm64'))
+    native_case('editor-commonized-mixed-targets', native_manifest, targets=('jvm', 'macosArm64'))
+    native_case('editor-commonized-missing-marker', {k: v for k, v in native_manifest.items() if k != 'commonizer_target'})
+    native_case('editor-commonized-inconsistent-targets', dict(native_manifest, native_targets='macos_arm64'))
+    native_case('editor-raw-native-refused', {k: v for k, v in dict(native_manifest, native_targets='macos_arm64').items()
+                                           if not k.startswith('commonizer_')})
+
     prepare('editor-metadata')
     prepared = json.loads((work / 'editor-metadata/classpath.json').read_text())
     assert prepared == {'schemaVersion': 1, 'classpath': ['0.klib', '1.klib']}, prepared

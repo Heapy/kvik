@@ -2,6 +2,31 @@ package kvik.compiler.native
 
 import kvik.core.*
 
+/** Commonize precisely the declared Native intersection, using an explicitly selected tool provider. */
+data class NativeCommonization(val targets: Set<NativeTarget>, val providerTarget: NativeTarget) {
+    init { require(targets.size >= 2 && providerTarget in targets) }
+    val targetName: String get() = targets.map { it.compilerName }.sorted().joinToString(", ", "(", ")")
+    fun toJson(): JsonValue.Object = obj("targets" to targets.map { it.projectName }.sorted().map { it.json() }.json(),
+        "providerTarget" to providerTarget.projectName.json())
+    companion object {
+        fun fromJson(value: JsonValue): NativeCommonization {
+            val d = value.fields(setOf("targets", "providerTarget"))
+            val targets = d.getValue("targets").arrayValue().map { NativeTarget.require(it.stringValue()) }
+            require(targets.distinct().size == targets.size)
+            return NativeCommonization(targets.toSet(), NativeTarget.require(d.getValue("providerTarget").stringValue()))
+        }
+    }
+}
+
+fun nativeCommonizationAction(spec: NativeCommonization, composition: Digest, toolchains: Map<String, Digest>): ActionSpec {
+    require(toolchains.keys == spec.providerTarget.toolIdentityNames + setOf("jdk", "jvm-compiler", "jvm-worker", "junit"))
+    return ActionSpec("kvik-native-commonizer-v1", composition, ActionKind.GENERATE, spec.providerTarget.executionPlatform, "common",
+        toolchains.toMap(), TreeManifest(emptyList()), listOf(LogicalPath("commonized")),
+        listOf("org.jetbrains.kotlin.commonizer.cli.CommonizerCLI", "native-dist-commonize", "-output-targets", spec.targetName,
+            "-optimistic-numbers", "false", "-platform-integers", "false", "-log-level", "quiet"),
+        mapOf("LANG" to "C.UTF-8", "PATH" to "/usr/bin:/bin"), spec.toJson(), 180_000, CachePolicy.LOCAL)
+}
+
 /** Editor SDK capture is independent of project sources and never invokes the compiler. */
 fun nativeIdeLibrariesAction(target: NativeTarget, composition: Digest, toolchains: Map<String, Digest>): ActionSpec {
     require(toolchains.keys == target.toolIdentityNames) { "Native editor libraries require exact Native tool identities" }

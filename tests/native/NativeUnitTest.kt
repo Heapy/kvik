@@ -10,9 +10,110 @@ import kvik.cache.NativeFiles
 import kvik.execution.NativeRunDirectory
 import kvik.execution.SchedulerRun
 import kvik.execution.EventJournal
+import kvik.compiler.jvm.JvmToolchainLayout
+import kvik.compiler.jvm.JvmToolchainProvider
 import kotlin.concurrent.atomics.AtomicInt
 
 class NativeUnitTest {
+    @Test fun commonizerUsesIsolatedRuntimeAndPublishesOnlyCompleteTargetIntersection() {
+        val root = NativeRunDirectory("/private/tmp").path
+        try {
+            val spec = NativeCommonization(setOf(NativeTarget.MACOS_ARM64, NativeTarget.IOS_ARM64), NativeTarget.MACOS_ARM64)
+            assertEquals(spec, NativeCommonization.fromJson(spec.toJson()))
+            assertEquals("(ios_arm64, macos_arm64)", spec.targetName)
+            assertFails { spec.copy(targets = setOf(NativeTarget.MACOS_ARM64)) }
+            val jars = listOf("kotlin-compiler-embeddable-2.4.20.jar", "kotlin-stdlib-2.4.20.jar", "kotlin-script-runtime-2.4.20.jar",
+                "kotlin-reflect-1.6.10.jar", "kotlinx-coroutines-core-jvm-1.8.0.jar", "annotations-13.0.jar")
+            val manifest = obj("schemaVersion" to CONTRACT_VERSION.json(), "version" to "2.4.20".json(),
+                "artifacts" to (jars + "kotlin-metadata-jvm-2.4.20.jar").map { obj("path" to it.json()) }.json(),
+                "serializationPlugin" to JsonValue.Null)
+            NativeFiles.writeNew("$root/compiler.json", manifest.canonical().encodeToByteArray())
+            val digest = Sha256.digest(byteArrayOf(1))
+            val tools = (spec.providerTarget.toolIdentityNames + setOf("jdk", "jvm-compiler", "jvm-worker", "junit"))
+                .associateWith { digest } + ("jvm-compiler" to Sha256.digest(manifest))
+            val action = nativeCommonizationAction(spec, digest, tools)
+            assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+            assertNotEquals(action.key(Sha256), nativeCommonizationAction(spec.copy(targets = setOf(NativeTarget.MACOS_ARM64,
+                NativeTarget.LINUX_X64)), digest, tools).key(Sha256))
+            for (target in spec.targets) NativeFiles.ensureDirectory("$root/native/klib/platform/${target.compilerName}")
+            val native = NativeToolchainProvider { requested ->
+                assertEquals(tools.filterKeys { it in spec.providerTarget.toolIdentityNames }, requested)
+                NativeToolchainLayout("$root/native/bin/konanc", "/jdk", "/sdk", "/dependencies", "/developer")
+            }
+            val jvm = JvmToolchainProvider { requested ->
+                assertEquals(tools.filterKeys { it in setOf("jdk", "jvm-compiler", "jvm-worker", "junit") }, requested)
+                JvmToolchainLayout(requested, "/jdk/bin/java", "/worker", "/bta.jar", "/stdlib.jar", "/junit.jar",
+                    "$root/jars", "$root/compiler.json", commonizerJar = "$root/kotlin-klib-commonizer-embeddable-2.4.20.jar")
+            }
+            for (scenario in listOf("success", "wrong-target", "failure", "cancel-process", "cancel-capture")) {
+                var launched = false
+                var closed = false
+                var cancelled = false
+                val store = NativeContentStore("$root/$scenario-store")
+                val host = object : ProcessHost {
+                    override fun start(request: ProcessRequest): OwnedProcess {
+                        launched = true
+                        assertEquals("/jdk/bin/java", request.arguments.first())
+                        val classpath = request.arguments[request.arguments.indexOf("-cp") + 1].split(':')
+                        assertEquals(7, classpath.size)
+                        assertEquals(jars.toSet(), classpath.drop(1).map { it.substringAfterLast('/') }.toSet())
+                        assertTrue(classpath.none { "kotlin-metadata-jvm" in it })
+                        assertEquals(spec.targetName, request.arguments[request.arguments.indexOf("-output-targets") + 1])
+                        assertEquals("$root/native", request.arguments[request.arguments.indexOf("-distribution-path") + 1])
+                        assertEquals("${request.workingDirectory}/home", request.environment["HOME"])
+                        val directory = "${request.workingDirectory}/output/${spec.targetName}/org.jetbrains.kotlin.native.platform.posix/default"
+                        NativeFiles.ensureDirectory(directory)
+                        val target = if (scenario == "wrong-target") "(linux_x64, macos_arm64)" else spec.targetName
+                        NativeFiles.writeNew("$directory/manifest", ("unique_name=org.jetbrains.kotlin.native.platform.posix\n" +
+                            "builtins_platform=NATIVE\ncommonizer_target=$target\ncommonizer_native_targets=ios_arm64 macos_arm64\n" +
+                            "native_targets=ios_arm64 macos_arm64\nmetadata_version=2.4.0\n").encodeToByteArray())
+                        repeat(30) { NativeFiles.writeNew("$directory/$it.knm", "fragment-$it".encodeToByteArray()) }
+                        NativeFiles.writeNew(request.stderrFile, "compiler failure".encodeToByteArray())
+                        return object : OwnedProcess {
+                            override fun poll(): ProcessResult? = if (scenario == "cancel-process" && !cancelled) null
+                                else ProcessResult(if (scenario == "failure") 7 else 0, cancelled = cancelled, usage = ProcessUsage(10, 20, 30))
+                            override fun cancel() { cancelled = true }
+                            override fun close() { closed = true }
+                        }
+                    }
+                    override fun close() = Unit
+                }
+                val executor = NativeCommonizerExecutor("run", root, host, store, jvm, mapOf(spec.providerTarget to native))
+                assertFails { executor.start("other", scenario, action) }
+                assertFails { executor.start("run", scenario, action.copy(arguments = action.arguments + "--unexpected")) }
+                executor.start("run", scenario, action).use { running ->
+                    assertFails { executor.start("run", scenario, action) }
+                    if (scenario == "cancel-process") {
+                        awaitLaunch(running) { launched }
+                        running.cancel()
+                    } else if (scenario == "cancel-capture") {
+                        val deadline = TimeSource.Monotonic.markNow()
+                        while (store.get(Sha256.digest("fragment-0".encodeToByteArray())) == null) {
+                            check(deadline.elapsedNow().inWholeMilliseconds < 5_000)
+                            assertNull(running.poll())
+                            usleep(1_000u)
+                        }
+                        running.cancel()
+                    }
+                    val result = awaitResult(running)
+                    assertTrue(closed)
+                    assertEquals(listOf(ProcessUsage(10, 20, 30)), result.processUsage)
+                    if (scenario == "success") {
+                        assertEquals(ActionStatus.EXECUTED, result.status)
+                        assertEquals(31, result.outputs.files.size)
+                        result.outputs.files.forEach { file ->
+                            assertTrue(file.path.value.startsWith("commonized/org.jetbrains.kotlin.native.platform.posix.klib/default/"))
+                            assertEquals(file.digest, Sha256.digest(assertNotNull(store.get(file.digest))))
+                        }
+                    } else {
+                        assertEquals(if (scenario.startsWith("cancel")) ActionStatus.CANCELLED else ActionStatus.FAILED, result.status)
+                        assertTrue(result.outputs.files.isEmpty())
+                    }
+                }
+            }
+        } finally { NativeFiles.removeTree(root) }
+    }
+
     @Test fun editorSdkCaptureUsesVerifiedTargetAndPreservesKlibDirectoriesWithoutProcesses() {
         val root = NativeRunDirectory("/private/tmp").path
         try {

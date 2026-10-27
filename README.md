@@ -294,8 +294,13 @@ their own roots and locked metadata. Refinement edges preserve `expect`/`actual`
 and internal visibility; shared tests receive explicit access to their main source
 sets, including when the test declaration omits a main refinement edge.
 Native-only shared source sets use Native stdlib for builtins such as `kotlinx.cinterop`.
-Shared platform APIs still require a commonizer integration; copying one target's
-platform libraries does not establish their availability in shared source sets.
+Their platform libraries are commonized for exactly the source set's declared Native
+targets in a separate, locally cached action. For example, a macOS+iOS source set can
+use shared `platform.posix` APIs, while macOS-only `platform.AppKit` remains unavailable.
+The pinned commonizer runs in an invocation-owned JVM with its own runtime classpath;
+it reads the verified Native distribution and does not use an ambient Gradle commonizer
+cache. Generated libraries are checked against the requested target intersection before
+being prepared for IDEA. Custom cinterop commonization remains pending.
 Compiler-plugin analysis, debugging and live
 project-model reload remain pending. `idea-export` rejects single-target common
 roots and compiler plugins; `prepare-ide` preserves their ownership/presence in
@@ -321,8 +326,9 @@ kinds. Pass the resulting case to `test_idea_import.py --prepared-case` to verif
 platform-specific APIs and rejection of JVM APIs in web modules with installed IDEA.
 Add `--native-target macosArm64` or `--native-target linuxX64` to prepare the host
 Native SDK, execute a Native test and check Native platform APIs and test friends
-in the import harness, including Native builtins in a source set shared with a second
-declared Native target. Linux CI combines `--web` with `--native-target linuxX64`.
+in the import harness, including Native builtins and commonized POSIX APIs in a source
+set shared with a second declared Native target. The import check rejects target-only
+APIs in that shared set. Linux CI combines `--web` with `--native-target linuxX64`.
 
 ### Configuration changes
 

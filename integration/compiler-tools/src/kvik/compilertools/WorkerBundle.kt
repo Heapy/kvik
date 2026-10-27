@@ -23,6 +23,7 @@ class VerifiedJvmWorkerBundle internal constructor(
     val jacocoCliIdentity: Digest,
     val documentationManifest: String? = null,
     val documentation: DocumentationDistribution? = null,
+    val commonizerJar: String? = null,
 ) {
     val documentationIdentity: Digest? get() = documentation?.identity
 }
@@ -42,7 +43,7 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: ()
     require(version == 1L || version == 2L) { "Unsupported JVM worker bundle version" }
     val workerRole = if (version == 1L) "classes" else "workerArchive"
     val fields = document.fields(
-        setOf("schemaVersion", workerRole, "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"), setOf("documentationManifest"))
+        setOf("schemaVersion", workerRole, "api", "stdlib", "junit", "compilerManifest", "worker", "jacocoVersion", "jacocoAgent", "jacocoCli"), setOf("documentationManifest", "commonizer"))
     require(CompilerFiles.names(root, checkpoint).toSet() == setOf(if (version == 1L) "classes" else "worker.jar", "lib", "manifest.json", "compiler-manifest.json") +
         if ("documentationManifest" in fields) setOf("documentation-manifest.json") else emptySet()) {
         "Unexpected JVM worker bundle entries"
@@ -82,6 +83,7 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: ()
     } else null
     val roles = listOf("api", "stdlib", "junit", "compilerManifest", "jacocoAgent", "jacocoCli") +
         (if ("documentationManifest" in fields) listOf("documentationManifest") else emptyList()) +
+        (if ("commonizer" in fields) listOf("commonizer") else emptyList()) +
         (if (version == 2L) listOf("workerArchive") else emptyList())
     val entries = roles.associateWith { role ->
         checkpoint()
@@ -110,10 +112,10 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: ()
     }
     val identity = if (version == 1L) jvmWorkerIdentity(checkNotNull(workerTree), entries.getValue("api").digest,
         entries.getValue("stdlib").digest, entries.getValue("junit").digest,
-        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, fields.getValue("jacocoVersion").stringValue(), entries["documentationManifest"]?.digest)
+        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, fields.getValue("jacocoVersion").stringValue(), entries["documentationManifest"]?.digest, entries["commonizer"]?.digest)
     else jvmWorkerArchiveIdentity(entries.getValue("workerArchive").digest, entries.getValue("api").digest,
         entries.getValue("stdlib").digest, entries.getValue("junit").digest,
-        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, fields.getValue("jacocoVersion").stringValue(), entries["documentationManifest"]?.digest)
+        entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest, fields.getValue("jacocoVersion").stringValue(), entries["documentationManifest"]?.digest, entries["commonizer"]?.digest)
     require(identity == Digest.fromJson(fields.getValue("worker"))) { "JVM worker identity differs from bundle" }
     checkpoint()
     fun path(role: String) = "$root/${entries.getValue(role).path.value}"
@@ -121,5 +123,6 @@ fun verifyJvmWorkerBundle(root: String, expectedManifest: Digest, checkpoint: ()
         entries.getValue("compilerManifest").digest, identity, entries.getValue("junit").digest,
         fields.getValue("jacocoVersion").stringValue(), path("jacocoAgent"), path("jacocoCli"),
         entries.getValue("jacocoAgent").digest, entries.getValue("jacocoCli").digest,
-        entries["documentationManifest"]?.let { "$root/${it.path.value}" }, documentation)
+        entries["documentationManifest"]?.let { "$root/${it.path.value}" }, documentation,
+        entries["commonizer"]?.let { "$root/${it.path.value}" })
 }

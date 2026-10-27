@@ -105,10 +105,11 @@ class ArtifactBoundaryTest(unittest.TestCase):
     def test_artifact_lock_rejects_ambiguous_and_unlocked_sources(self):
         valid = jvm_worker.read_lock(ROOT)
         self.assertEqual(22, len(valid["compilerArtifacts"]))
-        self.assertEqual(31, len(jvm_worker.all_artifacts(valid)))
+        self.assertEqual(32, len(jvm_worker.all_artifacts(valid)))
         for change in [lambda x: x.update(schemaVersion=True),
                        lambda x: x.update(documentationArtifacts=[]),
                        lambda x: x["documentationArtifacts"][0].update(coordinate="org.jetbrains.dokka:dokka-cli:2.1.0"),
+                       lambda x: x["commonizer"].update(coordinate="org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:2.4.10"),
                        lambda x: x["compilerArtifacts"].pop(),
                        lambda x: next(a for a in x["compilerArtifacts"] if a["coordinate"].startswith("org.ow2.asm:asm-tree:")).update(coordinate="org.ow2.asm:asm-tree:9.9"),
                        lambda x: x.update(jacocoVersion="0.8.13"),
@@ -188,6 +189,16 @@ class ArtifactBoundaryTest(unittest.TestCase):
             self.assertEqual([a["filename"] for a in lock["compilerArtifacts"]],
                 [a["path"] for a in distribution["artifacts"]])
             self.assertEqual(digest(canonical(distribution)), bundle["compilerManifest"]["digest"])
+            commonizer = lock["commonizer"]
+            for option in ("-cp", "-classpath"):
+                self.assertNotIn(str(artifacts[commonizer["filename"]]), commands[0][commands[0].index(option) + 1].split(os.pathsep))
+            self.assertEqual(jvm_worker.artifact_digest(commonizer), bundle["commonizer"]["digest"])
+            commonizer_path = runtime / "jvm" / bundle["commonizer"]["path"]
+            original_commonizer = commonizer_path.read_bytes()
+            commonizer_path.write_bytes(b"!" + original_commonizer[1:])
+            with self.assertRaisesRegex(ValueError, "differs from runtime"):
+                jvm_worker.verify_bundle(runtime, expected)
+            commonizer_path.write_bytes(original_commonizer)
             for item in lock["compilerArtifacts"]:
                 for option in ("-cp", "-classpath"):
                     self.assertIn(str(artifacts[item["filename"]]), commands[0][commands[0].index(option) + 1].split(os.pathsep))
@@ -241,6 +252,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
     def test_legacy_lock_and_bundle_without_documentation_manifest_remain_valid(self):
         lock = jvm_worker.read_lock(ROOT)
         lock.pop("documentationArtifacts")
+        lock.pop("commonizer")
         with patch.object(jvm_worker, "read_json", return_value=lock):
             self.assertEqual(lock, jvm_worker.read_lock(ROOT))
         with tempfile.TemporaryDirectory() as temporary:

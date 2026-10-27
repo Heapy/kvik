@@ -150,7 +150,7 @@ class WorkerArchiveTest(unittest.TestCase):
         self.assertEqual(1, manifest['schemaVersion']); self.assertNotIn('workerArchive', manifest)
         self.assertEqual(output/'jvm/classes', jvm_worker.worker_classpath(output, expected))
         self.assertEqual(jvm_worker.worker_identity(manifest['classes'], *[manifest[role]['digest'] for role in
-            ('api','stdlib','junit','jacocoAgent','jacocoCli')], manifest['jacocoVersion'], manifest['documentationManifest']['digest']), manifest['worker'])
+            ('api','stdlib','junit','jacocoAgent','jacocoCli')], manifest['jacocoVersion'], manifest['documentationManifest']['digest'], manifest.get('commonizer', {}).get('digest')), manifest['worker'])
         path = output/'jvm/classes/a/Worker.class'; raw = path.read_bytes(); stamp = path.stat()
         path.write_bytes(bytes([raw[0]^1])+raw[1:]); os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
         with self.assertRaises(ValueError): jvm_worker.verify_bundle(output, expected)

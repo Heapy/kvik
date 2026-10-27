@@ -181,8 +181,9 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
                 assert any(suffix in file and f'KVIK_REFERENCE {name} RESOLVED' == message
                            for file, message in values), (target, values)
         if prepared and prepared.get('nativeCommonSource'):
-            assert any('native-shared/SharedNative.kt' in file and message == 'KVIK_REFERENCE COpaquePointer RESOLVED'
-                       for file, message in values), values
+            for name in ('COpaquePointer', 'getpid'):
+                assert any('native-shared/SharedNative.kt' in file and message == f'KVIK_REFERENCE {name} RESOLVED'
+                           for file, message in values), values
         if common_library:
             for name in ('listOf', 'first', 'platformName', 'sharedValue', 'commonValue'):
                 assert any(f'KVIK_REFERENCE {name} RESOLVED' == message for _, message in values), (name, values)
@@ -249,9 +250,9 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
         native_shared = Path(prepared['nativeCommonSource'])
         original = native_shared.read_text()
         try:
-            native_shared.write_text(original + 'fun platformLeak(): Int = platform.posix.getpid()\n')
+            native_shared.write_text(original + 'fun platformLeak(value: platform.AppKit.NSApplication?): Boolean = value == null\n')
             leak = inspect('native-common-platform-leak')
-            assert len(leak) == 1 and 'SharedNative.kt' in leak[0][0] and "'platform'" in leak[0][1], leak
+            assert len(leak) == 1 and 'SharedNative.kt' in leak[0][0] and "'AppKit'" in leak[0][1], leak
         finally:
             native_shared.write_text(original)
         phases.append('native-common-platform-leak')

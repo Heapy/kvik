@@ -37,7 +37,8 @@ class JvmLockProfilesTest(unittest.TestCase):
                 lock = jvm_worker.read_lock(root)
                 self.assertEqual(version, lock["kotlinVersion"])
                 self.assertEqual(22, len(lock["compilerArtifacts"]))
-                self.assertEqual(31, len(jvm_worker.all_artifacts(lock)))
+                self.assertEqual(32, len(jvm_worker.all_artifacts(lock)))
+                self.assertEqual(f"org.jetbrains.kotlin:kotlin-klib-commonizer-embeddable:{version}", lock["commonizer"]["coordinate"])
                 for role in ("testPlatform", "jacocoVersion", "jacocoAgent", "jacocoCli", "documentationArtifacts"):
                     self.assertEqual(default[role], lock[role], role)
 
