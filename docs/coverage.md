@@ -272,3 +272,21 @@ kvik coverage-publish --report /path/to/previous-attempt/source/report.json \
 This works even after the original report directory is removed. There is no
 automatic POST retry or deduplication; another attempt can create another check.
 The retained reports remain usable regardless of the publication result.
+
+## Run the reporting acceptance checks
+
+The Linux host workflow runs the reporting contract against fresh JVM test captures:
+
+```sh
+python3 tools/test_reporting_cli.py --runtime /absolute/kvik.kexe \
+  --fixture /absolute/prepared-jvm-fixture
+```
+
+Use an unmodified fixture created by `tools/test_build_cli.py --prepare-only`,
+with provisioned tools and locked dependency artifacts. The reporting gate copies
+it into a private case and runs capture/exclusion checks, two-job aggregation,
+target-union completeness, JUnit and coverage exports, thresholds, report-cache
+reuse and publication failure/retry through a loopback server. Transformation
+checks retain test effects and verify that reporting does not rerun tests.
+The workflow uploads step results and logs as `reporting-linux`; local cases live
+under `.kvik/tests/reporting-cli/`.

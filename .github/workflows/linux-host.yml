@@ -118,6 +118,14 @@ jobs:
             .kvik/ci-artifacts/bootstrap-consumer-reuse
           include-hidden-files: true
           if-no-files-found: ignore
+      - name: Retain reporting contract checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporting-linux
+          path: .kvik/ci-artifacts/reporting
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Retain unavailable-target verification checks
         if: always()
         uses: actions/upload-artifact@v4

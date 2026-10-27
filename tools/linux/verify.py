@@ -25,6 +25,7 @@ def export_checks(root):
         'unavailable-target': ('unavailable-target-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log')),
         'build-output': ('build-output-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log',
             'runs/*/verification.json', 'runs/*/completion.json', 'runs/*/events.jsonl')),
+        'reporting': ('reporting-cli/case-*', ('summary.json', '*.stdout', '*.stderr')),
     }
     output = root / '.kvik/ci-artifacts'
     output.mkdir(parents=True, exist_ok=True)
@@ -179,6 +180,8 @@ def main():
         raise RuntimeError('Expected one fresh JVM performance fixture')
     run([sys.executable, ROOT/'tools/test_build_performance_cli.py', '--runtime', executable,
          '--fixture', performance_fixtures[0], '--host-name', 'Linux x64 Docker ' + platform.node()])
+    run([sys.executable, ROOT/'tools/test_reporting_cli.py', '--runtime', executable,
+         '--fixture', performance_fixtures[0]])
     run([sys.executable, ROOT/'tools/test_native_build_cli.py', '--java-home', java,
          '--konan-home', native, '--konan-data', data, '--runtime', executable,
          *(['--link-timeout-ms', args.native_link_timeout_ms] if args.native_link_timeout_ms is not None else [])])
