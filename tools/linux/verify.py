@@ -26,6 +26,7 @@ def export_checks(root):
         'build-output': ('build-output-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log',
             'runs/*/verification.json', 'runs/*/completion.json', 'runs/*/events.jsonl')),
         'reporting': ('reporting-cli/case-*', ('summary.json', '*.stdout', '*.stderr')),
+        'js-wasm': ('js-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log')),
     }
     output = root / '.kvik/ci-artifacts'
     output.mkdir(parents=True, exist_ok=True)
@@ -53,6 +54,8 @@ def main():
     parser.add_argument('--java-home', type=Path, default=os.environ.get('JAVA_HOME'), required='JAVA_HOME' not in os.environ)
     parser.add_argument('--konan-home', type=Path, default=os.environ.get('KONAN_HOME'), required='KONAN_HOME' not in os.environ)
     parser.add_argument('--konan-data', type=Path, default=ROOT/'.kvik/linux-konan')
+    parser.add_argument('--node-root', type=Path, default=os.environ.get('NODE_ROOT'),
+                        help='Run JS/Wasm tests using this explicit Node installation (provided by the CI image).')
     parser.add_argument('--bootstrap-command-timeout', type=int, default=300,
                         help='Per-command bootstrap deadline in seconds (1–3600; default: 300).')
     parser.add_argument('--native-link-timeout-ms', type=int,
@@ -161,6 +164,10 @@ def main():
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache'])
     run([sys.executable, ROOT/'tools/test_common_idea_export_cli.py', '--web', '--native-target', 'linuxX64', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache'])
+    if args.node_root is not None:
+        run([sys.executable, ROOT/'tools/test_js_cli.py', '--runtime', executable,
+             '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache',
+             '--node-root', args.node_root.resolve(strict=True)])
     run([sys.executable, ROOT/'tools/test_compiler_session_worker.py', '--java-home', java,
          '--compiler-artifacts', ROOT/'.kvik/tool-artifacts', '--offline'])
     run([sys.executable, ROOT/'tools/test_foreground_jvm.py', '--runtime', executable,

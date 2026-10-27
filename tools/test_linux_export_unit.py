@@ -22,6 +22,7 @@ class ExportChecksTest(unittest.TestCase):
                 'unavailable-target-cli/case-g': ['summary.json', 'mixed.stdout.jsonl', 'foreign-only.stderr.log'],
                 'build-output-cli/case-i': ['summary.json', 'summary.stdout.jsonl', 'summary.stderr.log',
                     'runs/run-a/verification.json', 'runs/run-a/completion.json', 'runs/run-a/events.jsonl'],
+                'js-cli/case-j': ['summary.json', '001-test.stdout.jsonl', '001-test.stderr.log'],
             }
             expected = {}
             for case_name, names in fixtures.items():
@@ -41,6 +42,8 @@ class ExportChecksTest(unittest.TestCase):
                         category = 'unavailable-target'
                     if category == 'build-output-cli':
                         category = 'build-output'
+                    if category == 'js-cli':
+                        category = 'js-wasm'
                     expected[f'{category}/{case.name}/{name}'] = name
                 (case / 'private-input').write_text('do not export')
                 (case / 'symlink.stdout.jsonl').symlink_to(case / 'private-input')

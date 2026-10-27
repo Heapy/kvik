@@ -56,8 +56,10 @@ def main():
     parser.add_argument('--tools', required=True, type=Path)
     parser.add_argument('--node-root', required=True, type=Path)
     parser.add_argument('--store', required=True, type=Path)
+    parser.add_argument('--output-dir', type=Path, default=ROOT/'.kvik/tests/js-cli')
     args = parser.parse_args()
-    root = Path(tempfile.mkdtemp(prefix='kvik-js-cli-')).resolve()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix='case-', dir=args.output_dir.resolve()))
     print('Fixture:', root, flush=True)
     runtime = args.runtime.resolve(strict=True)
     store = args.store.resolve()
@@ -68,6 +70,12 @@ def main():
     env = dict(os.environ)
     env.pop('KVIK_BOOTSTRAP_OFFLINE', None)
     schema = json.loads((ROOT / 'schemas/v1/contracts.json').read_bytes())
+    summary = dict(passed=False, runtime=str(runtime), nodeRoot=str(node), calls=[])
+
+    def save_summary():
+        (root/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
+
+    save_summary()
 
     def write(name, content):
         path = root / name
@@ -114,10 +122,20 @@ class Tests {
     write('app/test/Tests.kt', tests)
 
     def invoke(*argv, expected=0):
-        process = subprocess.run([str(runtime), *map(str, argv)], cwd=root, env=env, capture_output=True, timeout=360)
+        label = f'{len(summary["calls"]):03}-{argv[0]}'
+        command = [str(runtime), *map(str, argv)]
+        call = dict(command=command, expectedExitCode=expected, exitCode=None,
+                    stdout=label+'.stdout.jsonl', stderr=label+'.stderr.log')
+        summary['calls'].append(call)
+        save_summary()
+        with (root/call['stdout']).open('wb') as stdout, (root/call['stderr']).open('wb') as stderr:
+            process = subprocess.run(command, cwd=root, env=env, stdout=stdout, stderr=stderr, timeout=360)
+        call['exitCode'] = process.returncode
+        save_summary()
+        stdout, stderr = (root/call['stdout']).read_bytes(), (root/call['stderr']).read_bytes()
         assert (process.returncode != 0 if expected is None else process.returncode == expected), (
-            argv, process.returncode, process.stdout[-8000:], process.stderr[-2000:])
-        events = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
+            argv, process.returncode, stdout[-8000:], stderr[-2000:])
+        events = [json.loads(line) for line in stdout.splitlines() if line.strip()]
         for event in events:
             if event.get('type') == 'run-finished':
                 jsonschema.Draft202012Validator({**schema, '$ref': '#/$defs/verification'}).validate(event['payload'])
@@ -138,6 +156,10 @@ class Tests {
         retained, = invoke('verification', '--run', root / 'runs' / record['runId'])
         assert retained['freshness'] == 'current' and retained['verification'] == record, retained
 
+    composition, = invoke('runtime-info')
+    assert {plugin['id'] for plugin in composition['plugins']} == {'kvik.kotlin'}, (
+        'This gate requires the standard runtime composition: additional source build plugins '
+        'intentionally force full verification, so unchanged-check omission cannot be asserted.')
     resolve()
     built = run(operation='build')
     assert built['status'] == 'passed' and not built['tests'] and built['testCounts']['executed'] == 0, built
@@ -230,6 +252,8 @@ class Tests {
     save_config(); resolve()
     empty = run(expected=3)
     assert empty['status'] == 'incomplete' and empty['testCounts']['executed'] == 0
+    summary['passed'] = True
+    save_summary()
     print('PASS JS/Wasm CLI compile/link, fresh tests, cache reuse, dependency edits, failures and empty filters', flush=True)
 
 

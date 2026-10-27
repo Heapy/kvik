@@ -63,3 +63,13 @@ Run `tools/test_js_compiler.py --help` for the offline integration checks. Suppl
 compiler artifacts, Maven cache and Node paths. `--konan-home` also runs native contract tests.
 `tools/test_js_execution.py` exercises the Native adapter with real owned Node processes,
 including timeout/cancellation and retained JSON/JUnit reports, without compiling consumers.
+
+The Linux host workflow runs `tools/test_js_cli.py` with the image's pinned Node
+24.21.0 installation. It covers Node-free compilation, fresh JS/Wasm tests after
+cache hits, dependency invalidation, failed/ignored tests, empty filters, retained
+test aggregation and change-aware verification. Invocation logs and a completion
+summary are uploaded as `js-wasm-linux`. Local cases are retained under
+`.kvik/tests/js-cli/`; pass `--output-dir` to select another location.
+Use the standard `kvik.kotlin` runtime composition for this gate: additional
+source build plugins conservatively force full verification instead of omitting
+unchanged checks.

@@ -15,6 +15,14 @@ RUN curl --fail --location --retry 3 \
 
 ENV KONAN_HOME=/opt/kotlin-native-prebuilt-linux-x86_64-2.4.20
 RUN curl --fail --location --retry 3 \
+      https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz \
+      --output /tmp/node.tar.xz \
+    && echo 'fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6  /tmp/node.tar.xz' | sha256sum --check \
+    && mkdir /opt/node \
+    && tar -xJf /tmp/node.tar.xz --strip-components=1 -C /opt/node \
+    && rm /tmp/node.tar.xz
+ENV NODE_ROOT=/opt/node
+RUN curl --fail --location --retry 3 \
       https://github.com/buchgr/bazel-remote/releases/download/v2.6.4/bazel-remote-2.6.4-linux-amd64 \
       --output /usr/local/bin/bazel-remote \
     && echo '6a6b64666c2238ec6b49b7b29f5e41e4149de09417a0028897c9bffe40376876  /usr/local/bin/bazel-remote' | sha256sum --check \
