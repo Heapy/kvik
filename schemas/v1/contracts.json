@@ -5917,6 +5917,10 @@
         "target": {
           "enum": [
             "jvm",
+            "macosArm64",
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64",
             "js",
             "wasmJs"
           ]
@@ -5979,7 +5983,11 @@
                 "target": {
                   "enum": [
                     "js",
-                    "wasmJs"
+                    "wasmJs",
+                    "macosArm64",
+                    "linuxX64",
+                    "iosArm64",
+                    "iosSimulatorArm64"
                   ]
                 }
               }
@@ -6035,6 +6043,10 @@
         "target": {
           "enum": [
             "jvm",
+            "macosArm64",
+            "linuxX64",
+            "iosArm64",
+            "iosSimulatorArm64",
             "js",
             "wasmJs"
           ]
@@ -6138,6 +6150,10 @@
         {
           "type": "string",
           "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)$(?![\\s\\S])"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*:(macosArm64|linuxX64|iosArm64|iosSimulatorArm64):ide-inputs$(?![\\s\\S])"
         },
         {
           "type": "string",

@@ -31,7 +31,7 @@ data class JvmIdeCompilation(val module: String, val compilation: String, val ro
         require(roots.distinct().size == roots.size && modules.distinct().size == modules.size)
         require(sourceSet == null && targets.isEmpty() || sourceSet != null && sourceSet.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*")) &&
             targets.size >= 2 && targets.all { it == "jvm" || NativeTarget.find(it) != null || KotlinJsTarget.find(it) != null })
-        require(if (common) target == "common" else target in setOf("jvm", "js", "wasmJs"))
+        require(if (common) target == "common" else target in setOf("jvm", "js", "wasmJs") || NativeTarget.find(target) != null)
         require(libraries.distinct().size == libraries.size && libraries.all { it.value.endsWith(if (target == "jvm") ".jar" else ".klib") })
         require(refines.distinct().size == refines.size && friends.distinct().size == friends.size)
         require(friends.isEmpty() || compilation == "test")
@@ -66,7 +66,7 @@ fun ideCompilationName(module: String, target: String, scope: String): String =
 
 data class IdeInputs(val module: String, val compilations: List<JvmIdeCompilation>, val target: String = "jvm") {
     init {
-        require(target in setOf("jvm", "js", "wasmJs"))
+        require(target in setOf("jvm", "js", "wasmJs") || NativeTarget.find(target) != null)
         require(compilations.isNotEmpty() && compilations.any { it.module == module && it.compilation == "main" && it.target == target })
         require(compilations.all { it.common || it.target == target })
         val names = compilations.map { it.name }.toSet()
@@ -85,8 +85,10 @@ data class IdeInputs(val module: String, val compilations: List<JvmIdeCompilatio
     fun requireInputs(inputs: TreeManifest) {
         val libraries = compilations.flatMap { it.libraries }.toSet()
         val generated = compilations.flatMap { it.roots }.filter { it.generated }.distinct()
-        require(libraries.all { path -> inputs.files.any { it.path == path && !it.executable } }) { "Missing IDE library" }
-        require(inputs.files.all { file -> !file.executable && (file.path in libraries || generated.any {
+        val directories = compilations.filter { NativeTarget.find(it.target) != null }.flatMap { it.libraries }
+            .filter { root -> inputs.files.any { it.path.value == "${root.value}/default/manifest" && !it.executable } }.toSet()
+        require(libraries.all { path -> path in directories || inputs.files.any { it.path == path && !it.executable } }) { "Missing IDE library" }
+        require(inputs.files.all { file -> !file.executable && (file.path in libraries || directories.any { file.path.value.startsWith(it.value + "/") } || generated.any {
             file.path.value.startsWith(it.path.value + "/") && (it.resource || file.path.value.endsWith(".kt"))
         }) }) { "Undeclared IDE input" }
     }
@@ -137,10 +139,17 @@ class IdeInputsExecutor(private val content: ContentStore) : ActionExecutor {
                 if (started.elapsedNow().inWholeMilliseconds >= captured.timeoutMillis) return finish(ActionStatus.FAILED, 124, message = "IDE preparation timed out")
                 return try {
                     if (cursor < files.size) {
-                        val entry = files[cursor]
-                        val stored = content.get(entry.digest) ?: error("Missing IDE input: ${entry.path.value}")
-                        require(Sha256.digest(stored) == entry.digest) { "IDE input digest differs: ${entry.path.value}" }
-                        cursor++
+                        var count = 0
+                        var verified = 0L
+                        while (cursor < files.size && count < 64 && verified < 4L * 1024 * 1024 &&
+                            started.elapsedNow().inWholeMilliseconds < captured.timeoutMillis) {
+                            val entry = files[cursor]
+                            val stored = content.get(entry.digest) ?: error("Missing IDE input: ${entry.path.value}")
+                            require(Sha256.digest(stored) == entry.digest) { "IDE input digest differs: ${entry.path.value}" }
+                            cursor++
+                            count++
+                            verified += entry.digest.sizeBytes
+                        }
                         null
                     } else {
                         require(content.put(bytes) == expected && content.get(expected)?.let(Sha256::digest) == expected)

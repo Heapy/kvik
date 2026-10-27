@@ -2,6 +2,29 @@ package kvik.compiler.native
 
 import kvik.core.*
 
+/** Editor SDK capture is independent of project sources and never invokes the compiler. */
+fun nativeIdeLibrariesAction(target: NativeTarget, composition: Digest, toolchains: Map<String, Digest>): ActionSpec {
+    require(toolchains.keys == target.toolIdentityNames) { "Native editor libraries require exact Native tool identities" }
+    return ActionSpec("kvik-native-ide-libraries-v1", composition, ActionKind.GENERATE, target.executionPlatform,
+        target.projectName, toolchains.toMap(), TreeManifest(emptyList()), listOf(LogicalPath("native-sdk/${target.projectName}")),
+        emptyList(), emptyMap(), obj("target" to target.projectName.json()), 120_000, CachePolicy.LOCAL)
+}
+
+fun nativeIdeLibraryRoots(files: List<FileEntry>, target: NativeTarget): List<LogicalPath> {
+    val prefix = "native-sdk/${target.projectName}/"
+    require(files.isNotEmpty() && files.all { !it.executable && it.path.value.startsWith(prefix) }) { "Invalid Native editor SDK output" }
+    val libraries = files.groupBy { it.path.value.removePrefix(prefix).substringBefore('/') }
+    require("stdlib.klib" in libraries && libraries.size >= 2)
+    return libraries.entries.sortedBy { it.key }.map { (name, entries) ->
+        require(name == "stdlib.klib" || name.matches(Regex("org\\.jetbrains\\.kotlin\\.native\\.platform\\.[A-Za-z0-9_]+\\.klib")))
+        val path = "$prefix$name"
+        require(entries.all { it.path.value.startsWith("$path/") } && entries.any { it.path.value == "$path/default/manifest" }) {
+            "Native editor library has no manifest: $name"
+        }
+        LogicalPath(path)
+    }
+}
+
 enum class NativeOutput { LIBRARY, PROGRAM, TEST, KOTEST_TEST, FRAMEWORK }
 
 /** Closed source-language settings; paths and arbitrary compiler arguments are never accepted here. */

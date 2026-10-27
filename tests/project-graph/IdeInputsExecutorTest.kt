@@ -4,6 +4,38 @@ import kvik.core.*
 import kotlin.test.*
 
 class IdeInputsExecutorTest {
+    @Test fun batchedDirectoryVerificationStillYieldsForCancellation() {
+        val store = Store()
+        val root = LogicalPath("native-sdk/macosArm64/stdlib.klib")
+        val main = JvmIdeCompilation("app", "main", emptyList(), emptyList(), listOf(root), emptyList(), false, target = "macosArm64")
+        val model = IdeInputs("app", listOf(main), "macosArm64")
+        val paths = listOf("default/manifest") + (0 until 200).map { "default/linkdata/$it.knm" }
+        val files = TreeManifest(paths.map { FileEntry(LogicalPath("${root.value}/$it"), store.put(it.encodeToByteArray())) })
+        IdeInputsExecutor(store).start("run", "ide", ideInputsAction(model, files, composition, tools)).use { running ->
+            assertNull(running.poll())
+            running.cancel()
+            val result = assertNotNull(running.poll())
+            assertEquals(ActionStatus.CANCELLED, result.status)
+            assertTrue(result.outputs.files.isEmpty())
+        }
+    }
+
+    @Test fun nativeDirectoryLibrariesRequireManifestsAndRejectUnownedFiles() {
+        val store = Store()
+        val root = LogicalPath("native-sdk/macosArm64/stdlib.klib")
+        val main = JvmIdeCompilation("app", "main", emptyList(), emptyList(), listOf(root), emptyList(), false, target = "macosArm64")
+        val model = IdeInputs("app", listOf(main), "macosArm64")
+        val files = TreeManifest(listOf(FileEntry(LogicalPath("${root.value}/default/manifest"), store.put("manifest".encodeToByteArray())),
+            FileEntry(LogicalPath("${root.value}/default/linkdata/header"), store.put("metadata".encodeToByteArray()))))
+        val action = ideInputsAction(model, files, composition, tools)
+        IdeInputsExecutor(store).start("run", "app:macosArm64:ide-inputs", action).use { running ->
+            assertTrue((0 until 10).firstNotNullOf { running.poll() }.successful)
+        }
+        assertFails { model.requireInputs(TreeManifest(files.files.drop(1))) }
+        assertFails { model.requireInputs(TreeManifest(files.files + FileEntry(LogicalPath("unowned/file"), composition))) }
+        assertFails { IdeInputs("app", listOf(main.copy(target = "js")), "js").requireInputs(files) }
+    }
+
     @Test fun webModelsRejectMixedPlatformsAndPreserveTargetInActionIdentity() {
         val library = LogicalPath("deps/stdlib.klib")
         val main = JvmIdeCompilation("app", "main", emptyList(), emptyList(), listOf(library), emptyList(), false, target = "js")
@@ -60,9 +92,7 @@ class IdeInputsExecutorTest {
         val input = files(store)
         val action = ideInputsAction(model(), input, composition, tools)
         val running = IdeInputsExecutor(store).start("run", "app:jvm:ide-inputs", action)
-        assertNull(running.poll())
-        assertNull(running.poll())
-        val result = assertNotNull(running.poll())
+        val result = (0 until 10).firstNotNullOf { running.poll() }
         assertTrue(result.successful)
         assertEquals(input.files.map { it.digest }.toSet(), result.outputs.files.filter { it.path.value.startsWith("ide/input/") }.map { it.digest }.toSet())
         val metadata = result.outputs.files.single { it.path.value == "ide/model.json" }

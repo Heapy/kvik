@@ -4,7 +4,8 @@ import kvik.core.NativeTarget
 
 /** Physical roots and libraries have already been prepared and checked by the export boundary. */
 internal data class IdeaRoot(val path: String, val resource: Boolean = false, val generated: Boolean = false)
-internal data class IdeaLibrary(val name: String, val path: String, val common: Boolean = false, val target: String = if (common) "common" else "jvm")
+internal data class IdeaLibrary(val name: String, val path: String, val common: Boolean = false,
+    val target: String = if (common) "common" else "jvm", val directory: Boolean = false)
 internal sealed interface IdeaPlatform {
     data class Jvm(val target: Int) : IdeaPlatform {
         init { require(target in setOf(11, 17, 21, 25)) }
@@ -12,6 +13,7 @@ internal sealed interface IdeaPlatform {
     data class Web(val target: String) : IdeaPlatform {
         init { require(target in setOf("js", "wasmJs")) }
     }
+    data class Native(val target: NativeTarget) : IdeaPlatform
     /** The intersection of the actual consuming targets, including intermediate source sets. */
     data class Common(val targets: Set<String>, val jvmTarget: Int = 17) : IdeaPlatform {
         init {
@@ -44,6 +46,7 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
         is IdeaPlatform.Jvm -> setOf("jvm")
         is IdeaPlatform.Common -> platform.targets
         is IdeaPlatform.Web -> setOf(platform.target)
+        is IdeaPlatform.Native -> setOf(platform.target.projectName)
     }
     // IDEA needs the complete refinement closure, with ordinary module edges as well.
     // Keep ordinary library dependencies separate: they must not grant internal visibility.
@@ -86,6 +89,7 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
         val jvm = c.platform as? IdeaPlatform.Jvm
         val common = c.platform as? IdeaPlatform.Common
         val web = c.platform as? IdeaPlatform.Web
+        val native = c.platform as? IdeaPlatform.Native
         val refined = refinementClosures.getValue(c.name)
         val multiplatform = common != null || refined.isNotEmpty()
         val friends = (listOfNotNull(c.friend) + c.friends).distinct()
@@ -100,10 +104,11 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
         c.roots.forEach { ideaPath(it.path) }
         c.libraries.forEach {
             ideaPath(it.path)
-            require(it.common == (common != null) && it.target == (if (common != null) "common" else web?.target ?: "jvm") &&
+            require(it.common == (common != null) && it.target == (if (common != null) "common" else web?.target ?: native?.target?.projectName ?: "jvm") &&
                 it.path.endsWith(if (jvm != null) ".jar" else ".klib")) {
                 "IDEA libraries must match the source platform"
             }
+            require(!it.directory || native != null) { "Unpacked IDEA KLIBs require a Native platform" }
         }
         files[".idea/modules/${c.name}.iml"] = ideaXml("module", "type" to "JAVA_MODULE", "version" to "4") {
             element("component", "name" to "FacetManager") {
@@ -117,12 +122,13 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
                         ?.sorted()?.joinToString("/") ?: when (web?.target) {
                             "js" -> "JS []"
                             "wasmJs" -> "wasm-js [JS]"
-                            else -> "JVM [${checkNotNull(jvm).target}]"
+                            else -> native?.let { "Native []/Native [${it.target.compilerName}]" } ?: "JVM [${checkNotNull(jvm).target}]"
                         }
                     val attributes = listOf("version" to "5", "platform" to when {
                         common != null -> "Common (experimental) "
                         web?.target == "js" -> "JavaScript "
                         web?.target == "wasmJs" -> "Wasm"
+                        native != null -> "Native"
                         else -> "JVM ${jvm!!.target}"
                     },
                         "allPlatforms" to platforms, "useProjectSettings" to "false") +
@@ -144,6 +150,7 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
                             element("stringArguments") {
                                 jvm?.let { element("stringArg", "name" to "jvmTarget", "arg" to it.target.toString()) }
                                 if (web?.target == "wasmJs") element("stringArg", "name" to "wasmTarget", "arg" to "wasm-js")
+                                native?.let { element("stringArg", "name" to "target", "arg" to it.target.compilerName) }
                                 element("stringArg", "name" to "languageVersion", "arg" to "2.4")
                                 element("stringArg", "name" to "apiVersion", "arg" to "2.4")
                             }
@@ -175,11 +182,11 @@ internal fun ideaProjectFiles(sdk: String, compilations: List<IdeaCompilation>, 
                         "common" -> "kotlin.common"
                         "js" -> "kotlin.js"
                         "wasmJs" -> "kotlin.wasm.js"
-                        else -> null
+                        else -> if (NativeTarget.find(library.target) != null) "kotlin.native" else null
                     }
                     val libraryAttributes = listOf("name" to library.name) + if (kind != null) listOf("type" to kind) else emptyList()
                     element("library", *libraryAttributes.toTypedArray()) {
-                        element("CLASSES") { element("root", "url" to "jar://${library.path}!/") }
+                        element("CLASSES") { element("root", "url" to if (library.directory) "file://${library.path}" else "jar://${library.path}!/") }
                         element("JAVADOC")
                         element("SOURCES")
                     }

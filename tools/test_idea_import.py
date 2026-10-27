@@ -70,8 +70,8 @@ def main():
             shutil.copytree(prepared['project'], project, dirs_exist_ok=True)
             changes = {
                 'without-friend': ('app.test', 'additionalVisibleModuleNames'),
-                'without-js-friend': ('app.js.test', 'additionalVisibleModuleNames'),
-                'without-wasmJs-friend': ('app.wasmJs.test', 'additionalVisibleModuleNames'),
+                **{'without-' + target + '-friend': ('app.' + target + '.test', 'additionalVisibleModuleNames')
+                   for target in prepared.get('platformSources', {})},
                 'without-refinement': ('app.main', 'dependsOnModuleNames'),
                 'without-common-friends': ('app.common.commonTest', 'additionalVisibleModuleNames'),
             }
@@ -170,12 +170,19 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
             platforms = {text.split('|')[1]: text.split('|')[2:] for _, text in values
                          if text.startswith('KVIK_PLATFORM|')}
             assert not any(text.startswith('KVIK_PLATFORM_ERROR') for _, text in values), values
-            for target, platform, arguments in [('js', 'JS', 'K2JSCompilerArguments'),
-                                                ('wasmJs', 'wasm-js (JS)', 'KotlinWasmCompilerArguments')]:
+            expected = dict(js=('JS', 'K2JSCompilerArguments', 'js'),
+                            wasmJs=('wasm-js (JS)', 'KotlinWasmCompilerArguments', 'JsAny'),
+                            macosArm64=('Native (macos_arm64)', 'K2NativeCompilerArguments', 'getpid'),
+                            linuxX64=('Native (linux_x64)', 'K2NativeCompilerArguments', 'getpid'))
+            for target, path in prepared['platformSources'].items():
+                platform, arguments, name = expected[target]
                 assert platforms.get(f'app.{target}.main') == [platform, 'org.jetbrains.kotlin.cli.common.arguments.' + arguments], platforms
-            for target, name in [('js', 'js'), ('wasmJs', 'JsAny')]:
-                assert any(target.replace('wasmJs', 'wasm') + '/Platform.kt' in file and f'KVIK_REFERENCE {name} RESOLVED' == message
+                suffix = Path(path).parent.name + '/Platform.kt'
+                assert any(suffix in file and f'KVIK_REFERENCE {name} RESOLVED' == message
                            for file, message in values), (target, values)
+        if prepared and prepared.get('nativeCommonSource'):
+            assert any('native-shared/SharedNative.kt' in file and message == 'KVIK_REFERENCE COpaquePointer RESOLVED'
+                       for file, message in values), values
         if common_library:
             for name in ('listOf', 'first', 'platformName', 'sharedValue', 'commonValue'):
                 assert any(f'KVIK_REFERENCE {name} RESOLVED' == message for _, message in values), (name, values)
@@ -238,6 +245,16 @@ level="ERROR" enabled_by_default="true"/></profile></component>''')
         export('common-restored')
         assert inspect('common-restored') == []
         phases += ['common-platform-leak', 'without-refinement', 'without-common-friends', 'common-restored']
+    if prepared and prepared.get('nativeCommonSource'):
+        native_shared = Path(prepared['nativeCommonSource'])
+        original = native_shared.read_text()
+        try:
+            native_shared.write_text(original + 'fun platformLeak(): Int = platform.posix.getpid()\n')
+            leak = inspect('native-common-platform-leak')
+            assert len(leak) == 1 and 'SharedNative.kt' in leak[0][0] and "'platform'" in leak[0][1], leak
+        finally:
+            native_shared.write_text(original)
+        phases.append('native-common-platform-leak')
     for target, path in (prepared or {}).get('platformSources', {}).items():
         platform_source = Path(path)
         original = platform_source.read_text()

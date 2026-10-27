@@ -23,7 +23,7 @@ internal fun preparedIdeModel(record: VerificationRecord, action: ActionResult, 
 /** Only current, complete preparation runs expose an immutable generation of ordinary IDE paths. */
 internal fun materializeIdeInputs(record: VerificationRecord, content: ContentStore, runDirectory: String,
                                   beforeExpose: () -> Boolean): Boolean {
-    require(record.requestedChecks.isNotEmpty() && record.requestedChecks.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|js|wasmJs):ide-inputs")) }) { "Expected IDE preparation checks" }
+    require(record.requestedChecks.isNotEmpty() && record.requestedChecks.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|js|wasmJs|macosArm64|linuxX64|iosArm64|iosSimulatorArm64):ide-inputs")) }) { "Expected IDE preparation checks" }
     val files = record.requestedChecks.sorted().flatMap { check ->
         val action = record.actions.single { it.actionId == check }
         val metadata = action.outputs.files.single { it.path.value == "ide/model.json" }

@@ -6,12 +6,73 @@ import kotlin.test.*
 import platform.posix.usleep
 import kotlin.time.TimeSource
 import kvik.cache.NativeContentStore
+import kvik.cache.NativeFiles
 import kvik.execution.NativeRunDirectory
 import kvik.execution.SchedulerRun
 import kvik.execution.EventJournal
 import kotlin.concurrent.atomics.AtomicInt
 
 class NativeUnitTest {
+    @Test fun editorSdkCaptureUsesVerifiedTargetAndPreservesKlibDirectoriesWithoutProcesses() {
+        val root = NativeRunDirectory("/private/tmp").path
+        try {
+            val target = NativeTarget.MACOS_ARM64
+            val identity = Sha256.digest("sdk".encodeToByteArray())
+            val identities = target.toolIdentityNames.associateWith { identity }
+            val action = nativeIdeLibrariesAction(target, identity, identities)
+            val home = "$root/native"
+            for (library in listOf("common/stdlib", "platform/macos_arm64/org.jetbrains.kotlin.native.platform.posix")) {
+                NativeFiles.ensureDirectory("$home/klib/$library/default/linkdata")
+                NativeFiles.writeNew("$home/klib/$library/default/manifest", library.encodeToByteArray())
+                NativeFiles.writeNew("$home/klib/$library/default/linkdata/header", "metadata".encodeToByteArray())
+                repeat(20) { NativeFiles.writeNew("$home/klib/$library/default/linkdata/$it.knm", "fragment-$it".encodeToByteArray()) }
+            }
+            val verifications = AtomicInt(0)
+            val provider = NativeToolchainProvider { requested ->
+                assertEquals(identities, requested)
+                verifications.fetchAndAdd(1)
+                NativeToolchainLayout("$home/bin/konanc", "/jdk", "/sdk", "/dependencies", "/developer")
+            }
+            val store = NativeContentStore("$root/store")
+            val executor = NativeIdeLibrariesExecutor(store, provider)
+            val result = executor.start("run", "sdk", action).use(::awaitResult)
+            assertTrue(result.successful)
+            assertEquals(1, verifications.load())
+            assertEquals(44, result.outputs.files.size)
+            assertEquals(2, nativeIdeLibraryRoots(result.outputs.files, target).size)
+            result.outputs.files.forEach { assertEquals(it.digest, Sha256.digest(assertNotNull(store.get(it.digest)))) }
+            assertEquals(CachePolicy.LOCAL, action.cachePolicy)
+            assertFails { nativeIdeLibraryRoots(result.outputs.files.filterNot { it.path.value.endsWith("/manifest") }, target) }
+            assertFails { nativeIdeLibraryRoots(result.outputs.files, NativeTarget.LINUX_X64) }
+            executor.start("run", "cancelled", action).use { running ->
+                running.cancel()
+                val cancelled = assertNotNull(running.poll())
+                assertEquals(ActionStatus.CANCELLED, cancelled.status)
+                assertTrue(cancelled.outputs.files.isEmpty())
+            }
+            val partialStore = NativeContentStore("$root/partial-store")
+            NativeIdeLibrariesExecutor(partialStore, provider).start("run", "partial", action).use { running ->
+                val header = Sha256.digest("metadata".encodeToByteArray())
+                val deadline = TimeSource.Monotonic.markNow()
+                while (partialStore.get(header) == null) {
+                    check(deadline.elapsedNow().inWholeMilliseconds < 5_000)
+                    assertNull(running.poll())
+                    usleep(1_000u)
+                }
+                running.cancel()
+                val cancelled = assertNotNull(running.poll())
+                assertEquals(ActionStatus.CANCELLED, cancelled.status)
+                assertTrue(cancelled.outputs.files.isEmpty())
+            }
+            val wrong = NativeIdeLibrariesExecutor(store, NativeToolchainProvider {
+                NativeToolchainLayout("$home/bin/konanc", "/jdk", "/sdk", "/dependencies", "/developer", target = NativeTarget.IOS_ARM64)
+            })
+            assertFails { wrong.start("run", "wrong-target", action).use(::awaitResult) }
+            NativeFiles.removeTree("$home/klib/common/stdlib/default")
+            assertFails { executor.start("run", "missing-manifest", action).use(::awaitResult) }
+        } finally { NativeFiles.removeTree(root) }
+    }
+
     @Test fun linuxCompilationUsesDistinctIdentityTargetAndOutputContract() {
         val digest = Sha256.digest(byteArrayOf(1))
         val inputs = TreeManifest(listOf(FileEntry(LogicalPath("Main.kt"), digest)))

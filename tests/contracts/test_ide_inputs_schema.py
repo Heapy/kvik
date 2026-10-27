@@ -12,11 +12,11 @@ class IdeInputsSchemaTest(unittest.TestCase):
     def validator(self, name):
         return Draft202012Validator({**SCHEMA, '$ref': '#/$defs/'+name})
 
-    def test_preparation_checks_support_jvm_and_web_targets(self):
+    def test_preparation_checks_support_all_project_targets(self):
         check = self.validator('requestedCheck')
-        for target in ('jvm', 'js', 'wasmJs'):
+        for target in ('jvm', 'js', 'wasmJs', 'macosArm64', 'linuxX64', 'iosArm64', 'iosSimulatorArm64'):
             self.assertTrue(check.is_valid(f'app:{target}:ide-inputs'))
-        for value in ['app:macosArm64:ide-inputs', 'app:jvm:ide-inputs\n', 'app:common:ide-inputs']:
+        for value in ['app:unknown:ide-inputs', 'app:jvm:ide-inputs\n', 'app:common:ide-inputs']:
             self.assertFalse(check.is_valid(value))
         event = dict(schemaVersion=1, runId='run', sequence=1, type='ide-inputs-ready', payload=dict(directory='/run/ide'))
         self.validator('event').validate(event)
@@ -52,7 +52,7 @@ class IdeInputsSchemaTest(unittest.TestCase):
 
     def test_platform_libraries_match_the_selected_target(self):
         validator = self.validator('ideInputs')
-        for target in ('js', 'wasmJs'):
+        for target in ('js', 'wasmJs', 'macosArm64', 'linuxX64', 'iosArm64', 'iosSimulatorArm64'):
             compilation = dict(module='app', compilation='main', target=target, roots=[], modules=[],
                                libraries=['deps/stdlib.klib'], compilerOptions=[], hasCompilerPlugins=False)
             value = dict(schemaVersion=1, module='app', target=target, compilations=[compilation])

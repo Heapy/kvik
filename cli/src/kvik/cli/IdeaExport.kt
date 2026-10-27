@@ -26,7 +26,7 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
         }
     }
     val options = buildOptions(build)
-    require(options.targets.all { it in setOf("jvm", "js", "wasmJs") } && !options.coverage) { "IDEA export supports JVM, JS and Wasm targets" }
+    require(options.targets.all { it in setOf("jvm", "js", "wasmJs") || NativeTarget.find(it) != null } && !options.coverage) { "Unsupported IDEA export target" }
     val sdk = export["--sdk"] ?: error("Supply --sdk with the name of an IDEA JDK matching the build tools")
     val output = projectPath(currentDirectory(), export["--output"] ?: error("Supply --output NEW_DIRECTORY"))
     require(NativeFiles.info(output) == null) { "IDEA output already exists: $output" }
@@ -70,8 +70,8 @@ internal fun ideaExportCommand(arguments: List<String>): ExitStatus {
     val projected = compilations.map { c ->
         IdeaCompilation(c.name, c.roots.map { root -> IdeaRoot(
             if (root.generated) "$output/inputs/${root.path.value}" else "${project.root}/${root.path.value}", root.resource, root.generated) },
-            c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}", c.common, c.target) },
-            if (c.common) IdeaPlatform.Common(c.targets) else if (c.target == "jvm") IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)) else IdeaPlatform.Web(c.target), c.compilerOptions,
+            c.modules, c.libraries.map { IdeaLibrary(it.value.substringAfterLast('/'), "$output/inputs/${it.value}", c.common, c.target, directory = data.files.none { file -> file.path == it }) },
+            if (c.common) IdeaPlatform.Common(c.targets) else if (c.target == "jvm") IdeaPlatform.Jvm(jvmTargetFromOptions(c.compilerOptions)) else NativeTarget.find(c.target)?.let { IdeaPlatform.Native(it) } ?: IdeaPlatform.Web(c.target), c.compilerOptions,
             if (c.compilation == "test" && !c.common) ideCompilationName(c.module, c.target, "main") else null, test = c.compilation == "test",
             refines = c.refines, friends = c.friends)
     }

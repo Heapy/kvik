@@ -83,6 +83,9 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
     }
     "kvik-ksp-native-v1" -> listOf(FileEntry(kotestGeneratedLauncher, digest(salt)))
     "kvik-documentation-native-stdlib-v1" -> listOf(FileEntry(LogicalPath("stdlib/default/manifest"), digest(salt)))
+    "kvik-native-ide-libraries-v1" -> listOf("stdlib", "org.jetbrains.kotlin.native.platform.posix").map {
+        FileEntry(LogicalPath("native-sdk/${action.target}/$it.klib/default/manifest"), digest("$salt:$it"))
+    }
     "kvik-jvm-metadata-v1" -> listOf(FileEntry(LogicalPath("metadata/default/manifest"), digest(salt)))
     "kvik-jvm-metadata-prepare-v1" -> listOf("metadata/0.klib", "metadata/classpath.json").map { FileEntry(LogicalPath(it), digest("$salt:$it")) }
     "kvik-jvm-benchmark-harness-v1" -> listOf("META-INF/BenchmarkList", "META-INF/CompilerHints", "kvik-metadata.json", "generated/Harness.class").map { FileEntry(LogicalPath("benchmark-harness/$it"), digest("$salt:$it")) }
@@ -2057,6 +2060,58 @@ class IosFrameworkGraphTest {
 }
 
 class IdeInputGraphTest {
+    @Test fun sharedNativeEditorMetadataUsesNativeBuiltinsForTheFullTargetIntersection() {
+        fun sharedNative(module: ModuleSpec) = module.copy(targets = module.targets +
+            TargetSpec("iosArm64", "nativeMain", null, emptyList()))
+        val config = configuration(sharedNative(base), sharedNative(app))
+        val plan = graph(config, TreeManifest(emptyList()), request(ProjectMode.IDE_INPUTS, "macosArm64"))
+        val actions = resolved(plan)
+        val id = "app:common:ide-metadata-nativeMain"
+        val action = actions.getValue(id)
+        val prepared = JvmMetadataPreparation.fromJson(action.parameters)
+        assertEquals(setOf("macosArm64", "iosArm64"), prepared.targets)
+        assertContains(prepared.classpath, LogicalPath("native-stdlib/shared"))
+        assertContains(action.inputs.files.map { it.path }, LogicalPath("native-stdlib/shared/default/manifest"))
+        assertTrue(action.inputs.files.none { it.path.value.startsWith("native-sdk/") || "/org.jetbrains.kotlin.native.platform." in it.path.value })
+        val ordinaryStdlib = artifact("org.jetbrains.kotlin:kotlin-stdlib:2.4.20", "common", "kotlin-metadata").digest
+        assertTrue(action.inputs.files.none { it.digest == ordinaryStdlib })
+        assertTrue(actions.getValue("app:common:ide-metadata-commonMain").inputs.files.any { it.digest == ordinaryStdlib })
+        val changed = resolved(plan, "app:macosArm64:ide-sdk")
+        assertNotEquals(action.key(Sha256), changed.getValue(id).key(Sha256))
+        assertEquals(actions.getValue("app:common:ide-metadata-commonMain").key(Sha256), changed.getValue("app:common:ide-metadata-commonMain").key(Sha256))
+        assertTrue(plan.compilations.isEmpty())
+    }
+
+    @Test fun nativeEditorPreparationCapturesSdkWithoutCompilingConsumers() {
+        for (target in NativeTarget.entries) {
+            fun platform(module: ModuleSpec) = module.copy(targets = module.targets.map {
+                if (it.name == "jvm") it else it.copy(name = target.projectName, test = it.test.takeUnless { target.isIos })
+            })
+            val config = configuration(platform(base), platform(app))
+            val request = ProjectGraphRequest(setOf("app"), setOf(target.projectName), ProjectMode.IDE_INPUTS)
+            val effective = effectiveConfiguration(config)
+            assertEquals(setOf("jvm", target.projectName), projectToolTargets(config.project, request))
+            val plan = projectActionGraph(effective, lock(effective), TreeManifest(emptyList()), composition, tools, request)
+            assertTrue(plan.compilations.isEmpty())
+            assertTrue(plan.nodes.all { it.id.endsWith(":ide-sdk") || it.id.endsWith(":ide-inputs") || ":ide-metadata-" in it.id })
+            val actions = resolved(plan)
+            val sdk = actions.getValue("app:${target.projectName}:ide-sdk")
+            assertEquals(tools.getValue(target.projectName), sdk.toolchains)
+            assertTrue(sdk.inputs.files.isEmpty() && sdk.arguments.isEmpty())
+            val action = actions.getValue("app:${target.projectName}:ide-inputs")
+            val model = IdeInputs.fromJson(action.parameters)
+            val native = model.compilations.filter { !it.common }
+            assertTrue(native.isNotEmpty() && native.all { c -> c.target == target.projectName &&
+                c.libraries.any { it.value.endsWith("/stdlib.klib") } && c.libraries.any { it.value.endsWith("/org.jetbrains.kotlin.native.platform.posix.klib") } })
+            assertTrue(model.compilations.filter { it.common }.all { c -> c.libraries.none { it.value.startsWith("native-sdk/") } })
+            if (!target.isIos) {
+                val test = native.single { it.module == "app" && it.compilation == "test" }
+                assertContains(test.modules, "app.${target.projectName}.main")
+            }
+            assertNotEquals(action.key(Sha256), resolved(plan, "app:${target.projectName}:ide-sdk").getValue("app:${target.projectName}:ide-inputs").key(Sha256))
+        }
+    }
+
     @Test fun webEditorModelsKeepPlatformLibrariesAndTestFriendsWithoutCompilersOrNode() {
         val targets = setOf("jvm", "js", "wasmJs")
         fun web(value: ModuleSpec) = value.copy(

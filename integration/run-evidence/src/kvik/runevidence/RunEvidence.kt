@@ -11,6 +11,7 @@ internal fun validCheck(check: String): Boolean = check.matches(Regex("[A-Za-z][
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(js|wasmJs):(build|test|compile-tests|application|package|ide-inputs)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(iosArm64|iosSimulatorArm64):(build|package)")) ||
+    check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:(macosArm64|linuxX64|iosArm64|iosSimulatorArm64):ide-inputs")) ||
     check.matches(Regex("[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)")) ||
     check.matches(Regex("script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)"))
 internal fun benchmarkExecutionCheck(check: String): Boolean = check.endsWith(":benchmark-smoke") || check.endsWith(":benchmark-measurement")

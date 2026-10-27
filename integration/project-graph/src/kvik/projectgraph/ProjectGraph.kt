@@ -55,7 +55,7 @@ fun projectRequestedChecks(request: ProjectGraphRequest): Set<String> =
 /** Host JVM producers may be prerequisites even when only a Native target was requested. */
 fun projectToolTargets(project: ProjectSpec, request: ProjectGraphRequest): Set<String> {
     if (request.mode == ProjectMode.IDE_INPUTS) {
-        require(request.targets.all { it == "jvm" || KotlinJsTarget.find(it) != null }) { "IDE preparation supports JVM, JS and Wasm targets" }
+        require(request.targets.all { it == "jvm" || KotlinJsTarget.find(it) != null || NativeTarget.find(it) != null }) { "Unsupported IDE target" }
         return request.targets + "jvm"
     }
     if (request.mode.isClasspath()) {
@@ -157,7 +157,7 @@ private class Builder(
             "JS/Wasm currently supports build, test, compile-tests, packaging, ABI checks and documentation; unsupported JS/Wasm operation"
         }
         require(!this.request.mode.isClasspath() || this.request.targets == setOf("jvm")) { "Compiler classpath queries require JVM targets" }
-        require(this.request.mode != ProjectMode.IDE_INPUTS || this.request.targets.all { it == "jvm" || KotlinJsTarget.find(it) != null }) { "IDE preparation supports JVM, JS and Wasm targets" }
+        require(this.request.mode != ProjectMode.IDE_INPUTS || this.request.targets.all { it == "jvm" || KotlinJsTarget.find(it) != null || NativeTarget.find(it) != null }) { "Unsupported IDE target" }
         require(!this.request.mode.isBenchmark() || this.request.targets == setOf("jvm")) { "Benchmarks currently require JVM targets" }
         val expectedJvm = if (this.request.mode == ProjectMode.TEST && "jvm" in this.request.targets) this.request.modules else emptySet()
         require(this.request.jvmTests.keys == expectedJvm) { "Supply explicit JVM test selections for exactly the requested JVM test modules" }
@@ -697,20 +697,36 @@ private class Builder(
         return id
     }
 
-    private fun ensureIdeMetadata(source: CommonMetadataSource): String {
+    private fun ensureIdeMetadata(source: CommonMetadataSource, sdk: String?, platform: String): String {
         val id = "${source.module}:common:ide-metadata-${source.sourceSet}"
         if (id in nodes) return id
         val domain = source.domain()
         require(domain in authorized) { "IDE source set requires a locked metadata domain: $domain; run resolve" }
+        val native = source.targets.all { NativeTarget.find(it) != null }
+        require(!native || sdk != null && platform in source.targets) { "Native IDE metadata requires a supporting SDK" }
+        val stdlib = Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")
         val roots = (commonMetadataDependencyClosure(project, source.module, source.sourceSet).external +
-            Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")).distinct()
+            if (native) emptyList() else listOf(stdlib)).distinct().filter { !native || it != stdlib }
         val artifacts = roots.flatMap { coordinate ->
             selections[ResolutionRequest(coordinate, VariantRequest("common", "kotlin-metadata", emptyMap()), domain)]?.artifacts
                 ?: error("Missing locked IDE metadata: $coordinate:$domain")
-        }.map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
-        nodes[id] = ActionNode(id, emptySet(), ActionOutputContract(treeOutput("metadata", "kotlin-metadata"))) {
-            jvmMetadataPrepareAction(JvmMetadataPreparation(source.module, artifacts.map { it.path }, LogicalPath("metadata"), source.targets),
-                TreeManifest(artifacts), composition, tools.getValue("jvm"))
+        }.filter { !native || it.coordinate.group != stdlib.group || it.coordinate.name != stdlib.name }
+            .map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
+        val edges = if (native) setOf(checkNotNull(sdk)) else emptySet()
+        nodes[id] = ActionNode(id, edges, ActionOutputContract(treeOutput("metadata", "kotlin-metadata"))) { results ->
+            validateResults(results, edges)
+            val nativeStdlib = if (!native) emptyList() else {
+                val files = results.getValue(checkNotNull(sdk)).outputs.files
+                nativeIdeLibraryRoots(files, NativeTarget.require(platform))
+                val prefix = "native-sdk/$platform/stdlib.klib/"
+                files.filter { it.path.value.startsWith(prefix) }.map {
+                    it.copy(path = LogicalPath("native-stdlib/shared/" + it.path.value.removePrefix(prefix)))
+                }
+            }
+            jvmMetadataPrepareAction(JvmMetadataPreparation(source.module,
+                artifacts.map { it.path } + if (native) listOf(LogicalPath("native-stdlib/shared")) else emptyList(),
+                LogicalPath("metadata"), source.targets),
+                merge(artifacts, nativeStdlib), composition, tools.getValue("jvm"))
         }
         return id
     }
@@ -721,6 +737,13 @@ private class Builder(
             val sql: String?, val resources: ResourceSelection, val resourcePrefix: String,
             val source: CommonMetadataSource? = null, val metadata: String? = null,
             val refines: List<String> = emptyList(), val friends: List<String> = emptyList())
+        val sdk = NativeTarget.find(platform)?.let { target ->
+            val id = "$owner:$platform:ide-sdk"
+            nodes[id] = ActionNode(id, emptySet(), ActionOutputContract(treeOutput("native-sdk/$platform", "native-editor-libraries"))) {
+                nativeIdeLibrariesAction(target, composition, tools.getValue(platform))
+            }
+            id
+        }
         val prepared = linkedMapOf<String, Prepared>()
         fun commonName(module: String, source: String) = "$module.common.$source"
         fun shared(module: String) = commonMetadataSourceSets(modules.getValue(module)).associateBy { it.sourceSet }
@@ -741,7 +764,7 @@ private class Builder(
             prepared[name] = Prepared(source.module, source.compilation, listOf(set), emptyList(),
                 dependencies.map { commonName(it.module, it.sourceSet) }, ensureSourceGenerators(source.module, listOf(set)),
                 spec.sqlDelight?.takeIf { it.sourceSet == set.name }?.let { ensureSqlDelight(source.module) },
-                selectedResources(source.module, listOf(set), prefix), prefix, source, ensureIdeMetadata(source),
+                selectedResources(source.module, listOf(set), prefix), prefix, source, ensureIdeMetadata(source, sdk, platform),
                 own.filter { it.compilation == source.compilation }.map { commonName(it.module, it.sourceSet) },
                 own.filter { it.compilation != source.compilation }.map { commonName(it.module, it.sourceSet) })
             (own + dependencies).forEach(::visitCommon)
@@ -768,11 +791,13 @@ private class Builder(
         }
         visit(owner, "main")
         if (target(owner, platform).test != null) visit(owner, "test")
-        val edges = prepared.values.flatMap { item -> item.generators.map(::generatorId) + listOfNotNull(item.sql, item.metadata) + item.resources.dependencies }.toSet()
+        val edges = prepared.values.flatMap { item -> item.generators.map(::generatorId) + listOfNotNull(item.sql, item.metadata) + item.resources.dependencies }.toSet() + listOfNotNull(sdk)
         val id = "$owner:$platform:ide-inputs"
         nodes[id] = ActionNode(id, edges, ActionOutputContract(treeOutput("ide", "ide-inputs"))) { results ->
             validateResults(results, edges)
-            val inputs = mutableListOf<FileEntry>()
+            val sdkFiles = sdk?.let { results.getValue(it).outputs.files }.orEmpty()
+            val sdkLibraries = if (sdk != null) nativeIdeLibraryRoots(sdkFiles, NativeTarget.require(platform)) else emptyList()
+            val inputs = sdkFiles.toMutableList()
             val compilations = prepared.values.map { item ->
                 val common = commonSets(item.module)
                 val roots = item.sets.flatMap { set ->
@@ -810,7 +835,7 @@ private class Builder(
                         (if (settings.any { it.warningsAsErrors }) listOf("-Werror") else emptyList())
                 } ?: target(item.module, platform).optionsFor(item.scope)
                 JvmIdeCompilation(item.module, item.scope, roots.distinct(), item.modules,
-                    libraries.map { it.path }, options,
+                    libraries.map { it.path } + if (item.source == null) sdkLibraries else emptyList(), options,
                     item.source?.targets?.any { selectedPlugins(item.module, it, item.scope).isNotEmpty() }
                         ?: selectedPlugins(item.module, platform, item.scope).isNotEmpty(),
                     item.source?.sourceSet, item.source?.targets ?: emptySet(), item.refines, item.friends, if (item.source != null) "common" else platform)

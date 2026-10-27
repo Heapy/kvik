@@ -30,8 +30,11 @@ def main():
     parser.add_argument('--sdk', type=Path, required=True, help='Explicit macOS SDK; no xcode-select/xcrun selection')
     parser.add_argument('--kotaml', type=Path)
     parser.add_argument('--ktc-cache', type=Path)
+    parser.add_argument('--unit-only', action='store_true', help='Compile and run Native adapter unit tests only')
     parser.add_argument('--skip-bootstrap', action='store_true')
     args = parser.parse_args()
+    if args.unit_only and args.skip_bootstrap:
+        parser.error('--unit-only requires a fresh unit build')
     output = ROOT / '.kvik/tests/native'
     output.mkdir(parents=True, exist_ok=True)
     (output / 'runs').mkdir(exist_ok=True)
@@ -52,6 +55,8 @@ def main():
         base = [args.konan_home / 'bin/konanc', *files_library_args(output), '-target', 'macos_arm64', '-Xoverride-konan-properties=airplaneMode=true', '-library', output / 'process.klib', *sources]
         command([*base, ROOT / 'tests/native/NativeUnitTest.kt', '-generate-test-runner', '-o', output / 'unit.kexe'])
         command([output / 'unit.kexe'])
+        if args.unit_only:
+            return
         command([*base, ROOT / 'tests/native/NativeProbe.kt', '-entry', 'kvik.compiler.native.probe.main', '-o', output / 'probe.kexe'])
     # Local probe identity coverage is explicit, not a production toolchain inventory/cache gate.
     dependency_evidence = {

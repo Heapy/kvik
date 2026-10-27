@@ -483,18 +483,18 @@ DEFS["jvmIdeCompilation"] = object_({"module": IDE_ID, "compilation": enum("main
     "roots": array(ref("ideInputRoot"), uniqueItems=True), "modules": array(IDE_ID, uniqueItems=True),
     "libraries": array(PATH, uniqueItems=True), "compilerOptions": array(STRING), "hasCompilerPlugins": BOOL,
     "sourceSet": IDE_ID, "targets": array(enum(*PROJECT_TARGETS), minItems=2, uniqueItems=True),
-    "refines": array(IDE_ID, uniqueItems=True), "friends": array(IDE_ID, uniqueItems=True), "target": enum("jvm", "js", "wasmJs")},
+    "refines": array(IDE_ID, uniqueItems=True), "friends": array(IDE_ID, uniqueItems=True), "target": enum(*PROJECT_TARGETS)},
     optional=("sourceSet", "targets", "refines", "friends", "target"))
 DEFS["jvmIdeCompilation"]["dependentRequired"] = {"sourceSet": ["targets"], "targets": ["sourceSet"]}
 DEFS["jvmIdeCompilation"]["allOf"] = [
     {"if": {"required": ["sourceSet"]}, "then": {"not": {"required": ["target"]}, "properties": {
         "libraries": {"items": {"pattern": r"\.klib$(?![\s\S])"}}, "roots": {"items": {"properties": {"common": {"const": True}}}}}},
-     "else": {"if": {"required": ["target"], "properties": {"target": enum("js", "wasmJs")}},
+     "else": {"if": {"required": ["target"], "properties": {"target": enum(*JS_TARGETS, *NATIVE_TARGETS)}},
               "then": {"properties": {"libraries": {"items": {"pattern": r"\.klib$(?![\s\S])"}}}},
               "else": {"properties": {"libraries": {"items": {"pattern": r"\.jar$(?![\s\S])"}}}}}},
     {"if": {"properties": {"compilation": {"const": "main"}}}, "then": {"properties": {"friends": {"maxItems": 0}}}},
 ]
-DEFS["ideInputs"] = versioned({"module": IDE_ID, "target": enum("jvm", "js", "wasmJs"),
+DEFS["ideInputs"] = versioned({"module": IDE_ID, "target": enum(*PROJECT_TARGETS),
     "compilations": array(ref("jvmIdeCompilation"), minItems=1, uniqueItems=True)}, optional=("target",))
 DEFS["ideaExport"] = versioned({"kind": {"const": "idea-export"}, "directory": STRING, "preparation": STRING,
     "sdk": {"type": "string", "minLength": 1}, "compilations": array(IDE_ID, minItems=1, uniqueItems=True)})
@@ -504,6 +504,7 @@ DEFS["jvmClasspath"]["description"] = "Ordered compiler classpath; accompanying 
 DEFS["requestedCheck"] = {"oneOf": [
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:jvm:(classpath-main|classpath-test|ide-inputs|benchmark-smoke|benchmark-measurement)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(jvm|macosArm64|linuxX64|iosArm64|iosSimulatorArm64|js|wasmJs):(abi-dump|abi-check)$(?![\s\S])"},
+    {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:(macosArm64|linuxX64|iosArm64|iosSimulatorArm64):ide-inputs$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:common:(package|documentation)$(?![\s\S])"},
     {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_.-]*:((jvm|macosArm64|linuxX64):(build|test|compile-tests|application|package)|(iosArm64|iosSimulatorArm64):(build|package)|(js|wasmJs):(build|test|compile-tests|application|package|ide-inputs))$(?![\s\S])"},
     {"type": "string", "pattern": r"^script:[A-Za-z][A-Za-z0-9_.-]{0,127}:jvm:(prepare|run)$(?![\s\S])"},
