@@ -83,8 +83,11 @@ def main():
             for name, coordinate in [('main', 'example:main:1.0'), ('annotations', 'example:annotations:13.0')]])
         local = root / 'publisher.json'
         local.write_text(json.dumps(configuration))
-        inspection = command(runtime, ['inspect', '--project', local])
-        lock = dict(schemaVersion=2, configuration=inspection['configuration'], selections=[])
+        # Shared KMP roots have implicit common metadata dependencies. Resolve
+        # the actual publication model rather than fabricating an empty lock.
+        publisher_lock = root / 'publisher.lock.json'
+        command(runtime, ['resolve', '--project', local, '--lock', publisher_lock, '--store', cache])
+        lock = json.loads(publisher_lock.read_text())
         publisher_files = {'nested/kvik.json': json.dumps(configuration), 'nested/deps.json': json.dumps(lock)}
         producer = add('producer', publisher_files)
         pins = [part for usage in ['java-api', 'java-runtime'] for part in
@@ -98,19 +101,25 @@ def main():
         assert projects['producer']['source']['provenance']['revision'] == producer
         assert projects['producer']['source']['root'] == 'nested'
         edges = result['edges']
-        assert edges and all(e['consumer'] == 'consumer' for e in edges)
-        main = [e for e in edges if e['coordinate'] == 'example:main:1.0']
+        consumer_edges = [e for e in edges if e['consumer'] == 'consumer']
+        producer_edges = [e for e in edges if e['consumer'] == 'producer']
+        assert consumer_edges and len(consumer_edges) + len(producer_edges) == len(edges)
+        assert {e['domain']['module'] for e in producer_edges} == {'main', 'annotations'}
+        assert all(e['coordinate'] == 'org.jetbrains.kotlin:kotlin-stdlib:2.4.20'
+                   and e['domain']['target'] == 'common' and e['domain']['usage'] == 'kotlin-metadata'
+                   and e['match'] == 'external' and not e['producers'] for e in producer_edges)
+        main = [e for e in consumer_edges if e['coordinate'] == 'example:main:1.0']
         assert main and all(e['match'] == 'exact' and e['producers'][0]['project'] == 'producer' for e in main)
-        transitive = [e for e in edges if e['coordinate'] == 'example:annotations:13.0']
+        transitive = [e for e in consumer_edges if e['coordinate'] == 'example:annotations:13.0']
         assert transitive and all(e['match'] == 'exact' and e['domain']['compilation'] == 'main' for e in transitive)
-        mismatches = [e for e in edges if e['coordinate'] == 'example:annotations:23.0']
+        mismatches = [e for e in consumer_edges if e['coordinate'] == 'example:annotations:23.0']
         assert mismatches and all(e['match'] == 'version-mismatch' and not e['producers'] for e in mismatches)
         assert all(e['otherVersions'] == ['example:annotations:13.0'] for e in mismatches)
-        assert any(e['match'] == 'external' and e['coordinate'] == 'example:tests:1.0' for e in edges)
+        assert any(e['match'] == 'external' and e['coordinate'] == 'example:tests:1.0' for e in consumer_edges)
         assert 'example:main-jvm:1.0' in {p['coordinate'] for p in result['publications']}
         stale = graph('--configuration', 'producer=nested/kvik.json', '--dependency-lock', 'producer=deps.json', expected=3)
         assert any(p['name'] == 'consumer' and p['queryStatus'] == 'incomplete' for p in stale['projects'])
-        assert not stale['edges']
+        assert stale['edges'] == producer_edges  # Keep valid projects visible when another lock is stale.
 
         duplicate = add('duplicate', {'kvik.json': json.dumps(configuration), 'kvik.lock.json': json.dumps(lock)})
         ambiguous = graph(*options, expected=3)
