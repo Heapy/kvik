@@ -119,7 +119,7 @@ def main():
     run_owned([sys.executable, ROOT/'tools/test_documentation_cli.py', '--runtime', executable, '--tools', tools_path,
                '--native-target', 'iosArm64', '--native-target', 'iosSimulatorArm64'], environment, sys.stdout, timeout=3600)
     run_owned([sys.executable, ROOT/'tools/test_task_effects_cli.py', '--runtime', executable, '--tools', tools_path,
-               '--native-target', 'macosArm64'], environment, sys.stdout, timeout=1800)
+               '--native-target', 'macosArm64', '--native-only'], environment, sys.stdout, timeout=1800)
     if args.gradle is not None:
         run_owned([sys.executable, ROOT/'tools/test_native_publication_cli.py', '--runtime', executable, '--tools', tools_path,
                    '--java-home', java, '--konan-home', native, '--gradle', args.gradle.resolve(strict=True),

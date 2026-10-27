@@ -46,8 +46,11 @@ python3 tools/test_task_effects_cli.py --runtime /path/to/kvik.kexe \
 ```
 
 Omit `--native-target` for JVM-only checks, or use `linuxX64` on a matching host.
-The Linux host workflow runs the JVM subset; the macOS workflow also runs the
-`macosArm64` cases through the foreground process owner. Both targets verify warm
+The Linux host workflow runs the full JVM matrix. The macOS workflow uses
+`--native-target macosArm64 --native-only` through the foreground process owner:
+all Native cases plus a pure JVM baseline that checks target-key separation and
+reuse of the JVM-built checker. This avoids repeating the full JVM matrix inside
+the same bounded macOS invocation. Both targets verify warm
 compilation reuse and restoration of the original cache key after source edits.
 The fixture checks direct/transitive effects, permission boundaries, unknown calls,
 initialization and recursive analysis, plus compilation reuse after unchanged and

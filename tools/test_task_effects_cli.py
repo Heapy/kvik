@@ -73,7 +73,11 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--native-target', choices=['macosArm64', 'linuxX64'])
+    parser.add_argument('--native-only', action='store_true',
+                        help='Run the Native matrix and a JVM baseline for target-key and producer-reuse checks')
     args = parser.parse_args()
+    if args.native_only and not args.native_target:
+        parser.error('--native-only requires --native-target')
     parent = ROOT / '.kvik/tests/task-effects-cli'
     parent.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=parent))
@@ -170,16 +174,18 @@ def main():
         ('analysis-depth-limit', '@Task fun task(): Int = h0(); ' +
             '; '.join(f'fun h{i}(): Int = h{i + 1}()' for i in range(130)) + '; fun h130(): Int = 1', unsupported),
     ]
-    for label, text, expected in cases:
-        actions = build(label, text, expected)
-        assert actions['checker:jvm:main']['status'] == 'local_hit', label
-    restored = build('restore-pure', pure)
-    assert restored['consumer:jvm:main']['key'] == first['consumer:jvm:main']['key']
-    assert restored['consumer:jvm:main']['status'] == 'local_hit'
+    if not args.native_only:
+        for label, text, expected in cases:
+            actions = build(label, text, expected)
+            assert actions['checker:jvm:main']['status'] == 'local_hit', label
+        restored = build('restore-pure', pure)
+        assert restored['consumer:jvm:main']['key'] == first['consumer:jvm:main']['key']
+        assert restored['consumer:jvm:main']['status'] == 'local_hit'
     if args.native_target:
         native_action = f'consumer:{args.native_target}:main'
         native_first = build('native-pure', pure, target=args.native_target)
         assert native_first[native_action]['key'] != first['consumer:jvm:main']['key']
+        assert native_first['checker:jvm:main']['status'] == 'local_hit'
         native_warm = build('native-pure-warm', pure, target=args.native_target)
         assert all(a['status'] == 'local_hit' for a in native_warm.values())
         native_cases = cases[:5] + [case for case in cases if case[0] in (
