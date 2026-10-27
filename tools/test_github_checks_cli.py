@@ -23,7 +23,6 @@ import threading
 import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CASE = Path('/private/tmp/kvik-coverage-aggregate-cli/.kvik/tests/coverage-aggregate-cli/case-akvrlrt5')
 SHA = '0123456789abcdef0123456789abcdef01234567'
 REPOSITORY = 'fixture-owner/fixture-repo'
 TOKEN_ENV = 'KVIK_FIXTURE_GITHUB_TOKEN'
@@ -150,6 +149,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # These reads occur BEFORE the response, proving durable pre-network inputs.
             assert (output / 'request.json').read_bytes() == body
             assert (output / 'aggregate.json').is_file() and (output / 'action.json').is_file()
+            intent = read_json(output / 'intent.json')
+            assert intent['state'] == 'possibly-sent'
+            assert intent['request'] == digest(body)
+            assert intent['report'] == digest((output / 'aggregate.json').read_bytes())
             for run in scenario['runs']:
                 for name in ('verification.json', 'completion.json', 'events.jsonl'):
                     assert (output / 'runs' / run.name / name).read_bytes() == (run / name).read_bytes()
@@ -197,7 +200,7 @@ def run(args):
     expected = sorted({check for record in records for check in record['requestedChecks'] if check.endswith(':test')})
     assert len(expected) >= 2
     before = unchanged_snapshot(originals)
-    output_root = ROOT / '.kvik/tests/github-checks-cli'
+    output_root = args.output_dir.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output_root))
     print(f'case: {case}', flush=True)
@@ -205,6 +208,7 @@ def run(args):
     env = {key: value for key, value in os.environ.items() if key not in ('GITHUB_TOKEN', 'GH_TOKEN', 'KVIK_BOOTSTRAP_LAUNCH')}
     env[TOKEN_ENV] = token
     env.update({'NO_PROXY': '127.0.0.1', 'no_proxy': '127.0.0.1'})
+    env.update(PATH='/nonexistent', JAVA_HOME='/nonexistent', KONAN_HOME='/nonexistent')
     server = Fixture(token)
     thread = threading.Thread(target=server.serve_forever, name='github-fixture', daemon=False)
     thread.start()
@@ -364,7 +368,8 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', required=True, type=Path)
-    parser.add_argument('--case', type=Path, default=DEFAULT_CASE)
+    parser.add_argument('--case', type=Path, required=True, help='Completed two-scope coverage capture directory or capture.json')
+    parser.add_argument('--output-dir', type=Path, default=ROOT / '.kvik/tests/github-checks-cli')
     args = parser.parse_args()
     args.runtime = args.runtime.resolve(strict=True)
     args.case = args.case.resolve(strict=True)

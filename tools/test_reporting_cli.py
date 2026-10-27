@@ -84,6 +84,8 @@ def main():
          '--single-report', data['captures'][0]['report'], '--schema-root', ROOT, '--output-dir', case/'exports')
     gate('report-cache', 'test_report_cache_cli.py', '--case', captured)
     gate('coverage-analysis-cache', 'test_coverage_report_cache_cli.py', '--case', captured)
+    gate('test-publication', 'test_github_checks_cli.py', '--case', captured,
+         '--output-dir', case/'test-publication')
     gate('coverage-publication', 'test_coverage_publish_cli.py', '--output-dir', case/'publication')
     summary['passed'] = True
     save()
