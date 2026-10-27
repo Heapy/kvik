@@ -75,6 +75,8 @@ def main():
     gate('test-report', 'test_test_report_cli.py', '--run', data['captures'][0]['run'])
     gate('test-aggregate', 'test_test_aggregate_cli.py', '--case', captured, '--schema-root', ROOT,
          '--output-dir', case/'test-aggregates')
+    gate('test-failure-reports', 'test_reporting_failures_cli.py', '--fixture', base,
+         '--output-dir', case/'test-failures')
     gate('coverage-threshold', 'test_coverage_check_cli.py', '--report', data['captures'][1]['report'])
     gate('aggregate-threshold', 'test_coverage_aggregate_check_cli.py', '--case', captured,
          '--schema-root', ROOT, '--output-dir', case/'thresholds')

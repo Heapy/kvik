@@ -288,5 +288,10 @@ it into a private case and runs capture/exclusion checks, two-job aggregation,
 target-union completeness, JUnit and coverage exports, thresholds, report-cache
 reuse and publication failure/retry through a loopback server. Transformation
 checks retain test effects and verify that reporting does not rerun tests.
+The failure-reporting gate executes a test that passes on retry and a separate
+test VM that exits after one passing test. Individual and combined JSON/JUnit
+exports must retain the first failure, the runner error and incomplete discovery,
+with distinct unique-test and attempt counts. Warm report-cache hits and format
+changes must preserve those outcomes without rerunning either test scope.
 The workflow uploads step results and logs as `reporting-linux`; local cases live
 under `.kvik/tests/reporting-cli/`.
