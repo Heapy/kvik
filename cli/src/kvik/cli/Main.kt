@@ -36,7 +36,7 @@ private fun command(args: Array<String>) {
         "bsp-install" -> println(bspInstallCommand(args.drop(1)).canonical())
         "help", "--help", "-h" -> println("""
             Kvik — Kotlin/Native source-built prototype
-            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, inspect-graph, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, prepare-ide, idea-export, benchmark, verify, config, package-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
+            Commands: runtime-info, doctor, mcp, bsp, bsp-install, inspect, inspect-graph, view, resolve, check-lock, build, test, compile-tests, jvm-classpath, prepare-ide, idea-export, benchmark, verify, config, package-library, publish-library, abi-dump, abi-check, docs, test-report, test-aggregate, test-publish, coverage-report, coverage-check, coverage-aggregate, coverage-export, coverage-publish, run-script, inspect-script, resolve-script, check-script-lock, prepare-application, run-application, run-prepared, verification, explain, run-stats, dev, session, packages, dependencies, workspace, help
             Tool diagnostics: doctor --tools PATH --target TARGET (repeatable) [--check build|test]; reads installed tools without launching or downloading them
             Project options: --project PATH --pin GROUP:ARTIFACT:VERSION (repeatable)
             IDE import: bsp-install --project PATH registers .bsp connection details; bsp --project PATH serves BSP 2.2 over foreground stdio
@@ -98,6 +98,7 @@ private fun command(args: Array<String>) {
             Coverage: test --coverage [--coverage-exclude CLASS_PATTERN ...] --target jvm; coverage-report --run PATH [--module ID] --tools PATH --output NEW_DIRECTORY
             Coverage threshold: coverage-check --report PATH --metric line --minimum PERCENT (--module ID ... | --all-modules) [--target ID ... | --all-targets] --output NEW_DIRECTORY
             Test aggregation: test-aggregate --run PATH ... [--expect MODULE:TARGET:test ...] [--module ID ...] [--target ID ...] [--format json|junit-xml] --output NEW_DIRECTORY
+            Maven publication: publish-library (--run PATH | --retry ATTEMPT) --repository URL --username USER --password-env NAME --output NEW_DIRECTORY
             GitHub Checks: test-publish --run PATH ... --repository OWNER/REPO --sha SHA [--expect CHECK ...] [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY
             Coverage Checks: coverage-publish --report PATH --repository OWNER/REPO --sha SHA [--name NAME] [--token-env GITHUB_TOKEN] [--api-url URL] --output NEW_DIRECTORY
             Coverage export: coverage-export --report PATH --format sonar-generic|jacoco-xml [--target ID] (--module ID ... | --all-modules) --output NEW_DIRECTORY
@@ -129,6 +130,7 @@ private fun command(args: Array<String>) {
         "resolve", "check-lock" -> println(dependencyCommand(args.drop(1), updateRequested = args[0] == "resolve").canonical())
         "view" -> println(viewCommand(args.drop(1)).canonical())
         "package-library" -> exitProcess(libraryPackageCommand(args.drop(1)).code)
+        "publish-library" -> exitProcess(libraryPublishCommand(args.drop(1)).code)
         "abi-dump" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.ABI_DUMP).status.code)
         "abi-check" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.ABI_CHECK).status.code)
         "docs" -> exitProcess(executeBuild(args.drop(1), kvik.projectgraph.ProjectMode.DOCUMENTATION).status.code)

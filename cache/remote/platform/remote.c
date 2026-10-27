@@ -182,13 +182,13 @@ cleanup:
     curl_easy_cleanup(curl);
     return reply;
 }
-kvik_rpc_reply *kvik_http_cache(const char *url, const char *authorization, int put,
+static kvik_rpc_reply *http_request(const char *url, const char *authorization, int put,
     const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms, int (*cancelled)(void *), void *cancel_context) {
     kvik_rpc_reply *reply = calloc(1, sizeof(*reply));
     if (!reply) return NULL;
     reply->grpc_status = -1;
     reply->transport_error = CURLE_BAD_FUNCTION_ARGUMENT;
-    if (!url || (put != 0 && put != 1) || (request_size && (!put || !request)) ||
+    if (!url || put < 0 || put > 2 || (request_size && (!put || !request)) ||
         request_size > 512U * 1024U * 1024U || !response_limit || response_limit > 512U * 1024U * 1024U ||
         timeout_ms <= 0 || timeout_ms > 60000) return reply;
     if (authorization) {
@@ -204,6 +204,7 @@ kvik_rpc_reply *kvik_http_cache(const char *url, const char *authorization, int 
     struct curl_slist *headers = NULL;
     if (!append_header(&headers, "Content-Type: application/octet-stream") ||
         !append_header(&headers, "Expect:") ||
+        (put == 2 && !append_header(&headers, "If-None-Match: *")) ||
         (authorization && !append_header(&headers, authorization))) {
         reply->transport_error = CURLE_OUT_OF_MEMORY;
         goto http_cleanup;
@@ -241,6 +242,15 @@ http_cleanup:
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return reply;
+}
+kvik_rpc_reply *kvik_http_cache(const char *url, const char *authorization, int put,
+    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms, int (*cancelled)(void *), void *cancel_context) {
+    return http_request(url, authorization, put == 0 ? 0 : put == 1 ? 1 : -1,
+        request, request_size, response_limit, timeout_ms, cancelled, cancel_context);
+}
+kvik_rpc_reply *kvik_http_create(const char *url, const char *authorization,
+    const unsigned char *request, size_t request_size, size_t response_limit, long timeout_ms, int (*cancelled)(void *), void *cancel_context) {
+    return http_request(url, authorization, 2, request, request_size, response_limit, timeout_ms, cancelled, cancel_context);
 }
 void kvik_rpc_free(kvik_rpc_reply *reply) { if (reply) { free(reply->data); free(reply); } }
 

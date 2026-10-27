@@ -61,7 +61,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-publication-consumers
-          path: .kvik/tests/native-publication-cli/case-*/*.log
+          path: |
+            .kvik/tests/native-publication-cli/case-*/**/*.log
+            .kvik/tests/native-publication-cli/case-*/maven-publication/case-*/summary.json
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: warn

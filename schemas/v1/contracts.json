@@ -7297,6 +7297,154 @@
       ],
       "additionalProperties": false
     },
+    "mavenPublicationRequest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "maven-publication-request"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "verification": {
+          "$ref": "#/$defs/digest"
+        },
+        "files": {
+          "$ref": "#/$defs/tree"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "repository",
+        "runId",
+        "verification",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "mavenPublication": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "maven-publication"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "outputDirectory": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "request": {
+          "$ref": "#/$defs/digest"
+        },
+        "outcome": {
+          "enum": [
+            "published",
+            "incomplete",
+            "cancelled"
+          ]
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\\\:\\u0000-\\u001f]).*[^/]$|^[^./\\\\:\\u0000-\\u001f]$"
+              },
+              "digest": {
+                "$ref": "#/$defs/digest"
+              },
+              "state": {
+                "enum": [
+                  "not_attempted",
+                  "missing",
+                  "present",
+                  "published",
+                  "conflict",
+                  "rejected",
+                  "unknown"
+                ]
+              },
+              "httpStatus": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 599
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "digest",
+              "state",
+              "httpStatus"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 2000
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "repository",
+        "outputDirectory",
+        "request",
+        "outcome",
+        "files"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "published"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "files": {
+                "items": {
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "present",
+                        "published"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "githubCheckPublication": {
       "type": "object",
       "properties": {

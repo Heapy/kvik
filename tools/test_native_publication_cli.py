@@ -128,6 +128,8 @@ def main():
     run('ktc-targets', [ktc / 'kotlin', 'build'], cwd=ktc, extra_env=ktc_env)
     for target in ('MacosArm64', 'IosArm64'):
         assert (ktc / f'build/tasks/_ktc-consumer_compile{target}Debug/ktc-consumer.klib').is_file()
+    run('maven-publication', [sys.executable, ROOT / 'tools/test_maven_publication_cli.py',
+        '--runtime', runtime, '--run', repository.parent, '--output-dir', case / 'maven-publication'])
     print('PASS Native-only root publication, cache reuse, target boundaries, Gradle and KTC consumers', case, flush=True)
 
 

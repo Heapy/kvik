@@ -587,6 +587,22 @@ DEFS["testAggregateGraph"] = versioned({"scope": ref("testAggregationScope"),
     "runs": array(object_({"runId": NONEMPTY, "verification": ref("digest")}), minItems=1, maxItems=100, uniqueItems=True),
     "actions": array(object_({"actionId": NONEMPTY, "dependencies": array(NONEMPTY, uniqueItems=True), "action": ref("action")}), minItems=2, maxItems=2),
     "results": array(ref("actionResult"), minItems=2, maxItems=2), "events": array(ref("event"))})
+DEFS["mavenPublicationRequest"] = versioned({
+    "kind": {"const": "maven-publication-request"}, "repository": NONEMPTY,
+    "runId": NONEMPTY, "verification": ref("digest"), "files": ref("tree"),
+})
+DEFS["mavenPublication"] = versioned({
+    "kind": {"const": "maven-publication"}, "repository": NONEMPTY,
+    "outputDirectory": NONEMPTY, "request": ref("digest"),
+    "outcome": enum("published", "incomplete", "cancelled"),
+    "files": array(object_({"path": PATH, "digest": ref("digest"),
+        "state": enum("not_attempted", "missing", "present", "published", "conflict", "rejected", "unknown"),
+        "httpStatus": nullable({"type": "integer", "minimum": 1, "maximum": 599})}), minItems=1, maxItems=2000),
+})
+DEFS["mavenPublication"]["allOf"] = [
+    {"if": {"properties": {"outcome": {"const": "published"}}},
+     "then": {"properties": {"files": {"items": {"properties": {"state": enum("present", "published")}}}}}},
+]
 DEFS["githubCheckPublication"] = versioned({
     "kind": {"const": "github-check-publication"}, "outputDirectory": NONEMPTY,
     "sourceStatus": REPORT_STATUS, "outcome": enum("published", "rejected", "unknown"),
