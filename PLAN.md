@@ -135,6 +135,8 @@ Explore an `@Task` compiler plugin for Kvik build plugins. It could generate tas
 
 Evaluate a restricted task API and conservative call-graph checking, including transitive helper calls. Unknown external code, reflection and native calls require explicit handling; compiler acceptance must not be presented as proof of hermetic execution. Combine static checks with controlled execution and runtime access enforcement before granting portable cache eligibility. Consider the bootstrap ordering for the checker itself and use the workspace compiler-plugin mechanism once available. Keep this exploratory until a small fixture demonstrates useful diagnostics, acceptable restrictions and sound treatment of unsupported calls.
 
+The first [task-effects experiment](experiments/task-effects/README.md) checks a restricted scalar API, same-compilation helper calls and explicit standard-output, JVM environment-key and clock permissions through a source-built workspace compiler plugin. Unknown calls and unsupported initialization/dispatch constructs are rejected. Resource handles, runtime access enforcement, generated task metadata and bootstrap integration remain research; this checker does not grant portable cache eligibility.
+
 ### Local and distributed cache
 
 Use a content-addressable store for immutable blobs and directory trees, plus an action cache mapping an action identity to its output manifest. Resolve each eligible action by checking local results, then remote results, then executing locally and publishing its outputs. [Remote cache architecture](https://bazel.build/remote/caching).
