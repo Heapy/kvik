@@ -58,7 +58,10 @@ python3 tools/test_native_publication_cli.py \
 ```
 
 This fixture requires a macOS ARM64 host with Xcode and tools configured for both
-`macosArm64` and `iosArm64`.
+`macosArm64` and `iosArm64`. The [macOS workflow](../.github/workflows/ios-frameworks.yml)
+runs it with Gradle 9.8.2 and a checksum-pinned Kotlin Toolchain 0.13.0 wrapper,
+retaining producer and consumer logs. Consumer compilation uses the local Maven
+repository emitted by Kvik, without publishing to an external service.
 
 A compiler plugin enabled for `main` on every published target also runs during common metadata compilation. This supports the pinned serialization plugin and workspace compiler plugins, using the existing locked JVM host dependencies. Plugins enabled for only one target, or only for tests, stay in those compilations. Plugin implementations, options and declared inputs participate in the metadata compilation cache key. Declared plugin reports remain action outputs and are excluded from published metadata and consumer classpaths.
 

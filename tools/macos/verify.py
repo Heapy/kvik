@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the macOS host runtime and verify device/simulator frameworks with Swift."""
+"""Verify the macOS runtime, Apple frameworks, documentation and optional publication consumers."""
 import argparse
 import json
 import os
@@ -58,11 +58,15 @@ def main():
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--konan-data', type=Path, default=ROOT/'.kvik/macos-konan')
     parser.add_argument('--artifact-cache', type=Path, default=ROOT/'.kvik/tool-artifacts')
+    parser.add_argument('--gradle', type=Path, help='Gradle executable for Native publication acceptance (requires --ktc).')
+    parser.add_argument('--ktc', type=Path, help='Pinned KTC 0.13.0 wrapper for Native publication acceptance (requires --gradle).')
     parser.add_argument('--bootstrap-command-timeout', type=command_timeout, default=300,
                         help='Per-command bootstrap/provisioning deadline in seconds (1–3600).')
     parser.add_argument('--pin-tools', action='store_true',
                         help='Provision Native dependencies and replace the host lock in this disposable checkout.')
     args = parser.parse_args()
+    if (args.gradle is None) != (args.ktc is None):
+        parser.error('Native publication acceptance requires both --gradle and --ktc')
     if (platform.system(), platform.machine()) != ('Darwin', 'arm64'):
         parser.error('This entry point requires Darwin arm64')
     java = args.java_home.resolve(strict=True)
@@ -114,6 +118,10 @@ def main():
                '--runtime', executable, '--tools', tools_path], environment, sys.stdout, timeout=3600)
     run_owned([sys.executable, ROOT/'tools/test_documentation_cli.py', '--runtime', executable, '--tools', tools_path,
                '--native-target', 'iosArm64', '--native-target', 'iosSimulatorArm64'], environment, sys.stdout, timeout=3600)
+    if args.gradle is not None:
+        run_owned([sys.executable, ROOT/'tools/test_native_publication_cli.py', '--runtime', executable, '--tools', tools_path,
+                   '--java-home', java, '--konan-home', native, '--gradle', args.gradle.resolve(strict=True),
+                   '--ktc', args.ktc.resolve(strict=True)], environment, sys.stdout, timeout=3600)
     print('PASS macOS host runtime: cached startup, iOS frameworks, Swift consumers and shared Native documentation', flush=True)
 
 
