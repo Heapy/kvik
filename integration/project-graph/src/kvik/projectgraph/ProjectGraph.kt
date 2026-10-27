@@ -230,6 +230,36 @@ private class Builder(
         listOf(if (framework) treeOutput(path, "native-framework") else fileOutput(path, "native-executable")) +
             if (NativeTarget.require(target).isApple && !staticFramework) listOf(treeOutput("$path.dSYM", "debug-symbols")) else emptyList())
 
+    private fun ensureNativeCommonization(targets: Set<String>, provider: String): String {
+        val id = "native:common:commonize-${targets.sorted().joinToString("-")}"
+        if (id !in nodes) {
+            val spec = NativeCommonization(targets.map(NativeTarget::require).toSet(), NativeTarget.require(provider))
+            val nativeTools = tools.getValue(provider)
+            val jvmTools = tools.getValue("jvm")
+            require(nativeTools.getValue("jdk") == jvmTools.getValue("jdk")) { "Native commonizer and metadata require the same JDK" }
+            nodes[id] = ActionNode(id, emptySet(), ActionOutputContract(treeOutput("commonized", "native-commonized-libraries"))) { results ->
+                validateResults(results, emptySet())
+                nativeCommonizationAction(spec, composition, nativeTools + jvmTools)
+            }
+        }
+        return id
+    }
+
+    private data class NativeMetadataLibraries(val files: List<FileEntry>, val roots: List<LogicalPath>)
+
+    private fun commonizedLibraries(results: Map<String, ActionResult>, id: String?): NativeMetadataLibraries {
+        if (id == null) return NativeMetadataLibraries(emptyList(), emptyList())
+        // One documentation action can consume several intersections; their libraries must not overlap.
+        val prefix = "native-commonized/${id.substringAfterLast(':').removePrefix("commonize-")}/"
+        val files = results.getValue(id).outputs.files.also { entries ->
+            require(entries.isNotEmpty() && entries.all { !it.executable && it.path.value.startsWith("commonized/") }) { "Invalid commonizer outputs" }
+        }.map { it.copy(path = LogicalPath(prefix + it.path.value.removePrefix("commonized/"))) }
+        val roots = files.filter { it.path.value.endsWith("/default/manifest") }
+            .map { LogicalPath(it.path.value.removeSuffix("/default/manifest")) }.sortedBy { it.value }
+        require(roots.isNotEmpty() && files.all { file -> roots.any { file.path.value.startsWith(it.value + "/") } }) { "Missing commonized library manifest" }
+        return NativeMetadataLibraries(files, roots)
+    }
+
     private fun ensureDocumentationStdlib(module: String, target: String): String {
         val id = "$module:$target:documentation-stdlib"
         if (id !in nodes) nodes[id] = ActionNode(id, emptySet(),
@@ -299,7 +329,8 @@ private class Builder(
         val nativeTarget = if (targets.all { NativeTarget.find(it) != null }) targets.intersect(request.targets).sorted().firstOrNull()
             ?: error("Native documentation metadata has no selected supporting target") else null
         val stdlibId = nativeTarget?.let { ensureDocumentationStdlib(module, it) }
-        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, pluginTarget, "main", commonPlugins) + listOfNotNull(stdlibId, sqlDelight) + generators.map(::generatorId)
+        val commonizerId = nativeTarget?.let { ensureNativeCommonization(targets, it) }
+        val edges = dependencies.map { ensureDocumentationMetadata(it, targets) }.toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, pluginTarget, "main", commonPlugins) + listOfNotNull(stdlibId, commonizerId, sqlDelight) + generators.map(::generatorId)
         val artifacts = documentationArtifacts(module, targets, includeStdlib = nativeTarget == null)
         val plugin = plugins(module, pluginTarget, "main", commonPlugins)
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
@@ -312,14 +343,15 @@ private class Builder(
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { documentationMetadataOutputs(results, it, targets) }
             val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
+            val commonized = commonizedLibraries(results, commonizerId)
             val workspace = workspacePlugin(module, pluginTarget, "main", results, commonPlugins)
             val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + sourceGeneratorOutputs(generators, results).values.flatten()
             jvmMetadataCompileAction(JvmMetadataCompilation(module, (source + generated).map { it.path },
                 dependencies.map { LogicalPath("modules/$it/documentation-metadata-${targets.sorted().joinToString("-")}") } + artifacts.map { it.path } +
-                    listOfNotNull(nativeTarget?.let { LogicalPath("native-stdlib/shared") }), LogicalPath("metadata"),
+                    listOfNotNull(nativeTarget?.let { LogicalPath("native-stdlib/shared") }) + commonized.roots, LogicalPath("metadata"),
                 optIns = options.flatMap { it.optIns }.distinct().sorted(), explicitApi = options.any { it.explicitApi }, warningsAsErrors = options.any { it.warningsAsErrors },
                 targets = targets, plugins = plugin.map { it.path }, pluginApplications = workspace.applications),
-                merge(source, generated, artifacts, dependencyFiles, stdlib, plugin, workspace.entries), composition, tools.getValue("jvm"))
+                merge(source, generated, artifacts, dependencyFiles, stdlib, commonized.files, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         return id
     }
@@ -350,14 +382,24 @@ private class Builder(
         val metadataTargets = selectedSets.filter { platform(it) == "common" || supporting(it).size > 1 }
             .associate { it.name to supporting(it) }
         val metadataGroups = metadataTargets.values.distinct()
+        val commonizerIds = metadataGroups.filter { targets -> targets.all { NativeTarget.find(it) != null } }
+            .associateWith { targets -> ensureNativeCommonization(targets, targets.intersect(request.targets).sorted().first()) }
         val metadataDependencies = metadataGroups.associateWith { targets -> documentationCommonDependencyClosure(project, module, targets).modules.filter { documentationMetadataHasSources(it, targets) } }
         val metadataEdges = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.map { ensureDocumentationMetadata(it, targets) } }.toSet()
         val metadataArtifacts = metadataGroups.associateWith { documentationArtifacts(module, it) }
         val leafTargets = selectedSets.filter { it.name !in metadataTargets }.flatMap { supporting(it) }.filter { it in request.targets }.distinct()
+        val nativeLibraryIds = leafTargets.filter { NativeTarget.find(it) != null }.associateWith { target ->
+            val id = "native:$target:documentation-libraries"
+            if (id !in nodes) nodes[id] = ActionNode(id, emptySet(), ActionOutputContract(treeOutput("native-sdk/$target", "native-platform-libraries"))) { results ->
+                validateResults(results, emptySet())
+                nativeIdeLibrariesAction(NativeTarget.require(target), composition, tools.getValue(target))
+            }
+            id
+        }
         val targetDependencies = leafTargets.associateWith { closure(module, it, "main").modules }
         for ((target, dependencies) in targetDependencies) dependencies.forEach { ensureMain(it, target) }
         val targetArtifacts = leafTargets.associateWith { artifactEntries(external(module, it, "main", if (it == "jvm") "java-api" else "kotlin-api"), it) }
-        val edges = selectedTargets.map { mainId(module, it) }.toSet() + metadataEdges + nativeStdlibIds.values +
+        val edges = selectedTargets.map { mainId(module, it) }.toSet() + metadataEdges + nativeStdlibIds.values + commonizerIds.values + nativeLibraryIds.values +
             targetDependencies.flatMap { (target, dependencies) -> dependencies.map { mainId(it, target) } } + listOfNotNull(sqlDelightId) + generators.map(::generatorId)
         val sources = selectedSets.flatMap { set -> set.directories.flatMapIndexed { index, directory ->
             require(files.none { it.path == directory }) { "Documentation source directory is a file" }
@@ -374,6 +416,8 @@ private class Builder(
             val dependencyFiles = targetDependencies.flatMap { (target, dependencies) -> dependencies.flatMap { remap(results, it, target, "main") } }
             val metadataFiles = metadataDependencies.flatMap { (targets, dependencies) -> dependencies.flatMap { documentationMetadataOutputs(results, it, targets) } }
             val stdlibFiles = nativeStdlibIds.flatMap { (target, id) -> documentationStdlibOutputs(results, id, target) }
+            val commonized = commonizerIds.mapValues { (_, id) -> commonizedLibraries(results, id) }
+            val nativeLibraries = nativeLibraryIds.mapValues { (_, id) -> results.getValue(id).outputs.files }
             val generated = (sqlDelightId?.let { generation -> sqlDelightOutputs(module, generation, results).map { entry ->
                 entry.copy(path = LogicalPath("sources/${sqlDelight!!.sourceSet}/sqldelight/" +
                     entry.path.value.removePrefix("generated/sqldelight/$module/")))
@@ -392,10 +436,13 @@ private class Builder(
                 val stdlibs = if (kind == "native") targets.filter { it in nativeStdlibIds }.distinctBy { target ->
                     results.getValue(nativeStdlibIds.getValue(target)).outputs.toJson().canonical()
                 }.map { LogicalPath("native-stdlib/$it") } else emptyList()
-                DocumentationSourceSet(set.name, kind, LogicalPath("sources/${set.name}"), (classpath + stdlibs).distinct(), set.dependsOn, supporting(set).toSet())
+                val platformLibraries = if (metadata != null) commonized[metadata]?.roots.orEmpty() else targets.flatMap { target ->
+                    nativeLibraries[target]?.let { nativeIdeLibraryRoots(it, NativeTarget.require(target)).filterNot { it.value.endsWith("/stdlib.klib") } }.orEmpty()
+                }
+                DocumentationSourceSet(set.name, kind, LogicalPath("sources/${set.name}"), (classpath + stdlibs + platformLibraries).distinct(), set.dependsOn, supporting(set).toSet())
             }
             documentationAction(DocumentationSpec(module, request.targets, sets, settings),
-                merge(sources, generated, includes, (dependencyFiles + metadataFiles + stdlibFiles + metadataArtifacts.values.flatten() + targetArtifacts.values.flatten()).filter { file ->
+                merge(sources, generated, includes, (dependencyFiles + metadataFiles + stdlibFiles + commonized.values.flatMap { it.files } + nativeLibraries.values.flatten() + metadataArtifacts.values.flatten() + targetArtifacts.values.flatten()).filter { file ->
                     sets.any { source -> source.classpath.any { file.path == it || file.path.value.startsWith(it.value + "/") } }
                 }), composition, tools.getValue("jvm"))
         }
@@ -704,20 +751,7 @@ private class Builder(
         require(domain in authorized) { "IDE source set requires a locked metadata domain: $domain; run resolve" }
         val native = source.targets.all { NativeTarget.find(it) != null }
         require(!native || sdk != null && platform in source.targets) { "Native IDE metadata requires a supporting SDK" }
-        val commonizer = if (!native) null else {
-            val commonizerId = "native:common:ide-commonize-${source.targets.sorted().joinToString("-")}"
-            if (commonizerId !in nodes) {
-                val spec = NativeCommonization(source.targets.map(NativeTarget::require).toSet(), NativeTarget.require(platform))
-                val nativeTools = tools.getValue(platform)
-                val jvmTools = tools.getValue("jvm")
-                require(nativeTools.getValue("jdk") == jvmTools.getValue("jdk")) { "Native commonizer and JVM metadata require the same JDK" }
-                nodes[commonizerId] = ActionNode(commonizerId, emptySet(), ActionOutputContract(treeOutput("commonized", "native-commonized-libraries"))) { results ->
-                    validateResults(results, emptySet())
-                    nativeCommonizationAction(spec, composition, nativeTools + jvmTools)
-                }
-            }
-            commonizerId
-        }
+        val commonizer = if (native) ensureNativeCommonization(source.targets, platform) else null
         val stdlib = Coordinate("org.jetbrains.kotlin", "kotlin-stdlib", "2.4.20")
         val roots = (commonMetadataDependencyClosure(project, source.module, source.sourceSet).external +
             if (native) emptyList() else listOf(stdlib)).distinct().filter { !native || it != stdlib }
@@ -737,18 +771,11 @@ private class Builder(
                     it.copy(path = LogicalPath("native-stdlib/shared/" + it.path.value.removePrefix(prefix)))
                 }
             }
-            val commonized = commonizer?.let { producer ->
-                results.getValue(producer).outputs.files.also { entries ->
-                    require(entries.isNotEmpty() && entries.all { !it.executable && it.path.value.startsWith("commonized/") }) { "Invalid commonizer outputs" }
-                }.map { it.copy(path = LogicalPath("native-commonized/" + it.path.value.removePrefix("commonized/"))) }
-            }.orEmpty()
-            val commonizedRoots = commonized.filter { it.path.value.endsWith("/default/manifest") }
-                .map { LogicalPath(it.path.value.removeSuffix("/default/manifest")) }.sortedBy { it.value }
-            require(commonizer == null || commonizedRoots.isNotEmpty() && commonized.all { file -> commonizedRoots.any { file.path.value.startsWith(it.value + "/") } }) { "Missing commonized library manifest" }
+            val commonized = commonizedLibraries(results, commonizer)
             jvmMetadataPrepareAction(JvmMetadataPreparation(source.module,
-                artifacts.map { it.path } + (if (native) listOf(LogicalPath("native-stdlib/shared")) else emptyList()) + commonizedRoots,
+                artifacts.map { it.path } + (if (native) listOf(LogicalPath("native-stdlib/shared")) else emptyList()) + commonized.roots,
                 LogicalPath("metadata"), source.targets),
-                merge(artifacts, nativeStdlib, commonized), composition, tools.getValue("jvm"))
+                merge(artifacts, nativeStdlib, commonized.files), composition, tools.getValue("jvm"))
         }
         return id
     }
@@ -1208,8 +1235,12 @@ private class Builder(
         val dependencies = commonPublicationDependencyClosure(project, module).modules
         val pluginDependencies = pluginModules(module, pluginTarget, "main", commonPlugins)
         pluginDependencies.forEach { ensureMain(it, "jvm") }
-        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, pluginTarget, "main", commonPlugins) + listOfNotNull(sqlDelight) + generators.map(::generatorId)
-        val artifacts = commonArtifacts(module).map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
+        val nativeTarget = request.targets.takeIf { targets -> targets.all { NativeTarget.find(it) != null } }?.sorted()?.first()
+        val stdlibId = nativeTarget?.let { ensureDocumentationStdlib(module, it) }
+        val commonizerId = nativeTarget?.let { ensureNativeCommonization(request.targets, it) }
+        val edges = dependencies.map(::ensureCommonMetadata).toSet() + pluginDependencies.map { mainId(it, "jvm") } + pluginResourceDependencies(module, pluginTarget, "main", commonPlugins) + listOfNotNull(sqlDelight, stdlibId, commonizerId) + generators.map(::generatorId)
+        val artifacts = commonArtifacts(module).filter { nativeTarget == null || it.coordinate.group != "org.jetbrains.kotlin" || it.coordinate.name != "kotlin-stdlib" }
+            .map { FileEntry(artifactPath(it, false), it.digest) }.distinct()
         val plugin = plugins(module, pluginTarget, "main", commonPlugins)
         require(plugin.none { p -> artifacts.any { it.digest == p.digest } }) { "Compiler plugin cannot be a consumer metadata dependency" }
         val settings = spec.targets.map { compilerOptions(module, it.name, it.compilerOptions) }
@@ -1220,13 +1251,16 @@ private class Builder(
             ActionOutputContract(listOf(treeOutput("metadata", "kotlin-metadata")) + pluginOutputArtifacts(module, pluginTarget, "main", commonPlugins))) { results ->
             validateResults(results, edges)
             val dependencyFiles = dependencies.flatMap { commonOutputs(results, it, "modules/$it/metadata") }
+            val stdlib = if (stdlibId == null) emptyList() else documentationStdlibOutputs(results, stdlibId, "shared")
+            val commonized = commonizedLibraries(results, commonizerId)
             val workspace = workspacePlugin(module, pluginTarget, "main", results, commonPlugins)
             val generated = (sqlDelight?.let { sqlDelightOutputs(module, it, results) } ?: emptyList()) + sourceGeneratorOutputs(generators, results).values.flatten()
             jvmMetadataCompileAction(JvmMetadataCompilation("${publication.coordinate.group}:${publication.coordinate.name}", (sources + generated).map { it.path },
-                dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path }, LogicalPath("metadata"),
+                dependencies.map { LogicalPath("modules/$it/metadata") } + artifacts.map { it.path } +
+                    listOfNotNull(nativeTarget?.let { LogicalPath("native-stdlib/shared") }) + commonized.roots, LogicalPath("metadata"),
                 optIns = settings.flatMap { it.optIns }.distinct().sorted(), explicitApi = settings.any { it.explicitApi },
                 warningsAsErrors = settings.any { it.warningsAsErrors }, plugins = plugin.map { it.path }, pluginApplications = workspace.applications, targets = spec.targets.map { it.name }.toSet()),
-                merge(sources, generated, dependencyFiles, artifacts, plugin, workspace.entries), composition, tools.getValue("jvm"))
+                merge(sources, generated, dependencyFiles, artifacts, stdlib, commonized.files, plugin, workspace.entries), composition, tools.getValue("jvm"))
         }
         exposeArtifacts(module, "common", "main", id)
         exposeCompilation(module, "common", "main", id)

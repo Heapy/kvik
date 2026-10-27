@@ -37,6 +37,29 @@ Common metadata uses a separate locked `common` / `main` / `kotlin-metadata` dep
 
 Root publications support combinations of JVM, supported Native targets, `js` and `wasmJs`. Source sets shared by every selected main compilation are compiled together and published as `commonMain`; platform-only sources stay in their target artifacts. External dependencies must provide a compatible common metadata JAR. Selecting just one target produces its target package, without a root publication.
 
+For a Native-only library, common metadata uses the verified Native stdlib and
+platform libraries commonized for every declared target. Shared APIs can expose
+types such as `platform.posix.timespec`, including through workspace dependencies;
+an API available on only one target is rejected from shared metadata. The
+commonizer runs in an invocation-owned JVM process and its result is locally
+cached. SDK and commonized platform libraries remain compiler inputs and are not
+bundled in the published root JAR.
+
+The [Native publication fixture](../tools/test_native_publication_cli.py) packages
+a macOS/iOS library and a workspace dependency, checks cache reuse and rejection
+of a macOS-only shared API, then compiles common metadata and both targets in
+Gradle and Kotlin Toolchain 0.13.0 consumers:
+
+```sh
+python3 tools/test_native_publication_cli.py \
+  --runtime /path/to/kvik.kexe --tools /path/to/tools.json \
+  --java-home "$JAVA_HOME" --konan-home "$KONAN_HOME" \
+  --gradle /path/to/gradle --ktc /path/to/kotlin
+```
+
+This fixture requires a macOS ARM64 host with Xcode and tools configured for both
+`macosArm64` and `iosArm64`.
+
 A compiler plugin enabled for `main` on every published target also runs during common metadata compilation. This supports the pinned serialization plugin and workspace compiler plugins, using the existing locked JVM host dependencies. Plugins enabled for only one target, or only for tests, stay in those compilations. Plugin implementations, options and declared inputs participate in the metadata compilation cache key. Declared plugin reports remain action outputs and are excluded from published metadata and consumer classpaths.
 
 For a JS/Wasm-only library, use `--target js --target wasmJs`. Common metadata still

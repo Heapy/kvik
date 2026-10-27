@@ -54,7 +54,10 @@ def main():
     write('base/native/NativeToken.kt', '\n'.join(['package dependency',
         '/** A shared Native dependency type. */',
         '@OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)',
-        'class NativeToken(val worker: kotlin.native.concurrent.Worker)', '']))
+        'class NativeToken(val worker: kotlin.native.concurrent.Worker)',
+        '/** A platform structure in shared Native dependency metadata. */',
+        '@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)',
+        'class NativeTimestamp(val value: platform.posix.timespec)', '']))
     write('library/common/Library.kt', '''package sample
 import dependency.Token
 /** Public API using a dependency type. */
@@ -69,7 +72,10 @@ expect fun platformName(): String
         'fun workerId(worker: kotlin.native.concurrent.Worker): Int = worker.id',
         '/** Uses a dependency declared in shared Native code. */',
         '@OptIn(kotlin.native.concurrent.ObsoleteWorkersApi::class)',
-        'fun nativeTokenId(token: dependency.NativeToken): Int = token.worker.id', '']))
+        'fun nativeTokenId(token: dependency.NativeToken): Int = token.worker.id',
+        '/** Preserves a Native platform type from a workspace dependency. */',
+        '@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)',
+        'fun nativeTimestamp(token: dependency.NativeTimestamp): platform.posix.timespec = token.value', '']))
     write('Module.md', '# Module library\nA curious library\n')
     write('tools.json', json.dumps(tools))
 
@@ -114,7 +120,7 @@ expect fun platformName(): String
 
     resolve()
     first, html = invoke('common-jvm-native-and-local-dependency')
-    assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName', 'workerId', 'Worker', 'nativeTokenId', 'NativeToken']), html[:1000]
+    assert all(text in html for text in ['A curious library', 'Library', 'Token', 'platformName', 'workerId', 'Worker', 'nativeTokenId', 'NativeToken', 'nativeTimestamp', 'timespec']), html[:1000]
     warm, _ = invoke('warm-documentation')
     assert all(action['status'] == 'local_hit' for action in warm['actions'])
     selected, html = invoke('jvm-selection-preserves-common-metadata', selected_targets=['jvm'])
@@ -123,8 +129,10 @@ expect fun platformName(): String
     assert 'nativeTokenId' not in html
     assert all(action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in selected['actions'])
     native, html = invoke('native-selection-preserves-shared-metadata', selected_targets=[targets[-1]])
-    assert all(text in html for text in ['NativeToken', 'nativeTokenId', 'Worker'])
-    assert all(action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in native['actions'])
+    assert all(text in html for text in ['NativeToken', 'nativeTokenId', 'Worker', 'nativeTimestamp', 'timespec'])
+    # Selecting a different provider for the same intersection may create one new commonizer action.
+    assert all(action['status'] in ('executed', 'local_hit') if ':common:commonize-' in action['actionId']
+               else action['status'] == ('executed' if action['actionId'].endswith(':documentation') else 'local_hit') for action in native['actions'])
     write('Module.md', '# Module library\nRevised module description\n')
     query = run(['verification', '--run', project / '.kvik/runs' / first['runId']])
     assert query.returncode != 0 and json.loads(query.stdout)['freshness'] == 'stale'

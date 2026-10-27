@@ -152,7 +152,7 @@ fun main(args: Array<String>) {
         if args.native_target:
             sdk = [a for a in actions if a['actionId'].endswith(':ide-sdk')]
             assert len(sdk) == 1 and sdk[0]['status'] in (('executed', 'local_hit') if previous is None else ('local_hit',)), sdk
-            commonizers = [a for a in actions if ':common:ide-commonize-' in a['actionId']]
+            commonizers = [a for a in actions if ':common:commonize-' in a['actionId']]
             assert len(commonizers) == 1 and commonizers[0]['status'] in (('executed', 'local_hit') if previous is None else ('local_hit',)), commonizers
         by_name = {}
         for model in models:

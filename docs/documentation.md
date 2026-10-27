@@ -34,6 +34,13 @@ Tests are neither compiled nor run. JS and WasmJS analysis runs in Dokka's JVM
 process; it does not require Node or a browser. A `node` declaration in the tools
 configuration is needed only for test execution.
 
+Native source sets receive captured platform libraries from the verified Native
+distribution. Shared Native source sets and dependency metadata use libraries
+commonized for their full declared target intersection, even when documenting only
+one supporting target. This resolves APIs such as `platform.posix.timespec` without
+exposing a target-only API in shared code. Each intersection has its own input paths;
+the commonizer action is locally cached and shared with IDE and publication workflows.
+
 Settings include `includes`, `documentedVisibilities`, `reportUndocumented`,
 `failOnWarning`, `skipDeprecated`, `suppressInheritedMembers` and `timeoutMillis`.
 For example:

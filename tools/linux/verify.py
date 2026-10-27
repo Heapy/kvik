@@ -152,6 +152,8 @@ def main():
          '--fixture', fixtures[0]])
     run([sys.executable, ROOT/'tools/test_unavailable_target_cli.py', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json'])
+    run([sys.executable, ROOT/'tools/test_documentation_cli.py', '--runtime', executable,
+         '--tools', fixtures[0]/'tools.json', '--native-target', 'linuxX64'])
     run([sys.executable, ROOT/'tools/test_idea_export_cli.py', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache'])
     run([sys.executable, ROOT/'tools/test_common_idea_export_cli.py', '--web', '--native-target', 'linuxX64', '--runtime', executable,

@@ -97,9 +97,12 @@ private fun outputs(action: ActionSpec, salt: String): TreeManifest = TreeManife
         else listOf(FileEntry(NativeCompilation.fromJson(action.parameters).output, digest(salt)))
     else -> listOf(FileEntry(LogicalPath("test-results.json"), digest("report")))
 })
-private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<String, ActionSpec> {
+private fun resolved(graph: ProjectActionGraph, changed: String? = null, required: Set<String>? = null): Map<String, ActionSpec> {
     val results = linkedMapOf<String, ActionResult>(); val actions = linkedMapOf<String, ActionSpec>()
-    for (node in graph.nodes) {
+    val needed = mutableSetOf<String>()
+    fun include(id: String) { if (needed.add(id)) graph.nodes.single { it.id == id }.dependencies.forEach(::include) }
+    required?.forEach(::include)
+    for (node in graph.nodes.filter { required == null || it.id in needed }) {
         assertNotNull(node.outputContract, "Missing built-in output contract: ${node.id}")
         val action = node.resolve(results.filterKeys { it in node.dependencies })
         if (action.kind == ActionKind.TEST) {
@@ -113,7 +116,7 @@ private fun resolved(graph: ProjectActionGraph, changed: String? = null): Map<St
             assertEquals(action.parameters.objectValue().getValue("sources").arrayValue().map { LogicalPath(it.stringValue()) }, inputs.sources)
             assertEquals(inputs.sources.toSet(), inputs.sourceFiles().files.map { it.path }.toSet())
             val parameters = action.parameters.objectValue()
-            assertEquals(parameters.getValue("plugins").arrayValue().map { LogicalPath(it.stringValue()) }, inputs.plugins)
+            assertEquals(parameters["plugins"]?.arrayValue()?.map { LogicalPath(it.stringValue()) }.orEmpty(), inputs.plugins)
             assertEquals(parameters["pluginApplications"]?.arrayValue()?.map(JvmPluginApplication::fromJson).orEmpty(), inputs.pluginApplications)
         }
         actions[node.id] = action
@@ -472,11 +475,20 @@ class ProjectGraphTest {
         assertEquals("native", native.platform)
         assertEquals(setOf("iosArm64", "iosSimulatorArm64"), native.supportingTargets)
         assertTrue(native.classpath.any { "documentation-metadata-iosArm64-iosSimulatorArm64" in it.value })
-        assertTrue(native.classpath.none { it.value.endsWith(".klib") })
+        assertTrue(native.classpath.filter { it.value.endsWith(".klib") }.all { it.value.startsWith("native-commonized/iosArm64-iosSimulatorArm64/") })
         assertTrue(native.classpath.any { it.value.startsWith("native-stdlib/") })
         val metadata = JvmMetadataCompilation.fromJson(actions.getValue("base:common:documentation-metadata-iosArm64-iosSimulatorArm64").parameters)
         assertEquals(native.supportingTargets, metadata.targets)
         assertContains(metadata.classpath, LogicalPath("native-stdlib/shared"))
+        val commonizer = "native:common:commonize-iosArm64-iosSimulatorArm64"
+        val commonizedPath = LogicalPath("native-commonized/iosArm64-iosSimulatorArm64/org.jetbrains.kotlin.native.platform.posix.klib")
+        assertContains(metadata.classpath, commonizedPath)
+        assertContains(native.classpath, commonizedPath)
+        assertEquals(1, built.nodes.count { it.id == commonizer })
+        val changed = resolved(built, commonizer)
+        for (id in listOf("app:common:documentation", "base:common:documentation-metadata-iosArm64-iosSimulatorArm64"))
+            assertNotEquals(actions.getValue(id).key(Sha256), changed.getValue(id).key(Sha256))
+        assertEquals(actions.getValue("app:iosArm64:main").key(Sha256), changed.getValue("app:iosArm64:main").key(Sha256))
         assertTrue(actions.containsKey("base:iosArm64:documentation-stdlib"))
         val subset = resolved(graph(config, snapshot(), request.copy(targets = setOf("iosSimulatorArm64"))))
         val subsetMetadata = JvmMetadataCompilation.fromJson(subset.getValue("base:common:documentation-metadata-iosArm64-iosSimulatorArm64").parameters)
@@ -485,6 +497,25 @@ class ProjectGraphTest {
         assertTrue(metadata.sources.any { it.value.contains("/native/") })
         assertTrue(metadata.sources.none { it.value.contains("/jvm/") })
         assertEquals(request.targets, spec.sourceSets.single { it.name == "commonMain" }.supportingTargets)
+    }
+
+    @Test fun documentationKeepsNestedNativeIntersectionsInSeparateClasspathRoots() {
+        val targets = setOf("jvm", "macosArm64", "iosArm64", "iosSimulatorArm64")
+        fun nested(module: ModuleSpec) = module.copy(
+            sourceSets = module.sourceSets + source("iosMain", "${module.id}/ios", listOf("nativeMain")),
+            targets = module.targets + listOf("iosArm64", "iosSimulatorArm64").map { TargetSpec(it, "iosMain", null, emptyList()) })
+        val config = configuration(nested(base), nested(app).copy(documentation = DocumentationSettings()))
+        val files = TreeManifest(snapshot().files + listOf("base", "app").map { FileEntry(LogicalPath("$it/ios/Extra.kt"), digest(it)) })
+        val plan = graph(config, files, ProjectGraphRequest(setOf("app"), targets, ProjectMode.DOCUMENTATION))
+        val actions = resolved(plan)
+        val action = actions.getValue("app:common:documentation")
+        val spec = DocumentationSpec.fromJson(action.parameters)
+        val native = spec.sourceSets.single { it.name == "nativeMain" }.classpath.filter { it.value.startsWith("native-commonized/") }
+        val ios = spec.sourceSets.single { it.name == "iosMain" }.classpath.filter { it.value.startsWith("native-commonized/") }
+        assertTrue(native.isNotEmpty() && ios.isNotEmpty() && native.intersect(ios.toSet()).isEmpty())
+        assertTrue(native.all { it.value.startsWith("native-commonized/iosArm64-iosSimulatorArm64-macosArm64/") })
+        assertTrue(ios.all { it.value.startsWith("native-commonized/iosArm64-iosSimulatorArm64/") })
+        assertEquals(2, plan.nodes.count { it.id.startsWith("native:common:commonize-") })
     }
 
     @Test fun documentationDependencyMetadataPreservesWorkspacePlugins() {
@@ -701,8 +732,22 @@ class ProjectGraphTest {
             assertEquals(selected.map { "app:$it:package" }.toSet() + "app:common:package", plan.requestedChecks)
             assertEquals(plan.requestedChecks, projectRequestedChecks(request))
             assertTrue("jvm" in projectToolTargets(config.project, request))
-            val metadata = plan.nodes.single { it.id == "base:common:metadata" }.resolve(emptyMap())
+            val required = setOf("base:common:metadata", "app:common:metadata")
+            val actions = resolved(plan, required = required)
+            val metadata = actions.getValue("base:common:metadata")
             assertEquals(selected, JvmMetadataCompilation.fromJson(metadata.parameters).targets)
+            if (selected.all { NativeTarget.find(it) != null }) {
+                val recipe = JvmMetadataCompilation.fromJson(metadata.parameters)
+                assertContains(recipe.classpath, LogicalPath("native-stdlib/shared"))
+                assertContains(recipe.classpath, LogicalPath("native-commonized/linuxX64-macosArm64/org.jetbrains.kotlin.native.platform.posix.klib"))
+                val ordinaryStdlib = artifact("org.jetbrains.kotlin:kotlin-stdlib:2.4.20", "common", "kotlin-metadata").digest
+                assertTrue(metadata.inputs.files.none { it.digest == ordinaryStdlib })
+                val commonizer = "native:common:commonize-linuxX64-macosArm64"
+                assertEquals(1, plan.nodes.count { it.id == commonizer })
+                val changed = resolved(plan, commonizer, required)
+                assertNotEquals(metadata.key(Sha256), changed.getValue("base:common:metadata").key(Sha256))
+                assertNotEquals(actions.getValue("app:common:metadata").key(Sha256), changed.getValue("app:common:metadata").key(Sha256))
+            }
             assertTrue(metadata.inputs.files.none { "/native/" in it.path.value || "/jvm/" in it.path.value || "/linux/" in it.path.value })
             val packageNode = plan.nodes.single { it.id == "app:common:package" }
             assertTrue(packageNode.dependencies.containsAll(selected.map { "app:$it:package" }))
@@ -2072,7 +2117,7 @@ class IdeInputGraphTest {
         val prepared = JvmMetadataPreparation.fromJson(action.parameters)
         assertEquals(setOf("macosArm64", "iosArm64"), prepared.targets)
         assertContains(prepared.classpath, LogicalPath("native-stdlib/shared"))
-        assertContains(prepared.classpath, LogicalPath("native-commonized/org.jetbrains.kotlin.native.platform.posix.klib"))
+        assertContains(prepared.classpath, LogicalPath("native-commonized/iosArm64-macosArm64/org.jetbrains.kotlin.native.platform.posix.klib"))
         assertContains(action.inputs.files.map { it.path }, LogicalPath("native-stdlib/shared/default/manifest"))
         assertTrue(action.inputs.files.none { it.path.value.startsWith("native-sdk/") })
         val ordinaryStdlib = artifact("org.jetbrains.kotlin:kotlin-stdlib:2.4.20", "common", "kotlin-metadata").digest
@@ -2082,7 +2127,7 @@ class IdeInputGraphTest {
         assertNotEquals(action.key(Sha256), changed.getValue(id).key(Sha256))
         assertEquals(actions.getValue("app:common:ide-metadata-commonMain").key(Sha256), changed.getValue("app:common:ide-metadata-commonMain").key(Sha256))
         assertTrue(plan.compilations.isEmpty())
-        val commonizerId = "native:common:ide-commonize-iosArm64-macosArm64"
+        val commonizerId = "native:common:commonize-iosArm64-macosArm64"
         val commonizer = actions.getValue(commonizerId)
         assertEquals(setOf(NativeTarget.IOS_ARM64, NativeTarget.MACOS_ARM64), NativeCommonization.fromJson(commonizer.parameters).targets)
         assertEquals(1, plan.nodes.count { it.id == commonizerId })

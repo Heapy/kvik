@@ -112,7 +112,9 @@ def main():
     run([*bootstrap, '--offline', '--no-build', '--', 'runtime-info'])
     run_owned([sys.executable, ROOT/'tools/test_ios_framework_cli.py',
                '--runtime', executable, '--tools', tools_path], environment, sys.stdout, timeout=3600)
-    print('PASS macOS host runtime: cached startup, iOS device/simulator frameworks and Swift consumers', flush=True)
+    run_owned([sys.executable, ROOT/'tools/test_documentation_cli.py', '--runtime', executable, '--tools', tools_path,
+               '--native-target', 'iosArm64', '--native-target', 'iosSimulatorArm64'], environment, sys.stdout, timeout=3600)
+    print('PASS macOS host runtime: cached startup, iOS frameworks, Swift consumers and shared Native documentation', flush=True)
 
 
 if __name__ == '__main__':
