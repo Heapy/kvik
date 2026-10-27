@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Publish a real retained package run to an owned loopback repository; no compiler or external publication."""
+"""Publish real retained or newly built JVM packages to an owned loopback repository.
+
+Publication and retry run without compiler tools. --tools also builds the producer
+and verifies a separate Java consumer of downloaded packages; no external publishing.
+"""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +20,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import urllib.request
 
 import jsonschema
 
@@ -31,16 +36,72 @@ def snapshot(root):
             for p in root.rglob('*') if p.is_file()}
 
 
+def prepare_jvm_run(runtime, tools, store, case):
+    """Produce real workspace dependency packages on either supported native host."""
+    project = case / 'project'
+    project.mkdir()
+    modules = []
+    for name in ('base', 'library'):
+        source = project / name
+        source.mkdir()
+        (source / (name.capitalize() + '.kt')).write_text(f'package fixture\n// {case.name}\n' +
+            ('fun base(): Int = 40\n' if name == 'base' else 'fun answer(): Int = base() + 2\n'))
+        dependencies = [dict(coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.20', exported=True)]
+        if name == 'library':
+            dependencies.append(dict(module='base', exported=True))
+        modules.append(dict(id=name, publication=dict(coordinate=f'dev.kvik.uploadfixture:{name}:1.0'),
+            sourceSets=[dict(name='main', directories=[name], resources=[], dependsOn=[], dependencies=dependencies)],
+            targets=[dict(name='jvm', main='main', test=None, compilerOptions=['-jvm-target=11'])], compilerPlugins=[]))
+    configuration = project / 'kvik.json'
+    configuration.write_text(json.dumps(dict(schemaVersion=1, name='mavenPublication',
+        repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')], modules=modules)))
+    common = ['--project', configuration, '--store', store]
+    environment = dict(os.environ)
+    environment.pop('KVIK_BOOTSTRAP_OFFLINE', None)
+
+    def run(label, command):
+        result = subprocess.run(list(map(str, command)), env=environment, capture_output=True, timeout=300)
+        (case / (label + '.stdout')).write_bytes(result.stdout)
+        (case / (label + '.stderr')).write_bytes(result.stderr)
+        assert result.returncode == 0, (label, result.stdout[-4000:], result.stderr[-4000:])
+        return result.stdout
+
+    run('resolve', [runtime, 'resolve', *common])
+    command = [runtime, 'package-library', *common, '--module', 'library', '--target', 'jvm',
+               '--tools', tools, '--runs', case / 'runs', '--offline']
+    cold = [json.loads(line) for line in run('package-cold', command).splitlines()]
+    warm = [json.loads(line) for line in run('package-warm', command).splitlines()]
+    first = next(e['payload'] for e in cold if e.get('type') == 'run-finished')
+    second = next(e['payload'] for e in warm if e.get('type') == 'run-finished')
+    assert first['status'] == second['status'] == 'passed'
+    assert all(a['status'] == 'executed' for a in first['actions'] if a['actionId'].endswith(':main'))
+    assert all(a['status'] == 'local_hit' for a in second['actions'])
+    assert {a['actionId'] for a in first['actions'] if a['actionId'].endswith(':package')} == {'base:jvm:package', 'library:jvm:package'}
+    print('PASS JVM workspace packages and warm preparation reuse', flush=True)
+    return case / 'runs' / first['runId']
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', required=True, type=Path)
-    parser.add_argument('--run', required=True, type=Path, help='Completed real package-library run, including library/')
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument('--run', type=Path, help='Completed real package-library run, including library/')
+    inputs.add_argument('--tools', type=Path, help='Build a fresh two-module JVM package fixture using these tools')
+    parser.add_argument('--store', type=Path, help='Shared dependency/artifact store for --tools')
+    parser.add_argument('--java-home', type=Path, help='JDK for the downloaded JVM package consumer with --tools')
     parser.add_argument('--output-dir', type=Path, default=ROOT / '.kvik/tests/maven-publication-cli')
     args = parser.parse_args()
-    runtime, original = args.runtime.resolve(strict=True), args.run.resolve(strict=True)
+    if args.tools is not None and (args.store is None or args.java_home is None):
+        parser.error('--tools requires --store and --java-home')
+    if args.run is not None and (args.store is not None or args.java_home is not None):
+        parser.error('--store and --java-home apply only to --tools')
+    runtime = args.runtime.resolve(strict=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=args.output_dir)).resolve()
     print(f'Fixture: {case}', flush=True)
+    (case / 'summary.json').write_text(json.dumps(dict(passed=False, stage='prepare')) + '\n')
+    original = args.run.resolve(strict=True) if args.run else prepare_jvm_run(runtime,
+        args.tools.resolve(strict=True), args.store.resolve(), case)
     baseline = snapshot(original)
     record = json.loads((original / 'verification.json').read_bytes())
     assert record['status'] == 'passed' and all(c.endswith(':package') for c in record['requestedChecks'])
@@ -66,9 +127,11 @@ def main():
                        PATH='/no-tools', JAVA_HOME='/no-java', KONAN_HOME='/no-konan')
     results = []
     summary = case / 'summary.json'
+    consumer_verified = False if args.tools else None
 
     def save(passed=False):
-        summary.write_text(json.dumps(dict(passed=passed, sourceRun=str(original), files=len(expected), scenarios=results), indent=2) + '\n')
+        summary.write_text(json.dumps(dict(passed=passed, sourceRun=str(original), files=len(expected),
+            preparation='fresh-jvm' if args.tools else 'retained-run', consumerVerified=consumer_verified, scenarios=results), indent=2) + '\n')
 
     save()
     repository_files = {}
@@ -222,6 +285,39 @@ def main():
         assert repository_files == expected
         assert all(f['state'] == 'published' for f in result['files'])
         assert sum(method == 'PUT' for method, _ in sent) == len(expected)
+        if args.tools:
+            # Consume bytes actually downloaded over HTTP, outside the producer's class directories/CAS.
+            consumer = case / 'consumer'
+            consumer.mkdir()
+            jars = []
+            for path in expected:
+                if path.endswith('.jar'):
+                    request = urllib.request.Request(repository + path, headers={'Authorization': auth})
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        downloaded = response.read(len(expected[path]) + 1)
+                    assert downloaded == expected[path]
+                    destination = consumer / Path(path).name
+                    destination.write_bytes(downloaded)
+                    jars.append(destination)
+            assert len(jars) == 2
+            source = consumer / 'Consumer.java'
+            source.write_text('public class Consumer { public static void main(String[] args) { '
+                              'if (fixture.LibraryKt.answer() != 42) throw new AssertionError(); '
+                              'System.out.println("remote Maven packages consumed"); } }\n')
+            classpath = os.pathsep.join(map(str, jars))
+            java = args.java_home.resolve(strict=True)
+            for label, command in (
+                ('consumer-compile', [java / 'bin/javac', '-cp', classpath, '-d', consumer, source]),
+                ('consumer-run', [java / 'bin/java', '-cp', classpath + os.pathsep + str(consumer), 'Consumer']),
+            ):
+                consumed = subprocess.run(list(map(str, command)), capture_output=True, timeout=60)
+                (case / (label + '.stdout')).write_bytes(consumed.stdout)
+                (case / (label + '.stderr')).write_bytes(consumed.stderr)
+                assert consumed.returncode == 0, (label, consumed.stdout, consumed.stderr)
+            assert b'remote Maven packages consumed' in consumed.stdout
+            consumer_verified = True
+            save()
+            print('PASS downloaded JVM package consumer', flush=True)
         retained_baseline = snapshot(first)
         shutil.rmtree(disposable_source)
         warm, result, sent = invoke('already-present', retry=first)

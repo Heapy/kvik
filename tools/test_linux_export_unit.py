@@ -23,6 +23,7 @@ class ExportChecksTest(unittest.TestCase):
                 'build-output-cli/case-i': ['summary.json', 'summary.stdout.jsonl', 'summary.stderr.log',
                     'runs/run-a/verification.json', 'runs/run-a/completion.json', 'runs/run-a/events.jsonl'],
                 'js-cli/case-j': ['summary.json', '001-test.stdout.jsonl', '001-test.stderr.log'],
+                'maven-publication-cli/case-k': ['summary.json', 'package-cold.stdout', 'consumer-run.stdout', 'cancel.log'],
             }
             expected = {}
             for case_name, names in fixtures.items():
@@ -44,6 +45,8 @@ class ExportChecksTest(unittest.TestCase):
                         category = 'build-output'
                     if category == 'js-cli':
                         category = 'js-wasm'
+                    if category == 'maven-publication-cli':
+                        category = 'maven-publication'
                     expected[f'{category}/{case.name}/{name}'] = name
                 (case / 'private-input').write_text('do not export')
                 (case / 'symlink.stdout.jsonl').symlink_to(case / 'private-input')

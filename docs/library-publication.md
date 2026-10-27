@@ -89,6 +89,21 @@ The Native publication fixture also runs this test after its Gradle/KTC consumer
 checks, including in macOS CI. Its summary and command logs are retained alongside
 the consumer logs.
 
+Linux CI runs the same transport/failure matrix using newly built JVM packages.
+It also downloads both workspace modules over HTTP, compiles a separate Java
+consumer against those JARs, and executes its API assertion. The producer's class
+directories and CAS are not on the consumer classpath. Run that mode locally with:
+
+```sh
+.kvik/schema-tools/bin/python tools/test_maven_publication_cli.py \
+  --runtime /path/to/kvik.kexe --tools tools.json --store .kvik/cache \
+  --java-home "$JAVA_HOME"
+```
+
+The `maven-publication-linux` CI artifact contains the preparation and consumer
+logs, publication outcomes and summary; package archives and credentials are not
+exported.
+
 ## Publication contents and consumers
 
 JVM API dependencies appear in the compile/API metadata. Private implementation dependencies and runtime-only dependencies remain in runtime metadata and use POM runtime scope. KLIB loading requires compilation dependencies transitively, so Native, JS and Wasm API metadata includes private implementation dependencies as well as exported dependencies. Native runtime-only publication is rejected: Kotlin's Native publication model has no separate runtime resolution configuration to preserve link-only dependencies. Resources in Native, JS and Wasm KLIB publications are currently unsupported. JS/Wasm publishes separate API and runtime variants, including runtime-only dependencies in the latter.

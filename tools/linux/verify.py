@@ -27,6 +27,7 @@ def export_checks(root):
             'runs/*/verification.json', 'runs/*/completion.json', 'runs/*/events.jsonl')),
         'reporting': ('reporting-cli/case-*', ('summary.json', '*.stdout', '*.stderr')),
         'js-wasm': ('js-cli/case-*', ('summary.json', '*.stdout.jsonl', '*.stderr.log')),
+        'maven-publication': ('maven-publication-cli/case-*', ('summary.json', '*.stdout', '*.stderr', '*.log')),
     }
     output = root / '.kvik/ci-artifacts'
     output.mkdir(parents=True, exist_ok=True)
@@ -154,6 +155,8 @@ def main():
         raise RuntimeError('Expected one JVM fixture for parallel test measurements')
     run([sys.executable, ROOT/'tools/test_build_output_cli.py', '--runtime', executable,
          '--fixture', fixtures[0]])
+    run([sys.executable, ROOT/'tools/test_maven_publication_cli.py', '--runtime', executable,
+         '--tools', fixtures[0]/'tools.json', '--store', fixtures[0]/'.kvik/cache', '--java-home', java])
     run([sys.executable, ROOT/'tools/test_unavailable_target_cli.py', '--runtime', executable,
          '--tools', fixtures[0]/'tools.json'])
     run([sys.executable, ROOT/'tools/test_documentation_cli.py', '--runtime', executable,
