@@ -253,6 +253,26 @@ def trusted_copy(source, destination):
     return result
 
 
+def completed_source_fixture(attempt):
+    """Select the verified helper revision, independently of the mutable active lock."""
+    attempt = Path(attempt).resolve(strict=True)
+    prior = read(attempt/'summary.json')
+    assert prior['passed'] and prior['compiledRuntime'], 'Reference source bootstrap did not pass'
+    phase = prior['phases']['helper-mutation']
+    assert phase['passed'], 'Reference helper revision was not verified'
+    assert records_inventory_matches_selection(attempt.parent, read(attempt.parent/'source-selection.json')), \
+        'Reference source inventory changed'
+    producer = attempt/'trusted-launcher'
+    assert inventory(producer) == prior['producer']['inventory'], 'Reference launcher changed'
+    source_lock = attempt/'source-v2.lock.json'
+    key = phase['audit']['manifest']['composition']
+    runtime_lock = read(attempt.parent/'runtime-cache/executables'/key['hash']/'runtime.lock.json')
+    assert digest(canonical(runtime_lock)) == key, 'Reference runtime lock changed'
+    assert read(source_lock) == runtime_lock['sourceGraph']['document'], 'Reference source lock changed'
+    assert phase['runtimeInfo']['composition'] == key['hash'], 'Reference runtime result differs'
+    return prior, source_lock, phase['runtimeInfo']['plugins']
+
+
 def audit_worker_cache(directory, manifest, workers, expected_status):
     """Bind reuse reporting to the retained inputs, bundle and actual commands."""
     path = directory/'jvm-worker-cache.json'

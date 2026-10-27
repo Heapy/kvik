@@ -1913,6 +1913,16 @@ instrumented observations with uncontrolled OS caches, not startup percentiles o
 a general speedup claim; tool installation was excluded. The retained receipt is
 `.kvik/tests/source-bootstrap/case-p7e_lroh/attempt-ijhpg4m7/summary.json`.
 
+Use a completed source-bootstrap attempt directory as `--reference` for
+`tools/test_source_graph_lifecycle.py --run` to check concurrent construction,
+compiler interruption/retry, corrupt executable/receipt repair and incompatible
+tool refusal. Without `--run` it prepares a private case; resume that case with
+`--case <directory> --run`. The same attempt is accepted as `--fixture` by
+`tools/test_shared_runtime_launcher.py` for shared-store publication and compiler-free
+restoration, with explicit `--java-home`, `--konan-home` and `--artifact-cache`.
+Both scenarios use the verified helper revision and its recorded plugin schemas,
+even when the source-bootstrap run has subsequently restored its original active lock.
+
 Use `--runtime-store /absolute/shared-store` to share complete verified native runtime bundles between checkouts or distinct `--cache-dir` directories on the same compatible host. The local K04 store includes the executable, guardian, JVM workers and runtime manifests. Concurrent launchers coordinate one build; `--offline --no-build` can restore an existing shared bundle into an empty local runtime cache without compiler or source/artifact caches. Local source declarations still need to be observable. The store must be separate from sources, other bootstrap caches and tool installations. See the [shared runtime contract](docs/decisions/k14-shared-runtime-store.md) and [actual build/restore evidence](docs/evidence/k14-shared-runtime-launcher.md).
 
 `abi-dump` and `abi-check` accept the same module, target, project and tools selectors as `build`. They read main compilation outputs on JVM, Native, JS and WasmJS targets; publication coordinates are optional. Add `"abi": {"baseline": "api/library.jvm.api"}` to each target you want to check, using a separate baseline per target. Tests are neither compiled nor run. See [public API baselines](docs/abi.md) for the JS/Wasm workflow.

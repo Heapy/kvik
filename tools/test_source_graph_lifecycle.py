@@ -2,7 +2,7 @@
 """Actual offline source-graph failure/concurrency gate; default prepares only.
 
 --run performs four complete runtime compilations plus one interrupted Native
-compile. Every producer/source/cache input is copied from an approved fixture.
+compile. Every producer/source/cache input is copied from a verified fixture.
 """
 import argparse
 import json
@@ -18,21 +18,18 @@ import time
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tools'))
-from test_source_bootstrap import audit_runtime, digest, inventory, read, trusted_copy, write
-
-REFERENCE = Path('/private/tmp/kvik-k14-source-bootstrap/.kvik/tests/source-bootstrap/case-kgcfr28z')
+from test_source_bootstrap import audit_runtime, completed_source_fixture, digest, inventory, read, trusted_copy, write
 
 
 def events(data):
     return [json.loads(line) for line in data.splitlines() if line.startswith(b'{')]
 
 
-def assert_runtime(stdout, stderr, key, event):
+def assert_runtime(stdout, stderr, key, event, expected_plugins):
     info = json.loads(stdout)
     assert info['backend'] == 'kotlin-native' and info['composition'] == key['hash'], info
     plugins = {p['id']: p['schema'] for p in info['plugins']}
-    assert set(plugins) == {'kvik.kotlin', 'example.a', 'example.b'}
-    assert plugins['example.a']['description'] == plugins['example.b']['description'] == 'source-v2'
+    assert plugins == {p['id']: p['schema'] for p in expected_plugins}, plugins
     seen = events(stderr)
     assert [e['kind'] for e in seen].count(event) == 1, seen
     opposite = 'runtime-built' if event == 'runtime-cache-hit' else 'runtime-cache-hit'
@@ -69,6 +66,7 @@ class Gate:
     def __init__(self, case, args, receipt):
         self.case, self.args, self.receipt = case, args, receipt
         self.children = []
+        self.expected_plugins = read(case/'fixture.json')['plugins']
         self.environment = {name: os.environ[name] for name in ('HOME', 'TMPDIR') if name in os.environ}
         self.environment.update(PATH='/usr/bin:/bin:/usr/sbin:/sbin', LANG='C', LC_ALL='C', TZ='UTC')
         receipt['environment'] = self.environment
@@ -150,12 +148,13 @@ class Gate:
             job[0].terminate(); raise
         return self.finish(job, expected)
 
-    def build(self, label, cache, key, records):
+    def build(self, label, cache, key, records, worker_status):
         job=self.start(label, self.command(cache))
         monitor=self.monitor([job], cache, key)
         stdout,stderr=self.finish(job)
-        info=assert_runtime(stdout,stderr,key,'runtime-built')
-        audit=audit_runtime(cache/'executables'/key['hash'],read(self.case/'source.lock.json'),key,records)
+        info=assert_runtime(stdout,stderr,key,'runtime-built',self.expected_plugins)
+        audit=audit_runtime(cache/'executables'/key['hash'],read(self.case/'source.lock.json'),key,records,
+                            events(stderr),worker_status)
         assert len(monitor['staging'])==1, monitor['staging'].keys()
         self.receipt['phases'][label]=dict(passed=True,runtimeInfo=info,audit=audit)
         self.save()
@@ -170,20 +169,17 @@ class Gate:
 
 
 def prepare(case, reference):
-    prior=read(reference/'attempt-pz7voq2r/summary.json')
-    assert prior['passed'] and prior['compiledRuntime']
-    producer=reference/'attempt-pz7voq2r/trusted-launcher'
-    assert inventory(producer)==prior['producer']['inventory']
-    source_lock=reference/'attempt-pz7voq2r/source-v2.lock.json'
-    assert read(source_lock)==read(reference/'source.lock.json')
-    source_cache_before=inventory(reference/'source-cache')
+    prior,source_lock,plugins=completed_source_fixture(reference)
+    producer=reference/'trusted-launcher'
+    source_case=reference.parent
+    source_cache_before=inventory(source_case/'source-cache')
     trusted=trusted_copy(producer,case/'trusted-launcher')
     shutil.copyfile(source_lock,case/'source.lock.json')
-    shutil.copyfile(reference/'archive-identities.json',case/'archive-identities.json')
-    shutil.copytree(reference/'source-cache',case/'source-cache')
+    shutil.copyfile(source_case/'archive-identities.json',case/'archive-identities.json')
+    shutil.copytree(source_case/'source-cache',case/'source-cache')
     assert inventory(case/'source-cache')==source_cache_before
-    assert inventory(reference/'source-cache')==source_cache_before
-    value=dict(reference=str(reference), referenceSummary=digest((reference/'attempt-pz7voq2r/summary.json').read_bytes()),
+    assert inventory(source_case/'source-cache')==source_cache_before
+    value=dict(reference=str(reference), referenceSummary=digest((reference/'summary.json').read_bytes()),plugins=plugins,
         trustedInventory=trusted, sourceCacheInventory=source_cache_before,
         sourceLock=digest(source_lock.read_bytes()), archives=digest((case/'archive-identities.json').read_bytes()))
     write(case/'fixture.json',value)
@@ -192,10 +188,11 @@ def prepare(case, reference):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--reference',type=Path,default=REFERENCE)
+    selection=parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--reference',type=Path,help='Completed source-bootstrap attempt directory')
     parser.add_argument('--output-dir',type=Path,default=ROOT/'.kvik/tests/source-lifecycle')
-    parser.add_argument('--case',type=Path)
-    parser.add_argument('--run',action='store_true',help='Run real compilation after coordinated compiler-slot approval.')
+    selection.add_argument('--case',type=Path,help='Previously prepared lifecycle case')
+    parser.add_argument('--run',action='store_true',help='Run real compilation; otherwise only prepare the fixture.')
     parser.add_argument('--java-home',type=Path,default=Path('/Users/yoda/.sdkman/candidates/java/25.0.4-librca'))
     parser.add_argument('--konan-home',type=Path,default=Path('/Users/yoda/.konan/kotlin-native-prebuilt-macos-aarch64-2.4.20'))
     parser.add_argument('--konan-data',type=Path,default=Path.home()/'.konan')
@@ -234,21 +231,25 @@ def main():
         assert sum(k.count('runtime-built') for k in kinds)==1, kinds
         assert sum(k.count('runtime-cache-hit') for k in kinds)==1, kinds
         for stdout,stderr in outcomes:
-            assert_runtime(stdout,stderr,key,'runtime-built' if any(e['kind']=='runtime-built' for e in events(stderr)) else 'runtime-cache-hit')
+            assert_runtime(stdout,stderr,key,'runtime-built' if any(e['kind']=='runtime-built' for e in events(stderr)) else 'runtime-cache-hit',gate.expected_plugins)
         assert len(monitor['staging'])==1, monitor['staging'].keys()
-        assert sum(Path(c['command'][0]).name=='konanc' for commands in monitor['staging'].values() for c in commands)==1
-        receipt['phases']['concurrent']=dict(passed=True,audit=audit_runtime(cache/'executables'/key['hash'],read(case/'source.lock.json'),key,records))
+        assert sum(Path(c['command'][0]).name=='konanc' and '-produce' not in c['command']
+                   for commands in monitor['staging'].values() for c in commands)==1
+        receipt['phases']['concurrent']=dict(passed=True,audit=audit_runtime(cache/'executables'/key['hash'],
+            read(case/'source.lock.json'),key,records,[e for _,err in outcomes for e in events(err)],'compiled'))
         gate.save();print('PASS simultaneous cold owners: one actual build',flush=True)
 
         interrupted=case/'interrupted-cache'
         job=gate.start('interrupted',gate.command(interrupted))
-        gate.monitor([job],interrupted,key,interrupt=True)
+        interrupted_monitor=gate.monitor([job],interrupted,key,interrupt=True)
         stdout,stderr=gate.finish(job,130)
         assert not stdout and not any(e['kind']=='runtime-built' for e in events(stderr))
         assert list((interrupted/'executables').iterdir())==[], 'Interrupted build exposed/retained a runtime staging directory'
         stdout,stderr=gate.invoke('interrupted-no-build',gate.command(interrupted,no_build=True),2)
         assert not stdout and b'No valid executable' in stderr
-        gate.build('interrupted-retry',interrupted,key,records)
+        worker_completed=any('org.jetbrains.kotlin.cli.jvm.K2JVMCompiler' in command['command']
+            for commands in interrupted_monitor['staging'].values() for command in commands)
+        gate.build('interrupted-retry',interrupted,key,records,'cache-hit' if worker_completed else 'compiled')
         receipt['phases']['interruption']=dict(passed=True,noPublication=True)
         print('PASS interrupted actual Native compiler, no publication, retry',flush=True)
 
@@ -260,7 +261,7 @@ def main():
             stdout,stderr=gate.invoke(label+'-corrupt-no-build',gate.command(repaired,no_build=True),2)
             assert not stdout and b'No valid executable' in stderr
             assert digest(path.read_bytes())==corrupt_digest
-            gate.build(label+'-repair',repaired,key,records)
+            gate.build(label+'-repair',repaired,key,records,'cache-hit')
             quarantines=list((repaired/'executables').glob(key['hash']+'-corrupt-*'))
             assert len(quarantines)==1 and digest((quarantines[0]/relative).read_bytes())==corrupt_digest
             receipt['phases'][label+'-repair']['corruption']=dict(path=relative,before=digest(original),damaged=corrupt_digest,

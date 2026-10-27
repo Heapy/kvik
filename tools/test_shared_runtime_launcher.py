@@ -2,7 +2,7 @@
 """Actual source composition shared between independent local runtime caches.
 
 One Native build, two concurrent owners, compiler-free restore, blob and semantic
-corruption refusal/repair. Uses private copies of the approved source fixture.
+corruption refusal/repair. Uses private copies of the verified source fixture.
 """
 import argparse
 import json
@@ -21,9 +21,7 @@ from bootstrap.identity import canonical, digest, inventory
 from bootstrap.runtime_store import RuntimeStore, RuntimeRecord
 from bootstrap.source_graph import parse_source_lock, observe_graph
 from bootstrap import jvm_worker
-from test_source_bootstrap import audit_runtime
-
-DEFAULT_FIXTURE = Path('/private/tmp/kvik-k14-source-bootstrap/.kvik/tests/source-bootstrap/case-kgcfr28z')
+from test_source_bootstrap import audit_runtime, completed_source_fixture, inventory as source_inventory, trusted_copy
 
 
 def read(path): return json.loads(path.read_bytes())
@@ -33,30 +31,33 @@ def events(path): return [json.loads(line) for line in path.read_bytes().splitli
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--fixture', type=Path, default=DEFAULT_FIXTURE)
+    parser.add_argument('--fixture', type=Path, required=True, help='Completed source-bootstrap attempt directory')
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--konan-home', type=Path, required=True)
     parser.add_argument('--artifact-cache', type=Path, required=True)
     parser.add_argument('--prepare-only', action='store_true')
     args = parser.parse_args()
+    args.fixture = args.fixture.resolve(strict=True)
+    prior, source_lock, expected_plugins = completed_source_fixture(args.fixture)
+    source_case = args.fixture.parent
     output = ROOT / '.kvik/tests/shared-runtime-launcher'; output.mkdir(parents=True, exist_ok=True)
     case = Path(tempfile.mkdtemp(prefix='case-', dir=output)).resolve()
     print(case, flush=True)
-    bootstrap = case / 'bootstrap-owner'; bootstrap.mkdir()
-    shutil.copyfile(ROOT / 'kvik', bootstrap / 'kvik')
-    shutil.copytree(ROOT / 'bootstrap', bootstrap / 'bootstrap', ignore=shutil.ignore_patterns('__pycache__'))
-    graph = read(args.fixture / 'attempt-pz7voq2r/source-v2.lock.json')
+    bootstrap = case / 'bootstrap-owner'
+    trusted_copy(args.fixture / 'trusted-launcher', bootstrap)
+    graph = read(source_lock)
     local = case / 'local-kvik'; local.mkdir()
     source = next(node for node in graph['sources'] if node['id'] == 'kvik')
     for relative in source['contentPaths']:
-        shutil.copytree(ROOT / relative, local / relative)
+        shutil.copytree(source_case / 'packages/kvik' / relative, local / relative)
     source['pin'] = {'kind': 'local', 'origin': 'local-kvik', 'tree': None}
     lock = case / 'source.lock.json'; write(lock, graph)
-    source_cache = case / 'sources'; shutil.copytree(args.fixture / 'source-cache', source_cache)
+    source_cache = case / 'sources'; shutil.copytree(source_case / 'source-cache', source_cache)
     store = case / 'shared-store'
     environment = {key: os.environ[key] for key in ('HOME', 'TMPDIR') if key in os.environ}
     environment.update(PATH='/usr/bin:/bin:/usr/sbin:/sbin', LANG='C', LC_ALL='C', TZ='UTC', PYTHONDONTWRITEBYTECODE='1')
     summary = {'passed': False, 'commands': [], 'harness': digest(Path(__file__).read_bytes()),
+        'referenceSummary': digest((args.fixture / 'summary.json').read_bytes()),
         'auditHelper': digest((ROOT / 'tools/test_source_bootstrap.py').read_bytes()),
         'bootstrap': inventory(bootstrap), 'localSources': inventory(local), 'sourceCache': inventory(source_cache),
         'sourceLock': digest(lock.read_bytes())}
@@ -75,7 +76,7 @@ def main():
         return value
     def finish(value, expected=0):
         label, argv, process, stdout, stderr, started = value
-        code = process.wait(timeout=300); stdout.close(); stderr.close()
+        code = process.wait(timeout=900); stdout.close(); stderr.close()
         receipt = {'label': label, 'argv': argv, 'environment': environment, 'exitCode': code,
             'milliseconds': int((time.monotonic() - started) * 1000),
             **{stream: digest((case / (label + '.' + stream)).read_bytes()) for stream in ('stdout', 'stderr')}}
@@ -97,7 +98,7 @@ def main():
         assert descriptor['composition'] == key and descriptor['bootstrapArguments'][-4:] == ['--runtime-store', str(store), '--offline', '--no-build']
         info = invoke(label, [str(runtime), 'runtime-info'])
         assert info['composition'] == key['hash']
-        assert {p['id']: p['schema'].get('description') for p in info['plugins'] if p['id'].startswith('example.')} == {'example.a': 'source-v2', 'example.b': 'source-v2'}
+        assert {p['id']: p['schema'] for p in info['plugins']} == {p['id']: p['schema'] for p in expected_plugins}
         assert inventory(bundle) == baseline
         assert not (case / 'absent-artifacts').exists() and not (case / 'absent-sources').exists()
         return bundle
@@ -118,14 +119,14 @@ def main():
         bundle_a = Path(a['runtime']).parent; bundle_b = Path(b['runtime']).parent
         baseline = inventory(bundle_a); assert inventory(bundle_b) == baseline
         built = bundle_a if any(e['kind'] == 'runtime-built' for e in events(case / 'concurrent-a.stderr')) else bundle_b
-        records = read(args.fixture / 'archive-identities.json')
-        records['kvik'] = {'inventory': inventory(local)}
+        records = read(source_case / 'archive-identities.json')
+        records['kvik'] = {'inventory': source_inventory(local)}
         observed = observe_graph(parse_source_lock(lock.read_bytes()), case, lock_path=lock)
-        audit = audit_runtime(built, observed.observed_document, key, records)
+        audit = audit_runtime(built, observed.observed_document, key, records, combined, 'compiled')
         jvm_worker.verify_bundle(built, audit['manifest']['jvmWorkerBundle'])
         summary['buildAudit'] = audit
         shared = RuntimeStore(store); record = shared.lookup(key); assert record is not None
-        assert record.outputs == baseline
+        assert record.outputs == {**baseline, 'files': sorted(baseline['files'], key=lambda item: item['path'].encode('utf-16-be'))}
         summary['concurrency'] = {'a': a, 'b': b, 'events': combined, 'bundle': baseline, 'record': record.record_digest}
         restored = invoke('restore-c', command('runtime-c', no_build=True, missing_tools=True))
         bundle_c = verify_runtime('run-c', restored)

@@ -48,6 +48,8 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_source_core_cache_unit.py'
       - name: Check source bootstrap worker reuse assertions
         run: python3 -m unittest discover -s tools -p 'test_source_worker_cache_unit.py'
+      - name: Check source bootstrap input and reference binding
+        run: python3 -m unittest discover -s tests/source-bootstrap -p 'test_audit.py'
       - name: Check source bootstrap archive policy and timeout records
         run: python3 -m unittest discover -s tools -p 'test_source_tool_archives_unit.py'
       - name: Check source bootstrap process resource measurements
