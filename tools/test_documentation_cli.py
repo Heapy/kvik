@@ -3,13 +3,17 @@
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap import process_barrier
 
 
 def main():
@@ -33,7 +37,9 @@ def main():
         path.write_text(content)
 
     def run(parts):
-        return subprocess.run([runtime, *parts], capture_output=True, text=True, timeout=900)
+        environment, descriptors = process_barrier.inherited(os.environ)
+        return subprocess.run([runtime, *parts], env=environment, pass_fds=descriptors,
+                              capture_output=True, text=True, timeout=900)
 
     def source(name, roots, parents=(), dependencies=()):
         return dict(name=name, directories=list(roots), resources=[], dependsOn=list(parents), dependencies=list(dependencies))
@@ -94,7 +100,7 @@ expect fun platformName(): String
         write(label + '.stderr', result.stderr)
         events = [json.loads(line) for line in result.stdout.splitlines()]
         failures = [event['payload'] for event in events if event['type'] == 'diagnostic']
-        failed_actions = [(event['payload']['actionId'], event['payload']['status']) for event in events
+        failed_actions = [(event['payload']['actionId'], event['payload']['status'], event['payload'].get('diagnostic')) for event in events
                           if event['type'] == 'action-finished' and event['payload']['status'] in ['failed', 'cancelled']]
         assert (result.returncode == 0) == success, (label, result.returncode, failures[-10:], failed_actions,
             result.stderr[-2048:], str(project / (label + '.jsonl')))

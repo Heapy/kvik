@@ -7,10 +7,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from bootstrap import process_barrier
 TARGETS = ('macosArm64', 'iosArm64')
 
 
@@ -33,8 +36,9 @@ def main():
         path.write_text(text)
 
     def run(label, command, cwd=case, success=True, extra_env=None):
+        child_environment, descriptors = process_barrier.inherited(environment | (extra_env or {}))
         with (case / f'{label}.log').open('w') as log:
-            result = subprocess.run(list(map(str, command)), cwd=cwd, env=environment | (extra_env or {}),
+            result = subprocess.run(list(map(str, command)), cwd=cwd, env=child_environment, pass_fds=descriptors,
                                     stdout=log, stderr=subprocess.STDOUT, timeout=900)
         text = (case / f'{label}.log').read_text()
         assert (result.returncode == 0) == success, (label, result.returncode, text[-5000:])
