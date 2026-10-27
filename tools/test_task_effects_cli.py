@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compile the restricted @Task experiment through Kvik workspace compiler plugins."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,11 +9,63 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bootstrap import process_barrier
-PLUGIN = 'kvik.experimental.task-effects'
+from bootstrap.jvm_worker import artifact_digest, read_lock
+from bootstrap.jvm_acquisition import LockedRedirects, transfer_deadline
+
+
+def install_dependencies(fixture, project, store, artifacts, tool_lock, metadata_root, additional=None):
+    """Seed a private CAS from pinned metadata and already provisioned compiler JARs."""
+    lock_bytes = (fixture / 'kvik.lock.json').read_bytes()
+    lock = json.loads(lock_bytes)
+    metadata = json.loads((fixture / 'metadata.json').read_bytes())
+    compiler = {item['url']: item for item in tool_lock['compilerArtifacts']}
+    additional = additional or {}
+    blobs = store / 'blobs'
+    blobs.mkdir(parents=True)
+    installed = set()
+    for selection in lock['selections']:
+        for kind in ('metadata', 'artifacts'):
+            for entry in selection[kind]:
+                expected = entry['digest']
+                key = f"{expected['hash']}-{expected['sizeBytes']}"
+                if kind == 'artifacts':
+                    item = compiler[entry['url']]
+                    if artifact_digest(item) != expected or item['coordinate'] != entry['coordinate']:
+                        raise ValueError(f"Task fixture differs from pinned compiler artifact: {entry['coordinate']}")
+                    source = additional.get(item['url'], artifacts / item['filename'])
+                else:
+                    name = metadata[expected['hash']]
+                    if Path(name).name != name:
+                        raise ValueError('Task fixture metadata must name a file within the fixture directory')
+                    source = metadata_root / name
+                if key in installed:
+                    continue
+                data = source.read_bytes()
+                if len(data) != expected['sizeBytes'] or hashlib.sha256(data).hexdigest() != expected['hash']:
+                    raise ValueError(f'Task fixture dependency differs from lock: {source.name}')
+                (blobs / key).write_bytes(data)
+                installed.add(key)
+    (project / 'kvik.lock.json').write_bytes(lock_bytes)
+
+
+def provision_common_metadata(fixture, artifacts, case):
+    """The KMP metadata JAR is a fixture dependency, outside the worker tool lock."""
+    item = json.loads((fixture / 'common-stdlib.json').read_bytes())
+    source = artifacts / item['filename']
+    if not source.exists():
+        opener = urllib.request.build_opener(LockedRedirects())
+        with transfer_deadline(120), opener.open(item['url'], timeout=15) as response:
+            data = response.read(item['size'] + 1)
+        if len(data) != item['size'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+            raise ValueError('Common stdlib metadata differs from its fixture pin')
+        source = case / item['filename']
+        source.write_bytes(data)
+    return item, source
 
 
 def main():
@@ -30,25 +83,18 @@ def main():
     for directory in ('checker', 'resources', 'api'):
         shutil.copytree(experiment / directory, project / directory)
     (project / 'consumer').mkdir()
-    targets = ['jvm'] + ([args.native_target] if args.native_target else [])
-
-    def module(name, directories, dependencies, platforms, resources=()):
-        return dict(id=name, compilerPlugins=[], sourceSets=[dict(name='main', directories=directories,
-            resources=list(resources), dependsOn=[], dependencies=dependencies)],
-            targets=[dict(name=t, main='main', test=None, compilerOptions=[]) for t in platforms])
-
-    stdlib = dict(coordinate='org.jetbrains.kotlin:kotlin-stdlib:2.4.20')
-    producer = module('checker', ['checker'], [stdlib,
-        dict(coordinate='org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20')], ['jvm'], ['resources'])
-    # The Native adapter supplies Native stdlib; JVM stdlib belongs only to its source set.
-    consumer = module('consumer', ['api', 'consumer'], [], targets)
-    consumer['sourceSets'].append(dict(name='jvm', directories=[], resources=[], dependsOn=['main'], dependencies=[stdlib]))
-    consumer['targets'][0]['main'] = 'jvm'
-    consumer['compilerPlugins'] = [dict(module='checker', id=PLUGIN, compilerVersion='2.4.20', targets=targets,
-        scopes=['main'], options=[], inputs=[], pathOptions=[], outputs=[])]
-    document = dict(schemaVersion=1, name='taskEffectsExperiment', modules=[producer, consumer],
-        repositories=[dict(id='central', url='https://repo.maven.apache.org/maven2')])
-    (project / 'kvik.json').write_text(json.dumps(document))
+    dependencies = experiment / 'dependencies'
+    shutil.copyfile(dependencies / 'project.json', project / 'kvik.json')
+    tools_path = args.tools.resolve(strict=True)
+    tools = json.loads(tools_path.read_bytes())
+    artifacts = Path(tools['compilerArtifacts'])
+    if not artifacts.is_absolute():
+        artifacts = tools_path.parent / artifacts
+    tool_lock = read_lock(ROOT)
+    metadata_item, metadata_path = provision_common_metadata(dependencies, artifacts, case)
+    tool_lock['compilerArtifacts'].append(metadata_item)
+    install_dependencies(dependencies, project, case / 'store', artifacts, tool_lock, ROOT / 'tests/resolution/fixtures',
+                         {metadata_item['url']: metadata_path})
     source = project / 'consumer/Consumer.kt'
     prefix = 'package sample\nimport kvik.experimental.effects.Task\n'
     pure = '@Task fun task(x: Int): Int = helper(x)\nfun helper(x: Int): Int = x + 1\n'
@@ -67,7 +113,9 @@ def main():
         (case / (label + '.stderr')).write_text(result.stderr)
         return result
 
-    resolved = run('resolve', [runtime, 'resolve', *common])
+    # The native CLI independently replays locked metadata and validates the full
+    # closure. No compiler dependency is downloaded again by the Maven transport.
+    resolved = run('check-lock', [runtime, 'check-lock', *common, '--offline'])
     assert resolved.returncode == 0, resolved.stdout + resolved.stderr
 
     def build(label, text, expected=None, target='jvm'):
@@ -82,12 +130,11 @@ def main():
             assert expected in result.stdout, (label, result.stdout[-6000:])
             assert actions[f'consumer:{target}:main']['status'] == 'failed', actions
             assert not record['completedChecks'], record['completedChecks']
-            if target == 'jvm':
-                diagnostics = [e['payload'] for e in events if e['type'] == 'diagnostic'
-                               and expected in e['payload']['message']]
-                assert any(d.get('path') == 'consumer/Consumer.kt' and d.get('line', 0) > 0 for d in diagnostics), diagnostics
-                if label == 'transitive-denied':
-                    assert any('sample.task -> sample.helper -> sample.deep' in d['message'] for d in diagnostics)
+            diagnostics = [e['payload'] for e in events if e['type'] == 'diagnostic'
+                           and expected in e['payload']['message']]
+            assert any(d.get('path') == 'consumer/Consumer.kt' and d.get('line', 0) > 0 for d in diagnostics), diagnostics
+            if label in ('transitive-denied', 'native-transitive-denied'):
+                assert any('sample.task -> sample.helper -> sample.deep' in d['message'] for d in diagnostics)
         else:
             assert record['status'] == 'passed' and record['freshnessAtCompletion'] == 'current'
         print('PASS', label, flush=True)
@@ -130,10 +177,20 @@ def main():
     assert restored['consumer:jvm:main']['key'] == first['consumer:jvm:main']['key']
     assert restored['consumer:jvm:main']['status'] == 'local_hit'
     if args.native_target:
-        build('native-pure', pure, target=args.native_target)
-        native_cases = cases[:5] + [case for case in cases if case[0] in ('default-call', 'indirect-call', 'external-native')]
+        native_action = f'consumer:{args.native_target}:main'
+        native_first = build('native-pure', pure, target=args.native_target)
+        assert native_first[native_action]['key'] != first['consumer:jvm:main']['key']
+        native_warm = build('native-pure-warm', pure, target=args.native_target)
+        assert all(a['status'] == 'local_hit' for a in native_warm.values())
+        native_cases = cases[:5] + [case for case in cases if case[0] in (
+            'randomness', 'external-code', 'default-call', 'indirect-call', 'external-native',
+            'recursion-terminates-analysis', 'unreachable-function', 'analysis-depth-limit')]
         for label, text, expected in native_cases:
-            build('native-' + label, text, expected, target=args.native_target)
+            actions = build('native-' + label, text, expected, target=args.native_target)
+            assert actions['checker:jvm:main']['status'] == 'local_hit', label
+        native_restored = build('native-restore-pure', pure, target=args.native_target)
+        assert native_restored[native_action]['key'] == native_first[native_action]['key']
+        assert native_restored[native_action]['status'] == 'local_hit'
     print('PASS restricted task-effects compiler experiment', case, flush=True)
 
 

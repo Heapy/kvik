@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check cross-machine CI harness
         run: python3 -m unittest discover -s tools -p 'test_*cross_machine*unit.py'
+      - name: Check pinned task-effects dependencies
+        run: python3 -m unittest discover -s tools -p 'test_task_effects_fixture_unit.py'
       - name: Check source-workflow comparison gates
         run: python3 -m unittest discover -s tools -p 'test_source_comparison_unit.py'
       - name: Check workspace-agent comparison grading without model calls

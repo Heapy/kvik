@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the macOS runtime, Apple frameworks, documentation and optional publication consumers."""
+"""Verify the macOS runtime, Apple frameworks, documentation, task effects and optional publication consumers."""
 import argparse
 import json
 import os
@@ -118,11 +118,13 @@ def main():
                '--runtime', executable, '--tools', tools_path], environment, sys.stdout, timeout=3600)
     run_owned([sys.executable, ROOT/'tools/test_documentation_cli.py', '--runtime', executable, '--tools', tools_path,
                '--native-target', 'iosArm64', '--native-target', 'iosSimulatorArm64'], environment, sys.stdout, timeout=3600)
+    run_owned([sys.executable, ROOT/'tools/test_task_effects_cli.py', '--runtime', executable, '--tools', tools_path,
+               '--native-target', 'macosArm64'], environment, sys.stdout, timeout=1800)
     if args.gradle is not None:
         run_owned([sys.executable, ROOT/'tools/test_native_publication_cli.py', '--runtime', executable, '--tools', tools_path,
                    '--java-home', java, '--konan-home', native, '--gradle', args.gradle.resolve(strict=True),
                    '--ktc', args.ktc.resolve(strict=True)], environment, sys.stdout, timeout=3600)
-    print('PASS macOS host runtime: cached startup, iOS frameworks, Swift consumers and shared Native documentation', flush=True)
+    print('PASS macOS host runtime: cached startup, iOS frameworks, Swift consumers, shared Native documentation and task effects', flush=True)
 
 
 if __name__ == '__main__':

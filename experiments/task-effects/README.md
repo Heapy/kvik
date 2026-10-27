@@ -46,10 +46,33 @@ python3 tools/test_task_effects_cli.py --runtime /path/to/kvik.kexe \
 ```
 
 Omit `--native-target` for JVM-only checks, or use `linuxX64` on a matching host.
-The Linux host workflow runs the JVM subset.
+The Linux host workflow runs the JVM subset; the macOS workflow also runs the
+`macosArm64` cases through the foreground process owner. Both targets verify warm
+compilation reuse and restoration of the original cache key after source edits.
 The fixture checks direct/transitive effects, permission boundaries, unknown calls,
 initialization and recursive analysis, plus compilation reuse after unchanged and
 restored inputs. It compiles the task functions without executing them.
+
+The fixture uses `dependencies/project.json` and its checked-in dependency lock.
+Its `metadata.json` maps locked metadata digests to the existing snapshots in
+`tests/resolution/fixtures`; compiler JARs are copied
+from the provisioned `compilerArtifacts` directory in the supplied tools file.
+Compiler JARs must match both the dependency lock and `bootstrap/jvm-artifacts.lock.json`.
+The common stdlib metadata JAR has a separate `dependencies/common-stdlib.json`
+pin; if it is not provisioned, the fixture downloads it with bounded size/time,
+digest verification and no redirects before starting offline verification.
+The native CLI replays the dependency metadata with `check-lock --offline` before
+compilation. This avoids a second compiler download through the Maven transport,
+whose redirect policy differs from the pinned bootstrap downloader. The fixture
+declares JVM, macosArm64 and linuxX64 so the same lock works on both CI hosts;
+the requested compilation target still determines the executed graph.
+
+To refresh dependencies, resolve a temporary copy of `dependencies/project.json`
+with pins `org.jetbrains.kotlin:kotlin-stdlib:2.4.20` and
+`org.jetbrains:annotations:13.0`. Retain the generated lock and its referenced
+metadata blobs in `tests/resolution/fixtures`, update `dependencies/metadata.json`,
+then review any pin changes.
+Do not commit downloaded JARs.
 
 This is a compiler-diagnostic experiment, not a hermeticity proof or an execution
 sandbox. Unannotated entry points are outside its scope. Accepted standard-library

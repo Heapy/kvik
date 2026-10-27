@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "name": "taskEffectsExperiment",
+  "modules": [
+    {
+      "id": "checker",
+      "compilerPlugins": [],
+      "sourceSets": [
+        {
+          "name": "main",
+          "directories": [
+            "checker"
+          ],
+          "resources": [
+            "resources"
+          ],
+          "dependsOn": [],
+          "dependencies": [
+            {
+              "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.20"
+            },
+            {
+              "coordinate": "org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.20"
+            }
+          ]
+        }
+      ],
+      "targets": [
+        {
+          "name": "jvm",
+          "main": "main",
+          "test": null,
+          "compilerOptions": []
+        }
+      ]
+    },
+    {
+      "id": "consumer",
+      "compilerPlugins": [
+        {
+          "module": "checker",
+          "id": "kvik.experimental.task-effects",
+          "compilerVersion": "2.4.20",
+          "targets": [
+            "jvm",
+            "macosArm64",
+            "linuxX64"
+          ],
+          "scopes": [
+            "main"
+          ],
+          "options": [],
+          "inputs": [],
+          "pathOptions": [],
+          "outputs": []
+        }
+      ],
+      "sourceSets": [
+        {
+          "name": "main",
+          "directories": [
+            "api",
+            "consumer"
+          ],
+          "resources": [],
+          "dependsOn": [],
+          "dependencies": []
+        },
+        {
+          "name": "jvm",
+          "directories": [],
+          "resources": [],
+          "dependsOn": [
+            "main"
+          ],
+          "dependencies": [
+            {
+              "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.20"
+            }
+          ]
+        }
+      ],
+      "targets": [
+        {
+          "name": "jvm",
+          "main": "jvm",
+          "test": null,
+          "compilerOptions": []
+        },
+        {
+          "name": "macosArm64",
+          "main": "main",
+          "test": null,
+          "compilerOptions": []
+        },
+        {
+          "name": "linuxX64",
+          "main": "main",
+          "test": null,
+          "compilerOptions": []
+        }
+      ]
+    }
+  ],
+  "repositories": [
+    {
+      "id": "central",
+      "url": "https://repo.maven.apache.org/maven2"
+    }
+  ]
+}
